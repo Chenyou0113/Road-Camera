@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>國道監視器 - TDX</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Microsoft JhengHei', Arial, sans-serif; background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); min-height: 100vh; }
+        .header { background: white; padding: 20px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .container { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+        .header h1 { color: #2196F3; text-align: center; margin-bottom: 10px; }
+        .back-btn { display: inline-block; padding: 10px 20px; background: #2196F3; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+        .back-btn:hover { background: #1976D2; }
+        .loading { text-align: center; padding: 50px; color: white; font-size: 1.2rem; }
+        .cameras-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 20px; margin: 20px 0; }
+        .camera-card { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.3s; }
+        .camera-card:hover { transform: translateY(-5px); }
+        .camera-card h3 { color: #2196F3; margin-bottom: 10px; }
+        .camera-card p { color: #666; margin: 5px 0; }
+        .camera-image { width: 100%; height: 200px; background: #f0f0f0; border-radius: 5px; margin-top: 10px; display: flex; align-items: center; justify-content: center; }
+        .camera-image img { width: 100%; height: 100%; object-fit: cover; border-radius: 5px; }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); }
+        .modal-content { position: relative; margin: 2% auto; width: 90%; max-width: 1200px; }
+        .close { position: absolute; top: 15px; right: 35px; color: #fff; font-size: 40px; font-weight: bold; cursor: pointer; z-index: 1001; }
+        .close:hover { color: #2196F3; }
+        .modal-image { width: 100%; max-height: 80vh; object-fit: contain; }
+        .modal-info { background: white; padding: 20px; border-radius: 10px; margin-top: 20px; }
+        .modal-info h2 { color: #2196F3; margin-bottom: 10px; }
+        .modal-info p { color: #666; margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1><i class="fas fa-road"></i> 國道監視器</h1>
+            <p style="text-align: center; color: #666;">即時國道路況監視器</p>
+        </div>
+    </div>
+    <div class="container">
+        <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 返回首頁</a>
+        <div id="cameras-container" class="loading">載入中...</div>
+    </div>
+
+    <div id="imageModal" class="modal" onclick="closeModal()">
+        <span class="close">&times;</span>
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <img id="modalImage" class="modal-image" src="" alt="監視器大圖">
+            <div class="modal-info">
+                <h2 id="modalTitle"></h2>
+                <p id="modalDescription"></p>
+                <p id="modalLocation"></p>
+                <p><strong>即時影像串流：</strong><span id="modalStream"></span></p>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="tdx-api.js"></script>
+    <script>
+        let allCameras = [];
+
+        async function loadCameras() {
+            try {
+                const data = await tdxApi.fetchCCTV('/v2/Traffic/CCTV/Freeway?$format=JSON');
+                const container = document.getElementById('cameras-container');
+                
+                if (!data || data.length === 0) {
+                    container.innerHTML = '<div class="loading">無監視器資料</div>';
+                    return;
+                }
+
+                allCameras = data;
+
+                const html = data.slice(0, 50).map((camera, index) => `
+                    <div class="camera-card" onclick="showModal(${index})">
+                        <h3>${camera.LocationName || camera.RoadSectionName || '未命名'}</h3>
+                        <p>${camera.RoadSectionName || 'N/A'}</p>
+                        ${camera.VideoImageUrl ? `<div class="camera-image"><img src="${camera.VideoImageUrl}" alt="監視器畫面" onerror="this.parentNode.innerHTML='無法載入影像'"></div>` : '<div class="camera-image">無影像</div>'}
+                    </div>
+                `).join('');
+                
+                container.innerHTML = `<div class="cameras-grid">${html}</div>`;
+            } catch (error) {
+                document.getElementById('cameras-container').innerHTML = `<div class="loading">載入失敗：${error.message}<br>請確認 config.js 中的 API 金鑰是否正確</div>`;
+            }
+        }
+
+        function showModal(index) {
+            const camera = allCameras[index];
+            
+            document.getElementById('modalImage').src = camera.VideoImageUrl || '';
+            document.getElementById('modalTitle').textContent = camera.LocationName || camera.RoadSectionName || '未命名';
+            document.getElementById('modalDescription').textContent = `路段：${camera.RoadSectionName || 'N/A'} | 方向：${camera.RoadDirection || 'N/A'}`;
+            document.getElementById('modalLocation').innerHTML = `<strong>位置：</strong>${camera.PositionLon ? `${camera.PositionLon}, ${camera.PositionLat}` : 'N/A'}`;
+            document.getElementById('modalStream').innerHTML = camera.VideoStreamUrl ? 
+                `<a href="${camera.VideoStreamUrl}" target="_blank" style="color: #2196F3;">${camera.VideoStreamUrl}</a>` : 
+                '無串流資訊';
+            
+            document.getElementById('imageModal').style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('imageModal').style.display = 'none';
+        }
+
+        loadCameras();
+    </script>
+</body>
+</html>

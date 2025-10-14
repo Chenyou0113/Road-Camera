@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>公路監視器 - TDX</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Microsoft JhengHei', Arial, sans-serif; background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%); min-height: 100vh; }
+        .header { background: white; padding: 20px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .container { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+        .header h1 { color: #FF9800; text-align: center; margin-bottom: 10px; }
+        .back-btn { display: inline-block; padding: 10px 20px; background: #FF9800; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+        .back-btn:hover { background: #F57C00; }
+        .road-select { padding: 10px; border-radius: 5px; border: 2px solid #FF9800; font-size: 1rem; margin: 20px 0; }
+        .loading { text-align: center; padding: 50px; color: white; font-size: 1.2rem; }
+        .cameras-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 20px; margin: 20px 0; }
+        .camera-card { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.3s; }
+        .camera-card:hover { transform: translateY(-5px); }
+        .camera-card h3 { color: #FF9800; margin-bottom: 10px; }
+        .camera-card p { color: #666; margin: 5px 0; font-size: 0.9rem; }
+        .camera-image { width: 100%; height: 200px; background: #f0f0f0; border-radius: 5px; margin-top: 10px; display: flex; align-items: center; justify-content: center; }
+        .camera-image img { width: 100%; height: 100%; object-fit: cover; border-radius: 5px; }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); }
+        .modal-content { position: relative; margin: 2% auto; width: 90%; max-width: 1200px; }
+        .close { position: absolute; top: 15px; right: 35px; color: #fff; font-size: 40px; font-weight: bold; cursor: pointer; z-index: 1001; }
+        .close:hover { color: #FF9800; }
+        .modal-image { width: 100%; max-height: 80vh; object-fit: contain; }
+        .modal-info { background: white; padding: 20px; border-radius: 10px; margin-top: 20px; }
+        .modal-info h2 { color: #FF9800; margin-bottom: 10px; }
+        .modal-info p { color: #666; margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1><i class="fas fa-traffic-light"></i> 公路監視器</h1>
+            <p style="text-align: center; color: #666;">即時省道路況監視器</p>
+        </div>
+    </div>
+    <div class="container">
+        <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 返回首頁</a>
+        <select class="road-select" id="roadSelect" onchange="filterByRoad()">
+            <option value="">選擇路線</option>
+        </select>
+        <div id="cameras-container" class="loading">載入中...</div>
+    </div>
+
+    <div id="imageModal" class="modal" onclick="closeModal()">
+        <span class="close">&times;</span>
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <img id="modalImage" class="modal-image" src="" alt="監視器大圖">
+            <div class="modal-info">
+                <h2 id="modalTitle"></h2>
+                <p id="modalDescription"></p>
+                <p id="modalLocation"></p>
+                <p><strong>即時影像串流：</strong><span id="modalStream"></span></p>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="tdx-api.js"></script>
+    <script>
+        let allCameras = [];
+
+        // 根據經緯度判斷縣市
+        function getCityFromCoordinates(lon, lat) {
+            if (!lon || !lat) return '未知';
+            
+            // 台灣各縣市經緯度範圍（簡化版）
+            const cityRanges = [
+                { name: '台北市', lonMin: 121.45, lonMax: 121.65, latMin: 24.95, latMax: 25.20 },
+                { name: '新北市', lonMin: 121.30, lonMax: 122.00, latMin: 24.60, latMax: 25.30 },
+                { name: '基隆市', lonMin: 121.65, lonMax: 121.85, latMin: 25.10, latMax: 25.20 },
+                { name: '桃園市', lonMin: 121.00, lonMax: 121.50, latMin: 24.80, latMax: 25.10 },
+                { name: '新竹市', lonMin: 120.90, lonMax: 121.05, latMin: 24.75, latMax: 24.85 },
+                { name: '新竹縣', lonMin: 120.70, lonMax: 121.30, latMin: 24.50, latMax: 25.00 },
+                { name: '苗栗縣', lonMin: 120.60, lonMax: 121.20, latMin: 24.20, latMax: 24.80 },
+                { name: '台中市', lonMin: 120.50, lonMax: 121.20, latMin: 24.00, latMax: 24.50 },
+                { name: '彰化縣', lonMin: 120.40, lonMax: 120.80, latMin: 23.80, latMax: 24.20 },
+                { name: '南投縣', lonMin: 120.60, lonMax: 121.30, latMin: 23.50, latMax: 24.20 },
+                { name: '雲林縣', lonMin: 120.20, lonMax: 120.70, latMin: 23.50, latMax: 23.90 },
+                { name: '嘉義市', lonMin: 120.40, lonMax: 120.50, latMin: 23.45, latMax: 23.52 },
+                { name: '嘉義縣', lonMin: 120.10, lonMax: 120.80, latMin: 23.30, latMax: 23.70 },
+                { name: '台南市', lonMin: 120.00, lonMax: 120.50, latMin: 22.90, latMax: 23.40 },
+                { name: '高雄市', lonMin: 120.20, lonMax: 120.50, latMin: 22.50, latMax: 23.10 },
+                { name: '屏東縣', lonMin: 120.40, lonMax: 120.90, latMin: 22.00, latMax: 22.80 },
+                { name: '宜蘭縣', lonMin: 121.50, lonMax: 122.10, latMin: 24.50, latMax: 25.00 },
+                { name: '花蓮縣', lonMin: 121.30, lonMax: 121.80, latMin: 23.50, latMax: 24.50 },
+                { name: '台東縣', lonMin: 120.90, lonMax: 121.50, latMin: 22.50, latMax: 23.50 }
+            ];
+            
+            for (const city of cityRanges) {
+                if (lon >= city.lonMin && lon <= city.lonMax && lat >= city.latMin && lat <= city.latMax) {
+                    return city.name;
+                }
+            }
+            
+            return '其他地區';
+        }
+
+        async function loadCameras() {
+            try {
+                const data = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/Highway?$format=JSON');
+                const container = document.getElementById('cameras-container');
+                
+                if (!data || !data.CCTVs || data.CCTVs.length === 0) {
+                    container.innerHTML = '<div class="loading">無監視器資料</div>';
+                    return;
+                }
+
+                allCameras = data.CCTVs;
+                
+                const roads = [...new Set(allCameras.map(c => c.RoadName).filter(Boolean))].sort();
+                const roadSelect = document.getElementById('roadSelect');
+                roadSelect.innerHTML = '<option value="">全部路線</option>' + 
+                    roads.map(road => `<option value="${road}">${road}</option>`).join('');
+                
+                displayCameras(allCameras);
+            } catch (error) {
+                document.getElementById('cameras-container').innerHTML = `<div class="loading">載入失敗：${error.message}<br>請確認 config.js 中的 API 金鑰是否正確</div>`;
+            }
+        }
+
+        function filterByRoad() {
+            const selectedRoad = document.getElementById('roadSelect').value;
+            const filtered = selectedRoad ? allCameras.filter(c => c.RoadName === selectedRoad) : allCameras;
+            displayCameras(filtered);
+        }
+
+        function displayCameras(cameras) {
+            const container = document.getElementById('cameras-container');
+            
+            if (cameras.length === 0) {
+                container.innerHTML = '<div class="loading">無監視器資料</div>';
+                return;
+            }
+
+            const html = cameras.slice(0, 100).map((camera, index) => {
+                const city = getCityFromCoordinates(camera.PositionLon, camera.PositionLat);
+                return `
+                <div class="camera-card" onclick="showModal(${index}, '${document.getElementById('roadSelect').value}')">
+                    <h3>${camera.RoadName || '未命名'}</h3>
+                    <p>${camera.LocationMile || ''} | ${city}</p>
+                    ${camera.VideoImageURL ? `<div class="camera-image"><img src="${camera.VideoImageURL}" alt="監視器畫面" onerror="this.parentNode.innerHTML='無法載入影像'"></div>` : '<div class="camera-image">無影像</div>'}
+                </div>
+                `;
+            }).join('');
+            
+            container.innerHTML = `<div class="cameras-grid">${html}</div>`;
+        }
+
+        function showModal(index, selectedRoad) {
+            const cameras = selectedRoad ? allCameras.filter(c => c.RoadName === selectedRoad) : allCameras;
+            const camera = cameras[index];
+            
+            const city = getCityFromCoordinates(camera.PositionLon, camera.PositionLat);
+            document.getElementById('modalImage').src = camera.VideoImageURL || '';
+            document.getElementById('modalTitle').textContent = `${camera.RoadName || '未命名'} ${camera.LocationMile || ''}`;
+            document.getElementById('modalDescription').textContent = camera.SurveillanceDescription || 'N/A';
+            document.getElementById('modalLocation').innerHTML = `<strong>縣市：</strong>${city}<br><strong>座標：</strong>${camera.PositionLon ? `${camera.PositionLon}, ${camera.PositionLat}` : 'N/A'}`;
+            document.getElementById('modalStream').innerHTML = camera.VideoStreamURL ? 
+                `<a href="${camera.VideoStreamURL}" target="_blank" style="color: #FF9800;">${camera.VideoStreamURL}</a>` : 
+                '無串流資訊';
+            
+            document.getElementById('imageModal').style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('imageModal').style.display = 'none';
+        }
+
+        loadCameras();
+    </script>
+</body>
+</html>

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>縣市監視器 - TDX</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Microsoft JhengHei', Arial, sans-serif; background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%); min-height: 100vh; }
+        .header { background: white; padding: 20px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .container { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+        .header h1 { color: #4CAF50; text-align: center; margin-bottom: 10px; }
+        .back-btn { display: inline-block; padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+        .back-btn:hover { background: #388E3C; }
+        .city-select { padding: 10px; border-radius: 5px; border: 2px solid #4CAF50; font-size: 1rem; margin: 20px 0; }
+        .loading { text-align: center; padding: 50px; color: white; font-size: 1.2rem; }
+        .cameras-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 20px; margin: 20px 0; }
+        .camera-card { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.3s; }
+        .camera-card:hover { transform: translateY(-5px); }
+        .camera-card h3 { color: #4CAF50; margin-bottom: 10px; }
+        .camera-card p { color: #666; margin: 5px 0; }
+        .camera-image { width: 100%; height: 200px; background: #f0f0f0; border-radius: 5px; margin-top: 10px; display: flex; align-items: center; justify-content: center; }
+        .camera-image img { width: 100%; height: 100%; object-fit: cover; border-radius: 5px; }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); }
+        .modal-content { position: relative; margin: 2% auto; width: 90%; max-width: 1200px; }
+        .close { position: absolute; top: 15px; right: 35px; color: #fff; font-size: 40px; font-weight: bold; cursor: pointer; z-index: 1001; }
+        .close:hover { color: #4CAF50; }
+        .modal-image { width: 100%; max-height: 80vh; object-fit: contain; }
+        .modal-info { background: white; padding: 20px; border-radius: 10px; margin-top: 20px; }
+        .modal-info h2 { color: #4CAF50; margin-bottom: 10px; }
+        .modal-info p { color: #666; margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1><i class="fas fa-city"></i> 縣市監視器</h1>
+            <p style="text-align: center; color: #666;">即時縣市路況監視器</p>
+        </div>
+    </div>
+    <div class="container">
+        <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 返回首頁</a>
+        <select class="city-select" id="citySelect" onchange="loadCameras()">
+            <option value="">選擇縣市</option>
+            <option value="Taipei">台北市</option>
+            <option value="NewTaipei">新北市</option>
+            <option value="Kaohsiung">高雄市</option>
+            <option value="Taichung">台中市</option>
+            <option value="Tainan">台南市</option>
+            <option value="Taoyuan">桃園市</option>
+            <option value="YilanCounty">宜蘭縣</option>
+            <option value="HualienCounty">花蓮縣</option>
+            <option value="Hsinchu">新竹市</option>
+            <option value="HsinchuCounty">新竹縣</option>
+            <option value="NantouCounty">南投縣</option>
+            <option value="YunlinCounty">雲林縣</option>
+            <option value="Chiayi">嘉義市</option>
+            <option value="ChiayiCounty">嘉義縣</option>
+            <option value="ChanghuaCounty">彰化縣</option>
+            <option value="MiaoliCounty">苗栗縣</option>
+            <option value="PingtungCounty">屏東縣</option>
+            <option value="KinmenCounty">金門縣</option>
+        </select>
+        <div id="cameras-container" class="loading">請選擇縣市</div>
+    </div>
+
+    <div id="imageModal" class="modal" onclick="closeModal()">
+        <span class="close">&times;</span>
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <img id="modalImage" class="modal-image" src="" alt="監視器大圖">
+            <div class="modal-info">
+                <h2 id="modalTitle"></h2>
+                <p id="modalDescription"></p>
+                <p id="modalLocation"></p>
+                <p><strong>即時影像串流：</strong><span id="modalStream"></span></p>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="tdx-api.js"></script>
+    <script>
+        let allCameras = [];
+
+        async function loadCameras() {
+            const city = document.getElementById('citySelect').value;
+            const container = document.getElementById('cameras-container');
+            
+            if (!city) {
+                container.innerHTML = '<div class="loading">請選擇縣市</div>';
+                return;
+            }
+            
+            container.innerHTML = '<div class="loading">載入中...</div>';
+            
+            try {
+                const data = await tdxApi.fetchCCTV(`/v2/Road/Traffic/CCTV/City/${city}?$format=JSON`);
+                
+                if (!data || !data.CCTVs || data.CCTVs.length === 0) {
+                    container.innerHTML = '<div class="loading">無監視器資料</div>';
+                    return;
+                }
+
+                allCameras = data.CCTVs;
+
+                const html = data.CCTVs.slice(0, 50).map((camera, index) => `
+                    <div class="camera-card" onclick="showModal(${index})">
+                        <h3>${camera.RoadName || '未命名'} ${camera.LocationMile || ''}</h3>
+                        <p>${camera.SurveillanceDescription || 'N/A'}</p>
+                        ${camera.VideoImageURL ? `<div class="camera-image"><img src="${camera.VideoImageURL}" alt="監視器畫面" onerror="this.parentNode.innerHTML='無法載入影像'"></div>` : '<div class="camera-image">無影像</div>'}
+                    </div>
+                `).join('');
+                
+                container.innerHTML = `<div class="cameras-grid">${html}</div>`;
+            } catch (error) {
+                container.innerHTML = `<div class="loading">載入失敗：${error.message}<br>請確認 config.js 中的 API 金鑰是否正確</div>`;
+            }
+        }
+
+        function showModal(index) {
+            const camera = allCameras[index];
+            const city = document.getElementById('citySelect').options[document.getElementById('citySelect').selectedIndex].text;
+            
+            document.getElementById('modalImage').src = camera.VideoImageURL || '';
+            document.getElementById('modalTitle').textContent = `${camera.RoadName || '未命名'} ${camera.LocationMile || ''}`;
+            document.getElementById('modalDescription').textContent = camera.SurveillanceDescription || 'N/A';
+            document.getElementById('modalLocation').innerHTML = `<strong>縣市：</strong>${city}<br><strong>座標：</strong>${camera.PositionLon ? `${camera.PositionLon}, ${camera.PositionLat}` : 'N/A'}`;
+            document.getElementById('modalStream').innerHTML = camera.VideoStreamURL ? 
+                `<a href="${camera.VideoStreamURL}" target="_blank" style="color: #4CAF50;">${camera.VideoStreamURL}</a>` : 
+                '無串流資訊';
+            
+            document.getElementById('imageModal').style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('imageModal').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
