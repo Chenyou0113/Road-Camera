@@ -41,9 +41,31 @@
     </div>
     <div class="container">
         <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 返回首頁</a>
-        <select class="road-select" id="roadSelect" onchange="filterByRoad()">
-            <option value="">選擇路線</option>
-        </select>
+        <div style="display: flex; gap: 15px; margin: 20px 0; flex-wrap: wrap;">
+            <select class="road-select" id="citySelect" onchange="applyFilters()">
+                <option value="">選擇縣市</option>
+            </select>
+            <select class="road-select" id="roadSelect" onchange="applyFilters()">
+                <option value="">選擇路線</option>
+            </select>
+            <button class="road-select" style="background: #FF9800; color: white; border: none; cursor: pointer;" onclick="clearFilters()">
+                <i class="fas fa-refresh"></i> 清除篩選
+            </button>
+        </div>
+        <div id="stats" style="background: white; padding: 15px; border-radius: 10px; margin: 10px 0; display: flex; justify-content: space-around; flex-wrap: wrap;">
+            <div style="text-align: center; margin: 5px;">
+                <div style="font-size: 1.5rem; font-weight: bold; color: #FF9800;" id="totalCount">0</div>
+                <div style="color: #666;">總監視器</div>
+            </div>
+            <div style="text-align: center; margin: 5px;">
+                <div style="font-size: 1.5rem; font-weight: bold; color: #4CAF50;" id="filteredCount">0</div>
+                <div style="color: #666;">篩選結果</div>
+            </div>
+            <div style="text-align: center; margin: 5px;">
+                <div style="font-size: 1.5rem; font-weight: bold; color: #2196F3;" id="cityCount">0</div>
+                <div style="color: #666;">涵蓋縣市</div>
+            </div>
+        </div>
         <div id="cameras-container" class="loading">載入中...</div>
     </div>
 
@@ -113,56 +135,147 @@
 
                 allCameras = data.CCTVs;
                 
-                const roads = [...new Set(allCameras.map(c => c.RoadName).filter(Boolean))].sort();
-                const roadSelect = document.getElementById('roadSelect');
-                roadSelect.innerHTML = '<option value="">全部路線</option>' + 
-                    roads.map(road => `<option value="${road}">${road}</option>`).join('');
+                // 為每個監視器添加縣市資訊
+                allCameras = allCameras.map(camera => ({
+                    ...camera,
+                    City: getCityFromCoordinates(camera.PositionLon, camera.PositionLat)
+                }));
                 
+                populateFilters();
+                updateStats();
                 displayCameras(allCameras);
             } catch (error) {
                 document.getElementById('cameras-container').innerHTML = `<div class="loading">載入失敗：${error.message}<br>請確認 config.js 中的 API 金鑰是否正確</div>`;
             }
         }
 
-        function filterByRoad() {
+        function populateFilters() {
+            // 填充縣市選單
+            const cities = [...new Set(allCameras.map(c => c.City).filter(Boolean))].sort();
+            const citySelect = document.getElementById('citySelect');
+            citySelect.innerHTML = '<option value="">全部縣市</option>' + 
+                cities.map(city => `<option value="${city}">${city}</option>`).join('');
+            
+            // 填充路線選單
+            const roads = [...new Set(allCameras.map(c => c.RoadName).filter(Boolean))].sort();
+            const roadSelect = document.getElementById('roadSelect');
+            roadSelect.innerHTML = '<option value="">全部路線</option>' + 
+                roads.map(road => `<option value="${road}">${road}</option>`).join('');
+        }
+
+        function updateStats() {
+            const selectedCity = document.getElementById('citySelect').value;
             const selectedRoad = document.getElementById('roadSelect').value;
-            const filtered = selectedRoad ? allCameras.filter(c => c.RoadName === selectedRoad) : allCameras;
+            
+            let filteredCameras = allCameras;
+            if (selectedCity) filteredCameras = filteredCameras.filter(c => c.City === selectedCity);
+            if (selectedRoad) filteredCameras = filteredCameras.filter(c => c.RoadName === selectedRoad);
+            
+            const uniqueCities = [...new Set(filteredCameras.map(c => c.City).filter(Boolean))];
+            
+            document.getElementById('totalCount').textContent = allCameras.length;
+            document.getElementById('filteredCount').textContent = filteredCameras.length;
+            document.getElementById('cityCount').textContent = uniqueCities.length;
+        }
+
+        function applyFilters() {
+            const selectedCity = document.getElementById('citySelect').value;
+            const selectedRoad = document.getElementById('roadSelect').value;
+            
+            let filtered = allCameras;
+            if (selectedCity) {
+                filtered = filtered.filter(c => c.City === selectedCity);
+            }
+            if (selectedRoad) {
+                filtered = filtered.filter(c => c.RoadName === selectedRoad);
+            }
+            
+            updateStats();
             displayCameras(filtered);
+            
+            // 動態更新路線選單（當選擇縣市時）
+            if (selectedCity && !selectedRoad) {
+                const availableRoads = [...new Set(filtered.map(c => c.RoadName).filter(Boolean))].sort();
+                const roadSelect = document.getElementById('roadSelect');
+                const currentValue = roadSelect.value;
+                roadSelect.innerHTML = '<option value="">全部路線</option>' + 
+                    availableRoads.map(road => `<option value="${road}">${road}</option>`).join('');
+                if (currentValue && availableRoads.includes(currentValue)) {
+                    roadSelect.value = currentValue;
+                }
+            }
+            
+            // 動態更新縣市選單（當選擇路線時）
+            if (selectedRoad && !selectedCity) {
+                const availableCities = [...new Set(allCameras.filter(c => c.RoadName === selectedRoad).map(c => c.City).filter(Boolean))].sort();
+                const citySelect = document.getElementById('citySelect');
+                const currentValue = citySelect.value;
+                citySelect.innerHTML = '<option value="">全部縣市</option>' + 
+                    availableCities.map(city => `<option value="${city}">${city}</option>`).join('');
+                if (currentValue && availableCities.includes(currentValue)) {
+                    citySelect.value = currentValue;
+                }
+            }
+        }
+
+        function clearFilters() {
+            document.getElementById('citySelect').value = '';
+            document.getElementById('roadSelect').value = '';
+            populateFilters();
+            updateStats();
+            displayCameras(allCameras);
         }
 
         function displayCameras(cameras) {
             const container = document.getElementById('cameras-container');
             
             if (cameras.length === 0) {
-                container.innerHTML = '<div class="loading">無監視器資料</div>';
+                container.innerHTML = '<div class="loading">無符合篩選條件的監視器</div>';
                 return;
             }
 
-            const html = cameras.slice(0, 100).map((camera, index) => {
-                const city = getCityFromCoordinates(camera.PositionLon, camera.PositionLat);
+            // 顯示前100筆資料
+            const displayCameras = cameras.slice(0, 100);
+            const html = displayCameras.map((camera, index) => {
                 return `
-                <div class="camera-card" onclick="showModal(${index}, '${document.getElementById('roadSelect').value}')">
-                    <h3>${camera.RoadName || '未命名'}</h3>
-                    <p>${camera.LocationMile || ''} | ${city}</p>
-                    ${camera.VideoImageURL ? `<div class="camera-image"><img src="${camera.VideoImageURL}" alt="監視器畫面" onerror="this.parentNode.innerHTML='無法載入影像'"></div>` : '<div class="camera-image">無影像</div>'}
+                <div class="camera-card" onclick="showModal(${allCameras.indexOf(camera)})">
+                    <h3>${camera.RoadName || '未命名'} <span style="font-size: 0.8rem; color: #666;">(${camera.City || '未知'})</span></h3>
+                    <p><i class="fas fa-map-marker-alt"></i> ${camera.LocationMile || '無里程資訊'}</p>
+                    <p><i class="fas fa-info-circle"></i> ${camera.SurveillanceDescription || '無說明'}</p>
+                    ${camera.VideoImageURL ? 
+                        `<div class="camera-image"><img src="${camera.VideoImageURL}" alt="監視器畫面" onerror="this.parentNode.innerHTML='<i class=&quot;fas fa-exclamation-triangle&quot;></i> 無法載入影像'"></div>` : 
+                        '<div class="camera-image"><i class="fas fa-video-slash" style="font-size: 2rem; color: #ccc;"></i><br>無影像</div>'
+                    }
                 </div>
                 `;
             }).join('');
             
-            container.innerHTML = `<div class="cameras-grid">${html}</div>`;
+            let resultText = `顯示 ${displayCameras.length} 筆結果`;
+            if (cameras.length > 100) {
+                resultText += ` (共 ${cameras.length} 筆，僅顯示前100筆)`;
+            }
+            
+            container.innerHTML = `
+                <div style="text-align: center; margin: 20px 0; color: white; font-size: 1.1rem;">
+                    ${resultText}
+                </div>
+                <div class="cameras-grid">${html}</div>
+            `;
         }
 
-        function showModal(index, selectedRoad) {
-            const cameras = selectedRoad ? allCameras.filter(c => c.RoadName === selectedRoad) : allCameras;
-            const camera = cameras[index];
+        function showModal(index) {
+            const camera = allCameras[index];
             
-            const city = getCityFromCoordinates(camera.PositionLon, camera.PositionLat);
-            document.getElementById('modalImage').src = camera.VideoImageURL || '';
+            document.getElementById('modalImage').src = camera.VideoImageURL || 'data:image/svg+xml,<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg"><rect width="400" height="300" fill="%23f5f5f5"/><text x="50%" y="50%" font-family="Arial" font-size="18" fill="%23999" text-anchor="middle" dy=".3em">無影像資料</text></svg>';
             document.getElementById('modalTitle').textContent = `${camera.RoadName || '未命名'} ${camera.LocationMile || ''}`;
-            document.getElementById('modalDescription').textContent = camera.SurveillanceDescription || 'N/A';
-            document.getElementById('modalLocation').innerHTML = `<strong>縣市：</strong>${city}<br><strong>座標：</strong>${camera.PositionLon ? `${camera.PositionLon}, ${camera.PositionLat}` : 'N/A'}`;
+            document.getElementById('modalDescription').textContent = camera.SurveillanceDescription || '無說明';
+            document.getElementById('modalLocation').innerHTML = `
+                <strong><i class="fas fa-map-marker-alt"></i> 縣市：</strong>${camera.City || '未知'}<br>
+                <strong><i class="fas fa-crosshairs"></i> 座標：</strong>${camera.PositionLon ? `經度 ${camera.PositionLon}, 緯度 ${camera.PositionLat}` : '無座標資訊'}<br>
+                <strong><i class="fas fa-road"></i> 里程：</strong>${camera.LocationMile || '無里程資訊'}
+            `;
             document.getElementById('modalStream').innerHTML = camera.VideoStreamURL ? 
-                `<a href="${camera.VideoStreamURL}" target="_blank" style="color: #FF9800;">${camera.VideoStreamURL}</a>` : 
+                `<a href="${camera.VideoStreamURL}" target="_blank" style="color: #FF9800; text-decoration: none;"><i class="fas fa-external-link-alt"></i> 開啟串流連結</a>` : 
                 '無串流資訊';
             
             document.getElementById('imageModal').style.display = 'block';
