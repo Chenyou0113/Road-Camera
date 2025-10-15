@@ -8,6 +8,7 @@ function createNavbar(currentPage = '') {
         { id: 'water', icon: 'fa-water', text: '水利', color: '#00BCD4', file: 'water-resources.html' },
         { id: 'air-quality', icon: 'fa-wind', text: '空品', color: '#9C27B0', file: 'air-quality.html' },
         { id: 'debris-flow', icon: 'fa-mountain', text: '土石流', color: '#795548', file: 'debris-flow.html' },
+        { id: 'soil-monitoring', icon: 'fa-layer-group', text: '土砂觀測', color: '#8D6E63', file: 'soil-monitoring.html' },
         { id: 'water-gov', icon: 'fa-video', text: '水利署', color: '#3F51B5', file: 'water-gov.html' },
         { id: 'water-local', icon: 'fa-camera', text: '地方合建', color: '#009688', file: 'water-local.html' }
     ];
