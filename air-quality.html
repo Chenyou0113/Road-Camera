@@ -77,6 +77,38 @@
         }
         .pollutant-item .label { color: #666; font-weight: bold; }
         .pollutant-item .value { color: #333; font-weight: bold; margin-top: 2px; }
+        
+        /* 篩選功能樣式 */
+        .filter-select { 
+            padding: 10px 15px; 
+            border: 2px solid #ddd; 
+            border-radius: 8px; 
+            font-size: 1rem; 
+            background: white; 
+            color: #333; 
+            cursor: pointer;
+            transition: border-color 0.3s;
+            min-width: 120px;
+        }
+        .filter-select:hover, .filter-select:focus { 
+            border-color: #9C27B0; 
+            outline: none; 
+        }
+        .filter-button { 
+            padding: 10px 15px; 
+            border: none; 
+            border-radius: 8px; 
+            font-size: 1rem; 
+            cursor: pointer; 
+            transition: background-color 0.3s;
+        }
+        .clear-button { 
+            background: #FF9800; 
+            color: white; 
+        }
+        .clear-button:hover { 
+            background: #F57C00; 
+        }
     </style>
 </head>
 <body>
@@ -129,11 +161,56 @@
             </div>
         </div>
         
+        <!-- 縣市篩選功能 -->
+        <div style="display: flex; gap: 15px; margin: 20px 0; flex-wrap: wrap; align-items: center;">
+            <select class="filter-select" id="countySelect" onchange="applyFilters()">
+                <option value="">選擇縣市</option>
+            </select>
+            <select class="filter-select" id="aqiSelect" onchange="applyFilters()">
+                <option value="">AQI 等級</option>
+                <option value="良好">良好 (0-50)</option>
+                <option value="普通">普通 (51-100)</option>
+                <option value="對敏感族群不健康">敏感族群不健康 (101-150)</option>
+                <option value="對所有族群不健康">不健康 (151-200)</option>
+                <option value="非常不健康">非常不健康 (201-300)</option>
+                <option value="危害">危害 (301+)</option>
+            </select>
+            <button class="filter-button clear-button" onclick="clearFilters()">
+                <i class="fas fa-refresh"></i> 清除篩選
+            </button>
+        </div>
+        
+        <!-- 統計資訊 -->
+        <div id="stats" style="background: white; padding: 15px; border-radius: 10px; margin: 10px 0; display: flex; justify-content: space-around; flex-wrap: wrap;">
+            <div style="text-align: center; margin: 5px;">
+                <div style="font-size: 1.5rem; font-weight: bold; color: #9C27B0;" id="totalStations">0</div>
+                <div style="color: #666;">總測站數</div>
+            </div>
+            <div style="text-align: center; margin: 5px;">
+                <div style="font-size: 1.5rem; font-weight: bold; color: #4CAF50;" id="filteredStations">0</div>
+                <div style="color: #666;">篩選結果</div>
+            </div>
+            <div style="text-align: center; margin: 5px;">
+                <div style="font-size: 1.5rem; font-weight: bold; color: #2196F3;" id="countyCount">0</div>
+                <div style="color: #666;">涵蓋縣市</div>
+            </div>
+            <div style="text-align: center; margin: 5px;">
+                <div style="font-size: 1.2rem; font-weight: bold; color: #FF9800;" id="goodAqiCount">0</div>
+                <div style="color: #666;">良好品質</div>
+            </div>
+            <div style="text-align: center; margin: 5px;">
+                <div style="font-size: 1.2rem; font-weight: bold; color: #795548;" id="moderateAqiCount">0</div>
+                <div style="color: #666;">普通品質</div>
+            </div>
+        </div>
+        
         <div id="cameras-container" class="loading">載入中...</div>
     </div>
 
     <script>
         let isUsingRealData = false;
+        let allStations = []; // 儲存所有測站資料
+        let currentStations = []; // 目前顯示的測站資料
         
         // 頁面載入時執行
         document.addEventListener('DOMContentLoaded', function() {
@@ -178,7 +255,14 @@
                     }));
                     
                     console.log('真實資料載入成功:', mergedData.length, '個測站');
-                    processAirQualityData(mergedData, container);
+                    
+                    // 儲存所有測站資料並初始化篩選
+                    allStations = mergedData;
+                    currentStations = [...allStations];
+                    populateCountyOptions();
+                    updateStatistics();
+                    
+                    processAirQualityData(currentStations, container);
                     return;
                 }
                 
@@ -290,13 +374,79 @@
                     no2: '18',
                     siteid: 'NTP002',
                     imageUrl: 'https://images.unsplash.com/photo-1480714378408-67cf0d13bc1f?w=800&h=600&fit=crop&auto=format'
+                },
+                {
+                    sitename: '桃園',
+                    county: '桃園市',
+                    aqi: '73',
+                    status: '普通',
+                    publishtime: new Date(Date.now() - 1000*60*35).toISOString(),
+                    pm2_5: '32',
+                    pm10: '48',
+                    o3: '32',
+                    co: '0.6',
+                    so2: '5',
+                    no2: '35',
+                    siteid: 'TYN001',
+                    imageUrl: 'https://images.unsplash.com/photo-1449824913935-59a10b8d2000?w=800&h=600&fit=crop&auto=format'
+                },
+                {
+                    sitename: '台中',
+                    county: '臺中市',
+                    aqi: '68',
+                    status: '普通',
+                    publishtime: new Date(Date.now() - 1000*60*25).toISOString(),
+                    pm2_5: '28',
+                    pm10: '42',
+                    o3: '35',
+                    co: '0.5',
+                    so2: '4',
+                    no2: '31',
+                    siteid: 'TXG001',
+                    imageUrl: 'https://images.unsplash.com/photo-1516738901171-8eb4fc13bd20?w=800&h=600&fit=crop&auto=format'
+                },
+                {
+                    sitename: '高雄',
+                    county: '高雄市',
+                    aqi: '85',
+                    status: '普通',
+                    publishtime: new Date(Date.now() - 1000*60*40).toISOString(),
+                    pm2_5: '38',
+                    pm10: '55',
+                    o3: '28',
+                    co: '0.7',
+                    so2: '6',
+                    no2: '42',
+                    siteid: 'KHH001',
+                    imageUrl: 'https://images.unsplash.com/photo-1542744095-fcf48d80b0fd?w=800&h=600&fit=crop&auto=format'
+                },
+                {
+                    sitename: '新竹',
+                    county: '新竹市',
+                    aqi: '52',
+                    status: '普通',
+                    publishtime: new Date(Date.now() - 1000*60*18).toISOString(),
+                    pm2_5: '19',
+                    pm10: '32',
+                    o3: '41',
+                    co: '0.4',
+                    so2: '3',
+                    no2: '24',
+                    siteid: 'HSZ001',
+                    imageUrl: 'https://images.unsplash.com/photo-1518837695005-2083093ee35b?w=800&h=600&fit=crop&auto=format'
                 }
             ];
             
             console.log('模擬資料包含', mockStations.length, '個測站');
             
+            // 儲存所有測站資料並初始化篩選
+            allStations = mockStations;
+            currentStations = [...allStations];
+            populateCountyOptions();
+            updateStatistics();
+            
             // 處理並顯示資料
-            processAirQualityData(mockStations, container);
+            processAirQualityData(currentStations, container);
         }
         
         function processAirQualityData(stations, container) {
@@ -380,6 +530,93 @@
             
             container.innerHTML = `<div class="cameras-grid">${html}</div>`;
             console.log('空品資料顯示完成');
+        }
+        
+        // 篩選功能
+        function populateCountyOptions() {
+            const countySelect = document.getElementById('countySelect');
+            const counties = [...new Set(allStations.map(station => station.county).filter(c => c))].sort();
+            
+            // 清除現有選項（保留預設選項）
+            countySelect.innerHTML = '<option value="">選擇縣市</option>';
+            
+            counties.forEach(county => {
+                const option = document.createElement('option');
+                option.value = county;
+                option.textContent = county;
+                countySelect.appendChild(option);
+            });
+        }
+        
+        function applyFilters() {
+            const selectedCounty = document.getElementById('countySelect').value;
+            const selectedAqi = document.getElementById('aqiSelect').value;
+            
+            currentStations = allStations.filter(station => {
+                // 縣市篩選
+                if (selectedCounty && station.county !== selectedCounty) {
+                    return false;
+                }
+                
+                // AQI 等級篩選
+                if (selectedAqi) {
+                    const aqi = parseInt(station.aqi) || 0;
+                    let aqiStatus = '';
+                    
+                    if (aqi <= 50) aqiStatus = '良好';
+                    else if (aqi <= 100) aqiStatus = '普通';
+                    else if (aqi <= 150) aqiStatus = '對敏感族群不健康';
+                    else if (aqi <= 200) aqiStatus = '對所有族群不健康';
+                    else if (aqi <= 300) aqiStatus = '非常不健康';
+                    else aqiStatus = '危害';
+                    
+                    if (aqiStatus !== selectedAqi) {
+                        return false;
+                    }
+                }
+                
+                return true;
+            });
+            
+            // 重新顯示篩選後的資料
+            const container = document.getElementById('cameras-container');
+            processAirQualityData(currentStations, container);
+            updateStatistics();
+        }
+        
+        function clearFilters() {
+            document.getElementById('countySelect').value = '';
+            document.getElementById('aqiSelect').value = '';
+            currentStations = [...allStations];
+            
+            const container = document.getElementById('cameras-container');
+            processAirQualityData(currentStations, container);
+            updateStatistics();
+        }
+        
+        function updateStatistics() {
+            const total = allStations.length;
+            const filtered = currentStations.length;
+            const counties = new Set(currentStations.map(s => s.county).filter(c => c)).size;
+            
+            // 計算不同 AQI 等級的測站數
+            let goodCount = 0;
+            let moderateCount = 0;
+            
+            currentStations.forEach(station => {
+                const aqi = parseInt(station.aqi) || 0;
+                if (aqi <= 50) {
+                    goodCount++;
+                } else if (aqi <= 100) {
+                    moderateCount++;
+                }
+            });
+            
+            document.getElementById('totalStations').textContent = total;
+            document.getElementById('filteredStations').textContent = filtered;
+            document.getElementById('countyCount').textContent = counties;
+            document.getElementById('goodAqiCount').textContent = goodCount;
+            document.getElementById('moderateAqiCount').textContent = moderateCount;
         }
     </script>
 </body>
