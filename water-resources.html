@@ -394,11 +394,50 @@
     <div class="container">
         <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 返回首頁</a>
         
+        <!-- 水利署監測影像說明 -->
+        <div id="infoPanel" style="background: #e3f2fd; border-left: 4px solid #1976D2; padding: 20px; margin: 20px 0; border-radius: 8px; transition: all 0.3s ease;">
+            <h3 style="color: #1976D2; margin: 0 0 15px 0; display: flex; align-items: center; justify-content: space-between; cursor: pointer;" onclick="toggleInfoPanel()">
+                <span>
+                    <i class="fas fa-info-circle" style="margin-right: 8px;"></i>
+                    水利署監測影像說明
+                </span>
+                <i id="toggleIcon" class="fas fa-chevron-up" style="transition: transform 0.3s ease;"></i>
+            </h3>
+            <div id="infoContent" style="color: #333; line-height: 1.6;">
+                <p style="margin: 0 0 10px 0;">
+                    水利署視訊監測影格照片由<strong>經濟部水利署</strong>獨自建置管理，用於監測河川、水庫等水利設施。
+                </p>
+                
+                <div style="margin: 15px 0;">
+                    <p style="margin: 0 0 8px 0; font-weight: bold;">📍 您可以前往以下官方網站查看即時水利監測資訊：</p>
+                    <div style="margin-left: 20px;">
+                        <p style="margin: 5px 0;">
+                            • <a href="https://fhy.wra.gov.tw" target="_blank" style="color: #1976D2; text-decoration: none;">
+                                經濟部水利署防災資訊服務網 <i class="fas fa-external-link-alt" style="font-size: 0.8rem;"></i>
+                            </a>
+                        </p>
+                        <p style="margin: 5px 0;">
+                            • <a href="https://www.wra.gov.tw" target="_blank" style="color: #1976D2; text-decoration: none;">
+                                經濟部水利署官網 <i class="fas fa-external-link-alt" style="font-size: 0.8rem;"></i>
+                            </a>
+                        </p>
+                    </div>
+                </div>
+                
+                <p style="margin: 10px 0 0 0; font-size: 0.9rem; color: #666; font-style: italic;">
+                    💡 如需整合水利署監測影像資料，請聯繫水利署申請相關 API 權限。
+                </p>
+            </div>
+        </div>
+        
         <!-- 資料源篩選標籤 -->
         <div class="filter-tabs">
             <button class="tab-btn active" onclick="switchDataSource('all')">全部水利署監視器</button>
             <button class="tab-btn" onclick="switchDataSource('wra')">水利署直轄</button>
             <button class="tab-btn" onclick="switchDataSource('cooperative')">水利署與地方合建</button>
+            <button class="tab-btn" onclick="openDebugPage()" style="background: #FF9800; margin-left: 10px;">
+                <i class="fas fa-bug"></i> 除錯工具
+            </button>
         </div>
 
         <!-- 統計面板 -->
@@ -477,6 +516,182 @@
         let allCameras = [];
         let filteredCameras = [];
         let currentDataSource = 'all';
+        
+        // 切換資訊面板顯示/隱藏
+        function toggleInfoPanel() {
+            const content = document.getElementById('infoContent');
+            const icon = document.getElementById('toggleIcon');
+            const panel = document.getElementById('infoPanel');
+            
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.className = 'fas fa-chevron-up';
+                icon.style.transform = 'rotate(0deg)';
+                panel.style.background = '#e3f2fd';
+            } else {
+                content.style.display = 'none';
+                icon.className = 'fas fa-chevron-down';
+                icon.style.transform = 'rotate(180deg)';
+                panel.style.background = '#f5f5f5';
+            }
+        }
+        
+        // 處理影像載入錯誤
+        function handleImageError(img, originalUrl, name) {
+            console.warn(`影像載入失敗: ${name} - ${originalUrl}`);
+            
+            // 如果是第一次失敗，嘗試添加時間戳來避免快取問題
+            if (!img.dataset.retried) {
+                console.log(`重試載入影像: ${originalUrl}`);
+                img.dataset.retried = 'true';
+                const urlWithTimestamp = originalUrl + (originalUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
+                img.src = urlWithTimestamp;
+                return;
+            }
+            
+            // 重試仍失敗，保持預設的佔位圖案，但顯示為無法載入狀態
+            const placeholder = img.parentElement.querySelector('.image-placeholder');
+            if (placeholder) {
+                placeholder.innerHTML = `
+                    <i class="fas fa-exclamation-triangle" style="font-size: 2rem; margin-bottom: 10px; color: #FFB74D;"></i>
+                    <span style="font-size: 0.9rem; text-align: center; padding: 0 10px;">影像暫時無法載入</span>
+                    <span style="font-size: 0.7rem; opacity: 0.8; margin-top: 5px;">點擊開啟原始連結</span>
+                    <div style="position: absolute; bottom: 5px; left: 50%; transform: translateX(-50%); background: rgba(255,183,77,0.3); padding: 2px 8px; border-radius: 10px; font-size: 0.6rem;">
+                        載入失敗
+                    </div>
+                `;
+                placeholder.style.background = 'linear-gradient(135deg, #FFB74D 0%, #FF8A65 100%)';
+            }
+            
+            // 移除失敗的圖片元素
+            img.style.display = 'none';
+        }
+        
+        // 重新嘗試載入影像
+        function retryLoadImage(url, name, button) {
+            const container = button.parentElement;
+            container.innerHTML = `
+                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;">
+                    <i class="fas fa-spinner fa-spin" style="font-size: 2rem; color: #1976D2;"></i>
+                    <span style="font-size: 0.8rem; margin-top: 8px;">重新載入中...</span>
+                </div>
+            `;
+            
+            setTimeout(() => {
+                const newImg = document.createElement('img');
+                newImg.src = url + '?retry=' + Date.now();
+                newImg.alt = name;
+                newImg.style.cssText = 'width: 100%; height: 100%; object-fit: cover;';
+                newImg.crossOrigin = 'anonymous';
+                newImg.onerror = () => handleImageError(newImg, url, name);
+                newImg.onload = () => {
+                    container.innerHTML = '';
+                    container.appendChild(newImg);
+                };
+            }, 1000);
+        }
+        
+        // 顯示成功載入的影像
+        function showLoadedImage(img) {
+            console.log('影像成功載入:', img.src);
+            const placeholder = img.parentElement.querySelector('.image-placeholder');
+            if (placeholder) {
+                placeholder.style.display = 'none';
+            }
+            img.style.opacity = '1';
+        }
+        
+        // 開啟除錯工具頁面
+        function openDebugPage() {
+            window.open('water-test.html', '_blank');
+        }
+        
+        // 在新頁面開啟影像
+        function openImageInNewTab(url, name) {
+            console.log('開啟影像:', url);
+            
+            // 創建一個新的頁面來顯示影像
+            const newWindow = window.open('', '_blank');
+            newWindow.document.write(`
+                <html>
+                <head>
+                    <title>${name} - 水利署監測影像</title>
+                    <style>
+                        body { 
+                            margin: 0; 
+                            padding: 20px; 
+                            background: #f0f0f0; 
+                            font-family: Arial, sans-serif;
+                            display: flex;
+                            flex-direction: column;
+                            align-items: center;
+                        }
+                        .header {
+                            background: #1976D2;
+                            color: white;
+                            padding: 15px 30px;
+                            border-radius: 8px;
+                            margin-bottom: 20px;
+                            text-align: center;
+                            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+                        }
+                        .image-container {
+                            background: white;
+                            padding: 20px;
+                            border-radius: 12px;
+                            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+                            max-width: 90vw;
+                            max-height: 80vh;
+                        }
+                        img {
+                            max-width: 100%;
+                            max-height: 70vh;
+                            object-fit: contain;
+                            border-radius: 8px;
+                        }
+                        .error-message {
+                            color: #ff6b6b;
+                            text-align: center;
+                            padding: 40px;
+                            font-size: 1.1rem;
+                        }
+                        .retry-btn {
+                            background: #1976D2;
+                            color: white;
+                            border: none;
+                            padding: 10px 20px;
+                            border-radius: 6px;
+                            cursor: pointer;
+                            margin-top: 15px;
+                            font-size: 1rem;
+                        }
+                        .retry-btn:hover {
+                            background: #1565C0;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="header">
+                        <h2>${name}</h2>
+                        <p>經濟部水利署監測影像</p>
+                    </div>
+                    <div class="image-container">
+                        <img src="${url}" alt="${name}" 
+                             onerror="document.querySelector('.image-container').innerHTML='<div class=\\"error-message\\">影像載入失敗<br><small>${url}</small><br><button class=\\"retry-btn\\" onclick=\\"location.reload()\\">重新載入</button></div>'"
+                             onload="console.log('影像載入成功')">
+                    </div>
+                    <div style="margin-top: 20px; text-align: center; color: #666; font-size: 0.9rem;">
+                        <p>⚠️ 如果影像無法顯示，可能是因為：</p>
+                        <ul style="text-align: left; display: inline-block;">
+                            <li>水利署API需要特殊認證</li>
+                            <li>網路連線問題</li>
+                            <li>影像暫時不可用</li>
+                        </ul>
+                    </div>
+                </body>
+                </html>
+            `);
+        }
 
         async function loadCameras() {
             try {
@@ -522,6 +737,15 @@
                 applyCurrentFilter();
                 
                 console.log(`成功載入 ${allCameras.length} 個水利署監視器 (直轄: ${wraCameras.length}, 合建: ${cooperativeCameras.length})`);
+                
+                // 除錯資訊：檢查影像URL
+                const imagesWithUrl = allCameras.filter(c => c.Observations && c.Observations[0] && c.Observations[0].result);
+                const imagesWithoutUrl = allCameras.filter(c => !c.Observations || !c.Observations[0] || !c.Observations[0].result);
+                console.log(`有影像URL: ${imagesWithUrl.length}, 無影像URL: ${imagesWithoutUrl.length}`);
+                
+                if (imagesWithUrl.length > 0) {
+                    console.log('範例影像URL:', imagesWithUrl[0].Observations[0].result);
+                }
                 
             } catch (error) {
                 console.error('載入失敗:', error);
@@ -645,6 +869,19 @@
                 container.innerHTML = '<div class="loading">無符合條件的監視器</div>';
                 return;
             }
+            
+            console.log(`準備顯示 ${filteredCameras.length} 個監視器`);
+            
+            // 除錯：檢查當前要顯示的監視器中有影像的數量
+            const withImages = filteredCameras.filter(c => {
+                const latestObs = c.Observations && c.Observations.length > 0 ? c.Observations[0] : null;
+                const imageUrl = latestObs?.result || '';
+                return imageUrl && imageUrl.trim() !== '';
+            });
+            console.log(`其中有影像URL的監視器: ${withImages.length}`);
+            if (withImages.length > 0) {
+                console.log('第一個影像URL範例:', withImages[0].Observations[0].result);
+            }
 
             const html = filteredCameras.map((camera, index) => {
                 const thing = camera.Thing || {};
@@ -662,8 +899,27 @@
                     <div class="camera-card" onclick="showModal(${allCameras.indexOf(camera)})">
                         <div class="camera-image">
                             ${hasImage ? 
-                                `<img src="${imageUrl}" alt="${name}" onerror="this.parentNode.innerHTML='<i class=&quot;fas fa-exclamation-triangle&quot;></i> 影像載入失敗'">` : 
-                                '<i class="fas fa-video-slash" style="font-size: 3rem; color: #ccc;"></i><br>無影像資料'
+                                `<div class="image-container" data-url="${imageUrl}" data-name="${name}" style="position: relative; cursor: pointer;" onclick="openImageInNewTab('${imageUrl}', '${name}')">
+                                    <div class="image-placeholder" style="display: flex; flex-direction: column; align-items: center; justify-content: center; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; height: 100%; position: relative;">
+                                        <i class="fas fa-camera" style="font-size: 2.5rem; margin-bottom: 10px; opacity: 0.8;"></i>
+                                        <span style="font-size: 0.9rem; text-align: center; padding: 0 10px;">水利署監測影像</span>
+                                        <span style="font-size: 0.7rem; opacity: 0.7; margin-top: 5px;">點擊查看影像</span>
+                                        <div style="position: absolute; top: 8px; right: 8px;">
+                                            <i class="fas fa-external-link-alt" style="font-size: 0.8rem;"></i>
+                                        </div>
+                                        <div style="position: absolute; bottom: 5px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.3); padding: 2px 8px; border-radius: 10px; font-size: 0.6rem;">
+                                            官方影像源
+                                        </div>
+                                    </div>
+                                    <img src="${imageUrl}" 
+                                         alt="${name}" 
+                                         style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.3s;"
+                                         crossorigin="anonymous"
+                                         loading="lazy"
+                                         onload="showLoadedImage(this)"
+                                         onerror="handleImageError(this, '${imageUrl}', '${name}')">
+                                </div>` : 
+                                '<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; color: #999; background: #f5f5f5;"><i class="fas fa-video-slash" style="font-size: 3rem; margin-bottom: 10px;"></i><span>無影像資料</span></div>'
                             }
                         </div>
                         <div class="camera-info">

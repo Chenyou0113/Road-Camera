@@ -15,12 +15,17 @@
         .back-btn:hover { background: #1976D2; }
         .loading { text-align: center; padding: 50px; color: white; font-size: 1.2rem; }
         .cameras-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 20px; margin: 20px 0; }
-        .camera-card { background: white; border-radius: 10px; padding: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.3s; }
+        .camera-card { background: white; border-radius: 10px; padding: 0; box-shadow: 0 5px 15px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.3s; overflow: hidden; }
         .camera-card:hover { transform: translateY(-5px); }
-        .camera-card h3 { color: #2196F3; margin-bottom: 10px; }
-        .camera-card p { color: #666; margin: 5px 0; }
-        .camera-image { width: 100%; height: 200px; background: #f0f0f0; border-radius: 5px; margin-top: 10px; display: flex; align-items: center; justify-content: center; }
-        .camera-image img { width: 100%; height: 100%; object-fit: cover; border-radius: 5px; }
+        .camera-info { padding: 15px; }
+        .camera-info h3 { color: #2196F3; margin-bottom: 8px; font-size: 1.1rem; }
+        .camera-info p { color: #666; margin: 4px 0; font-size: 0.9rem; }
+        .camera-image { width: 100%; height: 200px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+        .camera-image img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
+        .camera-image:hover img { transform: scale(1.05); }
+        .image-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); color: white; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s; }
+        .camera-image:hover .image-overlay { opacity: 1; }
+        .stream-placeholder, .no-image-placeholder, .image-placeholder { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #f8f9fa; }
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); }
         .modal-content { position: relative; margin: 2% auto; width: 90%; max-width: 1200px; }
         .close { position: absolute; top: 15px; right: 35px; color: #fff; font-size: 40px; font-weight: bold; cursor: pointer; z-index: 1001; }
@@ -40,6 +45,42 @@
     </div>
     <div class="container">
         <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 返回首頁</a>
+        
+        <!-- TDX 交通資料服務說明 -->
+        <div id="infoPanel" style="background: #e8f5e8; border-left: 4px solid #4CAF50; padding: 20px; margin: 20px 0; border-radius: 8px; transition: all 0.3s ease;">
+            <h3 style="color: #388E3C; margin: 0 0 15px 0; display: flex; align-items: center; justify-content: space-between; cursor: pointer;" onclick="toggleInfoPanel()">
+                <span>
+                    <i class="fas fa-database" style="margin-right: 8px;"></i>
+                    TDX 交通資料服務說明
+                </span>
+                <i id="toggleIcon" class="fas fa-chevron-down" style="transition: transform 0.3s ease;"></i>
+            </h3>
+            <div id="infoContent" style="color: #333; line-height: 1.6; display: none;">
+                <p style="margin: 0 0 10px 0;">
+                    本系統使用<strong>交通部 TDX 交通資料流通服務平台</strong>提供的即時國道監視器資料，並輔以備援API確保資料穩定性。
+                </p>
+                
+                <div style="margin: 15px 0;">
+                    <p style="margin: 0 0 8px 0; font-weight: bold;">🔗 相關資源連結：</p>
+                    <div style="margin-left: 20px;">
+                        <p style="margin: 5px 0;">
+                            • <a href="https://tdx.transportdata.tw" target="_blank" style="color: #388E3C; text-decoration: none;">
+                                TDX 交通資料流通服務平台 <i class="fas fa-external-link-alt" style="font-size: 0.8rem;"></i>
+                            </a>
+                        </p>
+                        <p style="margin: 5px 0;">
+                            • <a href="https://tisvcloud.freeway.gov.tw" target="_blank" style="color: #388E3C; text-decoration: none;">
+                                高速公路局資訊雲 <i class="fas fa-external-link-alt" style="font-size: 0.8rem;"></i>
+                            </a>
+                        </p>
+                    </div>
+                </div>
+                
+                <p style="margin: 10px 0 0 0; font-size: 0.9rem; color: #666; font-style: italic;">
+                    📊 本系統整合主要與備援資料源，提供更可靠的監視器資料查詢服務。
+                </p>
+            </div>
+        </div>
         
         <div style="display: flex; gap: 15px; margin: 20px 0; flex-wrap: wrap;">
             <select style="padding: 10px; border-radius: 5px; border: 2px solid #2196F3; font-size: 1rem;" id="freewaySelect" onchange="applyFilters()">
@@ -105,6 +146,25 @@
     <script src="tdx-api.js"></script>
     <script>
         let allCameras = [];
+        
+        // 切換資訊面板顯示/隱藏
+        function toggleInfoPanel() {
+            const content = document.getElementById('infoContent');
+            const icon = document.getElementById('toggleIcon');
+            const panel = document.getElementById('infoPanel');
+            
+            if (content.style.display === 'none' || content.style.display === '') {
+                content.style.display = 'block';
+                icon.className = 'fas fa-chevron-up';
+                icon.style.transform = 'rotate(0deg)';
+                panel.style.background = '#e8f5e8';
+            } else {
+                content.style.display = 'none';
+                icon.className = 'fas fa-chevron-down';
+                icon.style.transform = 'rotate(180deg)';
+                panel.style.background = '#f5f5f5';
+            }
+        }
 
         // 根據經緯度判斷縣市
         function getCityFromCoordinates(lon, lat, roadName = '') {
@@ -447,21 +507,29 @@
             const displayCameras = cameras.slice(0, 100);
             const html = displayCameras.map((camera, index) => {
                 const sourceIcon = camera.source === 'tdx' ? '<i class="fas fa-database" style="color: #4CAF50;" title="TDX API"></i>' : '<i class="fas fa-backup" style="color: #FF9800;" title="備援 XML API"></i>';
+                const imageUrl = camera.VideoImageURL || (camera.VideoStreamURL ? '' : '');
                 return `
                 <div class="camera-card" onclick="showModal(${allCameras.indexOf(camera)})">
-                    <h3>${camera.FreewayNumber} <span style="font-size: 0.8rem; color: #666;">(${camera.City})</span> ${sourceIcon}</h3>
-                    <p><i class="fas fa-road"></i> ${camera.RoadSection ? `${camera.RoadSection.Start} - ${camera.RoadSection.End}` : camera.SurveillanceDescription || '無路段資訊'}</p>
-                    <p><i class="fas fa-compass"></i> ${camera.DirectionName} | <i class="fas fa-map-marker-alt"></i> ${camera.LocationMile || '無里程資訊'}</p>
+                    <div class="camera-info">
+                        <h3>${camera.FreewayNumber} <span style="font-size: 0.8rem; color: #666;">(${camera.City})</span> ${sourceIcon}</h3>
+                        <p><i class="fas fa-road"></i> ${camera.RoadSection ? `${camera.RoadSection.Start} - ${camera.RoadSection.End}` : camera.SurveillanceDescription || '無路段資訊'}</p>
+                        <p><i class="fas fa-compass"></i> ${camera.DirectionName} | <i class="fas fa-map-marker-alt"></i> ${camera.LocationMile || '無里程資訊'}</p>
+                    </div>
                     <div class="camera-image" onclick="openImageInNewTab('${camera.VideoStreamURL || camera.VideoImageURL}')">
-                        ${camera.VideoStreamURL ? 
-                            `<div style="background: #f0f0f0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; cursor: pointer;">
+                        ${imageUrl ? 
+                            `<img src="${imageUrl}" alt="監視器影像" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\\"image-placeholder\\"><i class=\\"fas fa-image\\" style=\\"font-size: 2rem; color: #ccc;\\"></i><br>影像載入失敗</div>';"> 
+                             <div class="image-overlay">
+                                <i class="fas fa-search-plus"></i> 點擊放大
+                             </div>` :
+                            camera.VideoStreamURL ? 
+                            `<div class="stream-placeholder">
                                 <i class="fas fa-play-circle" style="font-size: 3rem; color: #2196F3; margin-bottom: 10px;"></i>
                                 <span style="color: #666; font-size: 0.9rem;">點擊查看即時影像</span>
                                 <span style="color: #999; font-size: 0.8rem; margin-top: 5px;">${camera.CCTVID}</span>
                              </div>` : 
-                            camera.VideoImageURL ?
-                            `<img src="${camera.VideoImageURL}" alt="監視器影像" onerror="this.parentElement.innerHTML='<i class=\\"fas fa-image\\" style=\\"font-size: 2rem; color: #ccc;\\"></i><br>影像載入失敗'">`
-                            : '<i class="fas fa-video-slash" style="font-size: 2rem; color: #ccc;"></i><br>無影像'
+                            `<div class="no-image-placeholder">
+                                <i class="fas fa-video-slash" style="font-size: 2rem; color: #ccc;"></i><br>無影像資料
+                             </div>`
                         }
                     </div>
                 </div>
