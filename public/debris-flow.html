@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>            <h1><i class="fas fa-mountain"></i> 土石流觀測站影像</h1>
+            <p style="text-align: center; color: #666;">農業部土石流觀測站與水利署山區監測站影像</p>    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>土石流觀測站影像</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Microsoft JhengHei', Arial, sans-serif; background: linear-gradient(135deg, #795548 0%, #5D4037 100%); min-height: 100vh; }
+        .header { background: white; padding: 20px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .container { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+        .header h1 { color: #795548; text-align: center; margin-bottom: 10px; }
+        .filter-section { background: white; padding: 20px; margin: 20px 0; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .filter-buttons { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+        .filter-btn { padding: 10px 20px; border: 2px solid #795548; background: white; color: #795548; border-radius: 25px; cursor: pointer; transition: all 0.3s; }
+        .filter-btn.active, .filter-btn:hover { background: #795548; color: white; }
+        .stats { display: flex; justify-content: center; gap: 20px; margin-top: 15px; flex-wrap: wrap; }
+        .stat-item { text-align: center; }
+        .stat-number { font-size: 1.5rem; font-weight: bold; color: #795548; }
+        .stat-label { font-size: 0.9rem; color: #666; }
+        .back-btn { display: inline-block; padding: 10px 20px; background: #795548; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+        .back-btn:hover { background: #5D4037; }
+        .loading { text-align: center; padding: 50px; color: white; font-size: 1.2rem; }
+        .cameras-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 20px; margin: 20px 0; }
+        .camera-card { 
+            background: white; 
+            border-radius: 12px; 
+            padding: 15px; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1); 
+            cursor: pointer; 
+            transition: transform 0.3s ease, box-shadow 0.3s ease; 
+            display: flex; 
+            flex-direction: column; 
+        }
+        .camera-card:hover { 
+            transform: translateY(-5px); 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15); 
+        }
+        .camera-card h3 { color: #795548; margin-bottom: 8px; font-size: 1.1rem; }
+        .camera-card p { color: #666; margin: 4px 0; font-size: 0.9rem; }
+        .camera-info {
+            order: 1;
+            margin-bottom: 12px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #eee;
+        }
+        .camera-image { 
+            order: 2;
+            width: 100%; 
+            height: 150px; 
+            background: #f8f9fa; 
+            border-radius: 8px; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            overflow: hidden; 
+            position: relative; 
+        }
+        .camera-image img { 
+            width: 100%; 
+            height: 100%; 
+            object-fit: cover; 
+            transition: transform 0.3s ease; 
+        }
+        .camera-card:hover .camera-image img {
+            transform: scale(1.05);
+        }
+        .image-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            font-size: 0.9rem;
+        }
+        .camera-card:hover .image-overlay {
+            opacity: 1;
+        }
+        .no-image-placeholder {
+            color: #999;
+            font-size: 0.9rem;
+        }
+        .image-placeholder {
+            color: #ff6b6b;
+            font-size: 0.9rem;
+        }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); }
+        .modal-content { position: relative; margin: 2% auto; width: 90%; max-width: 1200px; }
+        .close { position: absolute; top: 15px; right: 35px; color: #fff; font-size: 40px; font-weight: bold; cursor: pointer; z-index: 1001; }
+        .close:hover { color: #795548; }
+        .modal-image { width: 100%; max-height: 80vh; object-fit: contain; }
+        .modal-info { background: white; padding: 20px; border-radius: 10px; margin-top: 20px; }
+        .modal-info h2 { color: #795548; margin-bottom: 10px; }
+        .modal-info p { color: #666; margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1><i class="fas fa-mountain"></i> 水土保持監測站影像</h1>
+            <p style="text-align: center; color: #666;">農業部土石流與水利署合建監測站影像</p>
+        </div>
+    </div>
+    <div class="container">
+        <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 返回首頁</a>
+        
+        <!-- 土石流監控資料說明 -->
+        <div id="infoPanel" style="background: #efebe9; border-left: 4px solid #795548; padding: 20px; margin: 20px 0; border-radius: 8px; transition: all 0.3s ease;">
+            <h3 style="color: #5D4037; margin: 0 0 15px 0; display: flex; align-items: center; justify-content: space-between; cursor: pointer;" onclick="toggleInfoPanel()">
+                <span>
+                    <i class="fas fa-mountain" style="margin-right: 8px;"></i>
+                    土石流監控資料說明
+                </span>
+                <i id="toggleIcon" class="fas fa-chevron-down" style="transition: transform 0.3s ease;"></i>
+            </h3>
+            <div id="infoContent" style="color: #333; line-height: 1.6; display: none;">
+                <p style="margin: 0 0 10px 0;">
+                    本系統整合<strong>農業部</strong>與<strong>水利署</strong>土石流監控資料，提供全台山區災害監測站影像。
+                </p>
+                
+                <div style="margin: 15px 0;">
+                    <p style="margin: 0 0 8px 0; font-weight: bold;">🏛️ 資料來源機關：</p>
+                    <div style="margin-left: 20px;">
+                        <p style="margin: 5px 0;">
+                            • <strong>農業部</strong> - 土石流防災資訊網監測站
+                        </p>
+                        <p style="margin: 5px 0;">
+                            • <strong>經濟部水利署</strong> - 山區水文監測站
+                        </p>
+                    </div>
+                </div>
+                
+                <p style="margin: 10px 0 0 0; font-size: 0.9rem; color: #666; font-style: italic;">
+                    🚨 此系統專供防災監控使用，如需詳細防災資訊請參考各主管機關官方網站。
+                </p>
+            </div>
+        </div>
+        
+        <div class="filter-section">
+            <div class="filter-buttons">
+                <button class="filter-btn active" onclick="filterStations('all')">全部監測站</button>
+                <button class="filter-btn" onclick="filterStations('agriculture')">農業部土石流</button>
+                <button class="filter-btn" onclick="filterStations('water')">水利署山區</button>
+                <button class="filter-btn" onclick="filterStations('with-image')">有影像</button>
+            </div>
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="stat-number" id="totalCount">0</div>
+                    <div class="stat-label">總監測站</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number" id="agricultureCount">0</div>
+                    <div class="stat-label">農業部</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number" id="waterCount">0</div>
+                    <div class="stat-label">水利署山區</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-number" id="imageCount">0</div>
+                    <div class="stat-label">有影像</div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="cameras-container" class="loading">載入中...</div>
+    </div>
+
+    <div id="imageModal" class="modal" onclick="closeModal()">
+        <span class="close">&times;</span>
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <img id="modalImage" class="modal-image" src="" alt="觀測站大圖">
+            <div class="modal-info">
+                <h2 id="modalTitle"></h2>
+                <p id="modalDescription"></p>
+                <p id="modalLocation"></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allStations = [];
+        let currentFilter = 'all';
+        
+        // 切換資訊面板顯示/隱藏
+        function toggleInfoPanel() {
+            const content = document.getElementById('infoContent');
+            const icon = document.getElementById('toggleIcon');
+            const panel = document.getElementById('infoPanel');
+            
+            if (content.style.display === 'none' || content.style.display === '') {
+                content.style.display = 'block';
+                icon.className = 'fas fa-chevron-up';
+                icon.style.transform = 'rotate(0deg)';
+                panel.style.background = '#efebe9';
+            } else {
+                content.style.display = 'none';
+                icon.className = 'fas fa-chevron-down';
+                icon.style.transform = 'rotate(180deg)';
+                panel.style.background = '#f5f5f5';
+            }
+        }
+
+        async function loadCameras() {
+            try {
+                const container = document.getElementById('cameras-container');
+                container.innerHTML = '<div class="loading">載入中...</div>';
+
+                // 載入農業部資料
+                const agricultureResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%BE%B2%E6%A5%AD%E9%83%A8%27&$count=true');
+                const agricultureData = await agricultureResponse.json();
+
+                // 載入水利署資料
+                const waterResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%B0%B4%E5%88%A9%E7%BD%B2%EF%BC%88%E8%88%87%E7%B8%A3%E5%B8%82%E6%94%BF%E5%BA%9C%E5%90%88%E5%BB%BA%EF%BC%89%27&$count=true');
+                const waterData = await waterResponse.json();
+
+                // 合併資料
+                const agricultureStations = (agricultureData.value || []).map(station => ({
+                    ...station,
+                    source: 'agriculture',
+                    sourceLabel: '農業部'
+                }));
+
+                // 過濾水利署資料，只顯示土石流相關的監測站
+                const waterStations = (waterData.value || [])
+                    .filter(station => {
+                        const stationName = station.Thing?.properties?.stationName || '';
+                        const stationID = station.Thing?.properties?.stationID || station['@iot.id'] || '';
+                        
+                        // 排除明確的水利監控站點（如排水、橋梁、堰壩等）
+                        const excludeKeywords = ['排水', '橋', '堰', '壩', '溪州', '河川', '堤防', '抽水站', '閘門', '水位站'];
+                        const isWaterManagement = excludeKeywords.some(keyword => stationName.includes(keyword));
+                        
+                        // 排除您提到的特定ID
+                        const isSpecificExcluded = stationID === '007d029e-2adc-4012-8602-7d69796cbcc8';
+                        
+                        // 包含土石流相關關鍵字
+                        const debrisKeywords = ['土石流', '山區', '崩塌', '坡地', '觀測站'];
+                        const isDebrisRelated = debrisKeywords.some(keyword => stationName.includes(keyword));
+                        
+                        return !isWaterManagement && !isSpecificExcluded && (isDebrisRelated || stationName.includes('山'));
+                    })
+                    .map(station => ({
+                        ...station,
+                        source: 'water',
+                        sourceLabel: '水利署山區'
+                    }));
+
+                allStations = [...agricultureStations, ...waterStations];
+                
+                updateStats();
+                displayStations();
+                
+            } catch (error) {
+                console.error('載入失敗:', error);
+                document.getElementById('cameras-container').innerHTML = `<div class="loading">載入失敗：${error.message}</div>`;
+            }
+        }
+
+        function updateStats() {
+            const total = allStations.length;
+            const agriculture = allStations.filter(s => s.source === 'agriculture').length;
+            const water = allStations.filter(s => s.source === 'water').length;
+            const withImage = allStations.filter(s => {
+                const latestObs = s.Observations && s.Observations.length > 0 ? s.Observations[0] : null;
+                return latestObs && latestObs.result;
+            }).length;
+
+            document.getElementById('totalCount').textContent = total;
+            document.getElementById('agricultureCount').textContent = agriculture;
+            document.getElementById('waterCount').textContent = water;
+            document.getElementById('imageCount').textContent = withImage;
+        }
+
+        function filterStations(filter) {
+            currentFilter = filter;
+            
+            // 更新按鈕狀態
+            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            displayStations();
+        }
+
+        function displayStations() {
+            let filteredStations = allStations;
+            
+            switch(currentFilter) {
+                case 'agriculture':
+                    filteredStations = allStations.filter(s => s.source === 'agriculture');
+                    break;
+                case 'water':
+                    filteredStations = allStations.filter(s => s.source === 'water');
+                    break;
+                case 'with-image':
+                    filteredStations = allStations.filter(s => {
+                        const latestObs = s.Observations && s.Observations.length > 0 ? s.Observations[0] : null;
+                        return latestObs && latestObs.result;
+                    });
+                    break;
+            }
+
+            const container = document.getElementById('cameras-container');
+            
+            if (filteredStations.length === 0) {
+                container.innerHTML = '<div class="loading">無符合條件的觀測站</div>';
+                return;
+            }
+
+            const html = filteredStations.slice(0, 100).map((station, index) => {
+                const thing = station.Thing || {};
+                const name = thing.name || '未命名觀測站';
+                const description = thing.description || '';
+                const location = thing.properties?.location || 'N/A';
+                const authority = thing.properties?.authority || 'N/A';
+                const latestObs = station.Observations && station.Observations.length > 0 ? station.Observations[0] : null;
+                const imageUrl = latestObs?.result || '';
+                const sourceColor = station.source === 'agriculture' ? '#4CAF50' : '#2196F3';
+                
+                return `
+                    <div class="camera-card" onclick="showModal(${allStations.indexOf(station)})">
+                        <div class="camera-info">
+                            <h3>${name}</h3>
+                            <p style="color: ${sourceColor}; font-weight: bold; font-size: 0.9rem;"><i class="fas fa-tag"></i> ${station.sourceLabel}</p>
+                            <p style="font-size: 0.9rem; color: #777;">${description}</p>
+                            <p style="font-size: 0.85rem;"><strong>主管機關：</strong>${authority}</p>
+                        </div>
+                        <div class="camera-image">
+                            ${imageUrl ? 
+                                `<img src="${imageUrl}" alt="${name}" onerror="this.parentElement.innerHTML='<div class=\\"image-placeholder\\"><i class=\\"fas fa-exclamation-triangle\\" style=\\"color: #ff6b6b;\\"></i><br>無法載入影像</div>'">
+                                 <div class="image-overlay">
+                                    <i class="fas fa-search-plus"></i> 點擊放大
+                                 </div>` : 
+                                `<div class="no-image-placeholder">
+                                    <i class="fas fa-video-slash" style="font-size: 2rem; color: #ccc;"></i><br>無影像資料
+                                 </div>`
+                            }
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            container.innerHTML = `<div class="cameras-grid">${html}</div>`;
+        }
+
+        function showModal(index) {
+            const station = allStations[index];
+            const thing = station.Thing || {};
+            const latestObs = station.Observations && station.Observations.length > 0 ? station.Observations[0] : null;
+            const imageUrl = latestObs?.result || '';
+            
+            if (imageUrl) {
+                document.getElementById('modalImage').src = imageUrl;
+            } else {
+                document.getElementById('modalImage').src = 'data:image/svg+xml,<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg"><rect width="400" height="300" fill="%23f5f5f5"/><text x="50%" y="50%" font-family="Arial" font-size="18" fill="%23999" text-anchor="middle" dy=".3em">無影像資料</text></svg>';
+            }
+            
+            document.getElementById('modalTitle').textContent = thing.name || '未命名觀測站';
+            document.getElementById('modalDescription').innerHTML = `
+                <strong>來源：</strong>${station.sourceLabel}<br>
+                <strong>說明：</strong>${thing.description || 'N/A'}<br>
+                <strong>主管機關：</strong>${thing.properties?.authority || 'N/A'}
+            `;
+            document.getElementById('modalLocation').innerHTML = `<strong>位置：</strong>${thing.properties?.location || 'N/A'}`;
+            
+            document.getElementById('imageModal').style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('imageModal').style.display = 'none';
+        }
+
+        loadCameras();
+    </script>
+</body>
+</html>
