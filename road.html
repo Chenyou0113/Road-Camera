@@ -65,6 +65,14 @@
                 <div style="font-size: 1.5rem; font-weight: bold; color: #2196F3;" id="cityCount">0</div>
                 <div style="color: #666;">涵蓋縣市</div>
             </div>
+            <div style="text-align: center; margin: 5px;">
+                <div style="font-size: 1.2rem; font-weight: bold; color: #9C27B0;" id="tdxCount">0</div>
+                <div style="color: #666;">TDX資料</div>
+            </div>
+            <div style="text-align: center; margin: 5px;">
+                <div style="font-size: 1.2rem; font-weight: bold; color: #795548;" id="backupCount">0</div>
+                <div style="color: #666;">備援資料</div>
+            </div>
         </div>
         <div id="cameras-container" class="loading">載入中...</div>
     </div>
@@ -91,27 +99,34 @@
         function getCityFromCoordinates(lon, lat) {
             if (!lon || !lat) return '未知';
             
-            // 台灣各縣市經緯度範圍（簡化版）
+            // 台灣各縣市經緯度範圍 - 優化順序避免重疊誤判
             const cityRanges = [
+                // 優先判斷較小的特殊區域
                 { name: '台北市', lonMin: 121.45, lonMax: 121.65, latMin: 24.95, latMax: 25.20 },
-                { name: '新北市', lonMin: 121.30, lonMax: 122.00, latMin: 24.60, latMax: 25.30 },
-                { name: '基隆市', lonMin: 121.65, lonMax: 121.85, latMin: 25.10, latMax: 25.20 },
-                { name: '桃園市', lonMin: 121.00, lonMax: 121.50, latMin: 24.80, latMax: 25.10 },
+                { name: '基隆市', lonMin: 121.65, lonMax: 121.85, latMin: 25.10, latMax: 25.25 },
                 { name: '新竹市', lonMin: 120.90, lonMax: 121.05, latMin: 24.75, latMax: 24.85 },
+                { name: '嘉義市', lonMin: 120.40, lonMax: 120.50, latMin: 23.45, latMax: 23.52 },
+                
+                // 東部縣市 - 優先判斷
+                { name: '宜蘭縣', lonMin: 121.50, lonMax: 122.10, latMin: 24.50, latMax: 25.05 },
+                { name: '花蓮縣', lonMin: 121.30, lonMax: 121.80, latMin: 23.30, latMax: 24.50 },
+                { name: '台東縣', lonMin: 120.90, lonMax: 121.50, latMin: 22.30, latMax: 23.50 },
+                
+                // 其他縣市
+                { name: '桃園市', lonMin: 121.00, lonMax: 121.50, latMin: 24.80, latMax: 25.10 },
                 { name: '新竹縣', lonMin: 120.70, lonMax: 121.30, latMin: 24.50, latMax: 25.00 },
                 { name: '苗栗縣', lonMin: 120.60, lonMax: 121.20, latMin: 24.20, latMax: 24.80 },
                 { name: '台中市', lonMin: 120.50, lonMax: 121.20, latMin: 24.00, latMax: 24.50 },
                 { name: '彰化縣', lonMin: 120.40, lonMax: 120.80, latMin: 23.80, latMax: 24.20 },
                 { name: '南投縣', lonMin: 120.60, lonMax: 121.30, latMin: 23.50, latMax: 24.20 },
                 { name: '雲林縣', lonMin: 120.20, lonMax: 120.70, latMin: 23.50, latMax: 23.90 },
-                { name: '嘉義市', lonMin: 120.40, lonMax: 120.50, latMin: 23.45, latMax: 23.52 },
                 { name: '嘉義縣', lonMin: 120.10, lonMax: 120.80, latMin: 23.30, latMax: 23.70 },
                 { name: '台南市', lonMin: 120.00, lonMax: 120.50, latMin: 22.90, latMax: 23.40 },
                 { name: '高雄市', lonMin: 120.20, lonMax: 120.50, latMin: 22.50, latMax: 23.10 },
                 { name: '屏東縣', lonMin: 120.40, lonMax: 120.90, latMin: 22.00, latMax: 22.80 },
-                { name: '宜蘭縣', lonMin: 121.50, lonMax: 122.10, latMin: 24.50, latMax: 25.00 },
-                { name: '花蓮縣', lonMin: 121.30, lonMax: 121.80, latMin: 23.50, latMax: 24.50 },
-                { name: '台東縣', lonMin: 120.90, lonMax: 121.50, latMin: 22.50, latMax: 23.50 }
+                
+                // 新北市範圍較大，放在最後
+                { name: '新北市', lonMin: 121.30, lonMax: 121.80, latMin: 24.60, latMax: 25.30 }
             ];
             
             for (const city of cityRanges) {
@@ -123,30 +138,110 @@
             return '其他地區';
         }
 
-        async function loadCameras() {
-            try {
-                const data = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/Highway?$format=JSON');
-                const container = document.getElementById('cameras-container');
+        // 解析XML格式的監視器資料
+        async function parseXMLCameras(xmlText) {
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+            
+            const cameras = [];
+            const items = xmlDoc.querySelectorAll('item');
+            
+            items.forEach(item => {
+                const camera = {
+                    CCTVID: item.querySelector('cctvid')?.textContent || '',
+                    RoadName: item.querySelector('roadsection')?.textContent || '',
+                    LocationMile: item.querySelector('locationmile')?.textContent || '',
+                    PositionLon: parseFloat(item.querySelector('px')?.textContent) || 0,
+                    PositionLat: parseFloat(item.querySelector('py')?.textContent) || 0,
+                    VideoImageURL: item.querySelector('videourl')?.textContent || '',
+                    SurveillanceDescription: item.querySelector('locationdesc')?.textContent || '',
+                    RoadDirection: item.querySelector('direction')?.textContent || '',
+                    source: 'xml'
+                };
                 
-                if (!data || !data.CCTVs || data.CCTVs.length === 0) {
-                    container.innerHTML = '<div class="loading">無監視器資料</div>';
-                    return;
+                if (camera.CCTVID) {
+                    cameras.push(camera);
                 }
+            });
+            
+            return cameras;
+        }
 
-                allCameras = data.CCTVs;
+        async function loadCameras() {
+            const container = document.getElementById('cameras-container');
+            container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 載入監視器資料中...</div>';
+            
+            let allCamerasFromSources = [];
+            
+            try {
+                // 嘗試載入主要API (TDX)
+                console.log('嘗試載入 TDX API...');
+                const response = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/Highway?$format=JSON');
                 
-                // 為每個監視器添加縣市資訊
-                allCameras = allCameras.map(camera => ({
-                    ...camera,
-                    City: getCityFromCoordinates(camera.PositionLon, camera.PositionLat)
-                }));
+                // 處理TDX API回傳的資料格式
+                let cameras = [];
+                if (response && response.CCTVs && Array.isArray(response.CCTVs)) {
+                    cameras = response.CCTVs.map(camera => ({...camera, source: 'tdx'}));
+                } else if (Array.isArray(response)) {
+                    cameras = response.map(camera => ({...camera, source: 'tdx'}));
+                }
                 
-                populateFilters();
-                updateStats();
-                displayCameras(allCameras);
+                if (cameras.length > 0) {
+                    console.log(`TDX API 載入成功: ${cameras.length} 筆資料`);
+                    allCamerasFromSources = cameras;
+                }
             } catch (error) {
-                document.getElementById('cameras-container').innerHTML = `<div class="loading">載入失敗：${error.message}<br>請確認 config.js 中的 API 金鑰是否正確</div>`;
+                console.log('TDX API 載入失敗:', error.message);
             }
+            
+            try {
+                // 嘗試載入備援API (XML)
+                console.log('嘗試載入備援 XML API...');
+                const xmlResponse = await fetch('https://cctv-maintain.thb.gov.tw/opendataCCTVs.xml');
+                
+                if (xmlResponse.ok) {
+                    const xmlText = await xmlResponse.text();
+                    const xmlCameras = await parseXMLCameras(xmlText);
+                    
+                    if (xmlCameras.length > 0) {
+                        console.log(`備援 XML API 載入成功: ${xmlCameras.length} 筆資料`);
+                        allCamerasFromSources = [...allCamerasFromSources, ...xmlCameras];
+                    }
+                }
+            } catch (error) {
+                console.log('備援 XML API 載入失敗:', error.message);
+            }
+            
+            // 檢查是否有任何資料
+            if (allCamerasFromSources.length === 0) {
+                container.innerHTML = '<div class="loading">無法載入監視器資料，請檢查網路連線</div>';
+                return;
+            }
+            
+            console.log(`總共載入 ${allCamerasFromSources.length} 筆監視器資料`);
+            
+            // 為每個監視器添加縣市資訊並去重
+            const uniqueCameras = {};
+            allCamerasFromSources.forEach(camera => {
+                const id = camera.CCTVID || camera.cctvid || `${camera.PositionLon}_${camera.PositionLat}`;
+                if (!uniqueCameras[id] || camera.source === 'tdx') { // TDX 資料優先
+                    uniqueCameras[id] = {
+                        ...camera,
+                        City: getCityFromCoordinates(camera.PositionLon, camera.PositionLat)
+                    };
+                }
+            });
+            
+            allCameras = Object.values(uniqueCameras);
+            
+            populateFilters();
+            updateStats();
+            displayCameras(allCameras);
+            
+            // 顯示資料來源統計
+            const tdxCount = allCameras.filter(c => c.source === 'tdx').length;
+            const backupCount = allCameras.filter(c => c.source === 'backup').length;
+            console.log(`資料來源統計 - TDX: ${tdxCount}, 備援: ${backupCount}`);
         }
 
         function populateFilters() {
@@ -172,10 +267,14 @@
             if (selectedRoad) filteredCameras = filteredCameras.filter(c => c.RoadName === selectedRoad);
             
             const uniqueCities = [...new Set(filteredCameras.map(c => c.City).filter(Boolean))];
+            const tdxCameras = allCameras.filter(c => c.source === 'tdx');
+            const backupCameras = allCameras.filter(c => c.source === 'backup');
             
             document.getElementById('totalCount').textContent = allCameras.length;
             document.getElementById('filteredCount').textContent = filteredCameras.length;
             document.getElementById('cityCount').textContent = uniqueCities.length;
+            document.getElementById('tdxCount').textContent = tdxCameras.length;
+            document.getElementById('backupCount').textContent = backupCameras.length;
         }
 
         function applyFilters() {
@@ -237,9 +336,16 @@
             // 顯示前100筆資料
             const displayCameras = cameras.slice(0, 100);
             const html = displayCameras.map((camera, index) => {
+                const sourceColor = camera.source === 'tdx' ? '#4CAF50' : '#795548';
+                const sourceLabel = camera.source === 'tdx' ? 'TDX' : '備援';
+                
                 return `
                 <div class="camera-card" onclick="showModal(${allCameras.indexOf(camera)})">
-                    <h3>${camera.RoadName || '未命名'} <span style="font-size: 0.8rem; color: #666;">(${camera.City || '未知'})</span></h3>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <h3 style="margin: 0;">${camera.RoadName || '未命名'}</h3>
+                        <span style="background: ${sourceColor}; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem;">${sourceLabel}</span>
+                    </div>
+                    <p style="color: #666; margin-bottom: 5px;"><i class="fas fa-map-pin"></i> ${camera.City || '未知'}</p>
                     <p><i class="fas fa-map-marker-alt"></i> ${camera.LocationMile || '無里程資訊'}</p>
                     <p><i class="fas fa-info-circle"></i> ${camera.SurveillanceDescription || '無說明'}</p>
                     ${camera.VideoImageURL ? 
@@ -268,15 +374,20 @@
             
             document.getElementById('modalImage').src = camera.VideoImageURL || 'data:image/svg+xml,<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg"><rect width="400" height="300" fill="%23f5f5f5"/><text x="50%" y="50%" font-family="Arial" font-size="18" fill="%23999" text-anchor="middle" dy=".3em">無影像資料</text></svg>';
             document.getElementById('modalTitle').textContent = `${camera.RoadName || '未命名'} ${camera.LocationMile || ''}`;
-            document.getElementById('modalDescription').textContent = camera.SurveillanceDescription || '無說明';
+            document.getElementById('modalDescription').innerHTML = `
+                <strong><i class="fas fa-database"></i> 資料來源：</strong>${camera.source === 'tdx' ? 'TDX API' : '備援 XML API'}<br>
+                <strong><i class="fas fa-info-circle"></i> 說明：</strong>${camera.SurveillanceDescription || '無說明'}<br>
+                <strong><i class="fas fa-road"></i> 路線：</strong>${camera.RoadName || '無路線資訊'}
+            `;
             document.getElementById('modalLocation').innerHTML = `
                 <strong><i class="fas fa-map-marker-alt"></i> 縣市：</strong>${camera.City || '未知'}<br>
                 <strong><i class="fas fa-crosshairs"></i> 座標：</strong>${camera.PositionLon ? `經度 ${camera.PositionLon}, 緯度 ${camera.PositionLat}` : '無座標資訊'}<br>
-                <strong><i class="fas fa-road"></i> 里程：</strong>${camera.LocationMile || '無里程資訊'}
+                <strong><i class="fas fa-road"></i> 里程：</strong>${camera.LocationMile || '無里程資訊'}<br>
+                <strong><i class="fas fa-id-card"></i> ID：</strong>${camera.CCTVID || 'N/A'}
             `;
             document.getElementById('modalStream').innerHTML = camera.VideoStreamURL ? 
                 `<a href="${camera.VideoStreamURL}" target="_blank" style="color: #FF9800; text-decoration: none;"><i class="fas fa-external-link-alt"></i> 開啟串流連結</a>` : 
-                '無串流資訊';
+                (camera.VideoImageURL ? `<a href="${camera.VideoImageURL}" target="_blank" style="color: #FF9800; text-decoration: none;"><i class="fas fa-external-link-alt"></i> 開啟影像連結</a>` : '無串流資訊');
             
             document.getElementById('imageModal').style.display = 'block';
         }
