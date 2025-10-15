@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>空品測站影像</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>window.CURRENT_PAGE = 'air-quality';</script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Microsoft JhengHei', Arial, sans-serif; background: linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%); min-height: 100vh; }
@@ -48,6 +49,115 @@
             color: #999; 
             text-align: center;
             padding: 20px;
+        }
+        
+        /* 模態框樣式 */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            overflow-y: auto;
+        }
+        .modal-content {
+            background: white;
+            margin: 2% auto;
+            padding: 0;
+            width: 90%;
+            max-width: 1000px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            position: relative;
+        }
+        .modal-header {
+            background: linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 15px 15px 0 0;
+            position: relative;
+        }
+        .modal-close {
+            position: absolute;
+            right: 20px;
+            top: 15px;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            color: white;
+            opacity: 0.8;
+        }
+        .modal-close:hover {
+            opacity: 1;
+        }
+        .modal-body {
+            padding: 20px;
+        }
+        .modal-image-section {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .modal-image {
+            width: 100%;
+            max-height: 400px;
+            object-fit: cover;
+            border-radius: 10px;
+            border: 3px solid #9C27B0;
+        }
+        .image-refresh {
+            margin-top: 10px;
+        }
+        .refresh-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 0 5px;
+        }
+        .refresh-btn:hover {
+            background: #45a049;
+        }
+        .modal-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .info-section {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 4px solid #9C27B0;
+        }
+        .info-section h4 {
+            color: #9C27B0;
+            margin-bottom: 10px;
+        }
+        .pollutant-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .pollutant-item {
+            text-align: center;
+            padding: 10px;
+            border-radius: 8px;
+            background: white;
+            border: 1px solid #ddd;
+        }
+        .pollutant-value {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #9C27B0;
+        }
+        .pollutant-name {
+            font-size: 0.8rem;
+            color: #666;
         }
         .air-quality-info {
             background: linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%);
@@ -244,27 +354,42 @@
             const container = document.getElementById('cameras-container');
             
             try {
-                // 載入空品資料
-                const aqDataResponse = await fetch('https://data.moenv.gov.tw/api/v2/aqx_p_432?api_key=e75b1660-e564-4107-aad5-a8be1f905dd9&limit=1000&sort=ImportDate%20desc&format=JSON');
-                
-                // 載入測站影像
+                // 只載入測站影像資料
                 const imageResponse = await fetch('https://data.moenv.gov.tw/api/v2/aqx_p_548?api_key=846e44e1-8cc5-4893-ad87-c79d2d383706&limit=1000&sort=ImportDate%20desc&format=JSON');
                 
-                if (!aqDataResponse.ok || !imageResponse.ok) {
+                if (!imageResponse.ok) {
                     throw new Error('API 回應錯誤');
                 }
                 
-                const aqData = await aqDataResponse.json();
                 const imageData = await imageResponse.json();
                 
-                if (aqData && aqData.records && imageData && imageData.records) {
+                if (imageData && imageData.records) {
                     isUsingRealData = true;
                     document.getElementById('dataSourceInfo').innerHTML = '• 顯示即時資料（API 連線成功）';
                     document.getElementById('dataSourceInfo').style.color = '#4CAF50';
                     
-                    // 合併空品資料和影像資料
-                    const mergedData = mergeAQDataAndImages(aqData.records, imageData.records);
-                    processAirQualityData({ records: mergedData }, container);
+                    console.log('API 回傳資料範例:', imageData.records[0]);
+                    
+                    // 直接使用影像資料，正確映射欄位名稱
+                    const processedData = imageData.records.map(station => ({
+                        sitename: station.sitename || station.SiteName || '未命名測站',
+                        county: station.county || station.County || '',
+                        siteid: station.siteid || station.SiteId || '',
+                        imageUrl: station.photourl || station.PhotoUrl || station.url || '',
+                        publishtime: station.publishtime || station.PublishTime || new Date().toISOString(),
+                        aqi: 'N/A',
+                        status: '影像監測',
+                        pm2_5: '',
+                        pm10: '',
+                        o3: '',
+                        co: '',
+                        so2: '',
+                        no2: ''
+                    }));
+                    
+                    console.log('處理後資料範例:', processedData[0]);
+                    
+                    processAirQualityData({ records: processedData }, container);
                     return;
                 }
                 
@@ -274,23 +399,6 @@
                 console.error('載入即時資料失敗:', error);
                 throw error;
             }
-        }
-        
-        // 合併空品資料和影像資料
-        function mergeAQDataAndImages(aqRecords, imageRecords) {
-            // 建立影像資料的映射表（以測站名稱為key）
-            const imageMap = {};
-            imageRecords.forEach(img => {
-                if (img.sitename) {
-                    imageMap[img.sitename] = img.photourl || img.url || '';
-                }
-            });
-            
-            // 為每個空品測站添加對應的影像URL
-            return aqRecords.map(station => ({
-                ...station,
-                imageUrl: imageMap[station.sitename] || ''
-            }));
         }
         
         function loadMockData() {
@@ -308,69 +416,110 @@
                         sitename: '中山', county: '臺北市', aqi: '42', status: '良好',
                         publishtime: new Date().toISOString(),
                         pm2_5: '15', pm10: '28', o3: '45', co: '0.3', so2: '2', no2: '18',
-                        siteid: 'TPE001'
+                        siteid: 'TPE001',
+                        imageUrl: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&h=600&fit=crop&auto=format',
+                        location: '臺北市中山區中山北路二段',
+                        elevation: '8公尺',
+                        coordinates: '25.0635°N, 121.5230°E'
                     },
                     {
                         sitename: '萬華', county: '臺北市', aqi: '58', status: '普通',
                         publishtime: new Date(Date.now() - 1000*60*30).toISOString(),
                         pm2_5: '22', pm10: '35', o3: '38', co: '0.4', so2: '3', no2: '25',
-                        siteid: 'TPE002'
+                        siteid: 'TPE002',
+                        imageUrl: 'https://images.unsplash.com/photo-1449824913935-59a10b8d2000?w=800&h=600&fit=crop&auto=format',
+                        location: '臺北市萬華區和平西路三段',
+                        elevation: '6公尺',
+                        coordinates: '25.0308°N, 121.5077°E'
                     },
                     {
                         sitename: '古亭', county: '臺北市', aqi: '35', status: '良好',
                         publishtime: new Date(Date.now() - 1000*60*15).toISOString(),
                         pm2_5: '12', pm10: '22', o3: '52', co: '0.2', so2: '1', no2: '15',
-                        siteid: 'TPE003'
+                        siteid: 'TPE003',
+                        imageUrl: 'https://images.unsplash.com/photo-1518837695005-2083093ee35b?w=800&h=600&fit=crop&auto=format',
+                        location: '臺北市中正區汀州路二段',
+                        elevation: '5公尺',
+                        coordinates: '25.0238°N, 121.5297°E'
                     },
                     {
                         sitename: '松山', county: '臺北市', aqi: '48', status: '良好',
                         publishtime: new Date().toISOString(),
                         pm2_5: '18', pm10: '30', o3: '42', co: '0.3', so2: '2', no2: '20',
-                        siteid: 'TPE004'
+                        siteid: 'TPE004',
+                        imageUrl: 'https://images.unsplash.com/photo-1480714378408-67cf0d13bc1f?w=800&h=600&fit=crop&auto=format',
+                        location: '臺北市松山區八德路四段',
+                        elevation: '12公尺',
+                        coordinates: '25.0486°N, 121.5570°E'
                     },
                     {
                         sitename: '大同', county: '臺北市', aqi: '67', status: '普通',
                         publishtime: new Date(Date.now() - 1000*60*45).toISOString(),
                         pm2_5: '28', pm10: '42', o3: '35', co: '0.5', so2: '4', no2: '30',
-                        siteid: 'TPE005'
+                        siteid: 'TPE005',
+                        imageUrl: 'https://images.unsplash.com/photo-1545558014-8692077e9b5c?w=800&h=600&fit=crop&auto=format',
+                        location: '臺北市大同區重慶北路二段',
+                        elevation: '7公尺',
+                        coordinates: '25.0608°N, 121.5126°E'
                     },
                     {
                         sitename: '中正', county: '臺北市', aqi: '52', status: '普通',
                         publishtime: new Date(Date.now() - 1000*60*20).toISOString(),
                         pm2_5: '20', pm10: '33', o3: '40', co: '0.4', so2: '3', no2: '22',
-                        siteid: 'TPE006'
+                        siteid: 'TPE006',
+                        imageUrl: 'https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=800&h=600&fit=crop&auto=format',
+                        location: '臺北市中正區徐州路',
+                        elevation: '9公尺',
+                        coordinates: '25.0418°N, 121.5188°E'
                     },
                     {
                         sitename: '板橋', county: '新北市', aqi: '61', status: '普通',
                         publishtime: new Date(Date.now() - 1000*60*10).toISOString(),
                         pm2_5: '25', pm10: '38', o3: '37', co: '0.4', so2: '3', no2: '28',
-                        siteid: 'NTP001'
+                        siteid: 'NTP001',
+                        imageUrl: 'https://images.unsplash.com/photo-1542744095-fcf48d80b0fd?w=800&h=600&fit=crop&auto=format',
+                        location: '新北市板橋區中山路一段',
+                        elevation: '11公尺',
+                        coordinates: '25.0136°N, 121.4627°E'
                     },
                     {
                         sitename: '新莊', county: '新北市', aqi: '45', status: '良好',
                         publishtime: new Date().toISOString(),
                         pm2_5: '16', pm10: '28', o3: '48', co: '0.3', so2: '2', no2: '18',
-                        siteid: 'NTP002'
+                        siteid: 'NTP002',
+                        imageUrl: 'https://images.unsplash.com/photo-1516738901171-8eb4fc13bd20?w=800&h=600&fit=crop&auto=format',
+                        location: '新北市新莊區中正路',
+                        elevation: '13公尺',
+                        coordinates: '25.0353°N, 121.4407°E'
                     },
                     {
                         sitename: '桃園', county: '桃園市', aqi: '73', status: '普通',
                         publishtime: new Date(Date.now() - 1000*60*35).toISOString(),
                         pm2_5: '32', pm10: '48', o3: '32', co: '0.6', so2: '5', no2: '35',
-                        siteid: 'TYN001'
+                        siteid: 'TYN001',
+                        imageUrl: 'https://images.unsplash.com/photo-1449824913935-59a10b8d2000?w=800&h=600&fit=crop&auto=format',
+                        location: '桃園市桃園區中正路',
+                        elevation: '156公尺',
+                        coordinates: '24.9937°N, 121.2999°E'
                     }
                 ]
             };
             
+            console.log('載入模擬數據:', mockData.records.length, '個測站');
+            console.log('第一個測站資料:', mockData.records[0]);
             processAirQualityData(mockData, container);
         }
         
         function processAirQualityData(data, container) {
+            console.log('處理空品資料:', data.records.length, '個測站');
             const html = data.records.slice(0, 100).map(station => {
                 const name = station.sitename || '未命名測站';
                 const county = station.county || '';
                 const aqi = station.aqi || 'N/A';
                 const status = station.status || '';
                 const publishtime = station.publishtime || '';
+                
+                console.log('處理測站:', name, '縣市:', county, 'AQI:', aqi);
                 
                 // 獲取空品指標顏色
                 let aqiColor = '#999';
@@ -510,7 +659,204 @@
         }
 
         function showStationDetail(stationId) {
-            alert(`測站 ${stationId} 的詳細資訊功能開發中...`);
+            // 從全域資料中尋找測站資訊
+            let station = null;
+            
+            // 先嘗試從模擬資料中找
+            const mockData = {
+                records: [
+                    {
+                        sitename: '士林', county: '臺北市', aqi: '41', status: '良好',
+                        publishtime: new Date(Date.now() - 1000*60*5).toISOString(),
+                        pm2_5: '12', pm10: '25', o3: '45', co: '0.3', so2: '2', no2: '15',
+                        siteid: 'TPE001',
+                        imageUrl: 'https://images.unsplash.com/photo-1480714378408-67cf0d13bc1f?w=800&h=600&fit=crop&auto=format',
+                        location: '臺北市士林區中山北路五段',
+                        elevation: '18公尺',
+                        coordinates: '25.0881°N, 121.5263°E'
+                    },
+                    {
+                        sitename: '中山', county: '臺北市', aqi: '48', status: '良好',
+                        publishtime: new Date(Date.now() - 1000*60*8).toISOString(),
+                        pm2_5: '18', pm10: '30', o3: '42', co: '0.3', so2: '2', no2: '18',
+                        siteid: 'TPE002',
+                        imageUrl: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&h=600&fit=crop&auto=format',
+                        location: '臺北市中山區民權東路二段',
+                        elevation: '12公尺',
+                        coordinates: '25.0635°N, 121.5230°E'
+                    },
+                    {
+                        sitename: '萬華', county: '臺北市', aqi: '58', status: '普通',
+                        publishtime: new Date(Date.now() - 1000*60*15).toISOString(),
+                        pm2_5: '22', pm10: '35', o3: '38', co: '0.4', so2: '3', no2: '25',
+                        siteid: 'TPE003',
+                        imageUrl: 'https://images.unsplash.com/photo-1444723121867-7a241cacace9?w=800&h=600&fit=crop&auto=format',
+                        location: '臺北市萬華區和平西路三段',
+                        elevation: '5公尺',
+                        coordinates: '25.0329°N, 121.5077°E'
+                    },
+                    {
+                        sitename: '古亭', county: '臺北市', aqi: '44', status: '良好',
+                        publishtime: new Date(Date.now() - 1000*60*12).toISOString(),
+                        pm2_5: '15', pm10: '28', o3: '44', co: '0.3', so2: '2', no2: '16',
+                        siteid: 'TPE004',
+                        imageUrl: 'https://images.unsplash.com/photo-1505142468610-359e7d316be0?w=800&h=600&fit=crop&auto=format',
+                        location: '臺北市中正區同安街',
+                        elevation: '8公尺',
+                        coordinates: '25.0265°N, 121.5200°E'
+                    },
+                    {
+                        sitename: '大同', county: '臺北市', aqi: '55', status: '普通',
+                        publishtime: new Date(Date.now() - 1000*60*18).toISOString(),
+                        pm2_5: '21', pm10: '34', o3: '39', co: '0.4', so2: '3', no2: '24',
+                        siteid: 'TPE005',
+                        imageUrl: 'https://images.unsplash.com/photo-1545558014-8692077e9b5c?w=800&h=600&fit=crop&auto=format',
+                        location: '臺北市大同區重慶北路二段',
+                        elevation: '7公尺',
+                        coordinates: '25.0608°N, 121.5126°E'
+                    },
+                    {
+                        sitename: '中正', county: '臺北市', aqi: '52', status: '普通',
+                        publishtime: new Date(Date.now() - 1000*60*20).toISOString(),
+                        pm2_5: '20', pm10: '33', o3: '40', co: '0.4', so2: '3', no2: '22',
+                        siteid: 'TPE006',
+                        imageUrl: 'https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=800&h=600&fit=crop&auto=format',
+                        location: '臺北市中正區徐州路',
+                        elevation: '9公尺',
+                        coordinates: '25.0418°N, 121.5188°E'
+                    },
+                    {
+                        sitename: '板橋', county: '新北市', aqi: '61', status: '普通',
+                        publishtime: new Date(Date.now() - 1000*60*10).toISOString(),
+                        pm2_5: '25', pm10: '38', o3: '37', co: '0.4', so2: '3', no2: '28',
+                        siteid: 'NTP001',
+                        imageUrl: 'https://images.unsplash.com/photo-1542744095-fcf48d80b0fd?w=800&h=600&fit=crop&auto=format',
+                        location: '新北市板橋區中山路一段',
+                        elevation: '11公尺',
+                        coordinates: '25.0136°N, 121.4627°E'
+                    },
+                    {
+                        sitename: '新莊', county: '新北市', aqi: '45', status: '良好',
+                        publishtime: new Date().toISOString(),
+                        pm2_5: '16', pm10: '28', o3: '48', co: '0.3', so2: '2', no2: '18',
+                        siteid: 'NTP002',
+                        imageUrl: 'https://images.unsplash.com/photo-1516738901171-8eb4fc13bd20?w=800&h=600&fit=crop&auto=format',
+                        location: '新北市新莊區中正路',
+                        elevation: '13公尺',
+                        coordinates: '25.0353°N, 121.4407°E'
+                    },
+                    {
+                        sitename: '桃園', county: '桃園市', aqi: '73', status: '普通',
+                        publishtime: new Date(Date.now() - 1000*60*35).toISOString(),
+                        pm2_5: '32', pm10: '48', o3: '32', co: '0.6', so2: '5', no2: '35',
+                        siteid: 'TYN001',
+                        imageUrl: 'https://images.unsplash.com/photo-1449824913935-59a10b8d2000?w=800&h=600&fit=crop&auto=format',
+                        location: '桃園市桃園區中正路',
+                        elevation: '156公尺',
+                        coordinates: '24.9937°N, 121.2999°E'
+                    }
+                ]
+            };
+            
+            // 尋找測站資料
+            station = mockData.records.find(s => s.siteid === stationId || s.sitename === stationId);
+            
+            if (!station) {
+                alert('找不到測站資料');
+                return;
+            }
+            
+            // 計算AQI狀態顏色
+            const aqi = station.aqi || 'N/A';
+            let aqiColor = '#999';
+            let aqiStatus = '無資料';
+            
+            if (aqi && aqi !== 'N/A' && aqi !== '') {
+                const aqiNum = parseInt(aqi);
+                if (aqiNum <= 50) {
+                    aqiColor = '#4CAF50';
+                    aqiStatus = '良好';
+                } else if (aqiNum <= 100) {
+                    aqiColor = '#FFEB3B';
+                    aqiStatus = '普通';
+                } else if (aqiNum <= 150) {
+                    aqiColor = '#FF9800';
+                    aqiStatus = '對敏感族群不健康';
+                } else if (aqiNum <= 200) {
+                    aqiColor = '#F44336';
+                    aqiStatus = '對所有族群不健康';
+                } else if (aqiNum <= 300) {
+                    aqiColor = '#9C27B0';
+                    aqiStatus = '非常不健康';
+                } else {
+                    aqiColor = '#8B0000';
+                    aqiStatus = '危害';
+                }
+            }
+            
+            // 格式化更新時間
+            const updateTime = station.publishtime ? new Date(station.publishtime).toLocaleString('zh-TW', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            }) : '無資料';
+            
+            // 填入模態框資料
+            document.getElementById('modalStationName').textContent = station.sitename || '未知測站';
+            document.getElementById('modalCounty').textContent = station.county || '未知地區';
+            document.getElementById('modalLocation').textContent = station.location || '位置資訊不詳';
+            document.getElementById('modalCoordinates').textContent = station.coordinates || '座標不詳';
+            document.getElementById('modalElevation').textContent = station.elevation || '海拔不詳';
+            
+            // 設定即時影像
+            const modalImage = document.getElementById('modalStationImage');
+            if (station.imageUrl) {
+                modalImage.src = station.imageUrl;
+                modalImage.style.display = 'block';
+                modalImage.onerror = function() {
+                    this.style.display = 'none';
+                    document.getElementById('noImageMessage').style.display = 'block';
+                };
+            } else {
+                modalImage.style.display = 'none';
+                document.getElementById('noImageMessage').style.display = 'block';
+            }
+            
+            // 設定AQI資料
+            document.getElementById('modalAqi').textContent = aqi;
+            document.getElementById('modalAqi').style.background = aqiColor;
+            document.getElementById('modalAqiStatus').textContent = aqiStatus;
+            document.getElementById('modalAqiStatus').style.color = aqiColor;
+            
+            // 設定污染物資料
+            document.getElementById('modalPm25').textContent = station.pm2_5 || 'N/A';
+            document.getElementById('modalPm10').textContent = station.pm10 || 'N/A';
+            document.getElementById('modalO3').textContent = station.o3 || 'N/A';
+            document.getElementById('modalCo').textContent = station.co || 'N/A';
+            document.getElementById('modalSo2').textContent = station.so2 || 'N/A';
+            document.getElementById('modalNo2').textContent = station.no2 || 'N/A';
+            
+            // 設定更新時間
+            document.getElementById('modalUpdateTime').textContent = updateTime;
+            
+            // 顯示模態框
+            document.getElementById('stationModal').style.display = 'block';
+        }
+        
+        function closeStationModal() {
+            document.getElementById('stationModal').style.display = 'none';
+        }
+        
+        function refreshStationImage() {
+            const modalImage = document.getElementById('modalStationImage');
+            const originalSrc = modalImage.src;
+            if (originalSrc) {
+                // 加上時間戳來強制重新載入
+                const separator = originalSrc.includes('?') ? '&' : '?';
+                modalImage.src = originalSrc + separator + 't=' + Date.now();
+            }
         }
 
         // 資訊面板切換功能
@@ -569,6 +915,78 @@
 
         // 頁面載入時啟動
         loadCameras();
+    </script>
+
+    <!-- 詳細資料模態框 -->
+    <div id="stationModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">測站詳細資料</h2>
+                <span class="modal-close" onclick="closeStationModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="modal-image-section">
+                    <img id="modalStationImage" class="modal-image" src="" alt="測站即時影像">
+                    <div class="image-refresh">
+                        <button class="refresh-btn" onclick="refreshStationImage()">
+                            <i class="fas fa-sync"></i> 重新整理影像
+                        </button>
+                        <button class="refresh-btn" onclick="toggleImageSize()">
+                            <i class="fas fa-expand"></i> 放大/縮小
+                        </button>
+                    </div>
+                    <div style="font-size: 0.9rem; color: #666; margin-top: 10px;" id="imageUpdateTime">
+                        影像更新時間：載入中...
+                    </div>
+                </div>
+                
+                <div class="modal-info">
+                    <div class="info-section">
+                        <h4><i class="fas fa-map-marker-alt"></i> 基本資訊</h4>
+                        <div id="modalBasicInfo">載入中...</div>
+                    </div>
+                    
+                    <div class="info-section">
+                        <h4><i class="fas fa-wind"></i> 空氣品質指標</h4>
+                        <div id="modalAQIInfo">載入中...</div>
+                    </div>
+                    
+                    <div class="info-section" style="grid-column: 1 / -1;">
+                        <h4><i class="fas fa-chart-bar"></i> 污染物濃度</h4>
+                        <div id="modalPollutants" class="pollutant-grid">載入中...</div>
+                    </div>
+                    
+                    <div class="info-section" style="grid-column: 1 / -1;">
+                        <h4><i class="fas fa-clock"></i> 即時狀況</h4>
+                        <div id="modalRealTimeInfo">載入中...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 頁面載入和模態框事件處理
+        document.addEventListener('DOMContentLoaded', function() {
+            // 載入空氣品質數據
+            loadCameras();
+            
+            const modal = document.getElementById('stationModal');
+            
+            // 點擊背景關閉模態框
+            modal.addEventListener('click', function(e) {
+                if (e.target === modal) {
+                    closeStationModal();
+                }
+            });
+            
+            // ESC 鍵關閉模態框
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && modal.style.display === 'block') {
+                    closeStationModal();
+                }
+            });
+        });
     </script>
 </body>
 </html>
