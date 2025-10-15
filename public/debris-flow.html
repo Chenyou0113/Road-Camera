@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
-<head>            <h1><i class="fas fa-mountain"></i> 土石流觀測站影像</h1>
-            <p style="text-align: center; color: #666;">農業部土石流觀測站與水利署山區監測站影像</p>    <meta charset="UTF-8">
+<head>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>土石流觀測站影像</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -92,14 +92,73 @@
             color: #ff6b6b;
             font-size: 0.9rem;
         }
-        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); }
-        .modal-content { position: relative; margin: 2% auto; width: 90%; max-width: 1200px; }
-        .close { position: absolute; top: 15px; right: 35px; color: #fff; font-size: 40px; font-weight: bold; cursor: pointer; z-index: 1001; }
-        .close:hover { color: #795548; }
-        .modal-image { width: 100%; max-height: 80vh; object-fit: contain; }
-        .modal-info { background: white; padding: 20px; border-radius: 10px; margin-top: 20px; }
+        .modal { 
+            display: none; 
+            position: fixed; 
+            z-index: 1000; 
+            left: 0; 
+            top: 0; 
+            width: 100%; 
+            height: 100%; 
+            background: rgba(0,0,0,0.9); 
+            overflow-y: auto;
+            padding: 20px 0;
+        }
+        .modal-content { 
+            position: relative; 
+            margin: 2% auto; 
+            width: 90%; 
+            max-width: 1200px; 
+            min-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .close { position: absolute; top: 15px; right: 35px; color: #fff; font-size: 40px; font-weight: bold; cursor: pointer; z-index: 1001; transition: color 0.3s ease; }
+        .close:hover { color: #ff6b6b; }
+        
+        /* 模態框導航按鈕 */
+        .modal-nav {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            background: rgba(255,255,255,0.8);
+            border: none;
+            font-size: 24px;
+            padding: 15px 20px;
+            cursor: pointer;
+            border-radius: 50%;
+            transition: all 0.3s ease;
+            z-index: 1001;
+            font-weight: bold;
+        }
+        .modal-nav:hover {
+            background: rgba(255,255,255,1);
+            transform: translateY(-50%) scale(1.1);
+        }
+        .modal-nav.prev { left: 20px; }
+        .modal-nav.next { right: 20px; }
+        .modal-nav:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+            transform: translateY(-50%);
+        }
+        .modal-image { 
+            width: 100%; 
+            max-height: 70vh; 
+            object-fit: contain; 
+            border-radius: 10px;
+            background: #f5f5f5;
+        }
+        .modal-info { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 10px; 
+            margin-top: 20px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
         .modal-info h2 { color: #795548; margin-bottom: 10px; }
-        .modal-info p { color: #666; margin: 5px 0; }
+        .modal-info p { color: #666; margin: 5px 0; line-height: 1.6; }
     </style>
 </head>
 <body>
@@ -150,6 +209,9 @@
                 <button class="filter-btn" onclick="filterStations('agriculture')">農業部土石流</button>
                 <button class="filter-btn" onclick="filterStations('water')">水利署山區</button>
                 <button class="filter-btn" onclick="filterStations('with-image')">有影像</button>
+                <button class="filter-btn" onclick="openDebugPage()" style="background: #FF9800; margin-left: 10px;">
+                    <i class="fas fa-bug"></i> API測試
+                </button>
             </div>
             <div class="stats">
                 <div class="stat-item">
@@ -175,13 +237,21 @@
     </div>
 
     <div id="imageModal" class="modal" onclick="closeModal()">
-        <span class="close">&times;</span>
+        <span class="close" onclick="closeModal()">&times;</span>
+        <button class="modal-nav prev" id="prevBtn" onclick="previousImage()" title="上一張">‹</button>
+        <button class="modal-nav next" id="nextBtn" onclick="nextImage()" title="下一張">›</button>
         <div class="modal-content" onclick="event.stopPropagation()">
             <img id="modalImage" class="modal-image" src="" alt="觀測站大圖">
             <div class="modal-info">
                 <h2 id="modalTitle"></h2>
                 <p id="modalDescription"></p>
                 <p id="modalLocation"></p>
+                <div style="margin-top: 15px; text-align: center;">
+                    <button onclick="closeModal()" style="background: #795548; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-size: 0.9rem;">
+                        <i class="fas fa-times"></i> 關閉
+                    </button>
+                    <span id="imageCounter" style="margin-left: 20px; color: #666; font-size: 0.9rem;"></span>
+                </div>
             </div>
         </div>
     </div>
@@ -208,6 +278,11 @@
                 panel.style.background = '#f5f5f5';
             }
         }
+        
+        // 開啟API測試頁面
+        function openDebugPage() {
+            window.open('debris-test.html', '_blank');
+        }
 
         async function loadCameras() {
             try {
@@ -229,24 +304,26 @@
                     sourceLabel: '農業部'
                 }));
 
-                // 過濾水利署資料，只顯示土石流相關的監測站
+                // 過濾水利署資料，只保留與土石流、山區監測相關的站點
                 const waterStations = (waterData.value || [])
                     .filter(station => {
                         const stationName = station.Thing?.properties?.stationName || '';
-                        const stationID = station.Thing?.properties?.stationID || station['@iot.id'] || '';
-                        
-                        // 排除明確的水利監控站點（如排水、橋梁、堰壩等）
-                        const excludeKeywords = ['排水', '橋', '堰', '壩', '溪州', '河川', '堤防', '抽水站', '閘門', '水位站'];
-                        const isWaterManagement = excludeKeywords.some(keyword => stationName.includes(keyword));
-                        
-                        // 排除您提到的特定ID
-                        const isSpecificExcluded = stationID === '007d029e-2adc-4012-8602-7d69796cbcc8';
+                        const description = station.Thing?.description || '';
+                        const location = station.Thing?.properties?.location || '';
                         
                         // 包含土石流相關關鍵字
-                        const debrisKeywords = ['土石流', '山區', '崩塌', '坡地', '觀測站'];
-                        const isDebrisRelated = debrisKeywords.some(keyword => stationName.includes(keyword));
+                        const includeKeywords = ['土石流', '山區', '坡地', '崩塌', '土砂', '觀測', '監測', '集水區', '流域', '溪', '山'];
+                        const hasRelevantKeywords = includeKeywords.some(keyword => 
+                            stationName.includes(keyword) || description.includes(keyword) || location.includes(keyword)
+                        );
                         
-                        return !isWaterManagement && !isSpecificExcluded && (isDebrisRelated || stationName.includes('山'));
+                        // 排除明確的一般水利設施
+                        const excludeKeywords = ['排水門', '抽水站', '閘門', '堤防段', '橋下', '港區', '海堤'];
+                        const isGeneralWaterManagement = excludeKeywords.some(keyword => 
+                            stationName.includes(keyword) || description.includes(keyword)
+                        );
+                        
+                        return hasRelevantKeywords && !isGeneralWaterManagement;
                     })
                     .map(station => ({
                         ...station,
@@ -255,6 +332,10 @@
                     }));
 
                 allStations = [...agricultureStations, ...waterStations];
+                
+                console.log(`載入完成: 農業部 ${agricultureStations.length} 站, 水利署山區 ${waterStations.length} 站`);
+                console.log('第一個農業部站點:', agricultureStations[0]?.Thing?.properties?.stationName);
+                console.log('第一個水利署站點:', waterStations[0]?.Thing?.properties?.stationName);
                 
                 updateStats();
                 displayStations();
@@ -317,7 +398,7 @@
 
             const html = filteredStations.slice(0, 100).map((station, index) => {
                 const thing = station.Thing || {};
-                const name = thing.name || '未命名觀測站';
+                const name = thing.properties?.stationName || thing.name || '未命名觀測站';
                 const description = thing.description || '';
                 const location = thing.properties?.location || 'N/A';
                 const authority = thing.properties?.authority || 'N/A';
@@ -328,20 +409,23 @@
                 return `
                     <div class="camera-card" onclick="showModal(${allStations.indexOf(station)})">
                         <div class="camera-info">
-                            <h3>${name}</h3>
-                            <p style="color: ${sourceColor}; font-weight: bold; font-size: 0.9rem;"><i class="fas fa-tag"></i> ${station.sourceLabel}</p>
-                            <p style="font-size: 0.9rem; color: #777;">${description}</p>
-                            <p style="font-size: 0.85rem;"><strong>主管機關：</strong>${authority}</p>
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <h3 style="margin: 0; font-size: 1.1rem; color: #795548;">${name}</h3>
+                                <span style="background: ${sourceColor}; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem;">${station.sourceLabel}</span>
+                            </div>
+                            <p style="color: #666; margin-bottom: 4px; font-size: 0.9rem;"><i class="fas fa-info-circle"></i> ${description || '無詳細說明'}</p>
+                            <p style="margin-bottom: 4px; font-size: 0.85rem; color: #777;"><i class="fas fa-map-marker-alt"></i> ${location}</p>
+                            <p style="font-size: 0.8rem; color: #999;"><i class="fas fa-building"></i> ${authority}</p>
                         </div>
                         <div class="camera-image">
                             ${imageUrl ? 
-                                `<img src="${imageUrl}" alt="${name}" onerror="this.parentElement.innerHTML='<div class=\\"image-placeholder\\"><i class=\\"fas fa-exclamation-triangle\\" style=\\"color: #ff6b6b;\\"></i><br>無法載入影像</div>'">
+                                `<img src="${imageUrl}" alt="${name}" onerror="this.parentElement.innerHTML='<div class=\\"image-placeholder\\"><i class=\\"fas fa-exclamation-triangle\\" style=\\"color: #ff6b6b; font-size: 2rem;\\"></i><br><span style=\\"font-size: 0.9rem;\\">無法載入影像</span></div>'">
                                  <div class="image-overlay">
                                     <i class="fas fa-search-plus"></i> 點擊放大
                                  </div>` : 
                                 `<div class="no-image-placeholder">
-                                    <i class="fas fa-video-slash" style="font-size: 2rem; color: #ccc;"></i><br>無影像資料
-                                 </div>`
+                                    <i class="fas fa-video-slash" style="font-size: 2rem; color: #ccc;"></i><br><span style="font-size: 0.9rem;">無影像資料</span>
+                                </div>`
                             }
                         </div>
                     </div>
@@ -351,8 +435,29 @@
             container.innerHTML = `<div class="cameras-grid">${html}</div>`;
         }
 
+        let currentModalIndex = 0;
+        let filteredStations = []; // 當前篩選後的測站列表
+
         function showModal(index) {
+            // 更新當前顯示的測站列表
+            updateFilteredStations();
+            
+            // 找到在篩選列表中的索引
             const station = allStations[index];
+            currentModalIndex = filteredStations.findIndex(s => s === station);
+            if (currentModalIndex === -1) currentModalIndex = 0;
+            
+            displayModalContent(currentModalIndex);
+            document.getElementById('imageModal').style.display = 'block';
+            
+            // 添加鍵盤事件監聽
+            document.addEventListener('keydown', handleKeyPress);
+        }
+
+        function displayModalContent(index) {
+            if (index < 0 || index >= filteredStations.length) return;
+            
+            const station = filteredStations[index];
             const thing = station.Thing || {};
             const latestObs = station.Observations && station.Observations.length > 0 ? station.Observations[0] : null;
             const imageUrl = latestObs?.result || '';
@@ -371,11 +476,65 @@
             `;
             document.getElementById('modalLocation').innerHTML = `<strong>位置：</strong>${thing.properties?.location || 'N/A'}`;
             
-            document.getElementById('imageModal').style.display = 'block';
+            // 更新計數器
+            document.getElementById('imageCounter').textContent = `${index + 1} / ${filteredStations.length}`;
+            
+            // 更新導航按鈕狀態
+            document.getElementById('prevBtn').disabled = index === 0;
+            document.getElementById('nextBtn').disabled = index === filteredStations.length - 1;
+        }
+
+        function updateFilteredStations() {
+            // 根據當前篩選條件更新顯示的測站列表
+            filteredStations = [...allStations];
+            
+            if (currentFilter === 'agriculture') {
+                filteredStations = allStations.filter(station => 
+                    station.sourceLabel && station.sourceLabel.includes('農業部')
+                );
+            } else if (currentFilter === 'water') {
+                filteredStations = allStations.filter(station => 
+                    station.sourceLabel && station.sourceLabel.includes('水利署')
+                );
+            } else if (currentFilter === 'with-image') {
+                filteredStations = allStations.filter(station => {
+                    const latestObs = station.Observations && station.Observations.length > 0 ? station.Observations[0] : null;
+                    return latestObs?.result;
+                });
+            }
+        }
+
+        function previousImage() {
+            if (currentModalIndex > 0) {
+                currentModalIndex--;
+                displayModalContent(currentModalIndex);
+            }
+        }
+
+        function nextImage() {
+            if (currentModalIndex < filteredStations.length - 1) {
+                currentModalIndex++;
+                displayModalContent(currentModalIndex);
+            }
+        }
+
+        function handleKeyPress(event) {
+            switch(event.key) {
+                case 'Escape':
+                    closeModal();
+                    break;
+                case 'ArrowLeft':
+                    previousImage();
+                    break;
+                case 'ArrowRight':
+                    nextImage();
+                    break;
+            }
         }
 
         function closeModal() {
             document.getElementById('imageModal').style.display = 'none';
+            document.removeEventListener('keydown', handleKeyPress);
         }
 
         loadCameras();
