@@ -297,60 +297,43 @@
                 const container = document.getElementById('cameras-container');
                 container.innerHTML = '<div class="loading">載入中...</div>';
 
-                // 載入農業部資料
-                const agricultureResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%BE%B2%E6%A5%AD%E9%83%A8%27&$count=true');
+                // 載入農業部土石流觀測站影像 API
+                const agricultureResponse = await fetch('https://data.moa.gov.tw/Service/OpenData/DataFileService.aspx?UnitId=111&IsTransData=1');
+                
+                if (!agricultureResponse.ok) {
+                    throw new Error('農業部 API 回應錯誤');
+                }
+                
                 const agricultureData = await agricultureResponse.json();
-
-                // 載入水利署資料
-                const waterResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%B0%B4%E5%88%A9%E7%BD%B2%EF%BC%88%E8%88%87%E7%B8%A3%E5%B8%82%E6%94%BF%E5%BA%9C%E5%90%88%E5%BB%BA%EF%BC%89%27&$count=true');
-                const waterData = await waterResponse.json();
-
-                // 合併資料
-                const agricultureStations = (agricultureData.value || []).map(station => ({
-                    ...station,
+                
+                console.log('農業部 API 回應:', agricultureData);
+                
+                // 轉換農業部資料格式
+                const agricultureStations = (agricultureData || []).map(station => ({
+                    name: station['攝影機名稱'] || station.攝影機名稱 || '未命名觀測站',
+                    county: station['縣市'] || station.縣市 || '',
+                    district: station['行政區'] || station.行政區 || '',
+                    location: station['架設或拍攝地點'] || station.架設或拍攝地點 || '',
+                    imageUrl: station['影像連結網址'] || station.影像連結網址 || '',
+                    latitude: station['緯度'] || station.緯度 || '',
+                    longitude: station['經度'] || station.經度 || '',
                     source: 'agriculture',
-                    sourceLabel: '農業部'
+                    sourceLabel: '農業部土石流'
                 }));
 
-                // 過濾水利署資料，只保留與土石流、山區監測相關的站點
-                const waterStations = (waterData.value || [])
-                    .filter(station => {
-                        const stationName = station.Thing?.properties?.stationName || '';
-                        const description = station.Thing?.description || '';
-                        const location = station.Thing?.properties?.location || '';
-                        
-                        // 包含土石流相關關鍵字
-                        const includeKeywords = ['土石流', '山區', '坡地', '崩塌', '土砂', '觀測', '監測', '集水區', '流域', '溪', '山'];
-                        const hasRelevantKeywords = includeKeywords.some(keyword => 
-                            stationName.includes(keyword) || description.includes(keyword) || location.includes(keyword)
-                        );
-                        
-                        // 排除明確的一般水利設施
-                        const excludeKeywords = ['排水門', '抽水站', '閘門', '堤防段', '橋下', '港區', '海堤'];
-                        const isGeneralWaterManagement = excludeKeywords.some(keyword => 
-                            stationName.includes(keyword) || description.includes(keyword)
-                        );
-                        
-                        return hasRelevantKeywords && !isGeneralWaterManagement;
-                    })
-                    .map(station => ({
-                        ...station,
-                        source: 'water',
-                        sourceLabel: '水利署山區'
-                    }));
-
-                allStations = [...agricultureStations, ...waterStations];
+                allStations = agricultureStations;
                 
-                console.log(`載入完成: 農業部 ${agricultureStations.length} 站, 水利署山區 ${waterStations.length} 站`);
-                console.log('第一個農業部站點:', agricultureStations[0]?.Thing?.properties?.stationName);
-                console.log('第一個水利署站點:', waterStations[0]?.Thing?.properties?.stationName);
+                console.log(`載入完成: 農業部 ${agricultureStations.length} 個土石流觀測站`);
+                if (agricultureStations.length > 0) {
+                    console.log('第一個站點:', agricultureStations[0]);
+                }
                 
                 updateStats();
                 displayStations();
                 
             } catch (error) {
                 console.error('載入失敗:', error);
-                document.getElementById('cameras-container').innerHTML = `<div class="loading">載入失敗：${error.message}</div>`;
+                document.getElementById('cameras-container').innerHTML = `<div class="loading">載入失敗：${error.message}<br><small>請檢查網路連線或稍後再試</small></div>`;
             }
         }
 
@@ -358,10 +341,7 @@
             const total = allStations.length;
             const agriculture = allStations.filter(s => s.source === 'agriculture').length;
             const water = allStations.filter(s => s.source === 'water').length;
-            const withImage = allStations.filter(s => {
-                const latestObs = s.Observations && s.Observations.length > 0 ? s.Observations[0] : null;
-                return latestObs && latestObs.result;
-            }).length;
+            const withImage = allStations.filter(s => s.imageUrl && s.imageUrl.trim() !== '').length;
 
             document.getElementById('totalCount').textContent = total;
             document.getElementById('agricultureCount').textContent = agriculture;
@@ -390,10 +370,7 @@
                     filteredStations = allStations.filter(s => s.source === 'water');
                     break;
                 case 'with-image':
-                    filteredStations = allStations.filter(s => {
-                        const latestObs = s.Observations && s.Observations.length > 0 ? s.Observations[0] : null;
-                        return latestObs && latestObs.result;
-                    });
+                    filteredStations = allStations.filter(s => s.imageUrl && s.imageUrl.trim() !== '');
                     break;
             }
 
@@ -404,14 +381,13 @@
                 return;
             }
 
-            const html = filteredStations.slice(0, 100).map((station, index) => {
-                const thing = station.Thing || {};
-                const name = thing.properties?.stationName || thing.name || '未命名觀測站';
-                const description = thing.description || '';
-                const location = thing.properties?.location || 'N/A';
-                const authority = thing.properties?.authority || 'N/A';
-                const latestObs = station.Observations && station.Observations.length > 0 ? station.Observations[0] : null;
-                const imageUrl = latestObs?.result || '';
+            const html = filteredStations.map((station, index) => {
+                const name = station.name || '未命名觀測站';
+                const county = station.county || '';
+                const district = station.district || '';
+                const location = station.location || '';
+                const fullLocation = `${county}${district} ${location}`.trim();
+                const imageUrl = station.imageUrl || '';
                 const sourceColor = station.source === 'agriculture' ? '#4CAF50' : '#2196F3';
                 
                 return `
@@ -421,9 +397,11 @@
                                 <h3 style="margin: 0; font-size: 1.1rem; color: #795548;">${name}</h3>
                                 <span style="background: ${sourceColor}; color: white; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem;">${station.sourceLabel}</span>
                             </div>
-                            <p style="color: #666; margin-bottom: 4px; font-size: 0.9rem;"><i class="fas fa-info-circle"></i> ${description || '無詳細說明'}</p>
-                            <p style="margin-bottom: 4px; font-size: 0.85rem; color: #777;"><i class="fas fa-map-marker-alt"></i> ${location}</p>
-                            <p style="font-size: 0.8rem; color: #999;"><i class="fas fa-building"></i> ${authority}</p>
+                            <p style="margin-bottom: 4px; font-size: 0.85rem; color: #777;"><i class="fas fa-map-marker-alt"></i> ${fullLocation || '無位置資訊'}</p>
+                            ${station.latitude && station.longitude ? 
+                                `<p style="font-size: 0.75rem; color: #999;"><i class="fas fa-compass"></i> ${station.latitude}, ${station.longitude}</p>` : 
+                                ''
+                            }
                         </div>
                         <div class="camera-image">
                             ${imageUrl ? 
@@ -466,9 +444,7 @@
             if (index < 0 || index >= filteredStations.length) return;
             
             const station = filteredStations[index];
-            const thing = station.Thing || {};
-            const latestObs = station.Observations && station.Observations.length > 0 ? station.Observations[0] : null;
-            const imageUrl = latestObs?.result || '';
+            const imageUrl = station.imageUrl || '';
             
             if (imageUrl) {
                 document.getElementById('modalImage').src = imageUrl;
@@ -476,13 +452,22 @@
                 document.getElementById('modalImage').src = 'data:image/svg+xml,<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg"><rect width="400" height="300" fill="%23f5f5f5"/><text x="50%" y="50%" font-family="Arial" font-size="18" fill="%23999" text-anchor="middle" dy=".3em">無影像資料</text></svg>';
             }
             
-            document.getElementById('modalTitle').textContent = thing.name || '未命名觀測站';
+            const county = station.county || '';
+            const district = station.district || '';
+            const location = station.location || '';
+            const fullLocation = `${county}${district} ${location}`.trim();
+            
+            document.getElementById('modalTitle').textContent = station.name || '未命名觀測站';
             document.getElementById('modalDescription').innerHTML = `
                 <strong>來源：</strong>${station.sourceLabel}<br>
-                <strong>說明：</strong>${thing.description || 'N/A'}<br>
-                <strong>主管機關：</strong>${thing.properties?.authority || 'N/A'}
+                <strong>縣市：</strong>${county || 'N/A'}<br>
+                <strong>行政區：</strong>${district || 'N/A'}<br>
+                <strong>架設地點：</strong>${location || 'N/A'}
             `;
-            document.getElementById('modalLocation').innerHTML = `<strong>位置：</strong>${thing.properties?.location || 'N/A'}`;
+            document.getElementById('modalLocation').innerHTML = `
+                <strong>完整位置：</strong>${fullLocation || 'N/A'}<br>
+                ${station.latitude && station.longitude ? `<strong>座標：</strong>${station.latitude}, ${station.longitude}` : ''}
+            `;
             
             // 更新計數器
             document.getElementById('imageCounter').textContent = `${index + 1} / ${filteredStations.length}`;
@@ -498,17 +483,16 @@
             
             if (currentFilter === 'agriculture') {
                 filteredStations = allStations.filter(station => 
-                    station.sourceLabel && station.sourceLabel.includes('農業部')
+                    station.source === 'agriculture'
                 );
             } else if (currentFilter === 'water') {
                 filteredStations = allStations.filter(station => 
-                    station.sourceLabel && station.sourceLabel.includes('水利署')
+                    station.source === 'water'
                 );
             } else if (currentFilter === 'with-image') {
-                filteredStations = allStations.filter(station => {
-                    const latestObs = station.Observations && station.Observations.length > 0 ? station.Observations[0] : null;
-                    return latestObs?.result;
-                });
+                filteredStations = allStations.filter(station => 
+                    station.imageUrl && station.imageUrl.trim() !== ''
+                );
             }
         }
 
