@@ -134,6 +134,27 @@
         </div>
         
         <div id="cameras-container" class="loading">載入中...</div>
+        
+        <!-- 分頁控制 -->
+        <div id="pagination" style="display: none; margin: 30px 0; text-align: center;">
+            <div style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); display: inline-block;">
+                <button onclick="changePage('first')" style="padding: 10px 15px; margin: 0 5px; background: #2196F3; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem;">
+                    <i class="fas fa-angle-double-left"></i> 首頁
+                </button>
+                <button onclick="changePage('prev')" style="padding: 10px 15px; margin: 0 5px; background: #2196F3; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem;">
+                    <i class="fas fa-angle-left"></i> 上一頁
+                </button>
+                <span style="margin: 0 15px; font-size: 1.1rem; color: #2196F3; font-weight: bold;">
+                    第 <span id="currentPageNum">1</span> 頁，共 <span id="totalPagesNum">1</span> 頁
+                </span>
+                <button onclick="changePage('next')" style="padding: 10px 15px; margin: 0 5px; background: #2196F3; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem;">
+                    下一頁 <i class="fas fa-angle-right"></i>
+                </button>
+                <button onclick="changePage('last')" style="padding: 10px 15px; margin: 0 5px; background: #2196F3; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem;">
+                    末頁 <i class="fas fa-angle-double-right"></i>
+                </button>
+            </div>
+        </div>
     </div>
 
     <div id="imageModal" class="modal" onclick="closeModal()">
@@ -154,6 +175,10 @@
     <script src="assets/tdx-api.js"></script>
     <script>
         let allCameras = [];
+        let filteredCameras = [];
+        let currentPage = 1;
+        let itemsPerPage = 50;
+        let totalPages = 1;
         
         // 切換資訊面板顯示/隱藏
         function toggleInfoPanel() {
@@ -463,6 +488,9 @@
                 filtered = filtered.filter(c => c.RoadDirection === selectedDirection);
             }
             
+            filteredCameras = filtered;
+            currentPage = 1; // 重置到第一頁
+            
             updateStats();
             displayCameras(filtered);
             
@@ -494,6 +522,7 @@
             document.getElementById('freewaySelect').value = '';
             document.getElementById('citySelect').value = '';
             document.getElementById('directionSelect').value = '';
+            currentPage = 1;
             populateFilters();
             updateStats();
             displayCameras(allCameras);
@@ -501,14 +530,28 @@
 
         function displayCameras(cameras) {
             const container = document.getElementById('cameras-container');
+            const pagination = document.getElementById('pagination');
             
             if (cameras.length === 0) {
                 container.innerHTML = '<div class="loading">無符合篩選條件的監視器</div>';
+                pagination.style.display = 'none';
                 return;
             }
 
-            // 顯示前100筆資料
-            const displayCameras = cameras.slice(0, 100);
+            // 計算分頁
+            totalPages = Math.ceil(cameras.length / itemsPerPage);
+            if (currentPage > totalPages) currentPage = 1;
+            
+            // 更新分頁資訊顯示
+            document.getElementById('currentPageNum').textContent = currentPage;
+            document.getElementById('totalPagesNum').textContent = totalPages;
+            pagination.style.display = totalPages > 1 ? 'block' : 'none';
+            
+            // 計算當前頁面要顯示的監視器
+            const startIndex = (currentPage - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const displayCameras = cameras.slice(startIndex, endIndex);
+            
             const html = displayCameras.map((camera, index) => {
                 const sourceIcon = camera.source === 'tdx' ? '<i class="fas fa-database" style="color: #4CAF50;" title="TDX API"></i>' : '<i class="fas fa-backup" style="color: #FF9800;" title="備援 XML API"></i>';
                 // 優先顯示即時影像串流(VideoStreamURL),若無則使用快照
@@ -538,17 +581,33 @@
                 `;
             }).join('');
             
-            let resultText = `顯示 ${displayCameras.length} 筆結果`;
-            if (cameras.length > 100) {
-                resultText += ` (共 ${cameras.length} 筆，僅顯示前100筆)`;
-            }
-            
             container.innerHTML = `
                 <div style="text-align: center; margin: 20px 0; color: white; font-size: 1.1rem;">
-                    ${resultText}
+                    顯示第 ${startIndex + 1}-${Math.min(endIndex, cameras.length)} 筆，共 ${cameras.length} 筆國道監視器
                 </div>
                 <div class="cameras-grid">${html}</div>
             `;
+            
+            // 滾動到頁面頂部
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        
+        function changePage(action) {
+            switch(action) {
+                case 'first':
+                    currentPage = 1;
+                    break;
+                case 'prev':
+                    if (currentPage > 1) currentPage--;
+                    break;
+                case 'next':
+                    if (currentPage < totalPages) currentPage++;
+                    break;
+                case 'last':
+                    currentPage = totalPages;
+                    break;
+            }
+            displayCameras(filteredCameras.length > 0 ? filteredCameras : allCameras);
         }
 
         function showModal(index) {

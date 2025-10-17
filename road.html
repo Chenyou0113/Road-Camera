@@ -90,11 +90,11 @@
         </div>
         
         <div style="display: flex; gap: 15px; margin: 20px 0; flex-wrap: wrap;">
-            <select style="padding: 10px; border-radius: 5px; border: 2px solid #FF9800; font-size: 1rem;" id="roadSelect" onchange="applyFilters()">
-                <option value="">選擇路線</option>
+            <select style="padding: 10px; border-radius: 5px; border: 2px solid #FF9800; font-size: 1rem;" id="roadSelect" onchange="applyFilters('road')">
+                <option value="">所有路線</option>
             </select>
-            <select style="padding: 10px; border-radius: 5px; border: 2px solid #FF9800; font-size: 1rem;" id="citySelect" onchange="applyFilters()">
-                <option value="">選擇縣市</option>
+            <select style="padding: 10px; border-radius: 5px; border: 2px solid #FF9800; font-size: 1rem;" id="citySelect" onchange="applyFilters('city')">
+                <option value="">所有縣市</option>
             </select>
             <button style="padding: 10px 20px; background: #FF9800; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem;" onclick="resetFilters()">
                 <i class="fas fa-redo"></i> 重置篩選
@@ -117,23 +117,29 @@
                 </div>
             </div>
         </div>
-            <div style="text-align: center; margin: 5px;">
-                <div style="font-size: 1.5rem; font-weight: bold; color: #FF9800;" id="freewayCount">0</div>
-                <div style="color: #666;">涵蓋國道</div>
-            </div>
-            <div style="text-align: center; margin: 5px;">
-                <div style="font-size: 1.5rem; font-weight: bold; color: #9C27B0;" id="cityCount">0</div>
-                <div style="color: #666;">涵蓋縣市</div>
-            </div>
-            <div style="text-align: center; margin: 5px;">
-                <div id="dataSourceInfo" style="font-size: 0.9rem; color: #666;">
-                    <i class="fas fa-spinner fa-spin"></i> 載入中...
-                </div>
-                <div style="color: #666; font-size: 0.8rem;">資料來源</div>
-            </div>
-        </div>
         
         <div id="cameras-container" class="loading">載入中...</div>
+        
+        <!-- 分頁控制 -->
+        <div id="pagination" style="display: none; margin: 30px 0; text-align: center;">
+            <div style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); display: inline-block;">
+                <button onclick="changePage('first')" style="padding: 10px 15px; margin: 0 5px; background: #FF9800; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem;">
+                    <i class="fas fa-angle-double-left"></i> 首頁
+                </button>
+                <button onclick="changePage('prev')" style="padding: 10px 15px; margin: 0 5px; background: #FF9800; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem;">
+                    <i class="fas fa-angle-left"></i> 上一頁
+                </button>
+                <span style="margin: 0 15px; font-size: 1.1rem; color: #FF9800; font-weight: bold;">
+                    第 <span id="currentPageNum">1</span> 頁，共 <span id="totalPagesNum">1</span> 頁
+                </span>
+                <button onclick="changePage('next')" style="padding: 10px 15px; margin: 0 5px; background: #FF9800; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem;">
+                    下一頁 <i class="fas fa-angle-right"></i>
+                </button>
+                <button onclick="changePage('last')" style="padding: 10px 15px; margin: 0 5px; background: #FF9800; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem;">
+                    末頁 <i class="fas fa-angle-double-right"></i>
+                </button>
+            </div>
+        </div>
     </div>
 
     <div id="imageModal" class="modal" onclick="closeModal()">
@@ -154,6 +160,10 @@
     <script src="assets/tdx-api.js"></script>
     <script>
         let allCameras = [];
+        let filteredCameras = [];
+        let currentPage = 1;
+        let itemsPerPage = 50; // 每頁顯示 50 個監視器
+        let totalPages = 1;
         
         // 從路段資訊中提取省道路線編號
         function extractRoadNumber(camera) {
@@ -350,266 +360,42 @@
             
             let allCamerasFromSources = [];
             
-            // 定義所有縣市的 TDX API 端點
-            // 注意：苗栗縣、嘉義縣、花蓮縣、澎湖縣、連江縣目前無 TDX CCTV 資料
-            // 台中市、嘉義市使用各縣市自己的開放資料 API
-            const cities = [
-                // 直轄市（5）- 台中市使用開放資料
-                { name: '台北市', endpoint: '/v2/Road/Traffic/CCTV/City/Taipei?$format=JSON' },
-                { name: '新北市', endpoint: '/v2/Road/Traffic/CCTV/City/NewTaipei?$format=JSON' },
-                { name: '桃園市', endpoint: '/v2/Road/Traffic/CCTV/City/Taoyuan?$format=JSON' },
-                { name: '台南市', endpoint: '/v2/Road/Traffic/CCTV/City/Tainan?$format=JSON' },
-                { name: '高雄市', endpoint: '/v2/Road/Traffic/CCTV/City/Kaohsiung?$format=JSON' },
-                // 市（2）- 嘉義市使用開放資料
-                { name: '基隆市', endpoint: '/v2/Road/Traffic/CCTV/City/Keelung?$format=JSON' },
-                { name: '新竹市', endpoint: '/v2/Road/Traffic/CCTV/City/Hsinchu?$format=JSON' },
-                // 縣（8）
-                { name: '宜蘭縣', endpoint: '/v2/Road/Traffic/CCTV/City/YilanCounty?$format=JSON' },
-                { name: '新竹縣', endpoint: '/v2/Road/Traffic/CCTV/City/HsinchuCounty?$format=JSON' },
-                { name: '彰化縣', endpoint: '/v2/Road/Traffic/CCTV/City/ChanghuaCounty?$format=JSON' },
-                { name: '南投縣', endpoint: '/v2/Road/Traffic/CCTV/City/NantouCounty?$format=JSON' },
-                { name: '雲林縣', endpoint: '/v2/Road/Traffic/CCTV/City/YunlinCounty?$format=JSON' },
-                { name: '屏東縣', endpoint: '/v2/Road/Traffic/CCTV/City/PingtungCounty?$format=JSON' },
-                { name: '台東縣', endpoint: '/v2/Road/Traffic/CCTV/City/TaitungCounty?$format=JSON' },
-                { name: '金門縣', endpoint: '/v2/Road/Traffic/CCTV/City/KinmenCounty?$format=JSON' }
-            ];
-            
             try {
-                console.log('正在分批載入所有縣市資料並篩選省道監視器...');
+                console.log('正在載入全國省道監視器資料...');
                 
                 // 顯示載入中訊息
                 container.innerHTML = `
                     <div class="loading">
                         <i class="fas fa-spinner fa-spin"></i> 正在載入省道監視器資料...<br>
-                        <small style="margin-top: 10px; display: block;">
-                            <span id="loading-status">準備載入資料...</span><br>
-                            已載入 <span id="loaded-count" style="font-weight: bold; color: #ff9800;">0</span> 個監視器
-                        </small>
-                        <div style="margin-top: 15px; background: rgba(255,255,255,0.1); border-radius: 10px; overflow: hidden; height: 8px; width: 300px; max-width: 90%;">
-                            <div id="loading-progress" style="height: 100%; background: linear-gradient(90deg, #ff9800, #ff6b00); width: 0%; transition: width 0.3s ease;"></div>
-                        </div>
+                        <small style="margin-top: 10px; display: block;">從 TDX 平台載入全國省道監視器...</small>
                     </div>
                 `;
                 
-                const totalSources = cities.length + 2; // TDX縣市 + 嘉義 + 台中
-                let loadedSources = 0;
+                // 使用 TDX Highway 端點載入全國省道監視器
+                const endpoint = '/v2/Road/Traffic/CCTV/Highway?$format=JSON';
+                console.log('📍 載入 Highway 端點資料...');
                 
-                const updateProgress = (statusText) => {
-                    const statusEl = document.getElementById('loading-status');
-                    const progressEl = document.getElementById('loading-progress');
-                    if (statusEl) statusEl.textContent = statusText;
-                    if (progressEl) {
-                        const percentage = (loadedSources / totalSources) * 100;
-                        progressEl.style.width = `${percentage}%`;
-                    }
-                };
+                const response = await tdxApi.fetchCCTV(endpoint);
                 
-                // 分批載入函數
-                const loadCityBatch = async (city) => {
-                    try {
-                        console.log(`📍 載入 ${city.name} 資料...`);
-                        updateProgress(`正在載入 ${city.name} 資料...`);
-                        const response = await tdxApi.fetchCCTV(city.endpoint);
-                        
-                        let cameras = [];
-                        if (Array.isArray(response)) {
-                            cameras = response;
-                        } else if (response && response.CCTVs && Array.isArray(response.CCTVs)) {
-                            cameras = response.CCTVs;
-                        } else if (response && response.data && Array.isArray(response.data)) {
-                            cameras = response.data;
-                        }
-                        
-                        // 篩選出省道監視器 (使用更寬鬆的條件)
-                        const provincialCameras = cameras.filter(camera => {
-                            const roadName = camera.RoadName || '';
-                            const locationDesc = camera.LocationDescription || '';
-                            const roadSection = camera.RoadSection || '';
-                            
-                            // 組合所有相關文字進行搜尋
-                            const allText = `${roadName} ${locationDesc} ${roadSection}`.toLowerCase();
-                            
-                            // 檢查是否包含省道相關關鍵字
-                            return allText.includes('省道') || 
-                                   allText.match(/[台臺]\d+[甲乙丙丁]?線?/) ||  // 台1線、台9甲線等
-                                   allText.match(/台\d+/) ||  // 台1、台2等
-                                   allText.match(/臺\d+/);    // 臺1、臺2等
-                        });
-                        
-                        console.log(`✅ ${city.name}: ${cameras.length} 個監視器，省道: ${provincialCameras.length} 個`);
-                        // 為每個監視器添加路線編號
-                        return provincialCameras.map(camera => {
-                            const roadNumber = extractRoadNumber(camera);
-                            return {...camera, source: 'tdx', city: city.name, RoadNumber: roadNumber};
-                        });
-                    } catch (error) {
-                        console.warn(`⚠️ ${city.name} TDX 載入失敗:`, error.message);
-                        return [];
-                    }
-                };
-                
-                // 分批處理 TDX 縣市資料 (每批 3 個縣市,避免 API 頻率限制)
-                const batchSize = 3;
-                const totalBatches = Math.ceil(cities.length / batchSize);
-                
-                for (let i = 0; i < cities.length; i += batchSize) {
-                    const batch = cities.slice(i, i + batchSize);
-                    const batchNum = Math.floor(i / batchSize) + 1;
-                    
-                    console.log(`🔄 載入第 ${batchNum}/${totalBatches} 批縣市 (${batch.map(c => c.name).join('、')})`);
-                    updateProgress(`載入第 ${batchNum}/${totalBatches} 批縣市 (${batch.map(c => c.name).join('、')})`);
-                    
-                    // 並行載入這批縣市
-                    const batchPromises = batch.map(city => loadCityBatch(city));
-                    const batchResults = await Promise.all(batchPromises);
-                    
-                    // 加入結果並更新顯示
-                    const batchCameras = batchResults.flat();
-                    allCamerasFromSources.push(...batchCameras);
-                    
-                    // 更新載入計數和進度
-                    loadedSources += batch.length;
-                    const loadedCountEl = document.getElementById('loaded-count');
-                    if (loadedCountEl) {
-                        loadedCountEl.textContent = allCamerasFromSources.length;
-                    }
-                    
-                    console.log(`✅ 第 ${batchNum}/${totalBatches} 批完成，累計: ${allCamerasFromSources.length} 個省道監視器`);
-                    
-                    // 批次間延遲 500ms，避免觸發 API 頻率限制
-                    if (i + batchSize < cities.length) {
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                    }
+                let cameras = [];
+                if (Array.isArray(response)) {
+                    cameras = response;
+                } else if (response && response.CCTVs && Array.isArray(response.CCTVs)) {
+                    cameras = response.CCTVs;
+                } else if (response && response.data && Array.isArray(response.data)) {
+                    cameras = response.data;
                 }
                 
-                // 載入嘉義市開放資料並篩選省道
-                console.log('📍 載入 嘉義市開放資料...');
-                updateProgress('載入 嘉義市開放資料...');
-                try {
-                    const response = await fetch('https://data.chiayi.gov.tw/opendata/api/getResource?oid=452283a9-bb9f-40fd-b748-228dd5c3fb1e&rid=c353736b-c126-4652-bc33-951423d73431');
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}`);
-                    }
-                    
-                    const data = await response.json();
-                    let cameras = [];
-                    
-                    if (Array.isArray(data)) {
-                        cameras = data;
-                    } else if (data && Array.isArray(data.result)) {
-                        cameras = data.result;
-                    } else if (data && Array.isArray(data.records)) {
-                        cameras = data.records;
-                    }
-                    
-                    // 篩選出省道監視器 (使用更寬鬆的條件)
-                    const provincialCameras = cameras.filter(camera => {
-                        const roadName = camera.RoadName || camera.road_name || '';
-                        const locationDesc = camera.LocationDescription || camera.location || '';
-                        
-                        // 組合所有相關文字進行搜尋
-                        const allText = `${roadName} ${locationDesc}`.toLowerCase();
-                        
-                        // 檢查是否包含省道相關關鍵字
-                        return allText.includes('省道') || 
-                               allText.match(/[台臺]\d+[甲乙丙丁]?線?/) ||  // 台1線、台9甲線等
-                               allText.match(/台\d+/) ||  // 台1、台2等
-                               allText.match(/臺\d+/);    // 臺1、臺2等
-                    });
-                    
-                    // 為每個監視器添加路線編號
-                    const chiayiCameras = provincialCameras.map(camera => {
-                        const roadNumber = extractRoadNumber(camera);
-                        return {...camera, source: 'chiayi-opendata', city: '嘉義市', RoadNumber: roadNumber};
-                    });
-                    allCamerasFromSources.push(...chiayiCameras);
-                    
-                    // 更新載入計數和進度
-                    loadedSources += 1;
-                    const loadedCountEl = document.getElementById('loaded-count');
-                    if (loadedCountEl) {
-                        loadedCountEl.textContent = allCamerasFromSources.length;
-                    }
-                    updateProgress('嘉義市載入完成');
-                    
-                    console.log(`✅ 嘉義市開放資料: ${cameras.length} 個監視器，省道: ${provincialCameras.length} 個，累計: ${allCamerasFromSources.length}`);
-                } catch (error) {
-                    console.warn(`⚠️ 嘉義市開放資料載入失敗:`, error.message);
-                    loadedSources += 1;
-                }
+                console.log(`✅ Highway 端點返回: ${cameras.length} 個監視器`);
                 
-                // 載入台中市開放資料並篩選省道
-                console.log('📍 載入 台中市開放資料...');
-                updateProgress('載入 台中市開放資料...');
-                try {
-                    const response = await fetch('https://newdatacenter.taichung.gov.tw/api/v1/no-auth/resource.download?rid=6c9f5fd5-d74c-4450-9339-1a00e6cda2e6');
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}`);
-                    }
-                    
-                    const data = await response.json();
-                    let cameras = [];
-                    
-                    if (Array.isArray(data)) {
-                        cameras = data;
-                    } else if (data && Array.isArray(data.result)) {
-                        cameras = data.result;
-                    } else if (data && Array.isArray(data.records)) {
-                        cameras = data.records;
-                    }
-                    
-                    // 轉換並篩選省道監視器 (使用更寬鬆的條件)
-                    const provincialCameras = cameras.filter(camera => {
-                        const roadSection = camera.roadsection || '';
-                        
-                        // 組合所有相關文字進行搜尋
-                        const allText = roadSection.toLowerCase();
-                        
-                        // 檢查是否包含省道相關關鍵字
-                        return allText.includes('省道') || 
-                               allText.match(/[台臺]\d+[甲乙丙丁]?線?/) ||  // 台1線、台9甲線等
-                               allText.match(/台\d+/) ||  // 台1、台2等
-                               allText.match(/臺\d+/);    // 臺1、臺2等
-                    }).map(camera => {
-                        const cameraData = {
-                            CCTVID: camera.cctvid,
-                            RoadSection: camera.roadsection,
-                            PositionLon: parseFloat(camera.px) || 0,
-                            PositionLat: parseFloat(camera.py) || 0,
-                            VideoStreamURL: `https://tcnvr8.taichung.gov.tw/${camera.cctvid}`,
-                            VideoImageURL: camera.url,
-                            Status: camera.status,
-                            RoadName: camera.roadsection || '',
-                            LocationDescription: camera.roadsection || '',
-                            source: 'taichung-opendata',
-                            city: '台中市'
-                        };
-                        // 添加路線編號
-                        cameraData.RoadNumber = extractRoadNumber(cameraData);
-                        return cameraData;
-                    });
-                    
-                    allCamerasFromSources.push(...provincialCameras);
-                    
-                    // 更新載入計數和進度
-                    loadedSources += 1;
-                    const loadedCountEl = document.getElementById('loaded-count');
-                    if (loadedCountEl) {
-                        loadedCountEl.textContent = allCamerasFromSources.length;
-                    }
-                    updateProgress('台中市載入完成');
-                    
-                    console.log(`✅ 台中市開放資料: ${cameras.length} 個監視器，省道: ${provincialCameras.length} 個，累計: ${allCamerasFromSources.length}`);
-                } catch (error) {
-                    console.warn(`⚠️ 台中市開放資料載入失敗:`, error.message);
-                    loadedSources += 1;
-                }
+                // 為每個監視器添加路線編號和來源標記
+                allCamerasFromSources = cameras.map(camera => {
+                    const roadNumber = extractRoadNumber(camera);
+                    return {...camera, source: 'tdx', RoadNumber: roadNumber};
+                });
                 
-                updateProgress('所有資料載入完成！');
-                console.log('✅ 所有縣市資料載入完成');
-                console.log('篩選後的省道監視器數量:', allCamerasFromSources.length);
+                console.log('✅ 省道監視器資料載入完成');
+                console.log('省道監視器總數:', allCamerasFromSources.length);
                 
                 if (allCamerasFromSources.length === 0) {
                     throw new Error('未找到省道監視器資料');
@@ -646,44 +432,25 @@
             console.log('最終處理的監視器數量:', allCamerasFromSources.length);
             console.log('第一筆資料範例:', allCamerasFromSources[0]);
 
-                // 為每個監視器添加額外資訊
-                allCameras = allCamerasFromSources.map(camera => ({
-                    ...camera,
-                    // 優先使用載入時設定的 city,若無則使用經緯度計算
-                    City: camera.city || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName),
-                    FreewayNumber: getFreewayNumber(camera.RoadName),
-                    DirectionName: getDirectionName(camera.RoadDirection)
-                }));            populateFilters();
+            // 為每個監視器添加額外資訊
+            allCameras = allCamerasFromSources.map(camera => ({
+                ...camera,
+                // 優先使用載入時設定的 city,若無則使用經緯度計算
+                City: camera.city || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName),
+                FreewayNumber: getFreewayNumber(camera.RoadName),
+                DirectionName: getDirectionName(camera.RoadDirection)
+            }));
+            
+            filteredCameras = allCameras;
+            populateFilters();
             updateStats();
             displayCameras(allCameras);
         }
 
         function populateFilters() {
-            // 填充路線選單 - 提取所有省道路線並排序
-            const roads = [...new Set(allCameras.map(c => c.RoadNumber).filter(Boolean))].sort((a, b) => {
-                // 提取數字部分進行排序
-                const numA = parseInt(a.match(/\d+/)?.[0] || '0');
-                const numB = parseInt(b.match(/\d+/)?.[0] || '0');
-                if (numA !== numB) return numA - numB;
-                // 數字相同時按甲乙丙丁排序
-                return a.localeCompare(b, 'zh-TW');
-            });
-            
-            const roadSelect = document.getElementById('roadSelect');
-            roadSelect.innerHTML = '<option value="">所有路線</option>' + 
-                roads.map(road => {
-                    const count = allCameras.filter(c => c.RoadNumber === road).length;
-                    return `<option value="${road}">${road} (${count})</option>`;
-                }).join('');
-            
-            // 填充縣市選單 - 使用 City 欄位(優先使用原始 city,其次用經緯度計算的 City)
-            const cities = [...new Set(allCameras.map(c => c.City || c.city).filter(Boolean))].sort();
-            const citySelect = document.getElementById('citySelect');
-            citySelect.innerHTML = '<option value="">所有縣市</option>' + 
-                cities.map(city => {
-                    const count = allCameras.filter(c => (c.City || c.city) === city).length;
-                    return `<option value="${city}">${city} (${count})</option>`;
-                }).join('');
+            // 使用輔助函數填充路線和縣市選單
+            updateRoadSelect(allCameras);
+            updateCitySelect(allCameras);
         }
 
         function updateStats() {
@@ -693,18 +460,109 @@
             document.getElementById('filteredCameras').textContent = filteredCameras.length;
         }
 
-        function applyFilters() {
+        function applyFilters(changedFilter = null) {
             const roadFilter = document.getElementById('roadSelect').value;
             const cityFilter = document.getElementById('citySelect').value;
             
+            // 根據哪個篩選器改變來更新另一個篩選器的選項
+            if (changedFilter === 'road') {
+                // 路線改變時,更新縣市選單
+                if (roadFilter) {
+                    const camerasForRoad = allCameras.filter(camera => camera.RoadNumber === roadFilter);
+                    const citiesForRoad = [...new Set(camerasForRoad.map(c => c.City || c.city).filter(Boolean))].sort();
+                    const citySelect = document.getElementById('citySelect');
+                    const currentCityValue = citySelect.value;
+                    
+                    citySelect.innerHTML = '<option value="">所有縣市</option>' + 
+                        citiesForRoad.map(city => {
+                            const count = camerasForRoad.filter(c => (c.City || c.city) === city).length;
+                            return `<option value="${city}">${city} (${count})</option>`;
+                        }).join('');
+                    
+                    // 如果之前選的縣市還在列表中,保持選擇
+                    if (currentCityValue && citiesForRoad.includes(currentCityValue)) {
+                        citySelect.value = currentCityValue;
+                    }
+                } else {
+                    // 沒有路線篩選時,恢復完整的縣市列表
+                    updateCitySelect(allCameras, cityFilter);
+                }
+            } else if (changedFilter === 'city') {
+                // 縣市改變時,更新路線選單
+                if (cityFilter) {
+                    const camerasForCity = allCameras.filter(camera => (camera.City || camera.city) === cityFilter);
+                    const roadsForCity = [...new Set(camerasForCity.map(c => c.RoadNumber).filter(Boolean))].sort((a, b) => {
+                        const numA = parseInt(a.match(/\d+/)?.[0] || '0');
+                        const numB = parseInt(b.match(/\d+/)?.[0] || '0');
+                        if (numA !== numB) return numA - numB;
+                        return a.localeCompare(b, 'zh-TW');
+                    });
+                    const roadSelect = document.getElementById('roadSelect');
+                    const currentRoadValue = roadSelect.value;
+                    
+                    roadSelect.innerHTML = '<option value="">所有路線</option>' + 
+                        roadsForCity.map(road => {
+                            const count = camerasForCity.filter(c => c.RoadNumber === road).length;
+                            return `<option value="${road}">${road} (${count})</option>`;
+                        }).join('');
+                    
+                    // 如果之前選的路線還在列表中,保持選擇
+                    if (currentRoadValue && roadsForCity.includes(currentRoadValue)) {
+                        roadSelect.value = currentRoadValue;
+                    }
+                } else {
+                    // 沒有縣市篩選時,恢復完整的路線列表
+                    updateRoadSelect(allCameras, roadFilter);
+                }
+            }
+            
+            // 套用篩選
             filteredCameras = allCameras.filter(camera => {
                 const matchRoad = !roadFilter || camera.RoadNumber === roadFilter;
                 const matchCity = !cityFilter || (camera.City || camera.city) === cityFilter;
                 return matchRoad && matchCity;
             });
             
+            // 重置到第一頁
+            currentPage = 1;
+            
             displayCameras(filteredCameras);
             updateStats();
+        }
+        
+        function updateRoadSelect(cameras, selectedValue = '') {
+            const roads = [...new Set(cameras.map(c => c.RoadNumber).filter(Boolean))].sort((a, b) => {
+                const numA = parseInt(a.match(/\d+/)?.[0] || '0');
+                const numB = parseInt(b.match(/\d+/)?.[0] || '0');
+                if (numA !== numB) return numA - numB;
+                return a.localeCompare(b, 'zh-TW');
+            });
+            
+            const roadSelect = document.getElementById('roadSelect');
+            roadSelect.innerHTML = '<option value="">所有路線</option>' + 
+                roads.map(road => {
+                    const count = cameras.filter(c => c.RoadNumber === road).length;
+                    return `<option value="${road}">${road} (${count})</option>`;
+                }).join('');
+            
+            if (selectedValue) {
+                roadSelect.value = selectedValue;
+            }
+        }
+        
+        function updateCitySelect(cameras, selectedValue = '') {
+            const cities = [...new Set(cameras.map(c => c.City || c.city).filter(Boolean))].sort();
+            const citySelect = document.getElementById('citySelect');
+            
+            citySelect.innerHTML = '<option value="">所有縣市</option>' + 
+                cities.map(city => {
+                    const count = cameras.filter(c => (c.City || c.city) === city).length;
+                    return `<option value="${city}">${city} (${count})</option>`;
+                }).join('');
+            
+            if (selectedValue) {
+                citySelect.value = selectedValue;
+            }
         }
 
         function resetFilters() {
@@ -715,19 +573,32 @@
 
         function displayCameras(cameras) {
             const container = document.getElementById('cameras-container');
+            const pagination = document.getElementById('pagination');
             
             if (cameras.length === 0) {
                 container.innerHTML = '<div class="loading">無符合篩選條件的監視器</div>';
+                pagination.style.display = 'none';
                 return;
             }
 
-            // 顯示前100筆資料
-            const displayCameras = cameras.slice(0, 100);
+            // 計算分頁
+            totalPages = Math.ceil(cameras.length / itemsPerPage);
+            if (currentPage > totalPages) currentPage = 1;
+            
+            // 更新分頁資訊顯示
+            document.getElementById('currentPageNum').textContent = currentPage;
+            document.getElementById('totalPagesNum').textContent = totalPages;
+            pagination.style.display = totalPages > 1 ? 'block' : 'none';
+            
+            // 計算當前頁面要顯示的監視器
+            const startIndex = (currentPage - 1) * itemsPerPage;
+            const endIndex = startIndex + itemsPerPage;
+            const displayCameras = cameras.slice(startIndex, endIndex);
+            
+            // 顯示當前頁的監視器
             const html = displayCameras.map((camera, index) => {
-                const sourceIcon = camera.source === 'tdx' ? '<i class="fas fa-database" style="color: #4CAF50;" title="TDX API"></i>' : 
-                                   camera.source === 'chiayi-opendata' ? '<i class="fas fa-city" style="color: #FF9800;" title="嘉義市開放資料"></i>' :
-                                   camera.source === 'taichung-opendata' ? '<i class="fas fa-building" style="color: #2196F3;" title="台中市開放資料"></i>' :
-                                   '<i class="fas fa-backup" style="color: #FF9800;" title="備援 XML API"></i>';
+                // 所有資料來源統一使用 TDX API
+                const sourceIcon = '<i class="fas fa-database" style="color: #4CAF50;" title="TDX API"></i>';
                 // 優先顯示快照圖(VideoImageURL),若無則使用串流連結
                 const thumbSrc = camera.VideoImageURL || '';
                 const streamUrl = camera.VideoStreamURL || '';
@@ -762,17 +633,33 @@
                 `;
             }).join('');
             
-            let resultText = `顯示 ${displayCameras.length} 筆結果`;
-            if (cameras.length > 100) {
-                resultText += ` (共 ${cameras.length} 筆，僅顯示前100筆)`;
-            }
-            
             container.innerHTML = `
                 <div style="text-align: center; margin: 20px 0; color: white; font-size: 1.1rem;">
-                    ${resultText}
+                    顯示第 ${startIndex + 1}-${Math.min(endIndex, cameras.length)} 筆，共 ${cameras.length} 筆省道監視器
                 </div>
                 <div class="cameras-grid">${html}</div>
             `;
+            
+            // 滾動到頁面頂部
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        
+        function changePage(action) {
+            switch(action) {
+                case 'first':
+                    currentPage = 1;
+                    break;
+                case 'prev':
+                    if (currentPage > 1) currentPage--;
+                    break;
+                case 'next':
+                    if (currentPage < totalPages) currentPage++;
+                    break;
+                case 'last':
+                    currentPage = totalPages;
+                    break;
+            }
+            displayCameras(filteredCameras);
         }
 
         function showModal(index) {
