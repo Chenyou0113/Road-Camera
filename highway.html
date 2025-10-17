@@ -321,67 +321,40 @@
             let allCamerasFromSources = [];
             
             try {
-                // 主要資料源：高速公路局 XML API
-                console.log('正在載入高速公路局 XML API...');
-                const xmlResponse = await fetch('https://tisvcloud.freeway.gov.tw/xml/CCTV.xml', {
-                    method: 'GET',
-                    headers: {
-                        'Accept': 'application/xml, text/xml, */*'
-                    }
-                });
+                // 使用 TDX API 載入國道監視器資料
+                console.log('正在載入 TDX 國道監視器 API...');
+                const response = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/Freeway?$format=JSON');
+                console.log('TDX API Response:', response);
                 
-                if (!xmlResponse.ok) {
-                    throw new Error(`XML API HTTP ${xmlResponse.status}: ${xmlResponse.statusText}`);
+                let cameras = [];
+                if (response && response.CCTVs && Array.isArray(response.CCTVs)) {
+                    cameras = response.CCTVs.map(camera => ({...camera, source: 'tdx'}));
+                } else if (Array.isArray(response)) {
+                    cameras = response.map(camera => ({...camera, source: 'tdx'}));
+                } else if (response && response.data && Array.isArray(response.data)) {
+                    cameras = response.data.map(camera => ({...camera, source: 'tdx'}));
+                } else if (response && response.value && Array.isArray(response.value)) {
+                    cameras = response.value.map(camera => ({...camera, source: 'tdx'}));
                 }
                 
-                const xmlText = await xmlResponse.text();
-                const xmlCameras = await parseXMLCameras(xmlText);
-                
-                if (xmlCameras && xmlCameras.length > 0) {
-                    allCamerasFromSources = xmlCameras;
-                    console.log('✅ XML API 載入成功，監視器數量:', xmlCameras.length);
+                if (cameras && cameras.length > 0) {
+                    allCamerasFromSources = cameras;
+                    console.log('✅ TDX API 載入成功，監視器數量:', cameras.length);
                 } else {
-                    throw new Error('XML 資料解析失敗或格式不正確');
+                    throw new Error('TDX API 回傳資料為空或格式不正確');
                 }
                 
-            } catch (xmlError) {
-                console.warn('⚠️ XML API 載入失敗:', xmlError.message);
-                console.log('正在嘗試 TDX 備援 API...');
-                
-                try {
-                    // 使用 TDX API 作為備援
-                    const response = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/Freeway?$format=JSON');
-                    console.log('TDX 備援 API Response:', response);
-                    
-                    let cameras = [];
-                    if (Array.isArray(response)) {
-                        cameras = response.map(camera => ({...camera, source: 'tdx'}));
-                    } else if (response && response.data && Array.isArray(response.data)) {
-                        cameras = response.data.map(camera => ({...camera, source: 'tdx'}));
-                    } else if (response && response.value && Array.isArray(response.value)) {
-                        cameras = response.value.map(camera => ({...camera, source: 'tdx'}));
-                    }
-                    
-                    if (cameras && cameras.length > 0) {
-                        allCamerasFromSources = cameras;
-                        console.log('✅ TDX 備援 API 載入成功，監視器數量:', cameras.length);
-                    } else {
-                        throw new Error('TDX API 回傳資料為空或格式不正確');
-                    }
-                    
-                } catch (tdxError) {
-                    console.error('❌ TDX 備援 API 也載入失敗:', tdxError.message);
-                    container.innerHTML = `
-                        <div class="loading" style="color: #ff6b6b;">
-                            <i class="fas fa-exclamation-triangle"></i> 
-                            所有資料來源都載入失敗<br>
-                            主要來源 (XML) 錯誤: ${xmlError.message}<br>
-                            備援來源 (TDX) 錯誤: ${tdxError.message}<br>
-                            請稍後再試或檢查網路連線
-                        </div>
-                    `;
-                    return;
-                }
+            } catch (error) {
+                console.error('❌ TDX API 載入失敗:', error.message);
+                container.innerHTML = `
+                    <div class="loading" style="color: #ff6b6b;">
+                        <i class="fas fa-exclamation-triangle"></i> 
+                        載入國道監視器資料失敗<br>
+                        錯誤: ${error.message}<br>
+                        請稍後再試或檢查網路連線
+                    </div>
+                `;
+                return;
             }
             
             if (!allCamerasFromSources || allCamerasFromSources.length === 0) {
