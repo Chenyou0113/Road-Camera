@@ -340,21 +340,55 @@
                     cameras = response.value;
                 }
                 
-                // 篩選出省道監視器（RoadName 包含省道資訊）
-                cameras = cameras.filter(camera => {
-                    const roadName = camera.RoadName || camera.LocationDescription || '';
-                    return roadName.includes('省道') || roadName.match(/台\d+線/) || roadName.match(/臺\d+線/);
-                }).map(camera => ({...camera, source: 'tdx'}));
+                console.log('原始監視器總數:', cameras.length);
                 
-                if (cameras && cameras.length > 0) {
-                    allCamerasFromSources = cameras;
-                    console.log('✅ TDX API 載入成功，省道監視器數量:', cameras.length);
+                // 檢查前幾筆資料的 RoadName
+                if (cameras.length > 0) {
+                    console.log('前5筆資料的路名範例:', cameras.slice(0, 5).map(c => ({
+                        RoadName: c.RoadName,
+                        LocationDescription: c.LocationDescription,
+                        RoadID: c.RoadID
+                    })));
+                }
+                
+                // 放寬篩選條件：包含台X、臺X、省道，或者 RoadID 為 Provincial
+                const provincialCameras = cameras.filter(camera => {
+                    const roadName = camera.RoadName || '';
+                    const locationDesc = camera.LocationDescription || '';
+                    const roadID = camera.RoadID || '';
+                    const roadSection = camera.RoadSection || '';
+                    
+                    // 檢查是否包含省道相關關鍵字
+                    const hasProvincialKeyword = 
+                        roadName.includes('省道') || 
+                        locationDesc.includes('省道') ||
+                        roadName.match(/[台臺]\d+/) || 
+                        locationDesc.match(/[台臺]\d+/) ||
+                        roadID.toLowerCase().includes('provincial') ||
+                        roadSection.match(/[台臺]\d+/);
+                    
+                    return hasProvincialKeyword;
+                });
+                
+                console.log('篩選後的省道監視器數量:', provincialCameras.length);
+                
+                if (provincialCameras.length > 0) {
+                    allCamerasFromSources = provincialCameras.map(camera => ({...camera, source: 'tdx'}));
+                    console.log('✅ TDX API 載入成功，省道監視器數量:', provincialCameras.length);
                 } else {
-                    throw new Error('TDX API 無省道監視器資料');
+                    console.warn('⚠️ 篩選後沒有找到省道監視器，嘗試使用全部 City 資料');
+                    // 如果篩選後沒有資料，使用全部 City 資料
+                    allCamerasFromSources = cameras.map(camera => ({...camera, source: 'tdx'}));
+                    console.log('使用全部市區監視器資料，數量:', cameras.length);
+                }
+                
+                if (allCamerasFromSources.length === 0) {
+                    throw new Error('TDX API 回傳資料為空');
                 }
                 
             } catch (error) {
                 console.error('❌ TDX API 載入失敗:', error.message);
+                console.error('完整錯誤:', error);
                 container.innerHTML = `
                     <div class="loading" style="color: #ff6b6b;">
                         <i class="fas fa-exclamation-triangle"></i> 
