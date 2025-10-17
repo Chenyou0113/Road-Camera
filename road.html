@@ -322,20 +322,19 @@
             
             let allCamerasFromSources = [];
             
-            // 定義所有縣市的 TDX API 端點（17 個有資料的縣市）
+            // 定義所有縣市的 TDX API 端點
             // 注意：苗栗縣、嘉義縣、花蓮縣、澎湖縣、連江縣目前無 TDX CCTV 資料
+            // 台中市、嘉義市使用各縣市自己的開放資料 API
             const cities = [
-                // 直轄市（6）
+                // 直轄市（5）- 台中市使用開放資料
                 { name: '台北市', endpoint: '/v2/Road/Traffic/CCTV/City/Taipei?$format=JSON' },
                 { name: '新北市', endpoint: '/v2/Road/Traffic/CCTV/City/NewTaipei?$format=JSON' },
                 { name: '桃園市', endpoint: '/v2/Road/Traffic/CCTV/City/Taoyuan?$format=JSON' },
-                { name: '台中市', endpoint: '/v2/Road/Traffic/CCTV/City/Taichung?$format=JSON' },
                 { name: '台南市', endpoint: '/v2/Road/Traffic/CCTV/City/Tainan?$format=JSON' },
                 { name: '高雄市', endpoint: '/v2/Road/Traffic/CCTV/City/Kaohsiung?$format=JSON' },
-                // 市（3）
+                // 市（2）- 嘉義市使用開放資料
                 { name: '基隆市', endpoint: '/v2/Road/Traffic/CCTV/City/Keelung?$format=JSON' },
                 { name: '新竹市', endpoint: '/v2/Road/Traffic/CCTV/City/Hsinchu?$format=JSON' },
-                { name: '嘉義市', endpoint: '/v2/Road/Traffic/CCTV/City/Chiayi?$format=JSON' },
                 // 縣（8）
                 { name: '宜蘭縣', endpoint: '/v2/Road/Traffic/CCTV/City/YilanCounty?$format=JSON' },
                 { name: '新竹縣', endpoint: '/v2/Road/Traffic/CCTV/City/HsinchuCounty?$format=JSON' },
@@ -422,6 +421,54 @@
                         return provincialCameras.map(camera => ({...camera, source: 'chiayi-opendata', city: '嘉義市'}));
                     } catch (error) {
                         console.warn(`⚠️ 嘉義市開放資料載入失敗:`, error.message);
+                        return [];
+                    }
+                })());
+                
+                // 額外載入台中市開放資料並篩選省道
+                promises.push((async () => {
+                    try {
+                        console.log('載入 台中市開放資料...');
+                        const response = await fetch('https://newdatacenter.taichung.gov.tw/api/v1/no-auth/resource.download?rid=6c9f5fd5-d74c-4450-9339-1a00e6cda2e6');
+                        
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}`);
+                        }
+                        
+                        const data = await response.json();
+                        let cameras = [];
+                        
+                        if (Array.isArray(data)) {
+                            cameras = data;
+                        } else if (data && Array.isArray(data.result)) {
+                            cameras = data.result;
+                        } else if (data && Array.isArray(data.records)) {
+                            cameras = data.records;
+                        }
+                        
+                        // 轉換並篩選省道監視器
+                        const provincialCameras = cameras.filter(camera => {
+                            const roadSection = camera.roadsection || '';
+                            return roadSection.includes('省道') || 
+                                   roadSection.match(/[台臺]\d+/);
+                        }).map(camera => ({
+                            CCTVID: camera.cctvid,
+                            RoadSection: camera.roadsection,
+                            PositionLon: parseFloat(camera.px) || 0,
+                            PositionLat: parseFloat(camera.py) || 0,
+                            VideoStreamURL: camera.url,
+                            VideoImageURL: camera.url,
+                            Status: camera.status,
+                            RoadName: camera.roadsection || '',
+                            LocationDescription: camera.roadsection || '',
+                            source: 'taichung-opendata',
+                            city: '台中市'
+                        }));
+                        
+                        console.log(`✅ 台中市開放資料: ${cameras.length} 個監視器，省道: ${provincialCameras.length} 個`);
+                        return provincialCameras;
+                    } catch (error) {
+                        console.warn(`⚠️ 台中市開放資料載入失敗:`, error.message);
                         return [];
                     }
                 })());
