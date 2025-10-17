@@ -448,26 +448,39 @@
                     }
                 };
                 
-                // 一次性並行載入所有 TDX 縣市資料
-                console.log(`🔄 開始並行載入 ${cities.length} 個縣市的省道監視器...`);
-                updateProgress(`正在並行載入 ${cities.length} 個縣市...`);
+                // 分批處理 TDX 縣市資料 (每批 3 個縣市,避免 API 頻率限制)
+                const batchSize = 3;
+                const totalBatches = Math.ceil(cities.length / batchSize);
                 
-                // 並行載入所有縣市
-                const allPromises = cities.map(city => loadCityBatch(city));
-                const allResults = await Promise.all(allPromises);
-                
-                // 加入所有結果
-                const tdxCameras = allResults.flat();
-                allCamerasFromSources.push(...tdxCameras);
-                
-                // 更新載入計數和進度
-                loadedSources += cities.length;
-                const loadedCountEl = document.getElementById('loaded-count');
-                if (loadedCountEl) {
-                    loadedCountEl.textContent = allCamerasFromSources.length;
+                for (let i = 0; i < cities.length; i += batchSize) {
+                    const batch = cities.slice(i, i + batchSize);
+                    const batchNum = Math.floor(i / batchSize) + 1;
+                    
+                    console.log(`🔄 載入第 ${batchNum}/${totalBatches} 批縣市 (${batch.map(c => c.name).join('、')})`);
+                    updateProgress(`載入第 ${batchNum}/${totalBatches} 批縣市 (${batch.map(c => c.name).join('、')})`);
+                    
+                    // 並行載入這批縣市
+                    const batchPromises = batch.map(city => loadCityBatch(city));
+                    const batchResults = await Promise.all(batchPromises);
+                    
+                    // 加入結果並更新顯示
+                    const batchCameras = batchResults.flat();
+                    allCamerasFromSources.push(...batchCameras);
+                    
+                    // 更新載入計數和進度
+                    loadedSources += batch.length;
+                    const loadedCountEl = document.getElementById('loaded-count');
+                    if (loadedCountEl) {
+                        loadedCountEl.textContent = allCamerasFromSources.length;
+                    }
+                    
+                    console.log(`✅ 第 ${batchNum}/${totalBatches} 批完成，累計: ${allCamerasFromSources.length} 個省道監視器`);
+                    
+                    // 批次間延遲 500ms，避免觸發 API 頻率限制
+                    if (i + batchSize < cities.length) {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
                 }
-                
-                console.log(`✅ TDX 縣市載入完成，累計: ${allCamerasFromSources.length} 個省道監視器`);
                 
                 // 載入嘉義市開放資料並篩選省道
                 console.log('📍 載入 嘉義市開放資料...');
