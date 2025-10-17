@@ -322,79 +322,98 @@
             
             let allCamerasFromSources = [];
             
+            // 定義所有縣市的 TDX API 端點（17 個有資料的縣市）
+            // 注意：苗栗縣、嘉義縣、花蓮縣、澎湖縣、連江縣目前無 TDX CCTV 資料
+            const cities = [
+                // 直轄市（6）
+                { name: '台北市', endpoint: '/v2/Road/Traffic/CCTV/City/Taipei?$format=JSON' },
+                { name: '新北市', endpoint: '/v2/Road/Traffic/CCTV/City/NewTaipei?$format=JSON' },
+                { name: '桃園市', endpoint: '/v2/Road/Traffic/CCTV/City/Taoyuan?$format=JSON' },
+                { name: '台中市', endpoint: '/v2/Road/Traffic/CCTV/City/Taichung?$format=JSON' },
+                { name: '台南市', endpoint: '/v2/Road/Traffic/CCTV/City/Tainan?$format=JSON' },
+                { name: '高雄市', endpoint: '/v2/Road/Traffic/CCTV/City/Kaohsiung?$format=JSON' },
+                // 市（3）
+                { name: '基隆市', endpoint: '/v2/Road/Traffic/CCTV/City/Keelung?$format=JSON' },
+                { name: '新竹市', endpoint: '/v2/Road/Traffic/CCTV/City/Hsinchu?$format=JSON' },
+                { name: '嘉義市', endpoint: '/v2/Road/Traffic/CCTV/City/Chiayi?$format=JSON' },
+                // 縣（8）
+                { name: '宜蘭縣', endpoint: '/v2/Road/Traffic/CCTV/City/YilanCounty?$format=JSON' },
+                { name: '新竹縣', endpoint: '/v2/Road/Traffic/CCTV/City/HsinchuCounty?$format=JSON' },
+                { name: '彰化縣', endpoint: '/v2/Road/Traffic/CCTV/City/ChanghuaCounty?$format=JSON' },
+                { name: '南投縣', endpoint: '/v2/Road/Traffic/CCTV/City/NantouCounty?$format=JSON' },
+                { name: '雲林縣', endpoint: '/v2/Road/Traffic/CCTV/City/YunlinCounty?$format=JSON' },
+                { name: '屏東縣', endpoint: '/v2/Road/Traffic/CCTV/City/PingtungCounty?$format=JSON' },
+                { name: '台東縣', endpoint: '/v2/Road/Traffic/CCTV/City/TaitungCounty?$format=JSON' },
+                { name: '金門縣', endpoint: '/v2/Road/Traffic/CCTV/City/KinmenCounty?$format=JSON' }
+            ];
+            
             try {
-                // 使用 TDX City API 並篩選省道監視器資料
-                console.log('正在載入 TDX 省道監視器資料...');
-                const response = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/City?$format=JSON');
-                console.log('TDX API Response:', response);
+                console.log('正在載入所有縣市資料並篩選省道監視器...');
                 
-                // 處理TDX API回傳的資料格式
-                let cameras = [];
-                if (response && response.CCTVs && Array.isArray(response.CCTVs)) {
-                    cameras = response.CCTVs;
-                } else if (Array.isArray(response)) {
-                    cameras = response;
-                } else if (response && response.data && Array.isArray(response.data)) {
-                    cameras = response.data;
-                } else if (response && response.value && Array.isArray(response.value)) {
-                    cameras = response.value;
-                }
-                
-                console.log('原始監視器總數:', cameras.length);
-                
-                // 檢查前幾筆資料的 RoadName
-                if (cameras.length > 0) {
-                    console.log('前5筆資料的路名範例:', cameras.slice(0, 5).map(c => ({
-                        RoadName: c.RoadName,
-                        LocationDescription: c.LocationDescription,
-                        RoadID: c.RoadID
-                    })));
-                }
-                
-                // 放寬篩選條件：包含台X、臺X、省道，或者 RoadID 為 Provincial
-                const provincialCameras = cameras.filter(camera => {
-                    const roadName = camera.RoadName || '';
-                    const locationDesc = camera.LocationDescription || '';
-                    const roadID = camera.RoadID || '';
-                    const roadSection = camera.RoadSection || '';
-                    
-                    // 檢查是否包含省道相關關鍵字
-                    const hasProvincialKeyword = 
-                        roadName.includes('省道') || 
-                        locationDesc.includes('省道') ||
-                        roadName.match(/[台臺]\d+/) || 
-                        locationDesc.match(/[台臺]\d+/) ||
-                        roadID.toLowerCase().includes('provincial') ||
-                        roadSection.match(/[台臺]\d+/);
-                    
-                    return hasProvincialKeyword;
+                // 並行載入所有縣市的資料
+                const promises = cities.map(async (city) => {
+                    try {
+                        console.log(`載入 ${city.name} 資料...`);
+                        const response = await tdxApi.fetchCCTV(city.endpoint);
+                        
+                        let cameras = [];
+                        if (Array.isArray(response)) {
+                            cameras = response;
+                        } else if (response && response.CCTVs && Array.isArray(response.CCTVs)) {
+                            cameras = response.CCTVs;
+                        } else if (response && response.data && Array.isArray(response.data)) {
+                            cameras = response.data;
+                        }
+                        
+                        // 篩選出省道監視器
+                        const provincialCameras = cameras.filter(camera => {
+                            const roadName = camera.RoadName || '';
+                            const locationDesc = camera.LocationDescription || '';
+                            const roadSection = camera.RoadSection || '';
+                            
+                            return roadName.includes('省道') || 
+                                   locationDesc.includes('省道') ||
+                                   roadName.match(/[台臺]\d+/) || 
+                                   locationDesc.match(/[台臺]\d+/) ||
+                                   roadSection.match(/[台臺]\d+/);
+                        });
+                        
+                        console.log(`✅ ${city.name}: ${cameras.length} 個監視器，省道: ${provincialCameras.length} 個`);
+                        return provincialCameras.map(camera => ({...camera, source: 'tdx', city: city.name}));
+                    } catch (error) {
+                        console.warn(`⚠️ ${city.name} 載入失敗:`, error.message);
+                        return [];
+                    }
                 });
                 
-                console.log('篩選後的省道監視器數量:', provincialCameras.length);
+                const results = await Promise.all(promises);
+                allCamerasFromSources = results.flat();
                 
-                if (provincialCameras.length > 0) {
-                    allCamerasFromSources = provincialCameras.map(camera => ({...camera, source: 'tdx'}));
-                    console.log('✅ TDX API 載入成功，省道監視器數量:', provincialCameras.length);
-                } else {
-                    console.warn('⚠️ 篩選後沒有找到省道監視器，嘗試使用全部 City 資料');
-                    // 如果篩選後沒有資料，使用全部 City 資料
-                    allCamerasFromSources = cameras.map(camera => ({...camera, source: 'tdx'}));
-                    console.log('使用全部市區監視器資料，數量:', cameras.length);
-                }
+                console.log('✅ 所有縣市資料載入完成');
+                console.log('篩選後的省道監視器數量:', allCamerasFromSources.length);
                 
                 if (allCamerasFromSources.length === 0) {
-                    throw new Error('TDX API 回傳資料為空');
+                    throw new Error('未找到省道監視器資料');
                 }
                 
             } catch (error) {
-                console.error('❌ TDX API 載入失敗:', error.message);
-                console.error('完整錯誤:', error);
+                console.error('❌ 省道監視器載入失敗:', error);
+                console.error('錯誤訊息:', error.message);
+                
                 container.innerHTML = `
                     <div class="loading" style="color: #ff6b6b;">
                         <i class="fas fa-exclamation-triangle"></i> 
                         載入省道監視器資料失敗<br>
                         錯誤: ${error.message}<br>
-                        請稍後再試或檢查網路連線
+                        <br>
+                        <small style="color: #ffddcc;">
+                            可能原因：<br>
+                            1. TDX API 端點可能已變更<br>
+                            2. API 金鑰需要重新設定<br>
+                            3. 網路連線問題<br>
+                            <br>
+                            請檢查瀏覽器主控台 (F12) 查看詳細錯誤訊息
+                        </small>
                     </div>
                 `;
                 return;
