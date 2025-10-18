@@ -60,5 +60,3 @@ class TDXApi {
         }
     }
 }
-
-const tdxApi = new TDXApi();

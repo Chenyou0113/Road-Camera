@@ -136,6 +136,12 @@
         <!-- 資料來源說明 -->
         <div style="background: white; padding: 15px; margin: 20px 0; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
             <h3 style="color: #8D6E63; margin-bottom: 10px;"><i class="fas fa-info-circle"></i> 河川分署監控影像資料說明</h3>
+            <div style="margin-bottom: 10px; padding: 10px; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #8D6E63;">
+                <p style="margin: 0; color: #555; font-size: 0.9rem; line-height: 1.5;">
+                    本系統整合<strong>水利署各河川分署流域與疏濬工區遠端監控系統</strong>的影像資料，提供即時河川水位、流量、工程施作等監控影像。
+                    若無法載入即時資料，系統會自動切換為示範模式以展示功能。
+                </p>
+            </div>
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
                 <div style="flex: 1;">
                     <p style="margin: 5px 0; color: #FF9800; font-weight: bold;" id="dataSourceInfo">
@@ -214,7 +220,20 @@
             try {
                 // 嘗試載入水利署各河川分署流域與疏濬工區遠端監控影像 API
                 console.log('正在嘗試載入水利署河川分署 API...');
-                const response = await fetch('https://opendata.wra.gov.tw/api/v2/65d61e4b-c250-4170-bcfc-5fd323fdd13e?limit=1000&sort=_importdate%20desc&format=JSON');
+                
+                // 先嘗試直接連接
+                let response;
+                try {
+                    container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 嘗試載入水利署即時資料...</div>';
+                    response = await fetch('https://opendata.wra.gov.tw/api/v2/65d61e4b-c250-4170-bcfc-5fd323fdd13e?limit=1000&sort=_importdate%20desc&format=JSON');
+                } catch (corsError) {
+                    console.log('直接連接失敗，嘗試使用 CORS 代理...');
+                    container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 嘗試替代連接方式...</div>';
+                    // 使用 CORS 代理
+                    const proxyUrl = 'https://api.allorigins.win/raw?url=';
+                    const targetUrl = encodeURIComponent('https://opendata.wra.gov.tw/api/v2/65d61e4b-c250-4170-bcfc-5fd323fdd13e?limit=1000&sort=_importdate%20desc&format=JSON');
+                    response = await fetch(proxyUrl + targetUrl);
+                }
                 
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -225,7 +244,7 @@
                 
                 if (data && data.records && Array.isArray(data.records) && data.records.length > 0) {
                     isUsingRealData = true;
-                    document.getElementById('dataSourceInfo').innerHTML = '• 顯示即時水利署河川監控資料（水利署 API 連線成功）';
+                    document.getElementById('dataSourceInfo').innerHTML = '• ✅ 即時資料載入成功（水利署開放資料平台）';
                     document.getElementById('dataSourceInfo').style.color = '#4CAF50';
                     
                     // 轉換水利署河川分署資料格式
@@ -267,47 +286,103 @@
                 
             } catch (error) {
                 console.error('載入水利署河川監控資料失敗:', error);
-                document.getElementById('dataSourceInfo').innerHTML = `• 載入失敗：${error.message}`;
-                document.getElementById('dataSourceInfo').style.color = '#F44336';
+                console.log('錯誤詳情:', error.message);
                 
                 // 嘗試使用備用資料源或載入模擬資料
-                console.log('嘗試載入備用河川監控資料...');
+                console.log('切換至備用河川監控資料...');
                 loadMockWaterResourcesData();
             }
         }
         
         function loadMockWaterResourcesData() {
-            console.log('載入模擬水利署河川監控資料...');
+            console.log('載入示範水利署河川監控資料...');
+            console.log('說明：由於網路連線或 CORS 政策限制，無法載入即時資料，改用示範資料顯示功能');
             
-            // 模擬水利署河川分署監控資料
+            // 示範水利署河川分署監控資料 - 基於真實監控站位置
             allStations = [
                 {
                     stationName: '濁水溪-集集攔河堰',
                     authority: '第三河川分署',
-                    ccdIdentifier: 'CCD-001',
+                    ccdIdentifier: 'WRA-R03-001',
                     latitude: '23.8302',
                     longitude: '120.7832',
                     coordinate: 'TWD97',
                     riverName: '濁水溪',
                     riverCode: 'R0301',
-                    imageURL: 'https://via.placeholder.com/400x300/8D6E63/FFFFFF?text=濁水溪-集集攔河堰',
-                    status: '正常',
-                    authorityType: '水利署',
+                    imageURL: 'https://fhy.wra.gov.tw/ReservoirPage_2011/Images/1351002A.jpg',
+                    status: '正常運作',
+                    authorityType: '水利署河川分署',
                     county: '南投縣'
                 },
                 {
-                    stationName: '大安溪-石岡壩',
+                    stationName: '大甲溪-石岡壩',
                     authority: '第三河川分署',
-                    ccdIdentifier: 'CCD-002',
+                    ccdIdentifier: 'WRA-R03-002',
                     latitude: '24.2572',
                     longitude: '120.7922',
                     coordinate: 'TWD97',
-                    riverName: '大安溪',
+                    riverName: '大甲溪',
                     riverCode: 'R0401',
-                    imageURL: 'https://via.placeholder.com/400x300/795548/FFFFFF?text=大安溪-石岡壩',
-                    status: '正常',
-                    authorityType: '水利署',
+                    imageURL: 'https://fhy.wra.gov.tw/ReservoirPage_2011/Images/1351018A.jpg',
+                    status: '正常運作',
+                    authorityType: '水利署河川分署',
                     county: '台中市'
+                },
+                {
+                    stationName: '淡水河-關渡',
+                    authority: '第一河川分署',
+                    ccdIdentifier: 'WRA-R01-003',
+                    latitude: '25.1175',
+                    longitude: '121.4627',
+                    coordinate: 'TWD97',
+                    riverName: '淡水河',
+                    riverCode: 'R0101',
+                    imageURL: 'https://fhy.wra.gov.tw/ReservoirPage_2011/Images/1401001A.jpg',
+                    status: '正常運作',
+                    authorityType: '水利署河川分署',
+                    county: '台北市'
+                },
+                {
+                    stationName: '高屏溪-里港大橋',
+                    authority: '第七河川分署',
+                    ccdIdentifier: 'WRA-R07-004',
+                    latitude: '22.7781',
+                    longitude: '120.4948',
+                    coordinate: 'TWD97',
+                    riverName: '高屏溪',
+                    riverCode: 'R0701',
+                    imageURL: 'https://fhy.wra.gov.tw/ReservoirPage_2011/Images/1471009A.jpg',
+                    status: '正常運作',
+                    authorityType: '水利署河川分署',
+                    county: '屏東縣'
+                },
+                {
+                    stationName: '蘭陽溪-員山',
+                    authority: '第一河川分署',
+                    ccdIdentifier: 'WRA-R01-005',
+                    latitude: '24.7394',
+                    longitude: '121.6622',
+                    coordinate: 'TWD97',
+                    riverName: '蘭陽溪',
+                    riverCode: 'R0102',
+                    imageURL: 'https://fhy.wra.gov.tw/ReservoirPage_2011/Images/1421001A.jpg',
+                    status: '正常運作',
+                    authorityType: '水利署河川分署',
+                    county: '宜蘭縣'
+                },
+                {
+                    stationName: '曾文溪-二溪大橋',
+                    authority: '第六河川分署',
+                    ccdIdentifier: 'WRA-R06-006',
+                    latitude: '23.1953',
+                    longitude: '120.3923',
+                    coordinate: 'TWD97',
+                    riverName: '曾文溪',
+                    riverCode: 'R0601',
+                    imageURL: 'https://fhy.wra.gov.tw/ReservoirPage_2011/Images/1461002A.jpg',
+                    status: '正常運作',
+                    authorityType: '水利署河川分署',
+                    county: '台南市'
                 },
                 {
                     stationName: '高屏溪-斜張橋',
@@ -340,7 +415,7 @@
                 {
                     stationName: '淡水河-關渡大橋',
                     authority: '第十河川分署',
-                    ccdIdentifier: 'CCD-005',
+                    ccdIdentifier: 'WRA-R10-007',
                     latitude: '25.1241',
                     longitude: '121.4592',
                     coordinate: 'TWD97',
@@ -350,11 +425,39 @@
                     status: '維護中',
                     authorityType: '水利署（與縣市政府合建）',
                     county: '新北市'
+                },
+                {
+                    stationName: '花蓮溪-花蓮大橋',
+                    authority: '第九河川分署',
+                    ccdIdentifier: 'WRA-R09-008',
+                    latitude: '23.9739',
+                    longitude: '121.6015',
+                    coordinate: 'TWD97',
+                    riverName: '花蓮溪',
+                    riverCode: 'R0901',
+                    imageURL: 'https://fhy.wra.gov.tw/ReservoirPage_2011/Images/1481001A.jpg',
+                    status: '正常運作',
+                    authorityType: '水利署河川分署',
+                    county: '花蓮縣'
+                },
+                {
+                    stationName: '卑南溪-知本',
+                    authority: '第八河川分署',
+                    ccdIdentifier: 'WRA-R08-009',
+                    latitude: '22.7216',
+                    longitude: '121.0854',
+                    coordinate: 'TWD97',
+                    riverName: '卑南溪',
+                    riverCode: 'R0801',
+                    imageURL: 'https://fhy.wra.gov.tw/ReservoirPage_2011/Images/1491001A.jpg',
+                    status: '正常運作',
+                    authorityType: '水利署河川分署',
+                    county: '台東縣'
                 }
             ];
             
             isUsingRealData = false;
-            document.getElementById('dataSourceInfo').innerHTML = '• 載入失敗，請稍後再試';
+            document.getElementById('dataSourceInfo').innerHTML = '• 使用示範資料（無法連接官方 API，顯示河川分署監控站範例）';
             document.getElementById('dataSourceInfo').style.color = '#FF9800';
             
             currentStations = [...allStations];
@@ -460,7 +563,10 @@
                 // 建立影像區塊
                 const imageHtml = imageUrl ? 
                     `<div class="station-image">
-                        <img src="${imageUrl}" alt="${stationName}影像" onerror="this.parentElement.innerHTML='<div class=\\'no-image\\'><i class=\\'fas fa-camera-slash\\'></i><br>影像載入失敗</div>'">
+                        <img src="${imageUrl}" alt="${stationName}影像" 
+                             onerror="handleImageError(this, '${stationName}')"
+                             onload="handleImageLoad(this)"
+                             style="opacity: 0; transition: opacity 0.3s ease;">
                     </div>` :
                     `<div class="station-image">
                         <div class="no-image">
@@ -526,6 +632,61 @@
             document.getElementById('videoStations').textContent = withImage;
             document.getElementById('waterAgencyStations').textContent = waterAgency;
             document.getElementById('localGovStations').textContent = localGov;
+        }
+
+        // 圖片載入成功處理
+        function handleImageLoad(img) {
+            img.style.opacity = '1';
+            console.log('✅ 河川監控影像載入成功:', img.alt);
+        }
+
+        // 圖片載入失敗處理
+        function handleImageError(img, stationName) {
+            console.warn('⚠️ 河川監控影像載入失敗:', img.src, '監控站:', stationName);
+            
+            // 嘗試重新載入一次
+            if (!img.dataset.retried) {
+                img.dataset.retried = 'true';
+                setTimeout(() => {
+                    console.log('🔄 重試載入河川監控影像:', img.src);
+                    const originalSrc = img.src.split('?')[0]; // 移除之前的參數
+                    img.src = originalSrc + '?retry=' + Date.now();
+                }, 2000);
+                return;
+            }
+            
+            // 重試失敗，顯示錯誤訊息
+            img.parentElement.innerHTML = `
+                <div class="no-image">
+                    <i class="fas fa-exclamation-triangle" style="color: #FF5722;"></i><br>
+                    <small style="color: #666; font-size: 0.8rem;">影像暫時無法載入</small><br>
+                    <small style="color: #999; font-size: 0.7rem;">${stationName}</small><br>
+                    <button onclick="retryLoadImage('${img.src.split('?')[0]}', this.parentElement, '${stationName}')" 
+                            style="margin-top: 5px; padding: 4px 8px; background: #8D6E63; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 0.7rem;">
+                        <i class="fas fa-redo"></i> 重試
+                    </button>
+                </div>
+            `;
+        }
+
+        // 手動重試載入圖片
+        function retryLoadImage(imageSrc, container, stationName) {
+            container.innerHTML = `
+                <div class="no-image">
+                    <i class="fas fa-spinner fa-spin" style="color: #8D6E63;"></i><br>
+                    <small style="color: #666; font-size: 0.8rem;">重新載入中...</small>
+                </div>
+            `;
+            
+            setTimeout(() => {
+                container.innerHTML = `
+                    <img src="${imageSrc}?manual_retry=${Date.now()}" 
+                         alt="${stationName}影像" 
+                         onerror="handleImageError(this, '${stationName}')"
+                         onload="handleImageLoad(this)"
+                         style="opacity: 0; transition: opacity 0.3s ease; width: 100%; height: 100%; object-fit: cover;">
+                `;
+            }, 500);
         }
     </script>
 </body>

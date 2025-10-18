@@ -444,9 +444,7 @@
         
         <!-- 資料源篩選標籤 -->
         <div class="filter-tabs">
-            <button class="tab-btn active" onclick="switchDataSource('all')">全部水利署監視器</button>
-            <button class="tab-btn" onclick="switchDataSource('wra')">水利署直轄</button>
-            <button class="tab-btn" onclick="switchDataSource('cooperative')">水利署與地方合建</button>
+            <button class="tab-btn active" onclick="switchDataSource('all')">全部監視器</button>
             <button class="tab-btn" onclick="openDebugPage()" style="background: #FF9800; margin-left: 10px;">
                 <i class="fas fa-bug"></i> 除錯工具
             </button>
@@ -478,6 +476,12 @@
 
         <div class="search-section">
             <div class="search-form">
+                <div class="form-group">
+                    <label for="filterAuthority">主管機關</label>
+                    <select id="filterAuthority">
+                        <option value="all">全部機關</option>
+                    </select>
+                </div>
                 <div class="form-group">
                     <label for="filterStatus">影像狀態</label>
                     <select id="filterStatus">
@@ -518,6 +522,7 @@
                 <p id="modalDescription"></p>
                 <p id="modalLocation"></p>
                 <p id="modalAuthority"></p>
+                <p id="modalStationID"></p>
                 <p id="modalUpdateTime"></p>
                 <p id="modalCoordinates"></p>
             </div>
@@ -528,6 +533,53 @@
         let allCameras = [];
         let filteredCameras = [];
         let currentDataSource = 'all';
+        
+        // 處理主管機關顯示 - 從描述中提取具體的河川分署或地方政府部門
+        function formatAuthority(camera) {
+            const thing = camera.Thing || {};
+            const authority = thing.properties?.authority || '';
+            const description = thing.description || thing.properties?.description || '';
+            const name = thing.name || '';
+            
+            // 如果 authority 是「水利署」，嘗試從 description 或 name 中提取河川分署資訊
+            if (authority === '水利署') {
+                // 尋找河川分署資訊
+                const riverBureauMatch = description.match(/第[一二三四五六七八九十]+河川分署|第\d+河川分署/) || 
+                                        name.match(/第[一二三四五六七八九十]+河川分署|第\d+河川分署/);
+                if (riverBureauMatch) {
+                    return riverBureauMatch[0];
+                }
+                // 如果找不到具體分署，返回「水利署」
+                return '水利署';
+            }
+            
+            // 如果 authority 是「水利署（與縣市政府合建）」，嘗試從其他欄位找出具體的地方政府部門
+            if (authority.includes('水利署') && authority.includes('合建')) {
+                // 嘗試從 description 中提取地方政府資訊（包含完整的縣市名稱）
+                const localGovMatch = description.match(/[\u4e00-\u9fa5]+[縣市]政府[\u4e00-\u9fa5]+[局科處]/);
+                if (localGovMatch) {
+                    return localGovMatch[0];
+                }
+                
+                // 從 name 或其他欄位嘗試推斷
+                const location = thing.properties?.location || '';
+                if (location) {
+                    // 根據位置推斷可能的地方政府
+                    if (location.includes('花蓮')) return '花蓮縣政府水利科';
+                    if (location.includes('台中') || location.includes('臺中')) return '台中市政府水利局';
+                    if (location.includes('新北')) return '新北市政府水利局';
+                    if (location.includes('台北') || location.includes('臺北')) return '台北市政府水利局';
+                    if (location.includes('桃園')) return '桃園市政府水務局';
+                    if (location.includes('高雄')) return '高雄市政府水利局';
+                }
+                
+                // 如果都找不到，返回原始 authority
+                return authority;
+            }
+            
+            // 其他情況直接返回 authority
+            return authority || 'N/A';
+        }
         
         // 切換資訊面板顯示/隱藏
         function toggleInfoPanel() {
@@ -716,12 +768,62 @@
                 // 載入水利署與地方政府合建監視器
                 const cooperativeResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%B0%B4%E5%88%A9%E7%BD%B2%EF%BC%88%E8%88%87%E7%B8%A3%E5%B8%82%E6%94%BF%E5%BA%9C%E5%90%88%E5%BB%BA%EF%BC%89%27&$count=true');
                 
+                // 嘗試載入一些常見的縣市政府水利單位
+                const localResponses = await Promise.allSettled([
+                    // 花蓮縣
+                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%8A%B1%E8%93%AE%E7%B8%A3%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E7%A7%91%27&$count=true'),
+                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%8A%B1%E8%93%AE%E7%B8%A3%E6%94%BF%E5%BA%9C%27&$count=true'),
+                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%8A%B1%E8%93%AE%E7%B8%A3%E5%BB%BA%E8%A8%AD%E8%99%95%27&$count=true'),
+                    // 台北市
+                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E5%8F%B0%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
+                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E5%8F%B0%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E5%B7%A5%E5%8B%99%E5%B1%80%E6%B0%B4%E5%88%A9%E5%B7%A5%E7%A8%8B%E8%99%95%27&$count=true'),
+                    // 新北市
+                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%96%B0%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
+                    // 桃園市
+                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%A1%83%E5%9C%92%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%8B%99%E5%B1%80%27&$count=true'),
+                    // 台中市
+                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E5%8F%B0%E4%B8%AD%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
+                    // 高雄市
+                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E9%AB%98%E9%9B%84%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
+                    // 其他可能的名稱
+                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%87%BA%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E5%B7%A5%E5%8B%99%E5%B1%80%27&$count=true')
+                ]);
+                
                 if (!wraResponse.ok || !cooperativeResponse.ok) {
                     throw new Error('API 回應錯誤');
                 }
 
                 const wraData = await wraResponse.json();
                 const cooperativeData = await cooperativeResponse.json();
+                
+                // 處理地方政府水利單位的回應
+                const localCameras = [];
+                for (const response of localResponses) {
+                    if (response.status === 'fulfilled' && response.value.ok) {
+                        const data = await response.value.json();
+                        if (data.value && data.value.length > 0) {
+                            console.log(`找到地方水利單位資料: ${data.value.length} 筆`, data.value[0]?.Thing?.properties?.authority);
+                            const cameras = data.value.map(camera => ({
+                                ...camera,
+                                source: 'local',
+                                sourceLabel: '地方水利單位'
+                            }));
+                            localCameras.push(...cameras);
+                        }
+                    }
+                }
+                
+                console.log(`總計載入: 水利署 ${wraData.value?.length || 0} 筆, 合建 ${cooperativeData.value?.length || 0} 筆, 地方 ${localCameras.length} 筆`);
+                
+                // 除錯：顯示所有 authority 類型
+                const allAuthorities = new Set();
+                [...(wraData.value || []), ...(cooperativeData.value || []), ...localCameras].forEach(camera => {
+                    const authority = camera.Thing?.properties?.authority;
+                    if (authority) {
+                        allAuthorities.add(authority);
+                    }
+                });
+                console.log('所有找到的 authority 類型:', Array.from(allAuthorities));
                 
                 // 合併資料並標記來源
                 const wraCameras = (wraData.value || []).map(camera => ({
@@ -736,7 +838,16 @@
                     sourceLabel: '水利署與地方合建'
                 }));
 
-                allCameras = [...wraCameras, ...cooperativeCameras];
+                // 去除重複項目並合併資料
+                const allCamerasMap = new Map();
+                [...wraCameras, ...cooperativeCameras, ...localCameras].forEach(camera => {
+                    const id = camera['@iot.id'];
+                    if (!allCamerasMap.has(id)) {
+                        allCamerasMap.set(id, camera);
+                    }
+                });
+                
+                allCameras = Array.from(allCamerasMap.values());
                 
                 if (allCameras.length === 0) {
                     container.innerHTML = '<div class="loading">無水利署監視器資料</div>';
@@ -746,6 +857,7 @@
                 filteredCameras = allCameras;
                 
                 updateStats();
+                populateAuthorityFilter();
                 applyCurrentFilter();
                 
                 console.log(`成功載入 ${allCameras.length} 個水利署監視器 (直轄: ${wraCameras.length}, 合建: ${cooperativeCameras.length})`);
@@ -791,6 +903,7 @@
             }
             
             // 應用其他篩選條件
+            const filterAuthority = document.getElementById('filterAuthority').value;
             const filterStatus = document.getElementById('filterStatus').value;
             const sortBy = document.getElementById('sortBy').value;
             const keyword = document.getElementById('keyword').value.toLowerCase().trim();
@@ -798,8 +911,12 @@
             filteredCameras = sourceFilteredCameras.filter(camera => {
                 const thing = camera.Thing || {};
                 const name = (thing.name || '').toLowerCase();
-                const description = (thing.description || '').toLowerCase();
+                const description = (thing.properties?.authority || '').toLowerCase();
                 const location = (thing.properties?.location || '').toLowerCase();
+                
+                // 主管機關篩選
+                const cameraAuthority = formatAuthority(camera);
+                const matchAuthority = filterAuthority === 'all' || cameraAuthority === filterAuthority;
                 
                 // 關鍵字篩選
                 const matchKeyword = !keyword || 
@@ -818,7 +935,7 @@
                     matchStatus = !hasImage;
                 }
 
-                return matchKeyword && matchStatus;
+                return matchAuthority && matchKeyword && matchStatus;
             });
 
             // 排序
@@ -859,6 +976,29 @@
             document.getElementById('onlineCameras').textContent = withImage;
         }
 
+        // 填充主管機關篩選下拉選單
+        function populateAuthorityFilter() {
+            const authorities = new Set();
+            allCameras.forEach(camera => {
+                const authority = formatAuthority(camera);
+                if (authority && authority !== 'N/A') {
+                    authorities.add(authority);
+                }
+            });
+            
+            const sortedAuthorities = Array.from(authorities).sort((a, b) => a.localeCompare(b, 'zh-TW'));
+            
+            const select = document.getElementById('filterAuthority');
+            select.innerHTML = '<option value="all">全部機關</option>';
+            
+            sortedAuthorities.forEach(authority => {
+                const option = document.createElement('option');
+                option.value = authority;
+                option.textContent = `${authority} (${allCameras.filter(c => formatAuthority(c) === authority).length})`;
+                select.appendChild(option);
+            });
+        }
+
         function updateTime() {
             const now = new Date();
             const timeString = now.toLocaleTimeString('zh-TW', {
@@ -897,10 +1037,11 @@
 
             const html = filteredCameras.map((camera, index) => {
                 const thing = camera.Thing || {};
-                const name = thing.name || '未命名監視器';
-                const description = thing.description || '無說明';
-                const location = thing.properties?.location || '位置未知';
-                const authority = thing.properties?.authority || 'N/A';
+                const name = thing.properties?.stationName || (thing.name && !thing.name.match(/^[0-9a-f-]{36}$/i) ? thing.name : '未命名監視器');
+                const description = thing.properties?.authority || '無說明';
+                // 位置優先使用 stationName，如果沒有則使用 location，最後才用 name
+                const location = thing.properties?.stationName || thing.properties?.location || (thing.name && !thing.name.match(/^[0-9a-f-]{36}$/i) ? thing.name : '位置未知');
+                const authority = formatAuthority(camera);
                 
                 const latestObs = camera.Observations && camera.Observations.length > 0 ? camera.Observations[0] : null;
                 const imageUrl = latestObs?.result || '';
@@ -943,12 +1084,9 @@
                             }
                         </div>
                         <div class="camera-info">
-                            <div class="authority-badge">
-                                <i class="fas fa-building"></i> ${camera.sourceLabel || '水利署'}
-                            </div>
                             <div class="camera-title">${name}</div>
                             <div class="camera-details">
-                                <strong><i class="fas fa-info-circle"></i> 說明：</strong>${description}<br>
+                                <strong><i class="fas fa-building"></i> 主管機關：</strong>${authority}<br>
                                 <strong><i class="fas fa-map-marker-alt"></i> 位置：</strong>${location}
                             </div>
                             <span class="camera-status ${hasImage ? 'status-online' : 'status-offline'}">
@@ -976,11 +1114,11 @@
             const isSpecialStation = stationID === '007d029e-2adc-4012-8602-7d69796cbcc8';
             
             document.getElementById('modalImage').src = imageUrl || 'data:image/svg+xml,<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg"><rect width="400" height="300" fill="%23f5f5f5"/><text x="50%" y="50%" font-family="Arial" font-size="18" fill="%23999" text-anchor="middle" dy=".3em">無影像資料</text></svg>';
-            document.getElementById('modalTitle').textContent = thing.name || '未命名監視器';
+            document.getElementById('modalTitle').textContent = thing.properties?.stationName || (thing.name && !thing.name.match(/^[0-9a-f-]{36}$/i) ? thing.name : '未命名監視器');
             
             let descriptionHtml = `
                 <strong><i class="fas fa-tag"></i> 類型：</strong>${camera.sourceLabel || '水利署'}<br>
-                <strong><i class="fas fa-info-circle"></i> 說明：</strong>${thing.description || '無說明'}
+                <strong><i class="fas fa-info-circle"></i> 說明：</strong>${thing.properties?.authority || '無說明'}
             `;
             
             // 為特定監測站添加說明
@@ -992,8 +1130,9 @@
             }
             
             document.getElementById('modalDescription').innerHTML = descriptionHtml;
-            document.getElementById('modalLocation').innerHTML = `<strong><i class="fas fa-map-marker-alt"></i> 位置：</strong>${thing.properties?.location || '位置未知'}`;
-            document.getElementById('modalAuthority').innerHTML = `<strong><i class="fas fa-building"></i> 主管機關：</strong>${thing.properties?.authority || 'N/A'}`;
+            document.getElementById('modalLocation').innerHTML = `<strong><i class="fas fa-map-marker-alt"></i> 位置：</strong>${thing.properties?.stationName || thing.properties?.location || (thing.name && !thing.name.match(/^[0-9a-f-]{36}$/i) ? thing.name : '位置未知')}`;
+            document.getElementById('modalAuthority').innerHTML = `<strong><i class="fas fa-building"></i> 主管機關：</strong>${formatAuthority(camera)}`;
+            document.getElementById('modalStationID').innerHTML = `<strong><i class="fas fa-id-card"></i> 監測站名稱：</strong>${thing.properties?.stationName || thing.name || '未知'}`;
             
             if (latestObs?.phenomenonTime) {
                 document.getElementById('modalUpdateTime').innerHTML = `<strong><i class="fas fa-clock"></i> 資料時間：</strong>${new Date(latestObs.phenomenonTime).toLocaleString('zh-TW')}`;
@@ -1043,6 +1182,7 @@
         });
 
         // 篩選條件改變時自動搜尋
+        document.getElementById('filterAuthority').addEventListener('change', filterCameras);
         document.getElementById('filterStatus').addEventListener('change', filterCameras);
         document.getElementById('sortBy').addEventListener('change', filterCameras);
     </script>
