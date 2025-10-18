@@ -336,52 +336,104 @@
             let allCamerasFromSources = [];
             
             try {
-                // 使用環境部空品測站影像 API
-                console.log('正在載入環境部空品測站影像資料...');
+                // 使用環境部開放資料 API
+                console.log('正在載入環境部空氣品質資料...');
                 
-                // 環境部空品測站影像 API
-                const apiUrl = 'https://data.moenv.gov.tw/api/v2/aqx_p_488?limit=1000&api_key=e8dd42e6-9b8b-43f8-991e-b3dee723a52d&format=json';
+                // 環境部空氣品質指標 API (aqx_p_01)
+                const apiUrl = 'https://data.moenv.gov.tw/api/v2/aqx_p_01?api_key=94650864-6a80-4c58-83ce-fd13e7ef0504&limit=1000&format=json';
                 
-                const response = await fetch(apiUrl);
+                // 使用多個 CORS 代理備援
+                const corsProxies = [
+                    'https://api.allorigins.win/raw?url=',
+                    'https://corsproxy.io/?',
+                    'https://api.codetabs.com/v1/proxy?quest='
+                ];
                 
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                let response = null;
+                let lastError = null;
+                
+                // 嘗試使用不同的 CORS 代理
+                for (const corsProxy of corsProxies) {
+                    try {
+                        console.log(`嘗試使用代理: ${corsProxy}`);
+                        response = await fetch(corsProxy + encodeURIComponent(apiUrl), {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'application/json'
+                            }
+                        });
+                        
+                        if (response.ok) {
+                            console.log(`✓ 代理成功: ${corsProxy}`);
+                            break;
+                        }
+                    } catch (error) {
+                        console.log(`✗ 代理失敗: ${corsProxy}`, error.message);
+                        lastError = error;
+                        continue;
+                    }
+                }
+                
+                if (!response || !response.ok) {
+                    throw new Error(`所有 CORS 代理都失敗。最後錯誤: ${lastError?.message || '未知錯誤'}`);
                 }
                 
                 const data = await response.json();
-                console.log('API Response:', data);
+                console.log('API Response 結構:', Object.keys(data));
+                console.log('完整 API Response:', JSON.stringify(data).substring(0, 500));
                 
                 // 處理環境部 API 回傳的資料格式
-                let cameras = [];
-                if (data && Array.isArray(data.records)) {
-                    cameras = data.records.map(station => ({
-                        SiteName: station.sitename || station.SiteName || '未知測站',
-                        County: station.county || station.County || '未知縣市',
-                        ImageURL: station.cctv_image || station.ImageURL || station.image_url || '',
-                        UpdateTime: station.datacreationdate || station.UpdateTime || '',
-                        Latitude: parseFloat(station.latitude || station.Latitude || 0),
-                        Longitude: parseFloat(station.longitude || station.Longitude || 0),
-                        source: 'moenv'
-                    }));
-                } else if (Array.isArray(data)) {
-                    cameras = data.map(station => ({
-                        SiteName: station.sitename || station.SiteName || '未知測站',
-                        County: station.county || station.County || '未知縣市',
-                        ImageURL: station.cctv_image || station.ImageURL || station.image_url || '',
-                        UpdateTime: station.datacreationdate || station.UpdateTime || '',
-                        Latitude: parseFloat(station.latitude || station.Latitude || 0),
-                        Longitude: parseFloat(station.longitude || station.Longitude || 0),
-                        source: 'moenv'
-                    }));
+                let stations = [];
+                let records = data.records || data.Records || data.data || data;
+                
+                if (Array.isArray(records)) {
+                    console.log('找到記錄陣列，長度:', records.length);
+                    console.log('第一筆資料範例:', JSON.stringify(records[0], null, 2));
+                    
+                    stations = records.map(record => {
+                        const siteName = record.sitename || record.SiteName || record.site_name || '未知測站';
+                        
+                        // 嘗試多種可能的環保署影像 URL 格式
+                        const imageUrls = [
+                            `https://airtw.moenv.gov.tw/AirSitePic/${encodeURIComponent(siteName)}.jpg`,
+                            `https://airtw.moenv.gov.tw/AirSitePic/${siteName}.jpg`,
+                            `https://airtw.moenv.gov.tw/CHT/EnvMonitoring/Central/photo/${encodeURIComponent(siteName)}.jpg`,
+                            `https://air.epa.gov.tw/AirSitePic/${encodeURIComponent(siteName)}.jpg`
+                        ];
+                        
+                        return {
+                            SiteName: siteName,
+                            County: record.county || record.County || '未知縣市',
+                            AQI: record.aqi || record.AQI || '-',
+                            Status: record.status || record.Status || '-',
+                            PM25: record['pm2.5'] || record.pm25 || record.PM25 || record['PM2.5'] || '-',
+                            PM10: record.pm10 || record.PM10 || '-',
+                            O3: record.o3 || record.O3 || '-',
+                            CO: record.co || record.CO || '-',
+                            SO2: record.so2 || record.SO2 || '-',
+                            NO2: record.no2 || record.NO2 || '-',
+                            Pollutant: record.pollutant || record.Pollutant || '-',
+                            UpdateTime: record.publishtime || record.PublishTime || record.datacreationdate || record.DataCreationDate || '',
+                            Latitude: parseFloat(record.latitude || record.Latitude || 0),
+                            Longitude: parseFloat(record.longitude || record.Longitude || 0),
+                            ImageURLs: imageUrls,
+                            ImageURL: imageUrls[0], // 預設使用第一個
+                            source: 'moenv'
+                        };
+                    });
+                    
+                    console.log('解析後第一筆測站:', stations[0]);
+                } else {
+                    console.error('無法找到記錄陣列，data 結構:', data);
                 }
                 
-                if (cameras && cameras.length > 0) {
-                    allCamerasFromSources = cameras;
-                    console.log('環境部 API 載入成功，測站數量:', cameras.length);
+                if (stations && stations.length > 0) {
+                    allCamerasFromSources = stations;
+                    console.log('環境部 API 載入成功，測站數量:', stations.length);
                     
                     // 更新資料來源資訊
                     document.getElementById('dataSourceInfo').innerHTML = 
-                        '<i class="fas fa-check-circle" style="color: #4CAF50;"></i> 環境部空品測站 API';
+                        '<i class="fas fa-check-circle" style="color: #4CAF50;"></i> 環境部開放資料 API';
                 } else {
                     throw new Error('API 回傳資料為空或格式不正確');
                 }
@@ -389,6 +441,7 @@
             } catch (error) {
                 console.error('❌ 空品測站影像載入失敗:', error);
                 console.error('錯誤訊息:', error.message);
+                console.error('錯誤堆疊:', error.stack);
                 
                 container.innerHTML = `
                     <div class="loading" style="color: #ff6b6b;">
@@ -398,11 +451,15 @@
                         <br>
                         <small style="color: #ffb3b3;">
                             可能原因：<br>
-                            1. 環境部 API 端點可能已變更<br>
-                            2. API 金鑰需要更新<br>
-                            3. 網路連線問題<br>
+                            1. <strong>CORS 政策限制</strong> - 環境部 API 可能不允許跨網域存取<br>
+                            2. <strong>API 端點已變更</strong> - 請確認 data.moenv.gov.tw 是否可用<br>
+                            3. <strong>網路連線問題</strong> - 請檢查您的網路連線<br>
+                            4. <strong>API 金鑰過期</strong> - 可能需要申請新的 API 金鑰<br>
                             <br>
-                            請檢查瀏覽器主控台 (F12) 查看詳細錯誤訊息
+                            <strong>建議解決方案：</strong><br>
+                            • 請檢查瀏覽器主控台 (F12) 查看詳細 CORS 錯誤訊息<br>
+                            • 若出現 CORS 錯誤，需要使用後端代理或環境部提供的其他存取方式<br>
+                            • 可以訪問 <a href="https://data.moenv.gov.tw" target="_blank" style="color: #fff; text-decoration: underline;">環境部開放資料平台</a> 確認 API 狀態<br>
                         </small>
                     </div>
                 `;
@@ -492,29 +549,108 @@
             
             const html = displayStations.map((station, index) => {
                 const sourceIcon = '<i class="fas fa-wind" style="color: #4CAF50;" title="環境部 API"></i>';
-                const imageSrc = station.ImageURL || '';
                 const updateTime = station.UpdateTime ? new Date(station.UpdateTime).toLocaleString('zh-TW') : '未知時間';
+                
+                // AQI 狀態顏色
+                let aqiColor = '#9E9E9E';
+                let aqiStatus = '未知';
+                const aqiValue = parseInt(station.AQI);
+                
+                if (!isNaN(aqiValue)) {
+                    if (aqiValue <= 50) {
+                        aqiColor = '#4CAF50'; // 良好 - 綠色
+                        aqiStatus = '良好';
+                    } else if (aqiValue <= 100) {
+                        aqiColor = '#FFEB3B'; // 普通 - 黃色
+                        aqiStatus = '普通';
+                    } else if (aqiValue <= 150) {
+                        aqiColor = '#FF9800'; // 對敏感族群不健康 - 橘色
+                        aqiStatus = '對敏感族群不健康';
+                    } else if (aqiValue <= 200) {
+                        aqiColor = '#F44336'; // 不健康 - 紅色
+                        aqiStatus = '不健康';
+                    } else if (aqiValue <= 300) {
+                        aqiColor = '#9C27B0'; // 非常不健康 - 紫色
+                        aqiStatus = '非常不健康';
+                    } else {
+                        aqiColor = '#8B0000'; // 危害 - 褐紅色
+                        aqiStatus = '危害';
+                    }
+                }
+                
+                // 生成 Google Maps 靜態地圖 URL
+                const mapUrl = station.Latitude && station.Longitude ? 
+                    `https://maps.googleapis.com/maps/api/staticmap?center=${station.Latitude},${station.Longitude}&zoom=15&size=400x200&markers=color:red%7C${station.Latitude},${station.Longitude}&key=YOUR_API_KEY` :
+                    null;
+                
+                // 使用 OpenStreetMap 靜態地圖（免費，不需 API Key）
+                const osmMapUrl = station.Latitude && station.Longitude ?
+                    `https://www.openstreetmap.org/export/embed.html?bbox=${station.Longitude-0.01},${station.Latitude-0.01},${station.Longitude+0.01},${station.Latitude+0.01}&layer=mapnik&marker=${station.Latitude},${station.Longitude}` :
+                    null;
                 
                 return `
                 <div class="camera-card" onclick="showModal(${allCameras.indexOf(station)})">
+                    <div class="camera-image" style="position: relative; height: 200px; overflow: hidden;">
+                        ${osmMapUrl ? 
+                            `<iframe 
+                                src="${osmMapUrl}" 
+                                style="width: 100%; height: 100%; border: none; pointer-events: none;"
+                                loading="lazy">
+                            </iframe>
+                            <div style="position: absolute; top: 10px; right: 10px; background: ${aqiColor}; color: white; padding: 8px 12px; border-radius: 20px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
+                                AQI: ${station.AQI || '-'}
+                            </div>` :
+                            `<div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: #f0f0f0;">
+                                <div style="text-align: center;">
+                                    <i class="fas fa-map-marked-alt" style="font-size: 3rem; color: #ccc;"></i>
+                                    <p style="margin-top: 10px; color: #999;">無座標資料</p>
+                                </div>
+                            </div>`
+                        }
+                    </div>
                     <div class="camera-info">
                         <h3>${station.SiteName} ${sourceIcon}</h3>
                         <p style="color: #9C27B0; font-weight: bold; margin: 5px 0;">
                             <i class="fas fa-map-marker-alt"></i> ${station.County}
                         </p>
-                        <p style="font-size: 0.85rem; color: #666;">
-                            <i class="fas fa-clock"></i> 更新時間: ${updateTime}
-                        </p>
-                    </div>
-                    <div class="camera-image" onclick="event.stopPropagation(); openImageInNewTab('${imageSrc}')">
-                        ${imageSrc ? 
-                            `<img src="${imageSrc}" alt="${station.SiteName}影像" loading="lazy" onerror="handleImageError(this, '${imageSrc}')"> 
-                             <div class="image-overlay">
-                                <i class="fas fa-search-plus"></i> 點擊放大
-                             </div>` :
-                            `<div class="no-image-placeholder">
-                                <i class="fas fa-image-slash" style="font-size: 2rem; color: #ccc;"></i><br>無影像資料
-                             </div>`
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin: 8px 0;">
+                            <div style="font-size: 1.5rem; font-weight: bold; color: ${aqiColor};">
+                                ${station.AQI || '-'} <span style="font-size: 0.8rem;">${aqiStatus}</span>
+                            </div>
+                            <div style="font-size: 0.75rem; color: #666;">
+                                <i class="fas fa-clock"></i> ${updateTime}
+                            </div>
+                        </div>
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; font-size: 0.75rem; margin-top: 10px;">
+                            <div style="background: ${getPollutantColor(station.PM25, 'PM25')}; padding: 5px; border-radius: 4px; text-align: center;">
+                                <div style="color: #555; font-size: 0.7rem;">PM2.5</div>
+                                <div style="font-weight: bold; color: #000;">${station.PM25 || '-'}</div>
+                            </div>
+                            <div style="background: ${getPollutantColor(station.PM10, 'PM10')}; padding: 5px; border-radius: 4px; text-align: center;">
+                                <div style="color: #555; font-size: 0.7rem;">PM10</div>
+                                <div style="font-weight: bold; color: #000;">${station.PM10 || '-'}</div>
+                            </div>
+                            <div style="background: ${getPollutantColor(station.O3, 'O3')}; padding: 5px; border-radius: 4px; text-align: center;">
+                                <div style="color: #555; font-size: 0.7rem;">O₃</div>
+                                <div style="font-weight: bold; color: #000;">${station.O3 || '-'}</div>
+                            </div>
+                            <div style="background: ${getPollutantColor(station.CO, 'CO')}; padding: 5px; border-radius: 4px; text-align: center;">
+                                <div style="color: #555; font-size: 0.7rem;">CO</div>
+                                <div style="font-weight: bold; color: #000;">${station.CO || '-'}</div>
+                            </div>
+                            <div style="background: ${getPollutantColor(station.SO2, 'SO2')}; padding: 5px; border-radius: 4px; text-align: center;">
+                                <div style="color: #555; font-size: 0.7rem;">SO₂</div>
+                                <div style="font-weight: bold; color: #000;">${station.SO2 || '-'}</div>
+                            </div>
+                            <div style="background: ${getPollutantColor(station.NO2, 'NO2')}; padding: 5px; border-radius: 4px; text-align: center;">
+                                <div style="color: #555; font-size: 0.7rem;">NO₂</div>
+                                <div style="font-weight: bold; color: #000;">${station.NO2 || '-'}</div>
+                            </div>
+                        </div>
+                        ${station.Pollutant && station.Pollutant !== '-' ? 
+                            `<div style="margin-top: 8px; padding: 6px; background: #fff3e0; border-left: 3px solid #FF9800; border-radius: 4px; font-size: 0.75rem;">
+                                <strong>主要污染物:</strong> <span style="color: #FF5722;">${station.Pollutant}</span>
+                            </div>` : ''
                         }
                     </div>
                 </div>
@@ -558,28 +694,260 @@
             const modalTitle = document.getElementById('modalTitle');
             const modalDescription = document.getElementById('modalDescription');
             const modalLocation = document.getElementById('modalLocation');
+            const modalStream = document.getElementById('modalStream');
             
-            modalTitle.textContent = station.SiteName;
-            modalDescription.textContent = `縣市: ${station.County}`;
-            modalLocation.textContent = `更新時間: ${station.UpdateTime ? new Date(station.UpdateTime).toLocaleString('zh-TW') : '未知'}`;
+            modalTitle.innerHTML = `
+                <i class="fas fa-wind" style="color: #9C27B0;"></i> ${station.SiteName}
+            `;
             
-            if (station.ImageURL) {
-                modalImage.src = station.ImageURL;
-                modalImage.style.display = 'block';
-                modalImage.onerror = () => {
-                    modalImage.src = 'data:image/svg+xml,<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg"><rect width="800" height="600" fill="%23f5f5f5"/><text x="50%" y="50%" font-family="Arial" font-size="24" fill="%23999" text-anchor="middle" dy=".3em">影像載入失敗</text></svg>';
-                };
-            } else {
-                modalImage.style.display = 'block';
-                modalImage.src = 'data:image/svg+xml,<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg"><rect width="800" height="600" fill="%23f5f5f5"/><text x="50%" y="50%" font-family="Arial" font-size="24" fill="%23999" text-anchor="middle" dy=".3em">無影像資料</text></svg>';
+            // 詳細資訊
+            const aqiValue = parseInt(station.AQI);
+            let aqiColor = '#9E9E9E';
+            let aqiStatus = '未知';
+            
+            if (!isNaN(aqiValue)) {
+                if (aqiValue <= 50) {
+                    aqiColor = '#4CAF50';
+                    aqiStatus = '良好';
+                } else if (aqiValue <= 100) {
+                    aqiColor = '#FFEB3B';
+                    aqiStatus = '普通';
+                } else if (aqiValue <= 150) {
+                    aqiColor = '#FF9800';
+                    aqiStatus = '對敏感族群不健康';
+                } else if (aqiValue <= 200) {
+                    aqiColor = '#F44336';
+                    aqiStatus = '不健康';
+                } else if (aqiValue <= 300) {
+                    aqiColor = '#9C27B0';
+                    aqiStatus = '非常不健康';
+                } else {
+                    aqiColor = '#8B0000';
+                    aqiStatus = '危害';
+                }
             }
             
+            modalDescription.innerHTML = `
+                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 15px;">
+                    <div>
+                        <strong><i class="fas fa-map-marker-alt"></i> 縣市：</strong>${station.County}
+                    </div>
+                    <div>
+                        <strong><i class="fas fa-chart-line"></i> AQI：</strong>
+                        <span style="color: ${aqiColor}; font-weight: bold; font-size: 1.2rem;">
+                            ${station.AQI || '-'} (${aqiStatus})
+                        </span>
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 15px 0; padding: 15px; background: #f5f5f5; border-radius: 8px;">
+                    <div style="text-align: center; padding: 10px; background: white; border-radius: 6px;">
+                        <div style="color: #666; font-size: 0.85rem; margin-bottom: 5px;">PM2.5</div>
+                        <div style="font-weight: bold; font-size: 1.3rem; color: ${getPollutantColor(station.PM25, 'PM25')};">${station.PM25 || '-'}</div>
+                    </div>
+                    <div style="text-align: center; padding: 10px; background: white; border-radius: 6px;">
+                        <div style="color: #666; font-size: 0.85rem; margin-bottom: 5px;">PM10</div>
+                        <div style="font-weight: bold; font-size: 1.3rem; color: ${getPollutantColor(station.PM10, 'PM10')};">${station.PM10 || '-'}</div>
+                    </div>
+                    <div style="text-align: center; padding: 10px; background: white; border-radius: 6px;">
+                        <div style="color: #666; font-size: 0.85rem; margin-bottom: 5px;">O₃</div>
+                        <div style="font-weight: bold; font-size: 1.3rem; color: ${getPollutantColor(station.O3, 'O3')};">${station.O3 || '-'}</div>
+                    </div>
+                    <div style="text-align: center; padding: 10px; background: white; border-radius: 6px;">
+                        <div style="color: #666; font-size: 0.85rem; margin-bottom: 5px;">CO</div>
+                        <div style="font-weight: bold; font-size: 1.3rem; color: ${getPollutantColor(station.CO, 'CO')};">${station.CO || '-'}</div>
+                    </div>
+                    <div style="text-align: center; padding: 10px; background: white; border-radius: 6px;">
+                        <div style="color: #666; font-size: 0.85rem; margin-bottom: 5px;">SO₂</div>
+                        <div style="font-weight: bold; font-size: 1.3rem; color: ${getPollutantColor(station.SO2, 'SO2')};">${station.SO2 || '-'}</div>
+                    </div>
+                    <div style="text-align: center; padding: 10px; background: white; border-radius: 6px;">
+                        <div style="color: #666; font-size: 0.85rem; margin-bottom: 5px;">NO₂</div>
+                        <div style="font-weight: bold; font-size: 1.3rem; color: ${getPollutantColor(station.NO2, 'NO2')};">${station.NO2 || '-'}</div>
+                    </div>
+                </div>
+                ${station.Pollutant && station.Pollutant !== '-' ? 
+                    `<div style="padding: 10px; background: #fff3e0; border-left: 4px solid #FF9800; border-radius: 4px; margin: 10px 0;">
+                        <strong><i class="fas fa-exclamation-triangle"></i> 主要污染物：</strong>
+                        <span style="color: #FF5722; font-weight: bold;">${station.Pollutant}</span>
+                    </div>` : ''
+                }
+            `;
+            
+            modalLocation.innerHTML = `
+                <strong><i class="fas fa-clock"></i> 更新時間：</strong>
+                ${station.UpdateTime ? new Date(station.UpdateTime).toLocaleString('zh-TW', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                }) : '未知'}
+            `;
+            
+            // 測站影像顯示 - 嘗試多個 URL
+            if (station.ImageURLs && station.ImageURLs.length > 0) {
+                let currentUrlIndex = 0;
+                let refreshInterval;
+                
+                const tryLoadImage = () => {
+                    if (currentUrlIndex >= station.ImageURLs.length) {
+                        // 所有 URL 都失敗了
+                        modalImage.style.display = 'none';
+                        modalStream.innerHTML = `
+                            <div style="padding: 40px; background: #fff3e0; border-radius: 8px; text-align: center; border: 2px dashed #FF9800;">
+                                <i class="fas fa-camera-retro" style="font-size: 3rem; color: #FF9800; margin-bottom: 15px;"></i>
+                                <p style="color: #E65100; margin: 10px 0; font-weight: bold;">該測站目前無可用影像</p>
+                                <p style="color: #F57C00; font-size: 0.9rem; margin: 10px 0;">
+                                    可能原因：<br>
+                                    • 測站未安裝監視器<br>
+                                    • 影像伺服器維護中<br>
+                                    • 網路連線問題
+                                </p>
+                                <div style="margin-top: 15px; padding: 10px; background: white; border-radius: 6px;">
+                                    <strong style="color: #666;">測站名稱：</strong><span style="color: #9C27B0;">${station.SiteName}</span>
+                                </div>
+                                <button onclick="window.open('https://airtw.moenv.gov.tw/CHT/EnvMonitoring/Central/SitePhoto.aspx', '_blank')" 
+                                    style="margin-top: 15px; padding: 10px 20px; background: #9C27B0; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 0.9rem;">
+                                    <i class="fas fa-external-link-alt"></i> 前往環保署查看所有測站影像
+                                </button>
+                            </div>
+                        `;
+                        return;
+                    }
+                    
+                    modalImage.style.display = 'block';
+                    modalStream.innerHTML = `
+                        <div style="margin-top: 10px; padding: 10px; background: #e3f2fd; border-radius: 6px; text-align: center;">
+                            <i class="fas fa-sync fa-spin" style="color: #2196F3;"></i>
+                            <span style="color: #1976D2;">正在載入影像... (嘗試 ${currentUrlIndex + 1}/${station.ImageURLs.length})</span>
+                        </div>
+                    `;
+                    
+                    const currentUrl = station.ImageURLs[currentUrlIndex];
+                    modalImage.src = currentUrl + '?t=' + new Date().getTime();
+                };
+                
+                modalImage.onload = () => {
+                    // 影像成功載入
+                    clearInterval(refreshInterval);
+                    modalStream.innerHTML = `
+                        <div style="margin-top: 10px; padding: 10px; background: #e8f5e9; border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <i class="fas fa-check-circle" style="color: #4CAF50;"></i>
+                                <span style="color: #2E7D32;">影像每30秒自動更新</span>
+                            </div>
+                            <button onclick="document.getElementById('modalImage').src = document.getElementById('modalImage').src.split('?')[0] + '?t=' + new Date().getTime()" 
+                                style="padding: 5px 15px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem;">
+                                <i class="fas fa-sync-alt"></i> 立即刷新
+                            </button>
+                        </div>
+                    `;
+                    
+                    // 每30秒刷新一次影像
+                    refreshInterval = setInterval(() => {
+                        if (modal.style.display === 'block') {
+                            modalImage.src = station.ImageURLs[currentUrlIndex] + '?t=' + new Date().getTime();
+                        } else {
+                            clearInterval(refreshInterval);
+                        }
+                    }, 30000);
+                };
+                
+                modalImage.onerror = () => {
+                    clearInterval(refreshInterval);
+                    currentUrlIndex++;
+                    console.log(`影像載入失敗，嘗試下一個 URL (${currentUrlIndex}/${station.ImageURLs.length})`);
+                    setTimeout(tryLoadImage, 500); // 延遲500ms後嘗試下一個URL
+                };
+                
+                // 開始嘗試載入第一個URL
+                tryLoadImage();
+            } else {
+                modalImage.style.display = 'none';
+                modalStream.innerHTML = `
+                    <div style="padding: 40px; background: #f5f5f5; border-radius: 8px; text-align: center;">
+                        <i class="fas fa-video-slash" style="font-size: 3rem; color: #ccc; margin-bottom: 15px;"></i>
+                        <p style="color: #666; margin: 10px 0;">該測站無影像資料</p>
+                    </div>
+                `;
+            }
             
             modal.style.display = 'block';
         }
 
         function closeModal() {
             document.getElementById('imageModal').style.display = 'none';
+        }
+
+        // 根據污染物濃度返回顏色
+        function getPollutantColor(value, pollutant) {
+            if (!value || value === '-') return '#f5f5f5';
+            
+            const numValue = parseFloat(value);
+            if (isNaN(numValue)) return '#f5f5f5';
+            
+            // PM2.5 標準 (μg/m³)
+            if (pollutant === 'PM25') {
+                if (numValue <= 15.4) return '#C8E6C9'; // 良好 - 淺綠
+                if (numValue <= 35.4) return '#FFF9C4'; // 普通 - 淺黃
+                if (numValue <= 54.4) return '#FFE0B2'; // 對敏感族群不健康 - 淺橘
+                if (numValue <= 150.4) return '#FFCDD2'; // 不健康 - 淺紅
+                if (numValue <= 250.4) return '#E1BEE7'; // 非常不健康 - 淺紫
+                return '#D7CCC8'; // 危害 - 淺褐
+            }
+            
+            // PM10 標準 (μg/m³)
+            if (pollutant === 'PM10') {
+                if (numValue <= 54) return '#C8E6C9';
+                if (numValue <= 125) return '#FFF9C4';
+                if (numValue <= 254) return '#FFE0B2';
+                if (numValue <= 354) return '#FFCDD2';
+                if (numValue <= 424) return '#E1BEE7';
+                return '#D7CCC8';
+            }
+            
+            // O3 臭氧標準 (ppb)
+            if (pollutant === 'O3') {
+                if (numValue <= 54) return '#C8E6C9';
+                if (numValue <= 70) return '#FFF9C4';
+                if (numValue <= 85) return '#FFE0B2';
+                if (numValue <= 105) return '#FFCDD2';
+                if (numValue <= 200) return '#E1BEE7';
+                return '#D7CCC8';
+            }
+            
+            // CO 一氧化碳標準 (ppm)
+            if (pollutant === 'CO') {
+                if (numValue <= 4.4) return '#C8E6C9';
+                if (numValue <= 9.4) return '#FFF9C4';
+                if (numValue <= 12.4) return '#FFE0B2';
+                if (numValue <= 15.4) return '#FFCDD2';
+                if (numValue <= 30.4) return '#E1BEE7';
+                return '#D7CCC8';
+            }
+            
+            // SO2 二氧化硫標準 (ppb)
+            if (pollutant === 'SO2') {
+                if (numValue <= 35) return '#C8E6C9';
+                if (numValue <= 75) return '#FFF9C4';
+                if (numValue <= 185) return '#FFE0B2';
+                if (numValue <= 304) return '#FFCDD2';
+                if (numValue <= 604) return '#E1BEE7';
+                return '#D7CCC8';
+            }
+            
+            // NO2 二氧化氮標準 (ppb)
+            if (pollutant === 'NO2') {
+                if (numValue <= 53) return '#C8E6C9';
+                if (numValue <= 100) return '#FFF9C4';
+                if (numValue <= 360) return '#FFE0B2';
+                if (numValue <= 649) return '#FFCDD2';
+                if (numValue <= 1249) return '#E1BEE7';
+                return '#D7CCC8';
+            }
+            
+            return '#f5f5f5';
         }
 
         loadCameras();

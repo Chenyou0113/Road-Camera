@@ -336,11 +336,12 @@
                 { name: '桃園市', endpoint: '/v2/Road/Traffic/CCTV/City/Taoyuan?$format=JSON' },
                 { name: '台南市', endpoint: '/v2/Road/Traffic/CCTV/City/Tainan?$format=JSON' },
                 { name: '高雄市', endpoint: '/v2/Road/Traffic/CCTV/City/Kaohsiung?$format=JSON' },
-                // 市（2）- 嘉義市使用開放資料
+                // 市（3）
                 { name: '基隆市', endpoint: '/v2/Road/Traffic/CCTV/City/Keelung?$format=JSON' },
                 { name: '新竹市', endpoint: '/v2/Road/Traffic/CCTV/City/Hsinchu?$format=JSON' },
-                // 縣（7）
-                // 宜蘭縣使用自己的即時影像 API
+                { name: '嘉義市', endpoint: '/v2/Road/Traffic/CCTV/City/Chiayi?$format=JSON' },
+                // 縣（8）
+                { name: '宜蘭縣', endpoint: '/v2/Road/Traffic/CCTV/City/YilanCounty?$format=JSON' },
                 { name: '新竹縣', endpoint: '/v2/Road/Traffic/CCTV/City/HsinchuCounty?$format=JSON' },
                 { name: '彰化縣', endpoint: '/v2/Road/Traffic/CCTV/City/ChanghuaCounty?$format=JSON' },
                 { name: '南投縣', endpoint: '/v2/Road/Traffic/CCTV/City/NantouCounty?$format=JSON' },
@@ -352,8 +353,6 @@
             
             try {
                 console.log('正在分批載入所有縣市的 TDX 市區道路監視器資料...');
-                
-                let allCamerasFromSources = [];
                 
                 // 分批處理 TDX 縣市資料 (每批 3 個縣市,避免 API 頻率限制)
                 const batchSize = 3;
@@ -381,7 +380,25 @@
                             }
                             
                             console.log(`✅ ${city.name}: ${cameras.length} 個監視器`);
-                            return cameras.map(camera => ({...camera, source: 'tdx', city: city.name}));
+                            console.log(`${city.name} 第一筆資料範例:`, cameras[0]);
+                            
+                            // 標準化欄位名稱 - 確保 city 和 City 都設定
+                            return cameras.map(camera => ({
+                                CCTVID: camera.CCTVID || camera.CCTVId || camera.cctvid || camera.id,
+                                RoadName: camera.RoadName || camera.RoadSection?.RoadName || '',
+                                LocationDescription: camera.LocationDescription || camera.SurveillanceDescription || '',
+                                PositionLat: camera.PositionLat || camera.CCTVPositionLat || 0,
+                                PositionLon: camera.PositionLon || camera.CCTVPositionLon || 0,
+                                VideoImageURL: camera.VideoImageURL || camera.PictureURL || camera.ImageURL || '',
+                                VideoStreamURL: camera.VideoStreamURL || camera.StreamURL || '',
+                                RoadDirection: camera.RoadDirection || '',
+                                LocationMile: camera.LocationMile || '',
+                                RoadSection: camera.RoadSection || null,
+                                SurveillanceDescription: camera.SurveillanceDescription || camera.LocationDescription || '',
+                                source: 'tdx',
+                                city: city.name,
+                                City: city.name  // 同時設定 City 屬性以確保相容性
+                            }));
                         } catch (error) {
                             console.warn(`⚠️ ${city.name} TDX 載入失敗:`, error.message);
                             return [];
@@ -399,36 +416,14 @@
                     }
                 }
                 
-                // 額外載入嘉義市開放資料
-                console.log('載入 嘉義市開放資料...');
-                try {
-                    const response = await fetch('https://data.chiayi.gov.tw/opendata/api/getResource?oid=452283a9-bb9f-40fd-b748-228dd5c3fb1e&rid=c353736b-c126-4652-bc33-951423d73431');
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}`);
-                    }
-                    
-                    const data = await response.json();
-                    let cameras = [];
-                    
-                    if (Array.isArray(data)) {
-                        cameras = data;
-                    } else if (data && Array.isArray(data.result)) {
-                        cameras = data.result;
-                    } else if (data && Array.isArray(data.records)) {
-                        cameras = data.records;
-                    }
-                    
-                    console.log(`✅ 嘉義市開放資料: ${cameras.length} 個監視器`);
-                    allCamerasFromSources.push(...cameras.map(camera => ({...camera, source: 'chiayi-opendata', city: '嘉義市'})));
-                } catch (error) {
-                    console.warn(`⚠️ 嘉義市開放資料載入失敗:`, error.message);
-                }
                 
-                // 額外載入台中市開放資料
+                // 額外載入台中市開放資料（使用 CORS 代理）
                 console.log('載入 台中市開放資料...');
                 try {
-                    const response = await fetch('https://newdatacenter.taichung.gov.tw/api/v1/no-auth/resource.download?rid=6c9f5fd5-d74c-4450-9339-1a00e6cda2e6');
+                    const taichungUrl = 'https://datacenter.taichung.gov.tw/swagger/OpenData/6c9f5fd5-d74c-4450-9339-1a00e6cda2e6';
+                    const corsProxy = 'https://api.allorigins.win/raw?url=';
+                    
+                    const response = await fetch(corsProxy + encodeURIComponent(taichungUrl));
                     
                     if (!response.ok) {
                         throw new Error(`HTTP ${response.status}`);
@@ -437,47 +432,7 @@
                     const data = await response.json();
                     let cameras = [];
                     
-                    if (Array.isArray(data)) {
-                        cameras = data;
-                    } else if (data && Array.isArray(data.result)) {
-                        cameras = data.result;
-                    } else if (data && Array.isArray(data.records)) {
-                        cameras = data.records;
-                    }
-                    
-                    // 轉換台中市資料格式
-                    const transformedCameras = cameras.map(camera => ({
-                        CCTVID: camera.cctvid,
-                        RoadSection: camera.roadsection,
-                        PositionLon: parseFloat(camera.px) || 0,
-                        PositionLat: parseFloat(camera.py) || 0,
-                        VideoStreamURL: `https://tcnvr8.taichung.gov.tw/${camera.cctvid}`,
-                        VideoImageURL: camera.url,
-                        Status: camera.status,
-                        RoadName: camera.roadsection || '',
-                        LocationDescription: camera.roadsection || '',
-                        source: 'taichung-opendata',
-                        city: '台中市'
-                    }));
-                    
-                    console.log(`✅ 台中市開放資料: ${transformedCameras.length} 個監視器`);
-                    allCamerasFromSources.push(...transformedCameras);
-                } catch (error) {
-                    console.warn(`⚠️ 台中市開放資料載入失敗:`, error.message);
-                }
-                
-                // 額外載入宜蘭縣即時影像
-                console.log('載入 宜蘭縣即時影像...');
-                try {
-                    const response = await fetch('https://ilcpb.ivs.hinet.net/public/ilcpb_live_cam');
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}`);
-                    }
-                    
-                    const data = await response.json();
-                    let cameras = [];
-                    
+                    // 嘗試不同的資料結構
                     if (Array.isArray(data)) {
                         cameras = data;
                     } else if (data && Array.isArray(data.result)) {
@@ -488,59 +443,76 @@
                         cameras = data.data;
                     }
                     
-                    // 轉換宜蘭縣資料格式
+                    console.log(`✅ 台中市開放資料: ${cameras.length} 個監視器`);
+                    if (cameras.length > 0) {
+                        console.log('台中市第一筆資料範例:', cameras[0]);
+                    }
+                    
+                    // 轉換台中市資料格式
                     const transformedCameras = cameras.map(camera => ({
-                        CCTVID: camera.id || camera.cctvid || camera.name,
-                        RoadSection: camera.location || camera.address || '',
-                        PositionLon: parseFloat(camera.lon || camera.longitude || camera.lng) || 0,
-                        PositionLat: parseFloat(camera.lat || camera.latitude) || 0,
-                        VideoStreamURL: camera.stream_url || camera.url || camera.video_url || '',
-                        VideoImageURL: camera.snapshot || camera.image || camera.img_url || '',
-                        Status: camera.status || '1',
-                        RoadName: camera.road || camera.location || '',
-                        LocationDescription: camera.location || camera.address || camera.description || '',
-                        source: 'yilan-live',
-                        city: '宜蘭縣'
+                        CCTVID: camera.cctvid || camera.CCTVID || camera.id,
+                        RoadSection: camera.roadsection || camera.RoadSection,
+                        PositionLon: parseFloat(camera.px || camera.lon || camera.longitude) || 120.68,
+                        PositionLat: parseFloat(camera.py || camera.lat || camera.latitude) || 24.15,
+                        VideoStreamURL: camera.cctvid ? `https://tcnvr8.taichung.gov.tw/${camera.cctvid}` : '',
+                        VideoImageURL: camera.url || camera.VideoImageURL || camera.image_url || '',
+                        Status: camera.status || camera.Status || '1',
+                        RoadName: camera.roadsection || camera.RoadSection || camera.road || '',
+                        LocationDescription: camera.roadsection || camera.RoadSection || camera.location || '',
+                        source: 'taichung-opendata',
+                        city: '台中市'
                     }));
                     
-                    console.log(`✅ 宜蘭縣即時影像: ${transformedCameras.length} 個監視器`);
                     allCamerasFromSources.push(...transformedCameras);
+                    console.log(`📍 台中市監視器已加入，累計: ${allCamerasFromSources.length}`);
                 } catch (error) {
-                    console.warn(`⚠️ 宜蘭縣即時影像載入失敗:`, error.message);
+                    console.warn(`⚠️ 台中市開放資料載入失敗:`, error.message);
+                    console.error('台中市錯誤詳情:', error);
                 }
+                
                 
                 console.log('✅ 所有縣市資料載入完成');
                 console.log('總監視器數量:', allCamerasFromSources.length);
                 
                 if (allCamerasFromSources.length === 0) {
-                    throw new Error('所有縣市資料載入失敗');
+                    container.innerHTML = `
+                        <div class="loading" style="color: #ff6b6b;">
+                            <i class="fas fa-exclamation-triangle"></i> 
+                            無法載入任何監視器資料<br>
+                            <br>
+                            <small style="color: #ffb3b3;">
+                                請檢查：<br>
+                                1. 網路連線是否正常<br>
+                                2. TDX API 金鑰是否正確設定<br>
+                                3. 開啟瀏覽器開發者工具 (F12) 查看詳細錯誤<br>
+                            </small>
+                        </div>
+                    `;
+                    return;
                 }
                 
             } catch (error) {
-                console.error('❌ TDX API 載入失敗:', error);
-                console.error('錯誤訊息:', error.message);
+                console.error('❌ 載入過程發生錯誤:', error);
+                console.error('錯誤詳情:', error);
                 
                 container.innerHTML = `
                     <div class="loading" style="color: #ff6b6b;">
                         <i class="fas fa-exclamation-triangle"></i> 
-                        載入市區道路監視器資料失敗<br>
+                        載入市區道路監視器資料時發生錯誤<br>
+                        <br>
                         錯誤: ${error.message}<br>
                         <br>
                         <small style="color: #ffb3b3;">
                             可能原因：<br>
-                            1. TDX API 端點可能已變更<br>
-                            2. API 金鑰需要重新設定<br>
+                            1. TDX API 金鑰設定問題（請檢查 assets/config.js）<br>
+                            2. TDX API 認證失敗<br>
                             3. 網路連線問題<br>
+                            4. CORS 跨域問題<br>
                             <br>
-                            請檢查瀏覽器主控台 (F12) 查看詳細錯誤訊息
+                            請開啟瀏覽器開發者工具 (F12) 查看 Console 和 Network 分頁的詳細錯誤訊息
                         </small>
                     </div>
                 `;
-                return;
-            }
-            
-            if (!allCamerasFromSources || allCamerasFromSources.length === 0) {
-                container.innerHTML = '<div class="loading">無監視器資料</div>';
                 return;
             }
 
@@ -548,17 +520,42 @@
             console.log('第一筆資料範例:', allCamerasFromSources[0]);
 
             // 為每個監視器添加額外資訊
-            allCameras = allCamerasFromSources.map(camera => ({
-                ...camera,
-                City: getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName),
-                FreewayNumber: getFreewayNumber(camera.RoadName),
-                DirectionName: getDirectionName(camera.RoadDirection)
-            }));
+            console.log('開始處理監視器資料...');
+            try {
+                allCameras = allCamerasFromSources.map(camera => {
+                    const cityName = camera.city || camera.City || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName);
+                    return {
+                        ...camera,
+                        city: cityName,      // 確保 city 屬性存在
+                        City: cityName,      // 確保 City 屬性存在
+                        FreewayNumber: getFreewayNumber(camera.RoadName),
+                        DirectionName: getDirectionName(camera.RoadDirection)
+                    };
+                });
+                
+                console.log('✅ 監視器資料處理完成，數量:', allCameras.length);
+                
+                // 顯示每個縣市的監視器數量統計
+                const cityCounts = {};
+                allCameras.forEach(camera => {
+                    const cityName = camera.city || camera.City || '未知';
+                    cityCounts[cityName] = (cityCounts[cityName] || 0) + 1;
+                });
+                console.log('📊 各縣市監視器數量統計:', cityCounts);
+                
+            } catch (mapError) {
+                console.error('❌ 資料處理錯誤:', mapError);
+                allCameras = allCamerasFromSources; // 如果處理失敗，使用原始資料
+            }
             
             filteredCameras = allCameras;
+            console.log('準備填充篩選器...');
             populateFilters();
+            console.log('準備更新統計...');
             updateStats();
+            console.log('準備顯示監視器...');
             displayCameras(allCameras);
+            console.log('✅ 所有處理完成');
         }
 
         function populateFilters() {
@@ -585,7 +582,7 @@
 
         function updateStats() {
             document.getElementById('totalCameras').textContent = allCameras.length;
-            const available = allCameras.filter(c => c.VideoImageUrl || c.VideoStreamURL).length;
+            const available = allCameras.filter(c => c.VideoImageURL || c.VideoStreamURL).length;
             document.getElementById('availableCameras').textContent = available;
             document.getElementById('filteredCameras').textContent = filteredCameras.length;
         }
