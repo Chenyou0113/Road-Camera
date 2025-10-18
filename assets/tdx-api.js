@@ -60,3 +60,6 @@ class TDXApi {
         }
     }
 }
+
+// 創建全域實例供其他頁面使用
+const tdxApi = new TDXApi();
