@@ -224,24 +224,16 @@
             z-index: 1;
         }
         
-        .image-placeholder {
-            position: absolute;
-            top: 0;
-            left: 0;
+        .no-image-display {
             width: 100%;
             height: 100%;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            color: white;
-            background: linear-gradient(135deg, #795548, #8D6E63);
-        }
-        
-        .image-placeholder i {
-            font-size: 3rem;
-            margin-bottom: 15px;
-            opacity: 0.8;
+            background: #f5f5f5;
+            border: 2px dashed #ddd;
+            border-radius: 8px;
         }
         
         .status-indicator {
@@ -691,13 +683,33 @@
         
         // 更新縣市和行政區選項
         function updateLocationOptions() {
+            // 台灣縣市標準排序 - 由北到南，直轄市優先
+            const TAIWAN_CITY_ORDER = [
+                '台北市', '新北市', '桃園市', '台中市', '台南市', '高雄市',
+                '基隆市', '新竹市', '嘉義市',
+                '新竹縣', '苗栗縣', '彰化縣', '南投縣', '雲林縣', '嘉義縣', '屏東縣',
+                '宜蘭縣', '花蓮縣', '台東縣',
+                '澎湖縣', '金門縣', '連江縣'
+            ];
+            
             const countyFilter = document.getElementById('countyFilter');
-            const counties = [...new Set(debrisFlowStations.map(s => s.county).filter(c => c))].sort();
+            const counties = [...new Set(debrisFlowStations.map(s => s.county).filter(c => c))];
+            
+            // 按照台灣縣市標準順序排列
+            const sortedCounties = counties.sort((a, b) => {
+                const indexA = TAIWAN_CITY_ORDER.indexOf(a);
+                const indexB = TAIWAN_CITY_ORDER.indexOf(b);
+                // 如果在標準順序中找不到，則放在最後並按字母排序
+                if (indexA === -1 && indexB === -1) return a.localeCompare(b);
+                if (indexA === -1) return 1;
+                if (indexB === -1) return -1;
+                return indexA - indexB;
+            });
             
             // 清空並重新填充縣市選項
             countyFilter.innerHTML = '<option value="">選擇縣市</option>';
             
-            counties.forEach(county => {
+            sortedCounties.forEach(county => {
                 const option = document.createElement('option');
                 option.value = county;
                 option.textContent = county;
@@ -833,17 +845,17 @@
             grid.innerHTML = filteredStations.map(station => `
                 <div class="station-card" onclick="showStationDetails('${station.id}')">
                     <div class="station-image">
-                        <div class="image-placeholder">
-                            <i class="fas fa-video"></i>
-                            <span>監測影像</span>
-                            <div style="font-size: 0.8rem; margin-top: 8px; opacity: 0.8;">
-                                點擊查看詳細資訊
-                            </div>
-                        </div>
-                        <img src="${station.image || ''}" alt="${station.name}" 
-                             style="opacity: 0;" onload="showImage(this)" onerror="handleImageError(this)"
-                             data-original-src="${station.image || ''}"
-                             crossorigin="anonymous">
+                        ${station.image ? 
+                            `<img src="${station.image}" alt="${station.name}" 
+                                  style="width: 100%; height: 100%; object-fit: cover;" 
+                                  onload="showImage(this)" onerror="handleImageError(this)"
+                                  data-original-src="${station.image}"
+                                  crossorigin="anonymous">` :
+                            `<div class="no-image-display">
+                                <i class="fas fa-video-slash" style="font-size: 2rem; margin-bottom: 10px; color: #999;"></i>
+                                <span style="color: #666; font-size: 0.9rem;">無監測影像</span>
+                            </div>`
+                        }
                     </div>
                     
                     <div class="station-info">
@@ -889,14 +901,8 @@
 
         // 圖片載入處理
         function showImage(img) {
-            // 淡入顯示圖片
+            // 影像成功載入時直接顯示
             img.style.opacity = '1';
-            // 隱藏預設的佔位圖
-            const placeholder = img.parentElement.querySelector('.image-placeholder');
-            if (placeholder) {
-                placeholder.style.opacity = '0';
-                placeholder.style.pointerEvents = 'none';
-            }
         }
 
         function handleImageError(img) {
@@ -931,48 +937,14 @@
                 }
             }
             
-            // 嘗試備用影像來源
-            const backupSources = [
-                'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=300&fit=crop&auto=format', // 山景
-                'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?w=400&h=300&fit=crop&auto=format', // 森林
-                'https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=400&h=300&fit=crop&auto=format', // 自然景觀
-                'https://images.unsplash.com/photo-1454391304352-2bf4678b1a7a?w=400&h=300&fit=crop&auto=format', // 山景
-                'https://images.unsplash.com/photo-1518837695005-2083093ee35b?w=400&h=300&fit=crop&auto=format'  // 河流
-            ];
-            
-            // 如果還沒有嘗試過備用來源
-            if (!img.dataset.backupTried) {
-                img.dataset.backupTried = 'true';
-                const randomIndex = Math.floor(Math.random() * backupSources.length);
-                img.src = backupSources[randomIndex];
-                return;
-            }
-            
-            // 所有來源都失敗，顯示可點擊的佔位圖
+            // 所有載入嘗試都失敗，隱藏影像元素
             img.style.display = 'none';
-            const placeholder = img.parentElement.querySelector('.image-placeholder');
-            if (placeholder) {
-                placeholder.style.opacity = '1';
-                placeholder.style.pointerEvents = 'auto';
-                placeholder.style.cursor = 'pointer';
-                
-                const span = placeholder.querySelector('span');
-                if (span) {
-                    span.innerHTML = `
-                        <i class="fas fa-external-link-alt"></i><br>
-                        點擊開啟監測影像<br>
-                        <small style="font-size: 0.7rem; opacity: 0.8;">影像需外部開啟</small>
-                    `;
+            const imageContainer = img.parentElement;
+            if (imageContainer) {
+                const noImageDisplay = imageContainer.querySelector('.no-image-display');
+                if (noImageDisplay) {
+                    noImageDisplay.style.display = 'flex';
                 }
-                
-                // 添加點擊事件開啟原始影像
-                placeholder.onclick = function(e) {
-                    e.stopPropagation();
-                    if (originalSrc && originalSrc.startsWith('http')) {
-                        window.open(originalSrc, '_blank', 'width=800,height=600');
-                        console.log('開啟原始影像URL:', originalSrc);
-                    }
-                };
             }
         }
 
