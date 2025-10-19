@@ -179,6 +179,12 @@
         let itemsPerPage = 50; // 每頁顯示 50 個監視器
         let totalPages = 1;
         
+        // 快速道路列表
+        const EXPRESSWAYS = [
+            '台61', '台62', '台63', '台64', '台65', '台66', '台68', 
+            '台72', '台74', '台76', '台78', '台82', '台84', '台86', '台88'
+        ];
+        
         // 從路段資訊中提取省道路線編號
         function extractRoadNumber(camera) {
             const roadName = camera.RoadName || '';
@@ -189,22 +195,60 @@
             // 匹配台1線、台9甲線等格式
             const match1 = allText.match(/[台臺](\d+)([甲乙丙丁]?)線?/);
             if (match1) {
-                return `台${match1[1]}${match1[2] ? match1[2] : ''}線`;
+                const roadNumber = `台${match1[1]}${match1[2] ? match1[2] : ''}線`;
+                // 排除快速道路
+                if (EXPRESSWAYS.includes(`台${match1[1]}`)) {
+                    return '';
+                }
+                return roadNumber;
             }
             
             // 匹配省道台1、省道9號等格式
             const match2 = allText.match(/省道[台臺]?(\d+)([甲乙丙丁]?)號?/);
             if (match2) {
-                return `台${match2[1]}${match2[2] ? match2[2] : ''}線`;
+                const roadNumber = `台${match2[1]}${match2[2] ? match2[2] : ''}線`;
+                // 排除快速道路
+                if (EXPRESSWAYS.includes(`台${match2[1]}`)) {
+                    return '';
+                }
+                return roadNumber;
             }
             
             // 匹配單純的台1、台2等
             const match3 = allText.match(/[台臺](\d+)([甲乙丙丁]?)[^線號]/);
             if (match3) {
-                return `台${match3[1]}${match3[2] ? match3[2] : ''}線`;
+                const roadNumber = `台${match3[1]}${match3[2] ? match3[2] : ''}線`;
+                // 排除快速道路
+                if (EXPRESSWAYS.includes(`台${match3[1]}`)) {
+                    return '';
+                }
+                return roadNumber;
             }
             
             return '';
+        }
+        
+        // 判斷是否為快速道路
+        function isExpressway(camera) {
+            const roadName = camera.RoadName || '';
+            const locationDesc = camera.LocationDescription || '';
+            const allText = `${roadName} ${locationDesc}`;
+            
+            // 檢查是否包含快速道路編號
+            for (const expressway of EXPRESSWAYS) {
+                const pattern = new RegExp(`[台臺](${expressway.slice(1)})線?`, 'g');
+                if (pattern.test(allText)) {
+                    return true;
+                }
+            }
+            
+            // 特殊處理一些別名
+            if (allText.includes('西濱') || allText.includes('西部濱海') ||
+                allText.includes('中投') || allText.includes('萬里瑞濱')) {
+                return true;
+            }
+            
+            return false;
         }
         
         // 切換資訊面板顯示/隱藏
@@ -402,11 +446,14 @@
                 
                 console.log(`✅ Highway 端點返回: ${cameras.length} 個監視器`);
                 
-                // 為每個監視器添加路線編號和來源標記
-                allCamerasFromSources = cameras.map(camera => {
-                    const roadNumber = extractRoadNumber(camera);
-                    return {...camera, source: 'tdx', RoadNumber: roadNumber};
-                });
+                // 篩選出一般省道，排除快速道路，並添加路線編號和來源標記
+                allCamerasFromSources = cameras
+                    .filter(camera => !isExpressway(camera))
+                    .map(camera => {
+                        const roadNumber = extractRoadNumber(camera);
+                        return {...camera, source: 'tdx', RoadNumber: roadNumber};
+                    })
+                    .filter(camera => camera.RoadNumber); // 只保留有省道編號的監視器
                 
                 console.log('✅ 省道監視器資料載入完成');
                 console.log('省道監視器總數:', allCamerasFromSources.length);

@@ -6,6 +6,22 @@
     <title>市區道路監視器 - TDX</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script>window.CURRENT_PAGE = 'city';</script>
+    <script>
+        // 防止 CSS 代碼意外顯示在頁面上
+        document.addEventListener('DOMContentLoaded', function() {
+            // 清理任何可能的錯誤顯示內容
+            const bodyElements = document.body.children;
+            for (let i = 0; i < bodyElements.length; i++) {
+                const element = bodyElements[i];
+                if (element.nodeType === Node.TEXT_NODE && element.textContent.includes('margin-bottom')) {
+                    element.remove();
+                } else if (element.tagName !== 'DIV' && element.tagName !== 'SCRIPT' && 
+                          element.textContent && element.textContent.includes('camera-image')) {
+                    element.style.display = 'none';
+                }
+            }
+        });
+    </script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Microsoft JhengHei', Arial, sans-serif; background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%); min-height: 100vh; }
@@ -44,6 +60,33 @@
     </style>
 </head>
 <body>
+    <!-- 清理腳本：防止 CSS 代碼意外顯示 -->
+    <script>
+        (function() {
+            // 立即執行，清理任何意外的內容
+            const cleanupInterval = setInterval(function() {
+                const textNodes = document.createTreeWalker(
+                    document.body,
+                    NodeFilter.SHOW_TEXT,
+                    null,
+                    false
+                );
+                
+                let node;
+                while (node = textNodes.nextNode()) {
+                    if (node.textContent.includes('margin-bottom') || 
+                        node.textContent.includes('camera-image') ||
+                        node.textContent.includes('border-bottom')) {
+                        node.remove();
+                    }
+                }
+                
+                // 5秒後停止清理
+                setTimeout(() => clearInterval(cleanupInterval), 5000);
+            }, 100);
+        })();
+    </script>
+    
     <div class="header">
         <div class="container">
             <h1><i class="fas fa-city"></i> 市區道路監視器</h1>
@@ -84,10 +127,14 @@
             </div>
         </div>
         
-        <div style="display: flex; gap: 15px; margin: 20px 0; flex-wrap: wrap;">
-            <select style="padding: 10px; border-radius: 5px; border: 2px solid #4CAF50; font-size: 1rem;" id="citySelect" onchange="applyFilters()">
+        <div style="display: flex; gap: 15px; margin: 20px 0; flex-wrap: wrap; align-items: center;">
+            <select style="padding: 10px; border-radius: 5px; border: 2px solid #4CAF50; font-size: 1rem; min-width: 150px;" id="citySelect" onchange="onCityChange()">
                 <option value="">所有縣市</option>
             </select>
+            <select style="padding: 10px; border-radius: 5px; border: 2px solid #4CAF50; font-size: 1rem; min-width: 150px;" id="districtSelect" onchange="applyFilters()" disabled>
+                <option value="">請先選擇縣市</option>
+            </select>
+            <input type="text" placeholder="搜尋路段或地點..." style="padding: 10px; border-radius: 5px; border: 2px solid #4CAF50; font-size: 1rem; min-width: 200px;" id="searchInput" onkeyup="applyFilters()">
             <button style="padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem;" onclick="resetFilters()">
                 <i class="fas fa-redo"></i> 重置篩選
             </button>
@@ -232,6 +279,54 @@
             }
             
             return '其他地區';
+        }
+
+        // 從位置描述中提取鄉鎮區資訊
+        function extractDistrict(locationDescription, city) {
+            if (!locationDescription) return '';
+            
+            // 常見的鄉鎮市區關鍵字
+            const districtKeywords = ['區', '市', '鄉', '鎮'];
+            
+            // 先嘗試從地址字串中提取
+            for (const keyword of districtKeywords) {
+                const regex = new RegExp(`([^\\s]{1,4}${keyword})`, 'g');
+                const matches = locationDescription.match(regex);
+                if (matches) {
+                    // 返回第一個匹配的鄉鎮區
+                    return matches[0];
+                }
+            }
+            
+            // 如果沒有找到，嘗試從路名中推測（部分路名包含區域資訊）
+            const roadDistrictMap = {
+                // 台北市
+                '忠孝': '大安區', '敦化': '大安區', '信義': '信義區', '松仁': '信義區',
+                '中山': '中山區', '民生': '中山區', '復興': '大安區', '建國': '大安區',
+                '羅斯福': '大安區', '仁愛': '大安區', '和平': '大安區',
+                '西門': '萬華區', '重慶': '大同區', '延平': '大同區',
+                // 新北市
+                '中正': '板橋區', '民族': '板橋區', '文化': '板橋區',
+                '中華': '板橋區', '新站': '板橋區', '三重': '三重區',
+                // 台中市
+                '台灣大道': '西屯區', '五權': '西區', '中港': '西屯區',
+                '文心': '南屯區', '向上': '西區', '公益': '西區',
+                // 高雄市
+                '中山一路': '三民區', '五福': '前金區', '建國': '三民區',
+                '民族': '三民區', '中正': '苓雅區', '光華': '苓雅區',
+                // 台南市
+                '中山': '中西區', '成功': '東區', '東門': '東區',
+                // 桃園市
+                '中正': '桃園區', '復興': '桃園區', '春日': '桃園區'
+            };
+            
+            for (const [road, district] of Object.entries(roadDistrictMap)) {
+                if (locationDescription.includes(road)) {
+                    return district;
+                }
+            }
+            
+            return ''; // 無法判斷
         }
 
         // 獲取方向名稱
@@ -417,22 +512,28 @@
                             console.log(`${city.name} 第一筆資料範例:`, cameras[0]);
                             
                             // 標準化欄位名稱 - 確保 city 和 City 都設定
-                            return cameras.map(camera => ({
-                                CCTVID: camera.CCTVID || camera.CCTVId || camera.cctvid || camera.id,
-                                RoadName: camera.RoadName || camera.RoadSection?.RoadName || '',
-                                LocationDescription: camera.LocationDescription || camera.SurveillanceDescription || '',
-                                PositionLat: camera.PositionLat || camera.CCTVPositionLat || 0,
-                                PositionLon: camera.PositionLon || camera.CCTVPositionLon || 0,
-                                VideoImageURL: camera.VideoImageURL || camera.PictureURL || camera.ImageURL || '',
-                                VideoStreamURL: camera.VideoStreamURL || camera.StreamURL || '',
-                                RoadDirection: camera.RoadDirection || '',
-                                LocationMile: camera.LocationMile || '',
-                                RoadSection: camera.RoadSection || null,
-                                SurveillanceDescription: camera.SurveillanceDescription || camera.LocationDescription || '',
-                                source: 'tdx',
-                                city: city.name,
-                                City: city.name  // 同時設定 City 屬性以確保相容性
-                            }));
+                            return cameras.map(camera => {
+                                const locationDesc = camera.LocationDescription || camera.SurveillanceDescription || '';
+                                const district = extractDistrict(locationDesc, city.name);
+                                
+                                return {
+                                    CCTVID: camera.CCTVID || camera.CCTVId || camera.cctvid || camera.id,
+                                    RoadName: camera.RoadName || camera.RoadSection?.RoadName || '',
+                                    LocationDescription: locationDesc,
+                                    PositionLat: camera.PositionLat || camera.CCTVPositionLat || 0,
+                                    PositionLon: camera.PositionLon || camera.CCTVPositionLon || 0,
+                                    VideoImageURL: camera.VideoImageURL || camera.PictureURL || camera.ImageURL || '',
+                                    VideoStreamURL: camera.VideoStreamURL || camera.StreamURL || '',
+                                    RoadDirection: camera.RoadDirection || '',
+                                    LocationMile: camera.LocationMile || '',
+                                    RoadSection: camera.RoadSection || null,
+                                    SurveillanceDescription: camera.SurveillanceDescription || camera.LocationDescription || '',
+                                    source: 'tdx',
+                                    city: city.name,
+                                    City: city.name,  // 同時設定 City 屬性以確保相容性
+                                    district: district // 新增鄉鎮區資訊
+                                };
+                            });
                         } catch (error) {
                             console.warn(`⚠️ ${city.name} TDX 載入失敗:`, error.message);
                             return [];
@@ -555,6 +656,7 @@
                     PositionLon: 121.5499,
                     VideoImageURL: 'https://via.placeholder.com/400x300/4CAF50/FFFFFF?text=忠孝敦化路口',
                     city: '台北市',
+                    district: '大安區',
                     source: 'demo'
                 },
                 {
@@ -565,6 +667,7 @@
                     PositionLon: 121.5711,
                     VideoImageURL: 'https://via.placeholder.com/400x300/2196F3/FFFFFF?text=信義松仁路口',
                     city: '台北市',
+                    district: '信義區',
                     source: 'demo'
                 },
                 {
@@ -575,6 +678,7 @@
                     PositionLon: 121.5153,
                     VideoImageURL: 'https://via.placeholder.com/400x300/FF9800/FFFFFF?text=中正中山路口',
                     city: '新北市',
+                    district: '板橋區',
                     source: 'demo'
                 },
                 {
@@ -585,6 +689,7 @@
                     PositionLon: 120.6820,
                     VideoImageURL: 'https://via.placeholder.com/400x300/9C27B0/FFFFFF?text=台灣大道五權路口',
                     city: '台中市',
+                    district: '西屯區',
                     source: 'demo'
                 },
                 {
@@ -595,6 +700,7 @@
                     PositionLon: 120.3103,
                     VideoImageURL: 'https://via.placeholder.com/400x300/F44336/FFFFFF?text=中山五福路口',
                     city: '高雄市',
+                    district: '三民區',
                     source: 'demo'
                 }
             ];
@@ -642,6 +748,43 @@
                 }).join('');
         }
 
+        // 當縣市選擇變更時，更新鄉鎮區選單
+        function onCityChange() {
+            const cityFilter = document.getElementById('citySelect').value;
+            const districtSelect = document.getElementById('districtSelect');
+            
+            if (!cityFilter) {
+                // 如果沒有選擇縣市，禁用鄉鎮區選單
+                districtSelect.innerHTML = '<option value="">請先選擇縣市</option>';
+                districtSelect.disabled = true;
+            } else {
+                // 獲取該縣市的所有鄉鎮區
+                const districtsInCity = [...new Set(
+                    allCameras
+                        .filter(c => (c.city || c.City) === cityFilter)
+                        .map(c => c.district)
+                        .filter(Boolean)
+                )].sort();
+                
+                if (districtsInCity.length > 0) {
+                    districtSelect.innerHTML = '<option value="">所有鄉鎮區</option>' + 
+                        districtsInCity.map(district => {
+                            const count = allCameras.filter(c => 
+                                (c.city || c.City) === cityFilter && c.district === district
+                            ).length;
+                            return `<option value="${district}">${district} (${count})</option>`;
+                        }).join('');
+                    districtSelect.disabled = false;
+                } else {
+                    districtSelect.innerHTML = '<option value="">該縣市無鄉鎮區資料</option>';
+                    districtSelect.disabled = true;
+                }
+            }
+            
+            // 應用篩選
+            applyFilters();
+        }
+
         function updateStats() {
             document.getElementById('totalCameras').textContent = allCameras.length;
             const available = allCameras.filter(c => c.VideoImageURL || c.VideoStreamURL).length;
@@ -651,10 +794,29 @@
 
         function applyFilters() {
             const cityFilter = document.getElementById('citySelect').value;
+            const districtFilter = document.getElementById('districtSelect').value;
+            const searchFilter = document.getElementById('searchInput').value.toLowerCase();
             
             filteredCameras = allCameras.filter(camera => {
                 const cameraCity = camera.city || camera.City || '';
-                return !cityFilter || cameraCity === cityFilter;
+                const cameraDistrict = camera.district || '';
+                const cameraLocation = (camera.LocationDescription || camera.SurveillanceDescription || '').toLowerCase();
+                const cameraRoad = (camera.RoadName || '').toLowerCase();
+                
+                // 縣市篩選
+                const cityMatch = !cityFilter || cameraCity === cityFilter;
+                
+                // 鄉鎮區篩選
+                const districtMatch = !districtFilter || cameraDistrict === districtFilter;
+                
+                // 搜尋篩選
+                const searchMatch = !searchFilter || 
+                    cameraLocation.includes(searchFilter) || 
+                    cameraRoad.includes(searchFilter) ||
+                    cameraCity.toLowerCase().includes(searchFilter) ||
+                    cameraDistrict.toLowerCase().includes(searchFilter);
+                
+                return cityMatch && districtMatch && searchMatch;
             });
             
             currentPage = 1; // 重置到第一頁
@@ -664,6 +826,10 @@
 
         function resetFilters() {
             document.getElementById('citySelect').value = '';
+            document.getElementById('districtSelect').value = '';
+            document.getElementById('districtSelect').disabled = true;
+            document.getElementById('districtSelect').innerHTML = '<option value="">請先選擇縣市</option>';
+            document.getElementById('searchInput').value = '';
             applyFilters();
         }
 
@@ -698,9 +864,12 @@
                 <div class="camera-card" onclick="showModal(${allCameras.indexOf(camera)})">
                     <div class="camera-info">
                         <h3>${camera.FreewayNumber || camera.RoadName || '監視器'} ${sourceIcon}</h3>
-                        <p style="color: #4CAF50; font-weight: bold; margin: 5px 0;"><i class="fas fa-map-marker-alt"></i> ${camera.city || camera.City || '未知地區'} - ${camera.SurveillanceDescription || camera.LocationMile || '監視器'}</p>
-                        <p><i class="fas fa-road"></i> ${camera.RoadSection ? `${camera.RoadSection.Start} - ${camera.RoadSection.End}` : camera.SurveillanceDescription || '無路段資訊'}</p>
-                        <p><i class="fas fa-compass"></i> ${camera.DirectionName || '未知方向'} | <i class="fas fa-map-marker-alt"></i> ${camera.LocationMile || '無里程資訊'}</p>
+                        <p style="color: #4CAF50; font-weight: bold; margin: 5px 0;">
+                            <i class="fas fa-map-marker-alt"></i> 
+                            ${camera.city || camera.City || '未知地區'}${camera.district ? ` ${camera.district}` : ''}
+                        </p>
+                        <p><i class="fas fa-road"></i> ${camera.LocationDescription || camera.SurveillanceDescription || '無位置描述'}</p>
+                        <p><i class="fas fa-compass"></i> ${camera.DirectionName || camera.RoadDirection || '未知方向'} | <i class="fas fa-map-marker-alt"></i> ${camera.LocationMile || '無里程資訊'}</p>
                     </div>
                     <div class="camera-image" onclick="event.stopPropagation(); openImageInNewTab('${displayUrl}')">
                         ${displayUrl ? 
@@ -817,7 +986,8 @@
                 <strong><i class="fas fa-map-marker-alt"></i> 里程：</strong>${camera.LocationMile || '無里程資訊'}
             `;
             document.getElementById('modalLocation').innerHTML = `
-                <strong><i class="fas fa-city"></i> 縣市：</strong>${camera.City}<br>
+                <strong><i class="fas fa-city"></i> 位置：</strong>${camera.City}${camera.district ? ` ${camera.district}` : ''}<br>
+                <strong><i class="fas fa-map-marker-alt"></i> 詳細位置：</strong>${camera.LocationDescription || camera.SurveillanceDescription || '無位置描述'}<br>
                 <strong><i class="fas fa-crosshairs"></i> 座標：</strong>${camera.PositionLon ? `經度 ${camera.PositionLon}, 緯度 ${camera.PositionLat}` : '無座標資訊'}<br>
                 <strong><i class="fas fa-id-card"></i> ID：</strong>${camera.CCTVID || 'N/A'}<br>
                 <strong><i class="fas fa-highway"></i> 路線：</strong>${camera.RoadName || '無路線資訊'}

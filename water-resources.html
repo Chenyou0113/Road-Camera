@@ -445,8 +445,6 @@
         <!-- 資料源篩選標籤 -->
         <div class="filter-tabs">
             <button class="tab-btn active" onclick="switchDataSource('all')">全部監視器</button>
-            <button class="tab-btn" onclick="switchDataSource('wra')"><i class="fas fa-building"></i> 水利署直屬</button>
-            <button class="tab-btn" onclick="switchDataSource('cooperative')"><i class="fas fa-handshake"></i> 合建監視器</button>
             <button class="tab-btn" onclick="openDebugPage()" style="background: #FF9800; margin-left: 10px;">
                 <i class="fas fa-bug"></i> 除錯工具
             </button>
@@ -542,71 +540,111 @@
             const authority = thing.properties?.authority || '';
             const description = thing.description || thing.properties?.description || '';
             const name = thing.name || '';
-            const location = thing.properties?.location || thing.properties?.stationName || '';
+            const location = thing.properties?.location || thing.properties?.stationName || name || '';
+            
+            // 如果來自水利署官方API，且已經有正確的河川分署資訊，直接使用
+            if (camera.source === 'wra_official' && authority && authority.includes('河川分署')) {
+                return authority;
+            }
             
             // 如果 authority 是「水利署」，嘗試從 description 或 name 中提取河川分署資訊
             if (authority === '水利署') {
-                // 首先嘗試從 description 或 name 中直接匹配河川分署
+                // 優先尋找直接提到的河川分署資訊
                 const riverBureauMatch = description.match(/第[一二三四五六七八九十]+河川分署|第\d+河川分署/) || 
-                                        name.match(/第[一二三四五六七八九十]+河川分署|第\d+河川分署/);
+                                        name.match(/第[一二三四五六七八九十]+河川分署|第\d+河川分署/) ||
+                                        location.match(/第[一二三四五六七八九十]+河川分署|第\d+河川分署/);
                 if (riverBureauMatch) {
                     return riverBureauMatch[0];
                 }
                 
-                // 如果找不到，根據地理位置推斷河川分署
-                const fullLocation = (location + ' ' + name + ' ' + description).toLowerCase();
+                // 如果沒有直接提到分署，根據地理位置推斷河川分署管轄範圍
+                const locationStr = location.toLowerCase();
                 
-                // 第一河川分署：基隆、宜蘭（包含蘭陽溪流域）
-                if (fullLocation.match(/基隆|宜蘭|羅東|蘇澳|頭城|礁溪|蘭陽/)) {
+                // 第一河川分署：基隆、台北、新北、桃園、新竹
+                if (locationStr.includes('基隆') || locationStr.includes('台北') || locationStr.includes('臺北') || 
+                    locationStr.includes('新北') || locationStr.includes('桃園') || locationStr.includes('新竹') ||
+                    locationStr.includes('淡水河') || locationStr.includes('基隆河') || locationStr.includes('新店溪') ||
+                    locationStr.includes('大漢溪') || locationStr.includes('景美溪') || locationStr.includes('頭前溪') ||
+                    locationStr.includes('中原') || locationStr.includes('中壢') || locationStr.includes('平鎮') ||
+                    locationStr.includes('龍潭') || locationStr.includes('楊梅') || locationStr.includes('竹北') ||
+                    locationStr.includes('三峽') || locationStr.includes('汴子頭') || locationStr.includes('信義') ||
+                    locationStr.includes('文山')) {
                     return '第一河川分署';
                 }
                 
-                // 第十河川分署：淡水河流域（台北、新北部分地區）
-                if (fullLocation.match(/淡水|新店|大漢|景美|基隆河|北海岸|金山|萬里/)) {
-                    return '第十河川分署';
-                }
-                
-                // 第二河川分署：桃園、新竹、苗栗
-                if (fullLocation.match(/桃園|中壢|石門|新竹|竹東|竹北|苗栗|後龍|頭份|中港溪|鳳山溪/)) {
+                // 第二河川分署：苗栗、台中、南投
+                if (locationStr.includes('苗栗') || locationStr.includes('台中') || locationStr.includes('臺中') ||
+                    locationStr.includes('南投') || locationStr.includes('後龍溪') || locationStr.includes('大安溪') ||
+                    locationStr.includes('大甲溪') || locationStr.includes('烏溪') || locationStr.includes('濁水溪上游') ||
+                    locationStr.includes('頭份') || locationStr.includes('竹南') || locationStr.includes('豐原') ||
+                    locationStr.includes('沙鹿') || locationStr.includes('清水') || locationStr.includes('草屯') ||
+                    locationStr.includes('筏子溪') || locationStr.includes('中科') || locationStr.includes('連仔橋') ||
+                    locationStr.includes('圓潭') || locationStr.includes('中埔')) {
                     return '第二河川分署';
                 }
                 
-                // 第三河川分署：台中、彰化（包含大甲溪、烏溪、大肚溪流域）
-                if (fullLocation.match(/台中|臺中|大甲|清水|梧棲|沙鹿|龍井|大肚|烏日|霧峰|大里|太平|彰化|伸港|和美|鹿港|線西|烏溪|大甲溪|大肚溪/)) {
+                // 第三河川分署：雲林、嘉義
+                if (locationStr.includes('雲林') || locationStr.includes('嘉義') ||
+                    locationStr.includes('濁水溪') || locationStr.includes('北港溪') || locationStr.includes('朴子溪') ||
+                    locationStr.includes('西螺') || locationStr.includes('虎尾') || locationStr.includes('斗六') ||
+                    locationStr.includes('朴子') || locationStr.includes('民雄') || locationStr.includes('水上')) {
                     return '第三河川分署';
                 }
                 
-                // 第四河川分署：雲林、濁水溪流域
-                if (fullLocation.match(/雲林|斗六|虎尾|西螺|北港|濁水溪|二崙|崙背/)) {
+                // 第四河川分署：彰化、台南、高雄、屏東
+                if (locationStr.includes('彰化') || locationStr.includes('伸港') ||
+                    locationStr.includes('台南') || locationStr.includes('臺南') || 
+                    locationStr.includes('高雄') || locationStr.includes('屏東') ||
+                    locationStr.includes('曾文溪') || locationStr.includes('鹽水溪') || locationStr.includes('二仁溪') ||
+                    locationStr.includes('阿公店溪') || locationStr.includes('愛河') || locationStr.includes('高屏溪') ||
+                    locationStr.includes('東港溪') || locationStr.includes('林邊溪') ||
+                    locationStr.includes('大鵬') || locationStr.includes('岡山') || locationStr.includes('鳳山') ||
+                    locationStr.includes('旗山') || locationStr.includes('美濃') || locationStr.includes('六龜') ||
+                    locationStr.includes('湳仔溝') || locationStr.includes('山上') || locationStr.includes('菜公寮') ||
+                    locationStr.includes('楠梓') || locationStr.includes('美上美')) {
                     return '第四河川分署';
                 }
                 
-                // 第五河川分署：嘉義
-                if (fullLocation.match(/嘉義|朴子|布袋|民雄|水上|太保|曾文溪|八掌溪/)) {
+                // 第五河川分署：宜蘭、花蓮
+                if (locationStr.includes('宜蘭') || locationStr.includes('花蓮') ||
+                    locationStr.includes('蘭陽溪') || locationStr.includes('立霧溪') || locationStr.includes('花蓮溪') ||
+                    locationStr.includes('秀姑巒溪') || locationStr.includes('嘉寶潭') || locationStr.includes('羅東') ||
+                    locationStr.includes('礁溪') || locationStr.includes('壯圍') || locationStr.includes('吉安') ||
+                    locationStr.includes('新城') || locationStr.includes('秀林') || locationStr.includes('玉里')) {
                     return '第五河川分署';
                 }
                 
-                // 第六河川分署：台南
-                if (fullLocation.match(/台南|臺南|安平|永康|新營|佳里|麻豆|鹽水|急水溪|將軍溪|鹽水溪/)) {
+                // 第六河川分署：台東
+                if (locationStr.includes('台東') || locationStr.includes('臺東') ||
+                    locationStr.includes('卑南溪') || locationStr.includes('太麻里溪') || locationStr.includes('知本溪') ||
+                    locationStr.includes('鸞山')) {
                     return '第六河川分署';
                 }
                 
-                // 第七河川分署：高雄、屏東
-                if (fullLocation.match(/高雄|屏東|旗山|美濃|岡山|鳳山|潮州|東港|恆春|高屏溪|下淡水溪|林邊溪/)) {
+                // 第七河川分署：澎湖、金門、馬祖（離島）
+                if (locationStr.includes('澎湖') || locationStr.includes('金門') || locationStr.includes('馬祖')) {
                     return '第七河川分署';
                 }
                 
-                // 第八河川分署：台東
-                if (fullLocation.match(/台東|臺東|關山|成功|池上|長濱|卑南溪|秀姑巒溪/)) {
-                    return '第八河川分署';
+                // 對於無法從地名判斷的監視器，嘗試從其他資訊推斷
+                // 首先檢查是否為編號式監視器
+                if (locationStr.match(/^[a-z]\d+$|^[A-Z]\d+$/)) {  // 純編號式監視器(如 C8, B6)
+                    console.log(`監視器編號 ${location} 無法確定分署，暫時歸類為第一河川分署`);
+                    return '第一河川分署（待確認）';
                 }
                 
-                // 第九河川分署：花蓮
-                if (fullLocation.match(/花蓮|秀林|吉安|壽豐|光復|玉里|瑞穗|立霧溪|木瓜溪|花蓮溪/)) {
-                    return '第九河川分署';
+                // 檢查是否有河川或水系相關關鍵字
+                if (locationStr.includes('溪') || locationStr.includes('河') || locationStr.includes('橋') ||
+                    locationStr.includes('堤防') || locationStr.includes('抽水站') || locationStr.includes('水門')) {
+                    
+                    // 根據常見的河川系統推斷可能的分署
+                    if (locationStr.match(/[a-z]\d+|[A-Z]\d+/)) {  // 包含編號的水利設施
+                        console.log(`水利設施 ${location} 無法確定分署，暫時歸類為第一河川分署`);
+                        return '第一河川分署（待確認）';
+                    }
                 }
                 
-                // 如果都無法判斷，返回「水利署」
+                // 如果找不到具體分署，返回「水利署」
                 return '水利署';
             }
             
@@ -618,16 +656,47 @@
                     return localGovMatch[0];
                 }
                 
-                // 從 name 或其他欄位嘗試推斷
-                const location = thing.properties?.location || '';
-                if (location) {
-                    // 根據位置推斷可能的地方政府
-                    if (location.includes('花蓮')) return '花蓮縣政府水利科';
-                    if (location.includes('台中') || location.includes('臺中')) return '台中市政府水利局';
-                    if (location.includes('新北')) return '新北市政府水利局';
-                    if (location.includes('台北') || location.includes('臺北')) return '台北市政府水利局';
-                    if (location.includes('桃園')) return '桃園市政府水務局';
-                    if (location.includes('高雄')) return '高雄市政府水利局';
+                // 從位置資訊推斷具體的地方政府水利單位
+                const locationStr = location.toLowerCase();
+                
+                // 優先檢查特定地名和地址關鍵字
+                if (locationStr.includes('花蓮')) return '花蓮縣政府水利科';
+                if (locationStr.includes('台中') || locationStr.includes('臺中')) return '台中市政府水利局';
+                if (locationStr.includes('新北')) return '新北市政府水利局';
+                if (locationStr.includes('台北') || locationStr.includes('臺北') || locationStr.includes('中山東路')) return '台北市政府水利局';
+                if (locationStr.includes('桃園') || locationStr.includes('龍潭區')) return '桃園市政府水務局';
+                if (locationStr.includes('高雄')) return '高雄市政府水利局';
+                if (locationStr.includes('台南') || locationStr.includes('臺南')) return '台南市政府水利局';
+                if (locationStr.includes('彰化')) return '彰化縣政府水利科';
+                if (locationStr.includes('雲林')) return '雲林縣政府水利科';
+                if (locationStr.includes('嘉義')) return '嘉義縣政府水利科';
+                if (locationStr.includes('屏東')) return '屏東縣政府水利科';
+                if (locationStr.includes('宜蘭')) return '宜蘭縣政府水利科';
+                if (locationStr.includes('台東') || locationStr.includes('臺東')) return '台東縣政府水利科';
+                if (locationStr.includes('南投')) return '南投縣政府水利科';
+                if (locationStr.includes('苗栗')) return '苗栗縣政府水利科';
+                if (locationStr.includes('新竹')) return '新竹縣政府水利科';
+                if (locationStr.includes('基隆')) return '基隆市政府都市發展處';
+                if (locationStr.includes('澎湖')) return '澎湖縣政府水利科';
+                if (locationStr.includes('金門')) return '金門縣政府建設處';
+                if (locationStr.includes('連江') || locationStr.includes('馬祖')) return '連江縣政府建設局';
+                
+                // 根據監視器編號或特殊地標推斷
+                if (locationStr.includes('c05') || locationStr.includes('山鼻橋')) {
+                    // 山鼻橋通常在高雄地區
+                    return '高雄市政府水利局';
+                }
+                if (locationStr.includes('c08') || locationStr.includes('西坡渠')) {
+                    // 西坡渠可能在台中地區
+                    return '台中市政府水利局';
+                }
+                if (locationStr.includes('士校大池')) {
+                    // 士校大池可能在桃園地區
+                    return '桃園市政府水務局';
+                }
+                if (locationStr.includes('中山路') && !locationStr.includes('中山東路')) {
+                    // 一般中山路，需要更多資訊，暫時歸類為台北市
+                    return '台北市政府水利局';
                 }
                 
                 // 如果都找不到，返回原始 authority
@@ -819,85 +888,140 @@
                 const container = document.getElementById('cameras-container');
                 container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 載入水利署監視器資料中...</div>';
 
-                // 載入水利署直轄監視器
-                const wraResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%B0%B4%E5%88%A9%E7%BD%B2%27&$count=true');
-                
-                // 載入水利署與地方政府合建監視器
-                const cooperativeResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%B0%B4%E5%88%A9%E7%BD%B2%EF%BC%88%E8%88%87%E7%B8%A3%E5%B8%82%E6%94%BF%E5%BA%9C%E5%90%88%E5%BB%BA%EF%BC%89%27&$count=true');
-                
-                // 嘗試載入一些常見的縣市政府水利單位
-                const localResponses = await Promise.allSettled([
-                    // 花蓮縣
-                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%8A%B1%E8%93%AE%E7%B8%A3%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E7%A7%91%27&$count=true'),
-                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%8A%B1%E8%93%AE%E7%B8%A3%E6%94%BF%E5%BA%9C%27&$count=true'),
-                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%8A%B1%E8%93%AE%E7%B8%A3%E5%BB%BA%E8%A8%AD%E8%99%95%27&$count=true'),
-                    // 台北市
-                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E5%8F%B0%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
-                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E5%8F%B0%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E5%B7%A5%E5%8B%99%E5%B1%80%E6%B0%B4%E5%88%A9%E5%B7%A5%E7%A8%8B%E8%99%95%27&$count=true'),
-                    // 新北市
-                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%96%B0%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
-                    // 桃園市
-                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%A1%83%E5%9C%92%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%8B%99%E5%B1%80%27&$count=true'),
-                    // 台中市
-                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E5%8F%B0%E4%B8%AD%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
-                    // 高雄市
-                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E9%AB%98%E9%9B%84%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
-                    // 其他可能的名稱
-                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%87%BA%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E5%B7%A5%E5%8B%99%E5%B1%80%27&$count=true')
-                ]);
-                
-                if (!wraResponse.ok || !cooperativeResponse.ok) {
-                    throw new Error('API 回應錯誤');
-                }
-
-                const wraData = await wraResponse.json();
-                const cooperativeData = await cooperativeResponse.json();
-                
-                // 處理地方政府水利單位的回應
-                const localCameras = [];
-                for (const response of localResponses) {
-                    if (response.status === 'fulfilled' && response.value.ok) {
-                        const data = await response.value.json();
-                        if (data.value && data.value.length > 0) {
-                            console.log(`找到地方水利單位資料: ${data.value.length} 筆`, data.value[0]?.Thing?.properties?.authority);
-                            const cameras = data.value.map(camera => ({
-                                ...camera,
-                                source: 'local',
-                                sourceLabel: '地方水利單位'
+                // 優先使用水利署官方 API
+                let wraApiCameras = [];
+                try {
+                    console.log('🔄 嘗試載入水利署官方 API...');
+                    const wraApiResponse = await fetch('https://fmg.wra.gov.tw/swagger/api/cctv_citynew');
+                    if (wraApiResponse.ok) {
+                        const wraApiData = await wraApiResponse.json();
+                        if (wraApiData.cctvs && wraApiData.cctvs.length > 0) {
+                            console.log(`✅ 成功載入水利署官方 API: ${wraApiData.cctvs.length} 筆資料`);
+                            wraApiCameras = wraApiData.cctvs.map(camera => ({
+                                '@iot.id': `wra_${camera.cctv_name}_${camera.lat}_${camera.lon}`,
+                                Thing: {
+                                    name: camera.cctv_name,
+                                    properties: {
+                                        stationName: camera.cctv_name,
+                                        authority: camera.wraunit_name || '水利署',
+                                        location: `${camera.city_name}${camera.town_name}`,
+                                        station_name: camera.station_name
+                                    },
+                                    location: {
+                                        coordinates: [camera.lon, camera.lat]
+                                    }
+                                },
+                                Observations: camera.new_imgurl ? [{
+                                    result: camera.new_imgurl,
+                                    phenomenonTime: new Date().toISOString()
+                                }] : [],
+                                source: 'wra_official',
+                                sourceLabel: '水利署官方API',
+                                streamUrl: camera.stream_url
                             }));
-                            localCameras.push(...cameras);
                         }
                     }
+                } catch (error) {
+                    console.warn('⚠️ 水利署官方 API 載入失敗，改用 STA API:', error.message);
                 }
-                
-                console.log(`總計載入: 水利署 ${wraData.value?.length || 0} 筆, 合建 ${cooperativeData.value?.length || 0} 筆, 地方 ${localCameras.length} 筆`);
-                
-                // 除錯：顯示所有 authority 類型
-                const allAuthorities = new Set();
-                [...(wraData.value || []), ...(cooperativeData.value || []), ...localCameras].forEach(camera => {
-                    const authority = camera.Thing?.properties?.authority;
-                    if (authority) {
-                        allAuthorities.add(authority);
-                    }
-                });
-                console.log('所有找到的 authority 類型:', Array.from(allAuthorities));
-                
-                // 合併資料並標記來源
-                const wraCameras = (wraData.value || []).map(camera => ({
-                    ...camera,
-                    source: 'wra',
-                    sourceLabel: '水利署直轄'
-                }));
 
-                const cooperativeCameras = (cooperativeData.value || []).map(camera => ({
-                    ...camera,
-                    source: 'cooperative',
-                    sourceLabel: '水利署與地方合建'
-                }));
+                // 如果官方API無資料或失敗，使用備用的 STA API
+                if (wraApiCameras.length === 0) {
+                    console.log('🔄 使用 STA API 載入監視器資料...');
+                    
+                    // 先嘗試全域搜尋了解總共有多少監視器
+                    try {
+                        const allCamerasResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$count=true&$top=0');
+                        if (allCamerasResponse.ok) {
+                            const allCamerasData = await allCamerasResponse.json();
+                            console.log(`📊 STA 資料庫總共有 ${allCamerasData['@iot.count']} 個監視器`);
+                        }
+                    } catch (e) {
+                        console.warn('無法獲取總監視器數量');
+                    }
+                    
+                    // 載入水利署直轄監視器
+                    const wraResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%B0%B4%E5%88%A9%E7%BD%B2%27&$count=true');
+                
+                    // 載入水利署與地方政府合建監視器
+                    const cooperativeResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%B0%B4%E5%88%A9%E7%BD%B2%EF%BC%88%E8%88%87%E7%B8%A3%E5%B8%82%E6%94%BF%E5%BA%9C%E5%90%88%E5%BB%BA%EF%BC%89%27&$count=true');
+                    
+                    // 嘗試載入更多相關的水利單位
+                    const extendedLocalResponses = await Promise.allSettled([
+                        // 原有的查詢
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%8A%B1%E8%93%AE%E7%B8%A3%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E7%A7%91%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%8A%B1%E8%93%AE%E7%B8%A3%E6%94%BF%E5%BA%9C%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%8A%B1%E8%93%AE%E7%B8%A3%E5%BB%BA%E8%A8%AD%E8%99%95%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E5%8F%B0%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E5%8F%B0%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E5%B7%A5%E5%8B%99%E5%B1%80%E6%B0%B4%E5%88%A9%E5%B7%A5%E7%A8%8B%E8%99%95%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%96%B0%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%A1%83%E5%9C%92%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%8B%99%E5%B1%80%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E5%8F%B0%E4%B8%AD%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E9%AB%98%E9%9B%84%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%87%BA%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E5%B7%A5%E5%8B%99%E5%B1%80%27&$count=true'),
+                        
+                        // 嘗試更廣泛的搜尋
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=contains(Thing/properties/authority,%27%E6%B0%B4%E5%88%A9%27)&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=contains(Thing/properties/authority,%27%E6%B2%B3%E5%B7%9D%27)&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=contains(Thing/properties/authority,%27%E5%88%86%E7%BD%B2%27)&$count=true'),
+                        
+                        // 其他可能的水利相關單位
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E7%B6%93%E6%BF%9F%E9%83%A8%E6%B0%B4%E5%88%A9%E7%BD%B2%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E7%AC%AC%E4%B8%80%E6%B2%B3%E5%B7%9D%E5%B1%80%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E7%AC%AC%E4%BA%8C%E6%B2%B3%E5%B7%9D%E5%B1%80%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E7%AC%AC%E4%B8%89%E6%B2%B3%E5%B7%9D%E5%B1%80%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E7%AC%AC%E5%9B%9B%E6%B2%B3%E5%B7%9D%E5%B1%80%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E7%AC%AC%E4%BA%94%E6%B2%B3%E5%B7%9D%E5%B1%80%27&$count=true'),
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E7%AC%AC%E5%85%AD%E6%B2%B3%E5%B7%9D%E5%B1%80%27&$count=true')
+                    ]);
+                    
+                    if (!wraResponse.ok || !cooperativeResponse.ok) {
+                        throw new Error('API 回應錯誤');
+                    }
+
+                    const wraData = await wraResponse.json();
+                    const cooperativeData = await cooperativeResponse.json();
+                    
+                    // 處理地方政府水利單位的回應
+                    const localCameras = [];
+                    for (const response of extendedLocalResponses) {
+                        if (response.status === 'fulfilled' && response.value.ok) {
+                            const data = await response.value.json();
+                            if (data.value && data.value.length > 0) {
+                                console.log(`找到地方水利單位資料: ${data.value.length} 筆`, data.value[0]?.Thing?.properties?.authority);
+                                const cameras = data.value.map(camera => ({
+                                    ...camera,
+                                    source: 'local',
+                                    sourceLabel: '地方水利單位'
+                                }));
+                                localCameras.push(...cameras);
+                            }
+                        }
+                    }
+                    
+                    console.log(`STA API 載入: 水利署 ${wraData.value?.length || 0} 筆, 合建 ${cooperativeData.value?.length || 0} 筆, 地方 ${localCameras.length} 筆`);
+                    
+                    // 合併STA API資料並標記來源
+                    const wraCameras = (wraData.value || []).map(camera => ({
+                        ...camera,
+                        source: 'wra',
+                        sourceLabel: '水利署直轄'
+                    }));
+
+                    const cooperativeCameras = (cooperativeData.value || []).map(camera => ({
+                        ...camera,
+                        source: 'cooperative',
+                        sourceLabel: '水利署與地方合建'
+                    }));
+                    
+                    // 合併STA API的資料
+                    const staCameras = [...wraCameras, ...cooperativeCameras, ...localCameras];
+                    wraApiCameras = [...wraApiCameras, ...staCameras];
+                }
 
                 // 去除重複項目並合併資料
                 const allCamerasMap = new Map();
-                [...wraCameras, ...cooperativeCameras, ...localCameras].forEach(camera => {
+                wraApiCameras.forEach(camera => {
                     const id = camera['@iot.id'];
                     if (!allCamerasMap.has(id)) {
                         allCamerasMap.set(id, camera);
@@ -1038,11 +1162,7 @@
             const authorities = new Set();
             allCameras.forEach(camera => {
                 const authority = formatAuthority(camera);
-                // 過濾掉籠統的選項，只保留具體的機關名稱
-                if (authority && 
-                    authority !== 'N/A' && 
-                    authority !== '水利署' && 
-                    !authority.includes('合建')) {
+                if (authority && authority !== 'N/A') {
                     authorities.add(authority);
                 }
             });
@@ -1102,58 +1222,7 @@
                 const description = thing.properties?.authority || '無說明';
                 // 位置優先使用 stationName，如果沒有則使用 location，最後才用 name
                 const location = thing.properties?.stationName || thing.properties?.location || (thing.name && !thing.name.match(/^[0-9a-f-]{36}$/i) ? thing.name : '位置未知');
-                
-                // 根據當前資料源決定要顯示的主管機關
-                let authority;
-                if (currentDataSource === 'wra') {
-                    // 水利署直屬：直接顯示河川分署
-                    const formatted = formatAuthority(camera);
-                    // 如果已經是河川分署，直接使用
-                    if (formatted && formatted.match(/第[一二三四五六七八九十\d]+河川分署/)) {
-                        authority = formatted;
-                    } else {
-                        // 根據地理位置推斷河川分署
-                        const stationLocation = thing.properties?.location || location || name;
-                        
-                        // 根據地點名稱推斷河川分署
-                        if (stationLocation.includes('基隆') || stationLocation.includes('宜蘭') || stationLocation.includes('羅東')) {
-                            authority = '第一河川分署';
-                        } else if (stationLocation.includes('淡水') || stationLocation.includes('新店') || stationLocation.includes('北海岸')) {
-                            authority = '第十河川分署';
-                        } else if (stationLocation.includes('桃園') || stationLocation.includes('石門')) {
-                            authority = '第二河川分署';
-                        } else if (stationLocation.includes('新竹') || stationLocation.includes('竹東')) {
-                            authority = '第二河川分署';
-                        } else if (stationLocation.includes('苗栗') || stationLocation.includes('後龍')) {
-                            authority = '第二河川分署';
-                        } else if (stationLocation.includes('台中') || stationLocation.includes('臺中') || stationLocation.includes('大甲') || stationLocation.includes('烏溪') || stationLocation.includes('伸港')) {
-                            authority = '第三河川分署';
-                        } else if (stationLocation.includes('彰化') || stationLocation.includes('濁水溪')) {
-                            authority = '第四河川分署';
-                        } else if (stationLocation.includes('雲林') || stationLocation.includes('北港') || stationLocation.includes('虎尾')) {
-                            authority = '第五河川分署';
-                        } else if (stationLocation.includes('嘉義') || stationLocation.includes('朴子') || stationLocation.includes('曾文溪')) {
-                            authority = '第五河川分署';
-                        } else if (stationLocation.includes('台南') || stationLocation.includes('臺南') || stationLocation.includes('安平')) {
-                            authority = '第六河川分署';
-                        } else if (stationLocation.includes('高雄') || stationLocation.includes('屏東') || stationLocation.includes('旗山') || stationLocation.includes('潮州')) {
-                            authority = '第七河川分署';
-                        } else if (stationLocation.includes('台東') || stationLocation.includes('臺東') || stationLocation.includes('關山') || stationLocation.includes('成功')) {
-                            authority = '第八河川分署';
-                        } else if (stationLocation.includes('花蓮') || stationLocation.includes('秀林') || stationLocation.includes('光復')) {
-                            authority = '第九河川分署';
-                        } else {
-                            authority = formatted || '水利署';
-                        }
-                    }
-                } else if (currentDataSource === 'cooperative') {
-                    // 合建監視器：只顯示地方政府水利單位
-                    const formatted = formatAuthority(camera);
-                    authority = (formatted !== '水利署' && !formatted.includes('合建')) ? formatted : '';
-                } else {
-                    // 全部監視器：顯示完整的主管機關資訊
-                    authority = formatAuthority(camera);
-                }
+                const authority = formatAuthority(camera);
                 
                 const latestObs = camera.Observations && camera.Observations.length > 0 ? camera.Observations[0] : null;
                 const imageUrl = latestObs?.result || '';
