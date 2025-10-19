@@ -3,11 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>國道監視器 - TDX</title>
+    <title>省道監視器 - TDX</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="assets/dark-mode.css">
     <link rel="stylesheet" href="assets/responsive-camera.css">
     <script>window.CURRENT_PAGE = 'highway';</script>
+    <script src="assets/config.js"></script>
+    <script src="assets/tdx-api.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Microsoft JhengHei', Arial, sans-serif; background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); min-height: 100vh; }
@@ -27,11 +29,11 @@
         .camera-card { background: white; border-radius: 10px; padding: 0; box-shadow: 0 5px 15px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.3s; overflow: hidden; }
         .camera-card:hover { transform: translateY(-5px); }
         .camera-info { padding: 15px; }
-        .camera-info h3 { color: #2196F3; margin-bottom: 8px; font-size: 1.1rem; }
-        .camera-info p { color: #666; margin: 4px 0; font-size: 0.9rem; }
-        .camera-image { width: 100%; height: 180px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
-        .camera-image img { width: 100%; height: 100%; object-fit: contain; transition: transform 0.3s; }
-        .camera-image:hover img { transform: scale(1.02); }
+        .camera-info h3 { color: #2196F3; margin-bottom: 8px; font-size: 1.1rem; word-wrap: break-word; overflow-wrap: break-word; }
+        .camera-info p { color: #666; margin: 4px 0; font-size: 0.9rem; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.5; }
+        .camera-image { width: 100%; height: 200px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+        .camera-image img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
+        .camera-image:hover img { transform: scale(1.05); }
         .image-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); color: white; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s; }
         .camera-image:hover .image-overlay { opacity: 1; }
         .stream-placeholder, .no-image-placeholder, .image-placeholder { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #f8f9fa; }
@@ -39,152 +41,235 @@
         .modal-content { position: relative; margin: 2% auto; width: 90%; max-width: 1200px; }
         .close { position: absolute; top: 15px; right: 35px; color: #fff; font-size: 40px; font-weight: bold; cursor: pointer; z-index: 1001; }
         .close:hover { color: #2196F3; }
-        .modal-image { width: 100%; max-height: 70vh; object-fit: contain; }
-        .original-link-btn { display: inline-block; margin-top: 15px; padding: 12px 24px; background: linear-gradient(135deg, #2196F3, #1976D2); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(33,150,243,0.3); }
-        .original-link-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(33,150,243,0.4); background: linear-gradient(135deg, #1976D2, #1565C0); }
-        .original-link-btn i { margin-right: 8px; }
+        .modal-image { width: 100%; max-height: 80vh; object-fit: contain; }
         .modal-info { background: white; padding: 20px; border-radius: 10px; margin-top: 20px; }
         .modal-info h2 { color: #2196F3; margin-bottom: 10px; }
-        .modal-info p { color: #666; margin: 5px 0; }
+        .modal-info p { color: #666; margin: 5px 0; word-wrap: break-word; overflow-wrap: break-word; }
+        
+        /* 國道特色樣式 */
+        .highway-badge { background: #2196F3; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; display: inline-block; margin: 2px; }
+        .stats-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+        .stat-card { background: white; padding: 20px; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .stat-number { font-size: 2rem; font-weight: bold; color: #2196F3; }
+        .stat-label { color: #666; margin-top: 5px; }
+        
+        /* 篩選區域 */
+        .filter-section { background: white; margin: 20px 0; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .filter-row { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
+        .filter-group { display: flex; flex-direction: column; }
+        .filter-group label { margin-bottom: 5px; font-weight: bold; color: #333; }
+        .filter-group select, .filter-group button { padding: 10px; border-radius: 5px; border: 2px solid #2196F3; font-size: 1rem; }
+        .filter-group button { background: #2196F3; color: white; cursor: pointer; }
+        .filter-group button:hover { background: #1976D2; }
+        
+        /* 分頁 */
+        .pagination { display: flex; justify-content: center; align-items: center; margin: 20px 0; gap: 10px; }
+        .pagination button { padding: 10px 15px; border: none; background: white; color: #2196F3; border-radius: 5px; cursor: pointer; }
+        .pagination button:hover, .pagination button.active { background: #2196F3; color: white; }
+        .pagination button:disabled { background: #ccc; cursor: not-allowed; }
+        .pagination span { color: white; font-weight: bold; padding: 10px 15px; }
+        
+        /* 深色模式下的分頁樣式 */
+        body.dark-mode .pagination button { background: rgba(255,255,255,0.1); color: #66BB6A; border: 1px solid rgba(255,255,255,0.2); }
+        body.dark-mode .pagination button:hover, body.dark-mode .pagination button.active { background: #66BB6A; color: #1a1a2e; }
+        body.dark-mode .pagination button:disabled { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.3); }
+        body.dark-mode .pagination span { color: #66BB6A; }
+        
+        /* 深色模式下的篩選區域和統計面板樣式 */
+        body.dark-mode .filter-section { background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(30,30,40,0.85) 100%); border: 1px solid rgba(255,255,255,0.1); }
+        body.dark-mode .filter-section h3 { color: #66BB6A; }
+        body.dark-mode .filter-group label { color: rgba(255,255,255,0.9); }
+        body.dark-mode .filter-group select { background: rgba(255,255,255,0.1); color: white; border-color: #66BB6A; }
+        body.dark-mode .filter-group select option { background: #2a2a3e; color: white; }
+        body.dark-mode .filter-group button { background: #66BB6A; color: #1a1a2e; border-color: #66BB6A; }
+        body.dark-mode .filter-group button:hover { background: #81C784; }
+        body.dark-mode .stat-card { background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(30,30,40,0.85) 100%); border: 1px solid rgba(255,255,255,0.1); }
+        body.dark-mode .stat-number { color: #66BB6A; }
+        body.dark-mode .stat-label { color: rgba(255,255,255,0.7); }
+        body.dark-mode #infoPanel { background: rgba(40,40,50,0.95); border-left-color: #66BB6A; }
+        body.dark-mode #infoPanel h3 { color: #66BB6A; }
+        body.dark-mode #infoContent { color: rgba(255,255,255,0.8); }
+        body.dark-mode #infoContent a { color: #66BB6A; }
+        
+        /* 手機版響應式優化 */
+        @media (max-width: 768px) {
+            .camera-info { padding: 12px; }
+            .camera-info h3 { font-size: 1rem; }
+            .camera-info p { font-size: 0.85rem; }
+            .filter-row { flex-direction: column; align-items: stretch; }
+            .stats-panel { grid-template-columns: repeat(2, 1fr); }
+        }
+        
+        @media (max-width: 480px) {
+            .stats-panel { grid-template-columns: 1fr; }
+        }
     </style>
 </head>
 <body>
     <div class="header">
         <div class="container">
-            <h1><i class="fas fa-road"></i> 國道監視器</h1>
-            <p style="text-align: center; color: #666;">即時國道路況監視器</p>
+            <h1><i class="fas fa-road"></i> 省道監視器</h1>
+            <p style="text-align: center; color: #666;">即時省道路況監視器</p>
         </div>
     </div>
+
     <div class="container">
         <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 返回首頁</a>
         
-        <!-- TDX 交通資料服務說明 -->
-        <div id="infoPanel" style="background: #e8f5e8; border-left: 4px solid #4CAF50; padding: 20px; margin: 20px 0; border-radius: 8px; transition: all 0.3s ease;">
-            <h3 style="color: #388E3C; margin: 0 0 15px 0; display: flex; align-items: center; justify-content: space-between; cursor: pointer;" onclick="toggleInfoPanel()">
+        <!-- 國道監視器說明 -->
+        <div id="infoPanel" style="background: #e8f5e8; border-left: 4px solid #2196F3; padding: 20px; margin: 20px 0; border-radius: 8px; transition: all 0.3s ease;">
+            <h3 style="color: #1976D2; margin: 0 0 15px 0; display: flex; align-items: center; justify-content: space-between; cursor: pointer;" onclick="toggleInfoPanel()">
                 <span>
-                    <i class="fas fa-database" style="margin-right: 8px;"></i>
+                    <i class="fas fa-info-circle" style="margin-right: 8px;"></i>
                     TDX 交通資料服務說明
                 </span>
-                <i id="toggleIcon" class="fas fa-chevron-down" style="transition: transform 0.3s ease;"></i>
+                <i id="toggleIcon" class="fas fa-chevron-up" style="transition: transform 0.3s ease;"></i>
             </h3>
-            <div id="infoContent" style="color: #333; line-height: 1.6; display: none;">
+            <div id="infoContent" style="color: #333; line-height: 1.6;">
                 <p style="margin: 0 0 10px 0;">
-                    本系統使用<strong>交通部 TDX 交通資料流通服務平台</strong>提供的即時國道監視器資料，並輔以備援API確保資料穩定性。
+                    本系統使用交通部 TDX 交通資料流通服務平台提供的即時省道監視器資料，並輔以備援API確保資料穩定性。
                 </p>
                 
                 <div style="margin: 15px 0;">
                     <p style="margin: 0 0 8px 0; font-weight: bold;">🔗 相關資源連結：</p>
                     <div style="margin-left: 20px;">
                         <p style="margin: 5px 0;">
-                            • <a href="https://tdx.transportdata.tw" target="_blank" style="color: #388E3C; text-decoration: none;">
+                            • <a href="https://tdx.transportdata.tw" target="_blank" style="color: #1976D2; text-decoration: none;">
                                 TDX 交通資料流通服務平台 <i class="fas fa-external-link-alt" style="font-size: 0.8rem;"></i>
                             </a>
                         </p>
                         <p style="margin: 5px 0;">
-                            • <a href="https://tisvcloud.freeway.gov.tw" target="_blank" style="color: #388E3C; text-decoration: none;">
-                                高速公路局資訊雲 <i class="fas fa-external-link-alt" style="font-size: 0.8rem;"></i>
+                            • <a href="https://www.thb.gov.tw" target="_blank" style="color: #1976D2; text-decoration: none;">
+                                公路總局監視器系統 <i class="fas fa-external-link-alt" style="font-size: 0.8rem;"></i>
                             </a>
                         </p>
                     </div>
                 </div>
                 
-                <p style="margin: 10px 0 0 0; font-size: 0.9rem; color: #666; font-style: italic;">
+                <p style="margin: 10px 0 0 0; font-size: 0.9rem; color: #666;">
                     📊 本系統整合主要與備援資料源，提供更可靠的監視器資料查詢服務。
                 </p>
             </div>
         </div>
-        
-        <div style="display: flex; gap: 15px; margin: 20px 0; flex-wrap: wrap;">
-            <select style="padding: 10px; border-radius: 5px; border: 2px solid #2196F3; font-size: 1rem;" id="freewaySelect" onchange="applyFilters()">
-                <option value="">選擇國道</option>
-            </select>
-            <select style="padding: 10px; border-radius: 5px; border: 2px solid #2196F3; font-size: 1rem;" id="citySelect" onchange="applyFilters()">
-                <option value="">選擇縣市</option>
-            </select>
-            <select style="padding: 10px; border-radius: 5px; border: 2px solid #2196F3; font-size: 1rem;" id="directionSelect" onchange="applyFilters()">
-                <option value="">選擇方向</option>
-                <option value="S">南下</option>
-                <option value="N">北上</option>
-                <option value="E">東向</option>
-                <option value="W">西向</option>
-            </select>
-            <button style="padding: 10px 20px; background: #2196F3; color: white; border: none; border-radius: 5px; cursor: pointer;" onclick="clearFilters()">
-                <i class="fas fa-refresh"></i> 清除篩選
-            </button>
+
+        <!-- 統計面板 -->
+        <div class="stats-panel">
+            <div class="stat-card">
+                <div class="stat-number" id="totalCameras">0</div>
+                <div class="stat-label">監視器總數</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="availableCameras">0</div>
+                <div class="stat-label">可用監視器</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="filteredCameras">0</div>
+                <div class="stat-label">目前顯示</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="highwayCount">0</div>
+                <div class="stat-label">省道數</div>
+            </div>
         </div>
-        
-        <div id="stats" style="background: white; padding: 15px; border-radius: 10px; margin: 10px 0; display: flex; justify-content: space-around; flex-wrap: wrap;">
-            <div style="text-align: center; margin: 5px;">
-                <div style="font-size: 1.5rem; font-weight: bold; color: #2196F3;" id="totalCount">0</div>
-                <div style="color: #666;">總監視器</div>
-            </div>
-            <div style="text-align: center; margin: 5px;">
-                <div style="font-size: 1.5rem; font-weight: bold; color: #4CAF50;" id="filteredCount">0</div>
-                <div style="color: #666;">篩選結果</div>
-            </div>
-            <div style="text-align: center; margin: 5px;">
-                <div style="font-size: 1.5rem; font-weight: bold; color: #FF9800;" id="freewayCount">0</div>
-                <div style="color: #666;">涵蓋國道</div>
-            </div>
-            <div style="text-align: center; margin: 5px;">
-                <div style="font-size: 1.5rem; font-weight: bold; color: #9C27B0;" id="cityCount">0</div>
-                <div style="color: #666;">涵蓋縣市</div>
-            </div>
-            <div style="text-align: center; margin: 5px;">
-                <div id="dataSourceInfo" style="font-size: 0.9rem; color: #666;">
-                    <i class="fas fa-spinner fa-spin"></i> 載入中...
+
+        <!-- 篩選區域 -->
+        <div class="filter-section">
+            <h3 style="color: #2196F3; margin-bottom: 15px;"><i class="fas fa-filter"></i> 篩選省道監視器</h3>
+            <div class="filter-row">
+                <div class="filter-group">
+                    <label for="roadSelect">省道</label>
+                    <select style="padding: 10px; border-radius: 5px; border: 2px solid #2196F3; font-size: 1rem;" id="roadSelect" onchange="applyFilters('road')">
+                        <option value="">所有省道</option>
+                    </select>
                 </div>
-                <div style="color: #666; font-size: 0.8rem;">資料來源</div>
+                <div class="filter-group">
+                    <label for="citySelect">縣市</label>
+                    <select style="padding: 10px; border-radius: 5px; border: 2px solid #2196F3; font-size: 1rem;" id="citySelect" onchange="applyFilters('city')">
+                        <option value="">所有縣市</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>&nbsp;</label>
+                    <button onclick="resetFilters()"><i class="fas fa-refresh"></i> 重置篩選</button>
+                </div>
             </div>
         </div>
-        
-        <div id="cameras-container" class="loading">載入中...</div>
-        
-        <!-- 分頁控制 -->
-        <div id="pagination" style="display: none; margin: 30px 0; text-align: center;">
-            <div style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); display: inline-block;">
-                <button onclick="changePage('first')" style="padding: 10px 15px; margin: 0 5px; background: #2196F3; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem;">
-                    <i class="fas fa-angle-double-left"></i> 首頁
-                </button>
-                <button onclick="changePage('prev')" style="padding: 10px 15px; margin: 0 5px; background: #2196F3; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem;">
-                    <i class="fas fa-angle-left"></i> 上一頁
-                </button>
-                <span style="margin: 0 15px; font-size: 1.1rem; color: #2196F3; font-weight: bold;">
-                    第 <span id="currentPageNum">1</span> 頁，共 <span id="totalPagesNum">1</span> 頁
-                </span>
-                <button onclick="changePage('next')" style="padding: 10px 15px; margin: 0 5px; background: #2196F3; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem;">
-                    下一頁 <i class="fas fa-angle-right"></i>
-                </button>
-                <button onclick="changePage('last')" style="padding: 10px 15px; margin: 0 5px; background: #2196F3; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem;">
-                    末頁 <i class="fas fa-angle-double-right"></i>
-                </button>
-            </div>
+
+        <div id="cameras-container" class="loading">
+            <i class="fas fa-spinner fa-spin"></i> 載入國道監視器資料中...
+        </div>
+
+        <!-- 分頁 -->
+        <div id="pagination" class="pagination" style="display: none;">
+            <button onclick="changePage(-1)" id="prevBtn"><i class="fas fa-chevron-left"></i> 上一頁</button>
+            <span id="pageInfo">第 1 頁，共 1 頁</span>
+            <button onclick="changePage(1)" id="nextBtn">下一頁 <i class="fas fa-chevron-right"></i></button>
         </div>
     </div>
 
-    <div id="imageModal" class="modal" onclick="closeModal()">
-        <span class="close">&times;</span>
-        <div class="modal-content" onclick="event.stopPropagation()">
-            <img id="modalImage" class="modal-image" src="" alt="監視器大圖">
+    <!-- 影像彈窗 -->
+    <div id="imageModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <img class="modal-image" id="modalImage" alt="監視器影像">
             <div class="modal-info">
-                <h2 id="modalTitle"></h2>
-                <p id="modalDescription"></p>
+            <h2 id="modalTitle">省道監視器資訊</h2>
                 <p id="modalLocation"></p>
-                <p><strong>即時影像串流：</strong><span id="modalStream"></span></p>
+                <p id="modalRoad"></p>
+                <p id="modalCoords"></p>
             </div>
         </div>
     </div>
 
     <script src="assets/navbar.js"></script>
-    <script src="assets/config.js"></script>
-    <script src="assets/tdx-api.js"></script>
     <script src="assets/dark-mode.js"></script>
     <script>
         let allCameras = [];
         let filteredCameras = [];
         let currentPage = 1;
-        let itemsPerPage = 50;
+        let itemsPerPage = 30;
         let totalPages = 1;
+        
+        // 國道列表
+        const highwayS = [
+            '台61', '台62', '台63', '台64', '台65', '台66', '台68', 
+            '台72', '台74', '台76', '台78', '台82', '台84', '台86', '台88'
+        ];
+        
+        // 從路段資訊中提取國道路線編號
+        function extracthighwayNumber(camera) {
+            const roadName = camera.RoadName || '';
+            const locationDesc = camera.LocationDescription || '';
+            const roadSection = typeof camera.RoadSection === 'string' ? camera.RoadSection : '';
+            const allText = `${roadName} ${locationDesc} ${roadSection}`;
+            
+            // 匹配台61、台62等國道格式
+            for (const highway of highwayS) {
+                const pattern = new RegExp(`[台臺](${highway.slice(1)})線?`, 'g');
+                if (pattern.test(allText)) {
+                    return `${highway}線`;
+                }
+            }
+            
+            // 特殊處理一些別名
+            if (allText.includes('西濱') || allText.includes('西部濱海')) {
+                return '國道1號';
+            }
+            if (allText.includes('中投')) {
+                return '台63線';
+            }
+            if (allText.includes('萬里瑞濱')) {
+                return '台62線';
+            }
+            
+            return '';
+        }
+        
+        // 判斷是否為國道
+        function ishighway(camera) {
+            const highwayNumber = extracthighwayNumber(camera);
+            return highwayNumber !== '';
+        }
         
         // 切換資訊面板顯示/隱藏
         function toggleInfoPanel() {
@@ -209,238 +294,229 @@
         function getCityFromCoordinates(lon, lat, roadName = '') {
             if (!lon || !lat) return '未知';
             
-            // 特殊處理國道5號 - 主要在宜蘭縣
-            if (roadName && roadName.includes('國道5號')) {
-                // 國道5號經過的區域主要在宜蘭縣，部分在新北市
-                if (lon >= 121.50 && lat >= 24.50 && lat <= 25.00) {
-                    return '宜蘭縣';
-                } else if (lon >= 121.30 && lon < 121.50 && lat >= 24.85) {
-                    return '新北市';
-                }
-            }
-            
-            // 台灣各縣市經緯度範圍 - 按優先級排序，避免重疊誤判
+            // 台灣各縣市經緯度範圍
             const cityRanges = [
-                // 優先判斷較小的特殊區域
                 { name: '台北市', lonMin: 121.45, lonMax: 121.65, latMin: 24.95, latMax: 25.20 },
                 { name: '基隆市', lonMin: 121.65, lonMax: 121.85, latMin: 25.10, latMax: 25.25 },
+                { name: '新北市', lonMin: 121.20, lonMax: 121.95, latMin: 24.70, latMax: 25.30 },
+                { name: '桃園市', lonMin: 121.05, lonMax: 121.50, latMin: 24.75, latMax: 25.05 },
+                { name: '新竹縣', lonMin: 120.80, lonMax: 121.30, latMin: 24.55, latMax: 24.85 },
                 { name: '新竹市', lonMin: 120.90, lonMax: 121.05, latMin: 24.75, latMax: 24.85 },
+                { name: '苗栗縣', lonMin: 120.55, lonMax: 121.15, latMin: 24.25, latMax: 24.75 },
+                { name: '台中市', lonMin: 120.45, lonMax: 121.25, latMin: 24.05, latMax: 24.55 },
+                { name: '彰化縣', lonMin: 120.35, lonMax: 120.75, latMin: 23.85, latMax: 24.25 },
+                { name: '南投縣', lonMin: 120.65, lonMax: 121.25, latMin: 23.45, latMax: 24.15 },
+                { name: '雲林縣', lonMin: 120.15, lonMax: 120.65, latMin: 23.45, latMax: 23.85 },
+                { name: '嘉義縣', lonMin: 120.15, lonMax: 120.75, latMin: 23.15, latMax: 23.65 },
                 { name: '嘉義市', lonMin: 120.40, lonMax: 120.50, latMin: 23.45, latMax: 23.52 },
-                
-                // 東部縣市 - 優先於其他縣市判斷
-                { name: '宜蘭縣', lonMin: 121.50, lonMax: 122.10, latMin: 24.50, latMax: 25.05 },
-                { name: '花蓮縣', lonMin: 121.30, lonMax: 121.80, latMin: 23.30, latMax: 24.50 },
-                { name: '台東縣', lonMin: 120.90, lonMax: 121.50, latMin: 22.30, latMax: 23.50 },
-                
-                // 其他縣市
-                { name: '桃園市', lonMin: 121.00, lonMax: 121.50, latMin: 24.80, latMax: 25.10 },
-                { name: '新竹縣', lonMin: 120.70, lonMax: 121.30, latMin: 24.50, latMax: 25.00 },
-                { name: '苗栗縣', lonMin: 120.60, lonMax: 121.20, latMin: 24.20, latMax: 24.80 },
-                { name: '台中市', lonMin: 120.50, lonMax: 121.20, latMin: 24.00, latMax: 24.50 },
-                { name: '彰化縣', lonMin: 120.40, lonMax: 120.80, latMin: 23.80, latMax: 24.20 },
-                { name: '南投縣', lonMin: 120.60, lonMax: 121.30, latMin: 23.50, latMax: 24.20 },
-                { name: '雲林縣', lonMin: 120.20, lonMax: 120.70, latMin: 23.50, latMax: 23.90 },
-                { name: '嘉義縣', lonMin: 120.10, lonMax: 120.80, latMin: 23.30, latMax: 23.70 },
-                { name: '台南市', lonMin: 120.00, lonMax: 120.50, latMin: 22.90, latMax: 23.40 },
-                { name: '高雄市', lonMin: 120.20, lonMax: 120.50, latMin: 22.50, latMax: 23.10 },
-                { name: '屏東縣', lonMin: 120.40, lonMax: 120.90, latMin: 22.00, latMax: 22.80 },
-                
-                // 新北市範圍較大，放在最後避免誤判東部地區
-                { name: '新北市', lonMin: 121.30, lonMax: 121.80, latMin: 24.60, latMax: 25.30 }
+                { name: '台南市', lonMin: 120.05, lonMax: 120.65, latMin: 22.85, latMax: 23.45 },
+                { name: '高雄市', lonMin: 120.15, lonMax: 120.95, latMin: 22.45, latMax: 23.15 },
+                { name: '屏東縣', lonMin: 120.25, lonMax: 120.95, latMin: 21.85, latMax: 22.85 },
+                { name: '宜蘭縣', lonMin: 121.55, lonMax: 122.05, latMin: 24.25, latMax: 24.95 },
+                { name: '花蓮縣', lonMin: 121.15, lonMax: 121.75, latMin: 23.00, latMax: 24.45 },
+                { name: '台東縣', lonMin: 120.95, lonMax: 121.65, latMin: 22.35, latMax: 23.55 }
             ];
             
             for (const city of cityRanges) {
-                if (lon >= city.lonMin && lon <= city.lonMax && lat >= city.latMin && lat <= city.latMax) {
+                if (lon >= city.lonMin && lon <= city.lonMax && 
+                    lat >= city.latMin && lat <= city.latMax) {
                     return city.name;
                 }
             }
             
-            return '其他地區';
-        }
-
-        // 獲取方向名稱
-        function getDirectionName(direction) {
-            const directions = {
-                'S': '南下',
-                'N': '北上', 
-                'E': '東向',
-                'W': '西向',
-                '0': '南下',
-                '1': '北上', 
-                '2': '東向',
-                '3': '西向'
-            };
-            return directions[direction] || '未知方向';
-        }
-
-        // 在新標籤頁開啟影像
-        function openImageInNewTab(url) {
-            if (url) {
-                window.open(url, '_blank');
-            }
+            return '未知';
         }
 
         // 處理影像載入錯誤
         function handleImageError(img, originalUrl) {
             if (img.dataset.retried) {
-                // 已經重試過，顯示錯誤訊息
                 img.parentNode.innerHTML = '<i class="fas fa-exclamation-triangle" style="font-size: 2rem; color: #f44336;"></i><br><span style="font-size: 0.8rem;">影像載入失敗</span>';
                 return;
             }
             
-            // 嘗試不同的URL格式
             img.dataset.retried = 'true';
             if (originalUrl.includes('bmjpg')) {
                 img.src = originalUrl.replace('bmjpg', 'mjpg');
             } else if (originalUrl.includes('mjpg')) {
                 img.src = originalUrl.replace('mjpg', 'jpg');
             } else {
-                // 如果都失敗了，顯示錯誤
                 img.parentNode.innerHTML = '<i class="fas fa-exclamation-triangle" style="font-size: 2rem; color: #f44336;"></i><br><span style="font-size: 0.8rem;">影像載入失敗</span>';
             }
         }
 
-        // 從路段名稱提取國道號碼
-        function getFreewayNumber(roadName) {
-            if (!roadName) return '未知';
-            
-            const match = roadName.match(/國道(\d+)/);
-            if (match) {
-                return `國道${match[1]}號`;
-            }
-            
-            // 處理其他格式
-            if (roadName.includes('中山高')) return '國道1號';
-            if (roadName.includes('福高') || roadName.includes('第二高速公路')) return '國道3號';
-            
-            return roadName;
-        }
-
-        async function parseFreewayXMLCameras(xmlText) {
-            const parser = new DOMParser();
-            const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-            
-            const cameras = [];
-            const items = xmlDoc.querySelectorAll('CCTV');
-            
-            items.forEach(item => {
-                const camera = {
-                    CCTVID: item.querySelector('CCTVID')?.textContent || '',
-                    RoadName: item.querySelector('RoadName')?.textContent || '',
-                    SurveillanceDescription: item.querySelector('SurveillanceDescription')?.textContent || '',
-                    PositionLon: parseFloat(item.querySelector('PositionLon')?.textContent) || 0,
-                    PositionLat: parseFloat(item.querySelector('PositionLat')?.textContent) || 0,
-                    VideoStreamURL: item.querySelector('VideoStreamURL')?.textContent || '',
-                    VideoImageURL: item.querySelector('VideoImageURL')?.textContent || '',
-                    RoadDirection: item.querySelector('RoadDirection')?.textContent || '',
-                    LocationMile: item.querySelector('LocationMile')?.textContent || '',
-                    source: 'xml'
-                };
-                
-                if (camera.CCTVID) {
-                    cameras.push(camera);
-                }
-            });
-            
-            return cameras;
-        }
-
         async function loadCameras() {
             const container = document.getElementById('cameras-container');
-            container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 載入監視器資料中...</div>';
+            container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 載入國道監視器資料中...</div>';
             
             let allCamerasFromSources = [];
             
             try {
-                // 使用 TDX API 載入國道監視器資料
-                console.log('正在載入 TDX 國道監視器 API...');
-                console.log('API 端點: /v2/Road/Traffic/CCTV/Freeway');
+                console.log('正在載入國道監視器資料...');
                 
-                const response = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/Freeway?$format=JSON');
-                console.log('TDX API Response:', response);
-                console.log('Response type:', typeof response);
-                console.log('Is array:', Array.isArray(response));
+                container.innerHTML = `
+                    <div class="loading">
+                        <i class="fas fa-spinner fa-spin"></i> 正在載入國道監視器資料...<br>
+                        <small style="margin-top: 10px; display: block;">從 TDX 平台載入全國國道監視器...</small>
+                    </div>
+                `;
                 
-                if (response && Object.keys(response).length > 0) {
-                    console.log('Response keys:', Object.keys(response));
-                }
+                // 使用 TDX Highway 端點載入全國省道監視器
+                const endpoint = '/v2/Road/Traffic/CCTV/Freeway?$format=JSON';
+                console.log('📍 載入 Freeway 端點資料...');
+                
+                const response = await tdxApi.fetchCCTV(endpoint);
                 
                 let cameras = [];
-                if (response && response.CCTVs && Array.isArray(response.CCTVs)) {
-                    cameras = response.CCTVs.map(camera => ({...camera, source: 'tdx'}));
-                    console.log('使用 response.CCTVs 格式');
-                } else if (Array.isArray(response)) {
-                    cameras = response.map(camera => ({...camera, source: 'tdx'}));
-                    console.log('使用 Array 格式');
+                if (Array.isArray(response)) {
+                    cameras = response;
+                } else if (response && response.CCTVs && Array.isArray(response.CCTVs)) {
+                    cameras = response.CCTVs;
                 } else if (response && response.data && Array.isArray(response.data)) {
-                    cameras = response.data.map(camera => ({...camera, source: 'tdx'}));
-                    console.log('使用 response.data 格式');
-                } else if (response && response.value && Array.isArray(response.value)) {
-                    cameras = response.value.map(camera => ({...camera, source: 'tdx'}));
-                    console.log('使用 response.value 格式');
+                    cameras = response.data;
                 } else {
-                    console.error('未知的資料格式:', response);
-                    throw new Error('TDX API 回傳格式不正確');
+                    console.warn('未預期的回應格式:', response);
+                    cameras = [];
                 }
                 
-                if (cameras && cameras.length > 0) {
-                    allCamerasFromSources = cameras;
-                    console.log('✅ TDX API 載入成功，監視器數量:', cameras.length);
-                    console.log('第一筆資料範例:', cameras[0]);
-                } else {
-                    throw new Error('TDX API 回傳資料為空');
+                console.log(`📊 TDX Freeway 原始資料: ${cameras.length} 筆`);
+                
+                if (cameras.length > 0) {
+                    // Freeway API 直接返回國道資料，不需篩選
+                    allCamerasFromSources = cameras.map(camera => ({
+                        ...camera, 
+                        source: 'tdx',
+                        RoadNumber: camera.RoadName || '未知國道'
+                    }));
                 }
                 
             } catch (error) {
-                console.error('❌ TDX API 載入失敗:', error);
-                console.error('錯誤訊息:', error.message);
-                console.error('錯誤堆疊:', error.stack);
+                console.error('載入國道監視器資料失敗:', error);
                 container.innerHTML = `
-                    <div class="loading" style="color: #ff6b6b;">
-                        <i class="fas fa-exclamation-triangle"></i> 
-                        載入國道監視器資料失敗<br>
-                        錯誤: ${error.message}<br>
-                        <br>
-                        <small style="color: #bbdefb;">
-                            可能原因：<br>
-                            1. TDX API 端點可能已變更<br>
-                            2. API 金鑰需要重新設定<br>
-                            3. 網路連線問題<br>
-                            <br>
-                            請檢查瀏覽器主控台 (F12) 查看詳細錯誤訊息
-                        </small>
+                    <div class="loading">
+                        <i class="fas fa-exclamation-triangle"></i><br>
+                        載入失敗: ${error.message}<br><br>
+                        <button onclick="loadCameras()" style="padding: 10px 20px; background: #2196F3; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                            <i class="fas fa-refresh"></i> 重新載入
+                        </button>
                     </div>
                 `;
                 return;
             }
             
-            if (!allCamerasFromSources || allCamerasFromSources.length === 0) {
-                container.innerHTML = '<div class="loading">無監視器資料</div>';
+            console.log(`📊 國道監視器: ${allCamerasFromSources.length} 筆`);
+            
+            if (allCamerasFromSources.length === 0) {
+                container.innerHTML = '<div class="loading">目前沒有可用的國道監視器資料</div>';
                 return;
             }
-
-            console.log('最終處理的監視器數量:', allCamerasFromSources.length);
-            console.log('第一筆資料範例:', allCamerasFromSources[0]);
-
-                // 為每個監視器添加額外資訊
-                allCameras = allCamerasFromSources.map(camera => ({
-                    ...camera,
-                    City: getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName),
-                    FreewayNumber: getFreewayNumber(camera.RoadName),
-                    DirectionName: getDirectionName(camera.RoadDirection)
-                }));            populateFilters();
+            
+            // 處理監視器資料
+            allCameras = allCamerasFromSources.map(camera => ({
+                ...camera,
+                City: getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName)
+            }));
+            
+            filteredCameras = allCameras;
+            populateFilters();
             updateStats();
             displayCameras(allCameras);
         }
 
         function populateFilters() {
-            // 填充國道選單
-            const freeways = [...new Set(allCameras.map(c => c.FreewayNumber).filter(Boolean))].sort();
-            const freewaySelect = document.getElementById('freewaySelect');
-            freewaySelect.innerHTML = '<option value="">全部國道</option>' + 
-                freeways.map(freeway => `<option value="${freeway}">${freeway}</option>`).join('');
+            updateRoadSelect(allCameras);
+            updateCitySelect(allCameras);
+        }
+
+        function updateStats() {
+            document.getElementById('totalCameras').textContent = allCameras.length;
+            const available = allCameras.filter(c => c.VideoImageUrl || c.VideoStreamURL).length;
+            document.getElementById('availableCameras').textContent = available;
+            document.getElementById('filteredCameras').textContent = filteredCameras.length;
             
-            // 填充縣市選單
+            // 計算國道數量
+            const highways = [...new Set(allCameras.map(c => c.RoadNumber).filter(Boolean))];
+            document.getElementById('highwayCount').textContent = highways.length;
+        }
+
+        function applyFilters(changedFilter = null) {
+            const roadFilter = document.getElementById('roadSelect').value;
+            const cityFilter = document.getElementById('citySelect').value;
+            
+            if (changedFilter === 'road') {
+                if (roadFilter) {
+                    const camerasForRoad = allCameras.filter(camera => camera.RoadNumber === roadFilter);
+                    const citiesForRoad = [...new Set(camerasForRoad.map(c => c.City).filter(Boolean))].sort();
+                    const citySelect = document.getElementById('citySelect');
+                    const currentCityValue = citySelect.value;
+                    
+                    citySelect.innerHTML = '<option value="">所有縣市</option>' + 
+                        citiesForRoad.map(city => {
+                            const count = camerasForRoad.filter(c => c.City === city).length;
+                            return `<option value="${city}">${city} (${count})</option>`;
+                        }).join('');
+                    
+                    if (currentCityValue && citiesForRoad.includes(currentCityValue)) {
+                        citySelect.value = currentCityValue;
+                    }
+                } else {
+                    updateCitySelect(allCameras);
+                }
+            } else if (changedFilter === 'city') {
+                if (cityFilter) {
+                    const camerasForCity = allCameras.filter(camera => camera.City === cityFilter);
+                    const roadsForCity = [...new Set(camerasForCity.map(c => c.RoadNumber).filter(Boolean))].sort((a, b) => {
+                        const numA = parseInt(a.match(/\d+/)?.[0] || '0');
+                        const numB = parseInt(b.match(/\d+/)?.[0] || '0');
+                        return numA - numB;
+                    });
+                    const roadSelect = document.getElementById('roadSelect');
+                    const currentRoadValue = roadSelect.value;
+                    
+                    roadSelect.innerHTML = '<option value="">所有國道</option>' + 
+                        roadsForCity.map(road => {
+                            const count = camerasForCity.filter(c => c.RoadNumber === road).length;
+                            return `<option value="${road}">${road} (${count})</option>`;
+                        }).join('');
+                    
+                    if (currentRoadValue && roadsForCity.includes(currentRoadValue)) {
+                        roadSelect.value = currentRoadValue;
+                    }
+                } else {
+                    updateRoadSelect(allCameras);
+                }
+            }
+            
+            filteredCameras = allCameras.filter(camera => {
+                const matchRoad = !roadFilter || camera.RoadNumber === roadFilter;
+                const matchCity = !cityFilter || camera.City === cityFilter;
+                return matchRoad && matchCity;
+            });
+            
+            currentPage = 1;
+            updateStats();
+            displayCameras(filteredCameras);
+        }
+        
+        function updateRoadSelect(cameras, selectedValue = '') {
+            const roads = [...new Set(cameras.map(c => c.RoadNumber).filter(Boolean))].sort((a, b) => {
+                const numA = parseInt(a.match(/\d+/)?.[0] || '0');
+                const numB = parseInt(b.match(/\d+/)?.[0] || '0');
+                return numA - numB;
+            });
+            
+            const roadSelect = document.getElementById('roadSelect');
+            roadSelect.innerHTML = '<option value="">所有國道</option>' + 
+                roads.map(road => {
+                    const count = cameras.filter(c => c.RoadNumber === road).length;
+                    return `<option value="${road}">${road} (${count})</option>`;
+                }).join('');
+            
+            if (selectedValue) {
+                roadSelect.value = selectedValue;
+            }
+        }
+        
+        function updateCitySelect(cameras, selectedValue = '') {
             // 台灣縣市標準排序 - 由北到南，直轄市優先
             const TAIWAN_CITY_ORDER = [
                 '台北市', '新北市', '桃園市', '台中市', '台南市', '高雄市',
@@ -450,7 +526,7 @@
                 '澎湖縣', '金門縣', '連江縣'
             ];
             
-            const cities = [...new Set(allCameras.map(c => c.City).filter(Boolean))];
+            const cities = [...new Set(cameras.map(c => c.City).filter(Boolean))];
             // 按照台灣縣市標準順序排列
             const sortedCities = cities.sort((a, b) => {
                 const indexA = TAIWAN_CITY_ORDER.indexOf(a);
@@ -463,115 +539,22 @@
             });
             
             const citySelect = document.getElementById('citySelect');
-            citySelect.innerHTML = '<option value="">全部縣市</option>' + 
-                sortedCities.map(city => `<option value="${city}">${city}</option>`).join('');
-        }
-
-        function updateStats() {
-            const selectedFreeway = document.getElementById('freewaySelect').value;
-            const selectedCity = document.getElementById('citySelect').value;
-            const selectedDirection = document.getElementById('directionSelect').value;
             
-            let filteredCameras = allCameras;
-            if (selectedFreeway) filteredCameras = filteredCameras.filter(c => c.FreewayNumber === selectedFreeway);
-            if (selectedCity) filteredCameras = filteredCameras.filter(c => c.City === selectedCity);
-            if (selectedDirection) filteredCameras = filteredCameras.filter(c => c.RoadDirection == selectedDirection);
+            citySelect.innerHTML = '<option value="">所有縣市</option>' + 
+                sortedCities.map(city => {
+                    const count = cameras.filter(c => c.City === city).length;
+                    return `<option value="${city}">${city} (${count})</option>`;
+                }).join('');
             
-            const uniqueFreeways = [...new Set(filteredCameras.map(c => c.FreewayNumber).filter(Boolean))];
-            const uniqueCities = [...new Set(filteredCameras.map(c => c.City).filter(Boolean))];
-            
-            // 計算資料來源統計
-            const tdxCount = allCameras.filter(c => c.source === 'tdx').length;
-            const xmlCount = allCameras.filter(c => c.source === 'xml').length;
-            
-            document.getElementById('totalCount').textContent = allCameras.length;
-            document.getElementById('filteredCount').textContent = filteredCameras.length;
-            document.getElementById('freewayCount').textContent = uniqueFreeways.length;
-            document.getElementById('cityCount').textContent = uniqueCities.length;
-            
-            // 更新資料來源統計顯示
-            const dataSourceInfo = document.getElementById('dataSourceInfo');
-            if (dataSourceInfo) {
-                dataSourceInfo.innerHTML = tdxCount > 0 ? 
-                    `<i class="fas fa-database" style="color: #4CAF50;"></i> TDX API: ${tdxCount}筆` :
-                    `<i class="fas fa-backup" style="color: #FF9800;"></i> 備援 XML API: ${xmlCount}筆`;
+            if (selectedValue) {
+                citySelect.value = selectedValue;
             }
         }
 
-        function applyFilters() {
-            const selectedFreeway = document.getElementById('freewaySelect').value;
-            const selectedCity = document.getElementById('citySelect').value;
-            const selectedDirection = document.getElementById('directionSelect').value;
-            
-            let filtered = allCameras;
-            if (selectedFreeway) {
-                filtered = filtered.filter(c => c.FreewayNumber === selectedFreeway);
-            }
-            if (selectedCity) {
-                filtered = filtered.filter(c => c.City === selectedCity);
-            }
-            if (selectedDirection) {
-                filtered = filtered.filter(c => c.RoadDirection === selectedDirection);
-            }
-            
-            filteredCameras = filtered;
-            currentPage = 1; // 重置到第一頁
-            
-            updateStats();
-            displayCameras(filtered);
-            
-            // 動態更新其他篩選選單
-            updateDynamicFilters(filtered);
-        }
-
-        function updateDynamicFilters(filteredCameras) {
-            // 更新國道選單
-            const availableFreeways = [...new Set(filteredCameras.map(c => c.FreewayNumber).filter(Boolean))].sort();
-            const freewaySelect = document.getElementById('freewaySelect');
-            const currentFreeway = freewaySelect.value;
-            if (!currentFreeway) {
-                freewaySelect.innerHTML = '<option value="">全部國道</option>' + 
-                    availableFreeways.map(freeway => `<option value="${freeway}">${freeway}</option>`).join('');
-            }
-            
-            // 更新縣市選單
-            // 台灣縣市標準排序 - 由北到南，直轄市優先
-            const TAIWAN_CITY_ORDER = [
-                '台北市', '新北市', '桃園市', '台中市', '台南市', '高雄市',
-                '基隆市', '新竹市', '嘉義市',
-                '新竹縣', '苗栗縣', '彰化縣', '南投縣', '雲林縣', '嘉義縣', '屏東縣',
-                '宜蘭縣', '花蓮縣', '台東縣',
-                '澎湖縣', '金門縣', '連江縣'
-            ];
-            
-            const availableCities = [...new Set(filteredCameras.map(c => c.City).filter(Boolean))];
-            // 按照台灣縣市標準順序排列
-            const sortedAvailableCities = availableCities.sort((a, b) => {
-                const indexA = TAIWAN_CITY_ORDER.indexOf(a);
-                const indexB = TAIWAN_CITY_ORDER.indexOf(b);
-                // 如果在標準順序中找不到，則放在最後並按字母排序
-                if (indexA === -1 && indexB === -1) return a.localeCompare(b);
-                if (indexA === -1) return 1;
-                if (indexB === -1) return -1;
-                return indexA - indexB;
-            });
-            
-            const citySelect = document.getElementById('citySelect');
-            const currentCity = citySelect.value;
-            if (!currentCity) {
-                citySelect.innerHTML = '<option value="">全部縣市</option>' + 
-                    sortedAvailableCities.map(city => `<option value="${city}">${city}</option>`).join('');
-            }
-        }
-
-        function clearFilters() {
-            document.getElementById('freewaySelect').value = '';
+        function resetFilters() {
+            document.getElementById('roadSelect').value = '';
             document.getElementById('citySelect').value = '';
-            document.getElementById('directionSelect').value = '';
-            currentPage = 1;
-            populateFilters();
-            updateStats();
-            displayCameras(allCameras);
+            applyFilters();
         }
 
         function displayCameras(cameras) {
@@ -579,7 +562,7 @@
             const pagination = document.getElementById('pagination');
             
             if (cameras.length === 0) {
-                container.innerHTML = '<div class="loading">無符合篩選條件的監視器</div>';
+                container.innerHTML = '<div class="loading">無符合篩選條件的國道監視器</div>';
                 pagination.style.display = 'none';
                 return;
             }
@@ -587,163 +570,126 @@
             // 計算分頁
             totalPages = Math.ceil(cameras.length / itemsPerPage);
             if (currentPage > totalPages) currentPage = 1;
-            
-            // 更新分頁資訊顯示
-            document.getElementById('currentPageNum').textContent = currentPage;
-            document.getElementById('totalPagesNum').textContent = totalPages;
-            pagination.style.display = totalPages > 1 ? 'block' : 'none';
-            
-            // 計算當前頁面要顯示的監視器
+
             const startIndex = (currentPage - 1) * itemsPerPage;
             const endIndex = startIndex + itemsPerPage;
             const displayCameras = cameras.slice(startIndex, endIndex);
-            
-            const html = displayCameras.map((camera, index) => {
-                const sourceIcon = camera.source === 'tdx' ? '<i class="fas fa-database" style="color: #4CAF50;" title="TDX API"></i>' : '<i class="fas fa-backup" style="color: #FF9800;" title="備援 XML API"></i>';
-                // 優先顯示即時影像串流(VideoStreamURL),若無則使用快照
-                const thumbSrc = camera.VideoImageURL || '';
-                const streamUrl = camera.VideoStreamURL || '';
-                const displayUrl = streamUrl || thumbSrc;
+
+            const grid = displayCameras.map((camera, index) => {
+                const sourceIcon = camera.source === 'tdx' ? '<i class="fas fa-database" title="TDX資料" style="color: #2196F3;"></i>' : '';
+                const roadNumber = camera.RoadNumber ? `<span class="highway-badge">${camera.RoadNumber}</span>` : '';
+                
                 return `
-                <div class="camera-card" onclick="showModal(${allCameras.indexOf(camera)})">
-                    <div class="camera-info">
-                        <h3>${camera.FreewayNumber} ${sourceIcon}</h3>
-                        <p style="color: #2196F3; font-weight: bold; margin: 5px 0;"><i class="fas fa-map-marker-alt"></i> ${camera.City} - ${camera.SurveillanceDescription || camera.LocationMile || '監視器'}</p>
-                        <p><i class="fas fa-road"></i> ${camera.RoadSection ? `${camera.RoadSection.Start} - ${camera.RoadSection.End}` : camera.SurveillanceDescription || '無路段資訊'}</p>
-                        <p><i class="fas fa-compass"></i> ${camera.DirectionName} | <i class="fas fa-map-marker-alt"></i> ${camera.LocationMile || '無里程資訊'}</p>
+                    <div class="camera-card" onclick="openModal(${startIndex + index})">
+                        <div class="camera-image">
+                            ${camera.VideoImageUrl || camera.VideoStreamURL ? 
+                                `<img src="${camera.VideoImageUrl || camera.VideoStreamURL}" alt="${camera.CCTVID || '監視器影像'}" 
+                                     onerror="handleImageError(this, '${camera.VideoImageUrl || camera.VideoStreamURL}')">
+                                 <div class="image-overlay">
+                                     <i class="fas fa-search-plus" style="font-size: 2rem;"></i>
+                                 </div>` : 
+                                '<div class="no-image-placeholder"><i class="fas fa-video-slash" style="font-size: 2rem; color: #ccc; margin-bottom: 10px;"></i><span style="color: #666;">無影像資料</span></div>'
+                            }
+                        </div>
+                        <div class="camera-info">
+                            <h3>${camera.RoadName || '國道監視器'} ${roadNumber} ${sourceIcon}</h3>
+                            <p><i class="fas fa-map-marker-alt"></i> ${camera.LocationDescription || '未知位置'}</p>
+                            <p><i class="fas fa-map"></i> ${camera.City || '未知縣市'}</p>
+                            <p><i class="fas fa-id-badge"></i> ${camera.CCTVID || '未知編號'}</p>
+                            ${camera.PositionLat && camera.PositionLon ? 
+                                `<p><i class="fas fa-crosshairs"></i> ${camera.PositionLat.toFixed(4)}, ${camera.PositionLon.toFixed(4)}</p>` : ''
+                            }
+                        </div>
                     </div>
-                    <div class="camera-image">
-                        ${displayUrl ? 
-                            `<img src="${displayUrl}" alt="${streamUrl ? '即時影像' : '監視器快照'}" loading="lazy" onerror="handleImageError(this, '${displayUrl}')"> 
-                             <div class="image-overlay">
-                                <i class="fas fa-search-plus"></i> 點擊放大
-                             </div>` :
-                            `<div class="no-image-placeholder">
-                                <i class="fas fa-video-slash" style="font-size: 2rem; color: #ccc;"></i><br>無影像資料
-                             </div>`
-                        }
-                    </div>
-                </div>
                 `;
             }).join('');
+
+            container.innerHTML = `<div class="cameras-grid">${grid}</div>`;
             
-            container.innerHTML = `
-                <div style="text-align: center; margin: 20px 0; color: white; font-size: 1.1rem;">
-                    顯示第 ${startIndex + 1}-${Math.min(endIndex, cameras.length)} 筆，共 ${cameras.length} 筆國道監視器
-                </div>
-                <div class="cameras-grid">${html}</div>
-            `;
-            
-            // 滾動到頁面頂部
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-        
-        function changePage(action) {
-            switch(action) {
-                case 'first':
-                    currentPage = 1;
-                    break;
-                case 'prev':
-                    if (currentPage > 1) currentPage--;
-                    break;
-                case 'next':
-                    if (currentPage < totalPages) currentPage++;
-                    break;
-                case 'last':
-                    currentPage = totalPages;
-                    break;
-            }
-            displayCameras(filteredCameras.length > 0 ? filteredCameras : allCameras);
+            // 更新分頁
+            updatePagination();
         }
 
-        function showModal(index) {
-            const camera = allCameras[index];
+        function updatePagination() {
+            const pagination = document.getElementById('pagination');
+            const pageInfo = document.getElementById('pageInfo');
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
             
-            // 重置圖片區域
-            const modalContent = document.querySelector('.modal-content');
-            const existingPreview = modalContent.querySelector('.preview-container');
-            if (existingPreview) {
-                existingPreview.remove();
+            if (totalPages <= 1) {
+                pagination.style.display = 'none';
+                return;
             }
             
-            let modalImage = document.getElementById('modalImage');
-            if (!modalImage) {
-                // 如果modalImage被替換了，重新創建
-                modalImage = document.createElement('img');
-                modalImage.id = 'modalImage';
-                modalImage.className = 'modal-image';
-                modalContent.insertBefore(modalImage, modalContent.querySelector('.modal-info'));
-            }
-            
-            if (camera.VideoStreamURL) {
-                // 創建一個可點擊的預覽區域
-                const previewContainer = document.createElement('div');
-                previewContainer.className = 'preview-container';
-                previewContainer.style.cssText = `
-                    width: 100%; 
-                    height: 400px; 
-                    background: linear-gradient(135deg, #2196F3, #1976D2); 
-                    display: flex; 
-                    align-items: center; 
-                    justify-content: center; 
-                    flex-direction: column; 
-                    cursor: pointer; 
-                    border-radius: 10px;
-                    color: white;
-                    margin-bottom: 20px;
-                `;
-                previewContainer.innerHTML = `
-                    <i class="fas fa-play-circle" style="font-size: 4rem; margin-bottom: 15px;"></i>
-                    <div style="font-size: 1.2rem; margin-bottom: 10px;">點擊開啟即時影像</div>
-                    <div style="font-size: 0.9rem; opacity: 0.8;">${camera.CCTVID}</div>
-                `;
-                previewContainer.onclick = () => window.open(camera.VideoStreamURL, '_blank');
-                
-                modalImage.style.display = 'none';
-                modalContent.insertBefore(previewContainer, modalContent.querySelector('.modal-info'));
-            } else if (camera.VideoImageURL) {
-                modalImage.style.display = 'block';
-                modalImage.src = camera.VideoImageURL;
-                modalImage.onerror = () => {
-                    modalImage.src = 'data:image/svg+xml,<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg"><rect width="400" height="300" fill="%23f5f5f5"/><text x="50%" y="50%" font-family="Arial" font-size="18" fill="%23999" text-anchor="middle" dy=".3em">影像載入失敗</text></svg>';
-                };
-            } else {
-                modalImage.style.display = 'block';
-                modalImage.src = 'data:image/svg+xml,<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg"><rect width="400" height="300" fill="%23f5f5f5"/><text x="50%" y="50%" font-family="Arial" font-size="18" fill="%23999" text-anchor="middle" dy=".3em">無影像資料</text></svg>';
-            }
-            document.getElementById('modalTitle').textContent = `${camera.FreewayNumber} - ${camera.LocationMile || '未命名'}`;
-            document.getElementById('modalDescription').innerHTML = `
-                <strong><i class="fas fa-database"></i> 資料來源：</strong>${camera.source === 'tdx' ? 'TDX API' : '備援 XML API'}<br>
-                <strong><i class="fas fa-road"></i> 路段：</strong>${camera.RoadSection ? `${camera.RoadSection.Start} - ${camera.RoadSection.End}` : camera.SurveillanceDescription || '無路段資訊'}<br>
-                <strong><i class="fas fa-compass"></i> 方向：</strong>${camera.DirectionName}<br>
-                <strong><i class="fas fa-map-marker-alt"></i> 里程：</strong>${camera.LocationMile || '無里程資訊'}
-            `;
-            document.getElementById('modalLocation').innerHTML = `
-                <strong><i class="fas fa-city"></i> 縣市：</strong>${camera.City}<br>
-                <strong><i class="fas fa-crosshairs"></i> 座標：</strong>${camera.PositionLon ? `經度 ${camera.PositionLon}, 緯度 ${camera.PositionLat}` : '無座標資訊'}<br>
-                <strong><i class="fas fa-id-card"></i> ID：</strong>${camera.CCTVID || 'N/A'}<br>
-                <strong><i class="fas fa-highway"></i> 路線：</strong>${camera.RoadName || '無路線資訊'}
-            `;
-            const streamInfo = document.getElementById('modalStream');
-            streamInfo.innerHTML = camera.VideoStreamURL ? 
-                `<a href="${camera.VideoStreamURL}" target="_blank" style="color: #2196F3; text-decoration: none;"><i class="fas fa-external-link-alt"></i> 開啟串流連結</a>` : 
-                '無串流資訊';
-            
-            // 添加前往原始影像按鈕
-            const originalUrl = camera.VideoImageURL || camera.VideoStreamURL;
-            if (originalUrl && !document.querySelector('.original-link-btn')) {
-                const btnHtml = `<a href="${originalUrl}" target="_blank" class="original-link-btn"><i class="fas fa-external-link-alt"></i>前往原始影像</a>`;
-                streamInfo.insertAdjacentHTML('afterend', btnHtml);
-            }
-            
-            document.getElementById('imageModal').style.display = 'block';
+            pagination.style.display = 'flex';
+            pageInfo.textContent = `第 ${currentPage} 頁，共 ${totalPages} 頁`;
+            prevBtn.disabled = currentPage === 1;
+            nextBtn.disabled = currentPage === totalPages;
         }
 
-        function closeModal() {
+        function changePage(direction) {
+            const newPage = currentPage + direction;
+            if (newPage >= 1 && newPage <= totalPages) {
+                currentPage = newPage;
+                displayCameras(filteredCameras);
+            }
+        }
+
+        function openModal(index) {
+            const camera = filteredCameras[index];
+            const modal = document.getElementById('imageModal');
+            const modalImg = document.getElementById('modalImage');
+            const modalTitle = document.getElementById('modalTitle');
+            const modalLocation = document.getElementById('modalLocation');
+            const modalRoad = document.getElementById('modalRoad');
+            const modalCoords = document.getElementById('modalCoords');
+            
+            modalImg.src = camera.VideoImageUrl || camera.VideoStreamURL || '';
+            modalTitle.textContent = camera.RoadName || '國道監視器';
+            
+            // 顯示里程資訊 - 優先使用 LocationMile，格式化為"第XXk+XXX"
+            let locationDisplay = '未知位置';
+            if (camera.LocationMile) {
+                locationDisplay = camera.LocationMile;
+            } else if (camera.LocationDescription) {
+                locationDisplay = camera.LocationDescription;
+            }
+            modalLocation.innerHTML = `<i class="fas fa-map-marker-alt"></i> <strong>位置：</strong>${locationDisplay}`;
+            
+            modalRoad.innerHTML = `<i class="fas fa-road"></i> <strong>路線：</strong>${camera.RoadNumber || '未知路線'} (${camera.City || '未知縣市'})`;
+            
+            // 座標和原始影像連結
+            let coordsHtml = '';
+            if (camera.PositionLat && camera.PositionLon) {
+                coordsHtml = `<i class="fas fa-crosshairs"></i> <strong>座標：</strong>${camera.PositionLat.toFixed(6)}, ${camera.PositionLon.toFixed(6)}`;
+            }
+            
+            const imageUrl = camera.VideoImageUrl || camera.VideoStreamURL;
+            if (imageUrl) {
+                coordsHtml += `<br><i class="fas fa-external-link-alt"></i> <a href="${imageUrl}" target="_blank" style="color: #2196F3; text-decoration: none; margin-left: 5px;">查看原始影像</a>`;
+            }
+            
+            modalCoords.innerHTML = coordsHtml;
+            
+            modal.style.display = 'block';
+        }
+
+        // 關閉彈窗
+        document.getElementsByClassName('close')[0].onclick = function() {
             document.getElementById('imageModal').style.display = 'none';
         }
 
-        loadCameras();
+        window.onclick = function(event) {
+            const modal = document.getElementById('imageModal');
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
+        }
+
+        // 初始載入
+        window.onload = function() {
+            loadCameras();
+        };
     </script>
 </body>
 </html>
