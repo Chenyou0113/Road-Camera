@@ -32,6 +32,68 @@
         .header h1 { color: #4CAF50; text-align: center; margin-bottom: 10px; }
         .back-btn { display: inline-block; padding: 10px 20px; background: #4CAF50; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
         .back-btn:hover { background: #388E3C; }
+        
+        /* 載入進度指示器樣式 */
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 50px 20px;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            margin: 30px auto;
+            max-width: 800px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            color: #333;
+            font-size: 1.2rem;
+        }
+
+        .loading-step {
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+            padding: 8px 0;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            width: 100%;
+            max-width: 400px;
+            word-wrap: break-word;
+        }
+
+        .loading-step i {
+            margin-right: 12px;
+            width: 16px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .loading-step span {
+            flex: 1;
+            text-align: left;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+
+        #progress-bar {
+            box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+        }
+
+        #loading-steps {
+            width: 100%;
+            max-width: 500px;
+        }
+
+        #loading-stats {
+            width: 100%;
+            max-width: 400px;
+        }
+
+        #loading-stats div {
+            margin: 5px 0;
+            font-size: 0.9rem;
+            word-wrap: break-word;
+        }
         .loading { text-align: center; padding: 50px; color: white; font-size: 1.2rem; }
         .cameras-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 20px 0; }
         @media (max-width: 1200px) {
@@ -201,8 +263,51 @@
     <script src="assets/tdx-api.js"></script>
     <script src="assets/dark-mode.js"></script>
     <script>
-        // 創建 TDX API 實例
-        const tdxApi = new TDXApi();
+        // 使用全局 TDX API 實例（由 tdx-api.js 提供）
+        // const tdxApi 已在 assets/tdx-api.js 中定義
+        
+        // 快速道路列表 - 用於篩選排除
+        const EXPRESSWAYS = [
+            '台61', '台62', '台63', '台64', '台65', '台66', '台68', 
+            '台72', '台74', '台76', '台78', '台82', '台84', '台86', '台88'
+        ];
+        
+        // 判斷是否為快速道路監視器（需要排除的）
+        function isExpressway(camera) {
+            const roadName = camera.RoadName || '';
+            const locationDesc = camera.LocationDescription || '';
+            const roadSection = typeof camera.RoadSection === 'string' ? camera.RoadSection : '';
+            const allText = `${roadName} ${locationDesc} ${roadSection}`.toLowerCase();
+            
+            // 檢查是否包含快速道路編號
+            for (const expressway of EXPRESSWAYS) {
+                const number = expressway.slice(1); // 取得數字部分
+                if (allText.includes(`台${number}`) || allText.includes(`臺${number}`) || 
+                    allText.includes(`快速道路${number}`) || allText.includes(`快速公路${number}`)) {
+                    return true;
+                }
+            }
+            
+            // 檢查特殊關鍵字
+            const expresswayKeywords = ['快速道路', '快速公路', '西濱', '中投', '萬里瑞濱', '東西向快速'];
+            return expresswayKeywords.some(keyword => allText.includes(keyword));
+        }
+        
+        // 判斷是否為國道監視器（需要排除的）
+        function isFreeway(camera) {
+            const roadName = camera.RoadName || '';
+            const locationDesc = camera.LocationDescription || '';
+            const allText = `${roadName} ${locationDesc}`.toLowerCase();
+            
+            return allText.includes('國道') || allText.includes('高速公路') || 
+                   allText.includes('freeway') || allText.includes('國1') || 
+                   allText.includes('國3') || allText.includes('國5') || allText.includes('國6');
+        }
+        
+        // 篩選市區道路監視器（排除快速道路和國道）
+        function isCityRoad(camera) {
+            return !isExpressway(camera) && !isFreeway(camera);
+        }
         
         let allCameras = [];
         let filteredCameras = [];
@@ -423,6 +528,8 @@
 
         async function loadCameras() {
             console.log('=== 開始載入市區道路監視器資料 ===');
+            console.log('TDX API 狀態:', typeof tdxApi !== 'undefined' ? '✅ 可用' : '❌ 未定義');
+            console.log('TDX_CONFIG 狀態:', typeof TDX_CONFIG !== 'undefined' ? '✅ 可用' : '❌ 未定義');
             
             const container = document.getElementById('cameras-container');
             if (!container) {
@@ -430,18 +537,104 @@
                 return;
             }
             
-            // 簡化載入指示器
-            container.innerHTML = `
-                <div class="loading">
-                    <i class="fas fa-rocket fa-spin" style="font-size: 2rem; margin-bottom: 1rem; color: #4CAF50;"></i>
-                    <div style="font-size: 1.2rem; margin-bottom: 0.5rem;">🚀 高速載入中...</div>
-                    <div style="font-size: 0.9rem; opacity: 0.8;">正在載入全台縣市監視器</div>
-                </div>
-            `;
+            // 創建動態載入進度指示器
+            function createProgressIndicator() {
+                return `
+                    <div class="loading">
+                        <i class="fas fa-road fa-spin" style="font-size: 3rem; margin-bottom: 1.5rem; color: #4CAF50;"></i>
+                        <div style="font-size: 1.4rem; font-weight: bold; margin-bottom: 1rem; color: #4CAF50; text-align: center;">市區道路監視器載入中</div>
+                        
+                        <!-- 進度條 -->
+                        <div style="background: rgba(76, 175, 80, 0.2); border-radius: 10px; height: 8px; margin: 1rem 0; overflow: hidden; width: 100%; max-width: 400px;">
+                            <div id="progress-bar" style="background: linear-gradient(90deg, #4CAF50, #66BB6A); height: 100%; width: 0%; transition: width 0.5s ease; border-radius: 10px;"></div>
+                        </div>
+                        
+                        <!-- 載入步驟 -->
+                        <div id="loading-steps" style="width: 100%; max-width: 500px; margin-top: 1.5rem;">
+                                <div class="loading-step" data-step="1">
+                                    <i class="fas fa-circle-notch fa-spin" style="color: #4CAF50; margin-right: 8px;"></i>
+                                    <span>初始化 TDX API 連接...</span>
+                                </div>
+                                <div class="loading-step" data-step="2" style="opacity: 0.4;">
+                                    <i class="fas fa-circle" style="color: #ccc; margin-right: 8px;"></i>
+                                    <span>載入縣市監視器資料...</span>
+                                </div>
+                                <div class="loading-step" data-step="3" style="opacity: 0.4;">
+                                    <i class="fas fa-circle" style="color: #ccc; margin-right: 8px;"></i>
+                                    <span>過濾市區道路監視器...</span>
+                                </div>
+                                <div class="loading-step" data-step="4" style="opacity: 0.4;">
+                                    <i class="fas fa-circle" style="color: #ccc; margin-right: 8px;"></i>
+                                    <span>生成監視器介面...</span>
+                                </div>
+                            </div>
+                            
+                        <!-- 統計資訊 -->
+                        <div id="loading-stats" style="margin-top: 1.5rem; font-size: 0.9rem; opacity: 0.8; text-align: center;">
+                            <div style="margin: 5px 0;">🏙️ <span id="current-count">0</span> 個市區監視器已載入</div>
+                            <div style="margin: 5px 0;">📊 <span id="city-count">0</span> / 19 個縣市已處理</div>
+                            <div style="margin: 5px 0;">⏱️ 預計完成時間：<span id="estimated-time">計算中...</span></div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // 更新進度的函數
+            function updateProgress(step, progress, message, count = 0, cityCount = 0) {
+                // 更新進度條
+                const progressBar = document.getElementById('progress-bar');
+                if (progressBar) {
+                    progressBar.style.width = `${progress}%`;
+                }
+                
+                // 更新當前步驟
+                const steps = document.querySelectorAll('.loading-step');
+                steps.forEach((stepEl, index) => {
+                    const stepNumber = index + 1;
+                    const icon = stepEl.querySelector('i');
+                    const span = stepEl.querySelector('span');
+                    
+                    if (stepNumber < step) {
+                        // 已完成的步驟
+                        stepEl.style.opacity = '1';
+                        icon.className = 'fas fa-check-circle';
+                        icon.style.color = '#4CAF50';
+                    } else if (stepNumber === step) {
+                        // 當前步驟
+                        stepEl.style.opacity = '1';
+                        icon.className = 'fas fa-circle-notch fa-spin';
+                        icon.style.color = '#4CAF50';
+                        if (message) span.textContent = message;
+                    } else {
+                        // 未開始的步驟
+                        stepEl.style.opacity = '0.4';
+                        icon.className = 'fas fa-circle';
+                        icon.style.color = '#ccc';
+                    }
+                });
+                
+                // 更新統計資訊
+                const currentCountEl = document.getElementById('current-count');
+                if (currentCountEl) currentCountEl.textContent = count;
+                
+                const cityCountEl = document.getElementById('city-count');
+                if (cityCountEl) cityCountEl.textContent = cityCount;
+                
+                const estimatedTimeEl = document.getElementById('estimated-time');
+                if (estimatedTimeEl) {
+                    const remaining = Math.max(0, Math.ceil((100 - progress) / 20));
+                    estimatedTimeEl.textContent = remaining > 0 ? `${remaining} 秒` : '即將完成';
+                }
+            }
+            
+            // 初始化載入指示器
+            container.innerHTML = createProgressIndicator();
+            updateProgress(1, 5, '初始化 TDX API 連接...');
 
             let allCamerasFromSources = [];
             
-            // 優化：優先載入主要城市，減少 API 調用次數
+            // 直接使用城市端點，這些才是真正的市區道路監視器
+            // 不使用通用端點，因為那些包含快速道路和國道
             const cities = [
                 // 直轄市（監視器數量最多）
                 { name: '台北市', endpoint: '/v2/Road/Traffic/CCTV/City/Taipei?$format=JSON' },
@@ -450,40 +643,65 @@
                 { name: '台中市', endpoint: '/v2/Road/Traffic/CCTV/City/Taichung?$format=JSON' },
                 { name: '台南市', endpoint: '/v2/Road/Traffic/CCTV/City/Tainan?$format=JSON' },
                 { name: '高雄市', endpoint: '/v2/Road/Traffic/CCTV/City/Kaohsiung?$format=JSON' },
-                // 市（有監視器資料）
+                // 市
                 { name: '基隆市', endpoint: '/v2/Road/Traffic/CCTV/City/Keelung?$format=JSON' },
                 { name: '新竹市', endpoint: '/v2/Road/Traffic/CCTV/City/Hsinchu?$format=JSON' },
                 { name: '嘉義市', endpoint: '/v2/Road/Traffic/CCTV/City/Chiayi?$format=JSON' },
-                // 主要縣份（有較多監視器資料）
+                // 主要縣份
                 { name: '新竹縣', endpoint: '/v2/Road/Traffic/CCTV/City/HsinchuCounty?$format=JSON' },
+                { name: '苗栗縣', endpoint: '/v2/Road/Traffic/CCTV/City/MiaoliCounty?$format=JSON' },
                 { name: '彰化縣', endpoint: '/v2/Road/Traffic/CCTV/City/ChanghuaCounty?$format=JSON' },
-                { name: '屏東縣', endpoint: '/v2/Road/Traffic/CCTV/City/PingtungCounty?$format=JSON' }
+                { name: '南投縣', endpoint: '/v2/Road/Traffic/CCTV/City/NantouCounty?$format=JSON' },
+                { name: '雲林縣', endpoint: '/v2/Road/Traffic/CCTV/City/YunlinCounty?$format=JSON' },
+                { name: '嘉義縣', endpoint: '/v2/Road/Traffic/CCTV/City/ChiayiCounty?$format=JSON' },
+                { name: '屏東縣', endpoint: '/v2/Road/Traffic/CCTV/City/PingtungCounty?$format=JSON' },
+                { name: '宜蘭縣', endpoint: '/v2/Road/Traffic/CCTV/City/YilanCounty?$format=JSON' },
+                { name: '花蓮縣', endpoint: '/v2/Road/Traffic/CCTV/City/HualienCounty?$format=JSON' },
+                { name: '台東縣', endpoint: '/v2/Road/Traffic/CCTV/City/TaitungCounty?$format=JSON' }
             ];
             
             try {
                 console.log('正在高速並行載入所有縣市的 TDX 市區道路監視器資料...');
                 
-                // 優化：使用並行載入，移除分批限制以提升速度
-                console.log(`🚀 啟動並行載入 ${cities.length} 個縣市的監視器資料...`);
+                // 步驟 1: 初始化完成
+                await new Promise(resolve => setTimeout(resolve, 800));
+                updateProgress(2, 15, '載入縣市監視器資料...', 0, 0);
                 
-                // 更新載入狀態指示器
-                container.innerHTML = `
-                    <div class="loading">
-                        <i class="fas fa-rocket fa-spin" style="font-size: 2rem; margin-bottom: 1rem; color: #4CAF50;"></i>
-                        <div style="font-size: 1.2rem; margin-bottom: 0.5rem;">🚀 高速載入中...</div>
-                        <div style="font-size: 0.9rem; opacity: 0.8;">並行載入 ${cities.length} 個縣市監視器</div>
-                        <div style="margin-top: 1rem; font-size: 0.8rem; opacity: 0.6;">
-                            <div>⚡ 使用最佳化並行技術</div>
-                            <div>🎯 預計載入時間：3-5 秒</div>
-                        </div>
-                    </div>
-                `;
+                console.log(`🚀 優先載入 ${cities.length} 個縣市的市區道路監視器資料...`);
                 
-                // 並行載入所有縣市 - 不再分批，直接並行處理
-                const cityPromises = cities.map(async (city) => {
+                // 直接使用個別城市端點載入市區道路監視器
+                console.log('🏙️ 載入各城市的市區道路監視器...');
+                
+                let completedCities = 0;
+                let totalCameras = 0;
+                
+                const cityPromises = cities.map(async (city, index) => {
                     try {
                         console.log(`📡 載入 ${city.name} 資料...`);
-                        const response = await tdxApi.fetchCCTV(city.endpoint);
+                        
+                        // 嘗試多個可能的端點
+                        let response = null;
+                        const possibleEndpoints = [
+                            city.endpoint,  // 原始端點
+                            city.endpoint.replace('/City/', '/Traffic/CCTV/City/'), // 備用格式1
+                            city.endpoint.replace('/v2/Road/Traffic/CCTV/City/', '/v2/Road/Traffic/LiveVideo/City/') // 備用格式2
+                        ];
+                        
+                        for (const endpoint of possibleEndpoints) {
+                            try {
+                                console.log(`  🔄 嘗試端點: ${endpoint}`);
+                                response = await tdxApi.fetchCCTV(endpoint);
+                                console.log(`  ✅ ${city.name} 端點成功: ${endpoint}`);
+                                break;
+                            } catch (endpointError) {
+                                console.warn(`  ❌ ${city.name} 端點失敗: ${endpoint} - ${endpointError.message}`);
+                                continue;
+                            }
+                        }
+                        
+                        if (!response) {
+                            throw new Error('所有端點都無法連接');
+                        }
                         
                         let cameras = [];
                         if (Array.isArray(response)) {
@@ -496,8 +714,25 @@
                         
                         console.log(`✅ ${city.name}: ${cameras.length} 個監視器`);
                         
+                        // 簡化：城市端點本身就是市區道路，只排除明顯的快速道路
+                        const cityRoadCameras = cameras.filter(camera => {
+                            // 只排除明顯的快速道路標識
+                            const roadName = (camera.RoadName || '').toLowerCase();
+                            const isObviousExpressway = roadName.includes('台61') || roadName.includes('台62') || 
+                                                      roadName.includes('快速道路') || roadName.includes('快速公路');
+                            return !isObviousExpressway;
+                        });
+                        
+                        console.log(`🏙️ ${city.name} 市區道路監視器: ${cityRoadCameras.length} 個（原始: ${cameras.length}）`);
+                        
+                        // 更新進度
+                        completedCities++;
+                        totalCameras += cityRoadCameras.length;
+                        const progress = 15 + (completedCities / cities.length) * 60; // 15% 到 75%
+                        updateProgress(2, progress, `正在載入 ${city.name}...`, totalCameras, completedCities);
+                        
                         // 標準化欄位名稱 - 確保 city 和 City 都設定
-                        return cameras.map(camera => {
+                        return cityRoadCameras.map(camera => {
                             const locationDesc = camera.LocationDescription || camera.SurveillanceDescription || '';
                             const district = extractDistrict(locationDesc, city.name);
                             
@@ -541,7 +776,12 @@
                     }
                 });
                 
-                console.log(`🎉 並行載入完成！總計載入 ${allCamerasFromSources.length} 個監視器`);
+                console.log(`🎉 城市端點載入完成！總計載入 ${allCamerasFromSources.length} 個監視器`);
+                
+                // 步驟 3: 過濾資料
+                updateProgress(3, 80, '過濾市區道路監視器...', allCamerasFromSources.length, cities.length);
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
                 console.log('總監視器數量:', allCamerasFromSources.length);
                 
                 if (allCamerasFromSources.length === 0) {
@@ -595,6 +835,8 @@
 
             // 為每個監視器添加額外資訊
             console.log('開始處理監視器資料...');
+            updateProgress(4, 90, '生成監視器介面...', allCamerasFromSources.length, cities.length);
+            
             try {
                 allCameras = allCamerasFromSources.map(camera => {
                     const cityName = camera.city || camera.City || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName);
@@ -625,10 +867,42 @@
             filteredCameras = allCameras;
             console.log('準備填充篩選器...');
             populateFilters();
+            // 最終步驟：完成載入
+            updateProgress(4, 95, '生成監視器介面...', allCameras.length, cities.length);
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
             console.log('準備更新統計...');
             updateStats();
             console.log('準備顯示監視器...');
             displayCameras(allCameras);
+            
+            // 載入完成
+            updateProgress(4, 100, '載入完成！', allCameras.length, cities.length);
+            
+            // 短暫延遲後顯示完成狀態
+            setTimeout(() => {
+                const steps = document.querySelectorAll('.loading-step');
+                steps.forEach(stepEl => {
+                    const icon = stepEl.querySelector('i');
+                    stepEl.style.opacity = '1';
+                    icon.className = 'fas fa-check-circle';
+                    icon.style.color = '#4CAF50';
+                });
+                
+                // 2秒後淡出載入畫面
+                setTimeout(() => {
+                    const loadingEl = document.querySelector('.loading');
+                    if (loadingEl) {
+                        loadingEl.style.transition = 'opacity 0.5s ease';
+                        loadingEl.style.opacity = '0';
+                        setTimeout(() => {
+                            if (loadingEl.parentNode) {
+                                loadingEl.remove();
+                            }
+                        }, 500);
+                    }
+                }, 1500);
+            }, 200);
             
             // 添加載入更多城市的選項
             addLoadMoreCitiesOption();
@@ -1129,9 +1403,48 @@
             document.getElementById('imageModal').style.display = 'none';
         }
 
-        // 簡化載入機制 - 與國道監視器一致的高效載入
-        window.onload = function() {
-            console.log('市區道路監視器頁面載入完成，立即開始載入資料');
+        // 等待 TDX API 初始化
+        async function waitForTdxApi() {
+            let attempts = 0;
+            const maxAttempts = 30; // 最多等待30秒
+            
+            while (attempts < maxAttempts) {
+                if (typeof tdxApi !== 'undefined' && tdxApi && typeof tdxApi.fetchCCTV === 'function') {
+                    console.log('✅ TDX API 已就緒');
+                    return true;
+                }
+                console.log(`⏳ 等待 TDX API 初始化... (${attempts + 1}/${maxAttempts})`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                attempts++;
+            }
+            
+            console.error('❌ TDX API 初始化超時');
+            return false;
+        }
+
+        // 載入機制 - 確保 TDX API 就緒後再載入資料
+        window.onload = async function() {
+            console.log('🚀 市區道路監視器頁面載入完成');
+            
+            // 等待 TDX API 初始化
+            const apiReady = await waitForTdxApi();
+            if (!apiReady) {
+                const container = document.getElementById('cameras-container');
+                if (container) {
+                    container.innerHTML = `
+                        <div class="loading" style="color: #ff6b6b;">
+                            <i class="fas fa-exclamation-triangle"></i><br>
+                            TDX API 初始化失敗<br><br>
+                            <button onclick="window.location.reload()" style="padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                                <i class="fas fa-refresh"></i> 重新整理
+                            </button>
+                        </div>
+                    `;
+                }
+                return;
+            }
+            
+            console.log('開始載入市區監視器資料');
             loadCameras();
         };
     </script>
