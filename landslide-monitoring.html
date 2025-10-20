@@ -622,6 +622,21 @@
             border: 1px solid rgba(255, 112, 67, 0.2);
         }
     </style>
+    
+    <!-- 載入進度條 -->
+    <script src="assets/loading-progress.js"></script>
+    <script>
+        // 土石流監測站載入設定
+        window.AUTO_START_LOADING = false;
+        
+        window.addEventListener('DOMContentLoaded', () => {
+            window.startLoading({
+                labelText: '載入土石流監測站影像...',
+                color: '#FF7043',
+                showLabel: true
+            });
+        });
+    </script>
 </head>
 <body>
     <div class="header">
@@ -717,29 +732,52 @@
                 const container = document.getElementById('cameras-container');
                 container.innerHTML = '<div class="loading">載入土石流監測站資料中...</div>';
 
+                // 更新全域進度條 - API 連接
+                if (window.setLoadingProgress) window.setLoadingProgress(30);
+                if (window.updateLoadingLabel) window.updateLoadingLabel('連接監測站 API...');
+
                 const response = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%BE%B2%E6%A5%AD%E9%83%A8%27&$count=true');
                 
                 if (!response.ok) {
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
 
+                // 更新全域進度條 - 解析資料
+                if (window.setLoadingProgress) window.setLoadingProgress(60);
+                if (window.updateLoadingLabel) window.updateLoadingLabel('解析監測站資料...');
+
                 const data = await response.json();
                 
                 if (!data || !data.value || data.value.length === 0) {
                     container.innerHTML = '<div class="loading">無土石流監測站資料</div>';
+                    if (window.finishLoading) window.finishLoading();
                     return;
                 }
 
                 allStations = data.value;
                 filteredStations = allStations;
+
+                // 更新全域進度條 - 產生介面
+                if (window.setLoadingProgress) window.setLoadingProgress(90);
+                if (window.updateLoadingLabel) window.updateLoadingLabel('產生監測站介面...');
                 
                 updateStats();
                 displayStations();
+
+                // 完成載入
+                if (window.setLoadingProgress) window.setLoadingProgress(100);
+                if (window.updateLoadingLabel) window.updateLoadingLabel('載入完成！');
+                setTimeout(() => {
+                    if (window.finishLoading) window.finishLoading();
+                }, 500);
                 
             } catch (error) {
                 console.error('載入失敗:', error);
                 document.getElementById('cameras-container').innerHTML = 
                     `<div class="loading">載入失敗：${error.message}<br><br>請檢查網路連線或稍後再試</div>`;
+                
+                // 錯誤時也要完成全域進度條
+                if (window.finishLoading) window.finishLoading();
             }
         }
 

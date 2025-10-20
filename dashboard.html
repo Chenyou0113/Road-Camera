@@ -447,6 +447,33 @@
             color: rgba(255,255,255,0.9) !important;
         }
     </style>
+    
+    <!-- 載入進度條 -->
+    <script src="assets/loading-progress.js"></script>
+    <script>
+        // 儀表板載入設定
+        window.AUTO_START_LOADING = true;
+        
+        // 自訂載入進度追蹤
+        let dashboardLoadingSteps = 0;
+        const totalSteps = 5; // TDX API, 國道數據, 省道數據, 其他數據, 圖表初始化
+        
+        function updateDashboardProgress(step, label) {
+            dashboardLoadingSteps = Math.min(step, totalSteps);
+            const progress = (dashboardLoadingSteps / totalSteps) * 90; // 保留10%給最終完成
+            window.setLoadingProgress(progress);
+            if (label) window.updateLoadingLabel(label);
+        }
+        
+        window.addEventListener('DOMContentLoaded', () => {
+            window.startLoading({
+                labelText: '初始化儀表板...',
+                color: '#667eea',
+                showLabel: true
+            });
+            updateDashboardProgress(1, '檢查API狀態...');
+        });
+    </script>
 </head>
 <body>
     <div class="header">
@@ -899,29 +926,42 @@
             
             try {
                 // 等待 TDX API 初始化
+                updateDashboardProgress(2, '初始化API連線...');
                 const apiReady = await waitForTdxApi();
                 
                 if (!apiReady) {
                     console.warn('⚠️ TDX API 未就緒，使用備用數據');
-                    // 使用備用數據載入
+                    updateDashboardProgress(3, '載入備用數據...');
                     loadFallbackData();
                 } else {
                     // 並行載入所有數據
+                    updateDashboardProgress(3, '載入交通監視器數據...');
                     await Promise.all([
                         loadHighwayData(),
                         loadRoadData()
                     ]);
                 }
                 
+                updateDashboardProgress(4, '載入其他系統數據...');
                 loadOtherSystemsData();
                 updateOverallStats();
                 updateLastUpdateTime();
                 
+                updateDashboardProgress(5, '初始化圖表...');
                 console.log('✅ 儀表板數據載入完成');
+                
+                // 完成載入
+                setTimeout(() => {
+                    window.finishLoading();
+                }, 500);
                 
             } catch (error) {
                 console.error('❌ 儀表板數據載入失敗:', error);
+                updateDashboardProgress(3, '載入備用數據...');
                 loadFallbackData();
+                setTimeout(() => {
+                    window.finishLoading();
+                }, 500);
             }
         }
 

@@ -104,6 +104,21 @@
             .stats-panel { grid-template-columns: 1fr; }
         }
     </style>
+    
+    <!-- 載入進度條 -->
+    <script src="assets/loading-progress.js"></script>
+    <script>
+        // 省道監視器載入設定
+        window.AUTO_START_LOADING = false;
+        
+        window.addEventListener('DOMContentLoaded', () => {
+            window.startLoading({
+                labelText: '載入省道監視器...',
+                color: '#FF9800',
+                showLabel: true
+            });
+        });
+    </script>
 </head>
 <body>
     <div class="header">
@@ -195,11 +210,18 @@
             </div>
         </div>
 
+        <!-- 上方分頁 -->
+        <div id="pagination-top" class="pagination" style="display: none;">
+            <button onclick="changePage(-1)"><i class="fas fa-chevron-left"></i> 上一頁</button>
+            <span id="pageInfoTop">第 1 頁，共 1 頁</span>
+            <button onclick="changePage(1)">下一頁 <i class="fas fa-chevron-right"></i></button>
+        </div>
+
         <div id="cameras-container" class="loading">
             <i class="fas fa-spinner fa-spin"></i> 載入省道監視器資料中...
         </div>
 
-        <!-- 分頁 -->
+        <!-- 下方分頁 -->
         <div id="pagination" class="pagination" style="display: none;">
             <button onclick="changePage(-1)" id="prevBtn"><i class="fas fa-chevron-left"></i> 上一頁</button>
             <span id="pageInfo">第 1 頁，共 1 頁</span>
@@ -428,6 +450,10 @@
             const container = document.getElementById('cameras-container');
             container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 載入省道監視器資料中...</div>';
             
+            // 更新進度
+            window.setLoadingProgress(20);
+            window.updateLoadingLabel('連接TDX API...');
+            
             let allCamerasFromSources = [];
             
             try {
@@ -440,11 +466,19 @@
                     </div>
                 `;
                 
+                // 更新進度
+                window.setLoadingProgress(40);
+                window.updateLoadingLabel('載入省道監視器資料...');
+                
                 // 使用 TDX Highway 端點載入全國省道監視器
                 const endpoint = '/v2/Road/Traffic/CCTV/Highway?$format=JSON';
                 console.log('📍 載入 Highway 端點資料...');
                 
                 const response = await tdxApi.fetchCCTV(endpoint);
+                
+                // 更新進度
+                window.setLoadingProgress(70);
+                window.updateLoadingLabel('篩選省道監視器...');
                 
                 let cameras = [];
                 if (Array.isArray(response)) {
@@ -502,6 +536,12 @@
             populateFilters();
             updateStats();
             displayCameras(allCameras);
+            
+            // 完成載入進度
+            window.setLoadingProgress(100);
+            setTimeout(() => {
+                window.finishLoading();
+            }, 500);
         }
 
         function populateFilters() {
@@ -701,20 +741,22 @@
         }
 
         function updatePagination() {
-            const pagination = document.getElementById('pagination');
-            const pageInfo = document.getElementById('pageInfo');
-            const prevBtn = document.getElementById('prevBtn');
-            const nextBtn = document.getElementById('nextBtn');
+            const paginationTop = document.getElementById('pagination-top');
+            const paginationBottom = document.getElementById('pagination');
+            const pageInfoTop = document.getElementById('pageInfoTop');
+            const pageInfoBottom = document.getElementById('pageInfo');
             
             if (totalPages <= 1) {
-                pagination.style.display = 'none';
+                paginationTop.style.display = 'none';
+                paginationBottom.style.display = 'none';
                 return;
             }
             
-            pagination.style.display = 'flex';
-            pageInfo.textContent = `第 ${currentPage} 頁，共 ${totalPages} 頁`;
-            prevBtn.disabled = currentPage === 1;
-            nextBtn.disabled = currentPage === totalPages;
+            const pageText = `第 ${currentPage} 頁 / 共 ${totalPages} 頁`;
+            paginationTop.style.display = 'flex';
+            paginationBottom.style.display = 'flex';
+            pageInfoTop.textContent = pageText;
+            pageInfoBottom.textContent = pageText;
         }
 
         function changePage(direction) {
@@ -722,6 +764,7 @@
             if (newPage >= 1 && newPage <= totalPages) {
                 currentPage = newPage;
                 displayCameras(filteredCameras);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
             }
         }
 
