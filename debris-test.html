@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>土石流觀測站 API 測試</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .test-result {
+            background: #f8f9fa;
+            border-left: 4px solid #795548;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .error {
+            border-left-color: #dc3545;
+            background: #f8d7da;
+        }
+        .success {
+            border-left-color: #28a745;
+            background: #d4edda;
+        }
+        button {
+            background: #795548;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #5D4037;
+        }
+        .station-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .station-card {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .station-card h4 {
+            margin: 0 0 10px 0;
+            color: #795548;
+            font-size: 14px;
+        }
+        .station-card p {
+            margin: 5px 0;
+            font-size: 12px;
+            color: #666;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏔️ 土石流觀測站 API 測試工具</h1>
+        <p>診斷農業部與水利署土石流監測站資料載入問題</p>
+        
+        <button onclick="testAgricultureAPI()">測試農業部API</button>
+        <button onclick="testWaterAPI()">測試水利署API</button>
+        <button onclick="testBothAPIs()">測試兩個API</button>
+        <button onclick="clearResults()">清除結果</button>
+        
+        <div id="results"></div>
+        <div id="stationTests"></div>
+    </div>
+
+    <script>
+        async function testAgricultureAPI() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<div class="loading">正在測試農業部 API...</div>';
+            
+            try {
+                const response = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%BE%B2%E6%A5%AD%E9%83%A8%27&$count=true&$top=10');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP 錯誤: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                resultsDiv.innerHTML = `
+                    <div class="test-result success">
+                        <h3>✅ 農業部 API 連線成功</h3>
+                        <p><strong>總監測站數量:</strong> ${data['@iot.count'] || 0}</p>
+                        <p><strong>本次查詢返回:</strong> ${data.value ? data.value.length : 0} 筆資料</p>
+                    </div>
+                `;
+                
+                if (data.value && data.value.length > 0) {
+                    showStations(data.value, '農業部');
+                }
+                
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="test-result error">
+                        <h3>❌ 農業部 API 測試失敗</h3>
+                        <p><strong>錯誤:</strong> ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+        
+        async function testWaterAPI() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<div class="loading">正在測試水利署 API...</div>';
+            
+            try {
+                const response = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%B0%B4%E5%88%A9%E7%BD%B2%EF%BC%88%E8%88%87%E7%B8%A3%E5%B8%82%E6%94%BF%E5%BA%9C%E5%90%88%E5%BB%BA%EF%BC%89%27&$count=true&$top=20');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP 錯誤: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // 套用土石流相關過濾
+                const filteredStations = data.value.filter(station => {
+                    const stationName = station.Thing?.properties?.stationName || '';
+                    const description = station.Thing?.description || '';
+                    const location = station.Thing?.properties?.location || '';
+                    
+                    const includeKeywords = ['土石流', '山區', '坡地', '崩塌', '土砂', '觀測', '監測', '集水區', '流域', '溪', '山'];
+                    const hasRelevantKeywords = includeKeywords.some(keyword => 
+                        stationName.includes(keyword) || description.includes(keyword) || location.includes(keyword)
+                    );
+                    
+                    const excludeKeywords = ['排水門', '抽水站', '閘門', '堤防段', '橋下', '港區', '海堤'];
+                    const isGeneralWaterManagement = excludeKeywords.some(keyword => 
+                        stationName.includes(keyword) || description.includes(keyword)
+                    );
+                    
+                    return hasRelevantKeywords && !isGeneralWaterManagement;
+                });
+                
+                resultsDiv.innerHTML = `
+                    <div class="test-result success">
+                        <h3>✅ 水利署 API 連線成功</h3>
+                        <p><strong>原始監測站數量:</strong> ${data['@iot.count'] || 0}</p>
+                        <p><strong>本次查詢原始結果:</strong> ${data.value ? data.value.length : 0} 筆</p>
+                        <p><strong>過濾後土石流相關:</strong> ${filteredStations.length} 筆</p>
+                    </div>
+                `;
+                
+                if (filteredStations.length > 0) {
+                    showStations(filteredStations, '水利署山區');
+                }
+                
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="test-result error">
+                        <h3>❌ 水利署 API 測試失敗</h3>
+                        <p><strong>錯誤:</strong> ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+        
+        async function testBothAPIs() {
+            const resultsDiv = document.getElementById('results');
+            resultsDiv.innerHTML = '<div class="loading">正在測試兩個 API...</div>';
+            
+            try {
+                const [agricultureResponse, waterResponse] = await Promise.all([
+                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%BE%B2%E6%A5%AD%E9%83%A8%27&$count=true'),
+                    fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%B0%B4%E5%88%A9%E7%BD%B2%EF%BC%88%E8%88%87%E7%B8%A3%E5%B8%82%E6%94%BF%E5%BA%9C%E5%90%88%E5%BB%BA%EF%BC%89%27&$count=true')
+                ]);
+                
+                const agricultureData = await agricultureResponse.json();
+                const waterData = await waterResponse.json();
+                
+                const waterFiltered = waterData.value.filter(station => {
+                    const stationName = station.Thing?.properties?.stationName || '';
+                    const description = station.Thing?.description || '';
+                    const location = station.Thing?.properties?.location || '';
+                    
+                    const includeKeywords = ['土石流', '山區', '坡地', '崩塌', '土砂', '觀測', '監測', '集水區', '流域', '溪', '山'];
+                    const hasRelevantKeywords = includeKeywords.some(keyword => 
+                        stationName.includes(keyword) || description.includes(keyword) || location.includes(keyword)
+                    );
+                    
+                    const excludeKeywords = ['排水門', '抽水站', '閘門', '堤防段', '橋下', '港區', '海堤'];
+                    const isGeneralWaterManagement = excludeKeywords.some(keyword => 
+                        stationName.includes(keyword) || description.includes(keyword)
+                    );
+                    
+                    return hasRelevantKeywords && !isGeneralWaterManagement;
+                });
+                
+                const totalStations = agricultureData.value.length + waterFiltered.length;
+                const withImages = [...agricultureData.value, ...waterFiltered].filter(station => {
+                    const latestObs = station.Observations && station.Observations.length > 0 ? station.Observations[0] : null;
+                    return latestObs && latestObs.result;
+                }).length;
+                
+                resultsDiv.innerHTML = `
+                    <div class="test-result success">
+                        <h3>✅ 整合測試結果</h3>
+                        <p><strong>農業部監測站:</strong> ${agricultureData.value.length} 個</p>
+                        <p><strong>水利署山區監測站:</strong> ${waterFiltered.length} 個</p>
+                        <p><strong>總計:</strong> ${totalStations} 個土石流監測站</p>
+                        <p><strong>有影像的監測站:</strong> ${withImages} 個</p>
+                    </div>
+                `;
+                
+                // 顯示一些範例站點
+                const sampleStations = [...agricultureData.value.slice(0, 5), ...waterFiltered.slice(0, 5)];
+                showStations(sampleStations, '整合範例');
+                
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="test-result error">
+                        <h3>❌ 整合測試失敗</h3>
+                        <p><strong>錯誤:</strong> ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+        
+        function showStations(stations, source) {
+            const stationTestsDiv = document.getElementById('stationTests');
+            
+            let html = `<h3>📊 ${source} 監測站範例</h3><div class="station-grid">`;
+            
+            stations.slice(0, 10).forEach(station => {
+                const thing = station.Thing || {};
+                const name = thing.properties?.stationName || thing.name || '未命名';
+                const description = thing.description || '';
+                const location = thing.properties?.location || 'N/A';
+                const authority = thing.properties?.authority || 'N/A';
+                const hasImage = station.Observations && station.Observations[0] && station.Observations[0].result;
+                
+                html += `
+                    <div class="station-card">
+                        <h4>${name}</h4>
+                        <p><strong>來源:</strong> ${source}</p>
+                        <p><strong>位置:</strong> ${location}</p>
+                        <p><strong>主管:</strong> ${authority}</p>
+                        <p><strong>影像:</strong> ${hasImage ? '✅ 有' : '❌ 無'}</p>
+                        <p style="font-size: 10px; color: #999;">${description.substring(0, 80)}...</p>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            stationTestsDiv.innerHTML = html;
+        }
+        
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+            document.getElementById('stationTests').innerHTML = '';
+        }
+        
+        // 頁面載入時的提示
+        window.addEventListener('load', function() {
+            console.log('土石流觀測站 API 測試工具已載入');
+        });
+    </script>
+</body>
+</html>
