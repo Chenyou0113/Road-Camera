@@ -230,6 +230,78 @@
         let itemsPerPage = 30;
         let totalPages = 1;
         
+        // 將英文方向轉換為中文
+        function convertDirectionToChinese(direction) {
+            if (!direction || typeof direction !== 'string') return direction;
+            
+            const directionMap = {
+                'S': '南',
+                'N': '北',  
+                'E': '東',
+                'W': '西',
+                'South': '南',
+                'North': '北',
+                'East': '東', 
+                'West': '西',
+                'southbound': '南下',
+                'northbound': '北上',
+                'eastbound': '東向',
+                'westbound': '西向',
+                'Southbound': '南下',
+                'Northbound': '北上',
+                'Eastbound': '東向',
+                'Westbound': '西向'
+            };
+            
+            // 直接映射
+            if (directionMap[direction]) {
+                return directionMap[direction];
+            }
+            
+            // 處理包含方向詞的字符串
+            let result = direction;
+            for (const [english, chinese] of Object.entries(directionMap)) {
+                result = result.replace(new RegExp(english, 'gi'), chinese);
+            }
+            
+            return result;
+        }
+        
+        // 格式化位置資訊，包含里程、方向和路段
+        function formatLocationInfo(camera) {
+            let locationParts = [];
+            
+            // 優先顯示里程（確保是字符串類型）
+            if (camera.LocationMile && typeof camera.LocationMile === 'string') {
+                locationParts.push(camera.LocationMile);
+            } else if (camera.LocationDescription && typeof camera.LocationDescription === 'string') {
+                locationParts.push(camera.LocationDescription);
+            }
+            
+            // 添加方向資訊（確保是字符串類型並轉換為中文）
+            if (camera.RoadDirection && typeof camera.RoadDirection === 'string') {
+                const chineseDirection = convertDirectionToChinese(camera.RoadDirection);
+                locationParts.push(chineseDirection);
+            }
+            
+            // 添加路段資訊（確保是字符串類型）
+            if (camera.RoadSection && typeof camera.RoadSection === 'string') {
+                locationParts.push(camera.RoadSection);
+            } else if (camera.LocationDescription && typeof camera.LocationDescription === 'string') {
+                // 如果沒有專門的路段欄位，嘗試從位置描述中提取路段信息
+                const sectionMatches = camera.LocationDescription.match(/(.*?段|.*?線|.*?交流道|.*?收費站|.*?服務區)/);
+                if (sectionMatches) {
+                    const sectionInfo = sectionMatches[1];
+                    // 只有當sectionInfo不同於已有的LocationMile時才添加
+                    if (!camera.LocationMile || !camera.LocationMile.includes(sectionInfo)) {
+                        locationParts.push(sectionInfo);
+                    }
+                }
+            }
+            
+            return locationParts.length > 0 ? locationParts.join(' ') : '未提供位置資訊';
+        }
+
         // 國道列表
         const highwayS = [
             '台61', '台62', '台63', '台64', '台65', '台66', '台68', 
@@ -593,7 +665,7 @@
                         </div>
                         <div class="camera-info">
                             <h3>${camera.RoadName || '國道監視器'} ${roadNumber} ${sourceIcon}</h3>
-                            <p><i class="fas fa-map-marker-alt"></i> ${camera.LocationDescription || '未知位置'}</p>
+                            <p><i class="fas fa-map-marker-alt"></i> ${formatLocationInfo(camera)}</p>
                             <p><i class="fas fa-map"></i> ${camera.City || '未知縣市'}</p>
                             <p><i class="fas fa-id-badge"></i> ${camera.CCTVID || '未知編號'}</p>
                             ${camera.PositionLat && camera.PositionLon ? 
@@ -648,13 +720,7 @@
             modalTitle.textContent = camera.RoadName || '國道監視器';
             
             // 顯示里程資訊 - 優先使用 LocationMile，格式化為"第XXk+XXX"
-            let locationDisplay = '未知位置';
-            if (camera.LocationMile) {
-                locationDisplay = camera.LocationMile;
-            } else if (camera.LocationDescription) {
-                locationDisplay = camera.LocationDescription;
-            }
-            modalLocation.innerHTML = `<i class="fas fa-map-marker-alt"></i> <strong>位置：</strong>${locationDisplay}`;
+            modalLocation.innerHTML = `<i class="fas fa-map-marker-alt"></i> <strong>位置：</strong>${formatLocationInfo(camera)}`;
             
             modalRoad.innerHTML = `<i class="fas fa-road"></i> <strong>路線：</strong>${camera.RoadNumber || '未知路線'} (${camera.City || '未知縣市'})`;
             

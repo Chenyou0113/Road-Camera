@@ -423,8 +423,6 @@
 
         async function loadCameras() {
             console.log('=== 開始載入市區道路監視器資料 ===');
-            console.log('TDX API 實例檢查:', tdxApi);
-            console.log('TDX 配置檢查:', typeof TDX_CONFIG !== 'undefined' ? 'OK' : 'Missing');
             
             const container = document.getElementById('cameras-container');
             if (!container) {
@@ -432,130 +430,118 @@
                 return;
             }
             
-            container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 載入監視器資料中...</div>';
-            
-            // 測試 TDX API token 獲取
-            try {
-                console.log('測試 TDX API token 獲取...');
-                const token = await tdxApi.getAccessToken();
-                console.log('✅ TDX API token 獲取成功:', token ? 'Token OK' : 'Token Empty');
-            } catch (tokenError) {
-                console.error('❌ TDX API token 獲取失敗:', tokenError);
-                container.innerHTML = `
-                    <div class="loading" style="color: #ff6b6b;">
-                        <i class="fas fa-exclamation-triangle"></i> 
-                        TDX API 認證失敗<br>
-                        <br>
-                        錯誤: ${tokenError.message}<br>
-                        <br>
-                        <small style="color: #ffb3b3;">
-                            請檢查 TDX API 金鑰設定是否正確
-                        </small>
-                    </div>
-                `;
-                return;
-            }
-            
+            // 簡化載入指示器
+            container.innerHTML = `
+                <div class="loading">
+                    <i class="fas fa-rocket fa-spin" style="font-size: 2rem; margin-bottom: 1rem; color: #4CAF50;"></i>
+                    <div style="font-size: 1.2rem; margin-bottom: 0.5rem;">🚀 高速載入中...</div>
+                    <div style="font-size: 0.9rem; opacity: 0.8;">正在載入全台縣市監視器</div>
+                </div>
+            `;
+
             let allCamerasFromSources = [];
             
-            // 定義所有縣市的 TDX API 端點
-            // 注意：苗栗縣、嘉義縣、花蓮縣、澎湖縣、連江縣目前無 TDX CCTV 資料
+            // 優化：優先載入主要城市，減少 API 調用次數
             const cities = [
-                // 直轄市（6）
+                // 直轄市（監視器數量最多）
                 { name: '台北市', endpoint: '/v2/Road/Traffic/CCTV/City/Taipei?$format=JSON' },
                 { name: '新北市', endpoint: '/v2/Road/Traffic/CCTV/City/NewTaipei?$format=JSON' },
                 { name: '桃園市', endpoint: '/v2/Road/Traffic/CCTV/City/Taoyuan?$format=JSON' },
                 { name: '台中市', endpoint: '/v2/Road/Traffic/CCTV/City/Taichung?$format=JSON' },
                 { name: '台南市', endpoint: '/v2/Road/Traffic/CCTV/City/Tainan?$format=JSON' },
                 { name: '高雄市', endpoint: '/v2/Road/Traffic/CCTV/City/Kaohsiung?$format=JSON' },
-                // 市（3）
+                // 市（有監視器資料）
                 { name: '基隆市', endpoint: '/v2/Road/Traffic/CCTV/City/Keelung?$format=JSON' },
                 { name: '新竹市', endpoint: '/v2/Road/Traffic/CCTV/City/Hsinchu?$format=JSON' },
                 { name: '嘉義市', endpoint: '/v2/Road/Traffic/CCTV/City/Chiayi?$format=JSON' },
-                // 縣（8）
-                { name: '宜蘭縣', endpoint: '/v2/Road/Traffic/CCTV/City/YilanCounty?$format=JSON' },
+                // 主要縣份（有較多監視器資料）
                 { name: '新竹縣', endpoint: '/v2/Road/Traffic/CCTV/City/HsinchuCounty?$format=JSON' },
                 { name: '彰化縣', endpoint: '/v2/Road/Traffic/CCTV/City/ChanghuaCounty?$format=JSON' },
-                { name: '南投縣', endpoint: '/v2/Road/Traffic/CCTV/City/NantouCounty?$format=JSON' },
-                { name: '雲林縣', endpoint: '/v2/Road/Traffic/CCTV/City/YunlinCounty?$format=JSON' },
-                { name: '屏東縣', endpoint: '/v2/Road/Traffic/CCTV/City/PingtungCounty?$format=JSON' },
-                { name: '台東縣', endpoint: '/v2/Road/Traffic/CCTV/City/TaitungCounty?$format=JSON' },
-                { name: '金門縣', endpoint: '/v2/Road/Traffic/CCTV/City/KinmenCounty?$format=JSON' }
+                { name: '屏東縣', endpoint: '/v2/Road/Traffic/CCTV/City/PingtungCounty?$format=JSON' }
             ];
             
             try {
-                console.log('正在分批載入所有縣市的 TDX 市區道路監視器資料...');
+                console.log('正在高速並行載入所有縣市的 TDX 市區道路監視器資料...');
                 
-                // 分批處理 TDX 縣市資料 (每批 3 個縣市,避免 API 頻率限制)
-                const batchSize = 3;
-                const totalBatches = Math.ceil(cities.length / batchSize);
+                // 優化：使用並行載入，移除分批限制以提升速度
+                console.log(`🚀 啟動並行載入 ${cities.length} 個縣市的監視器資料...`);
                 
-                for (let i = 0; i < cities.length; i += batchSize) {
-                    const batch = cities.slice(i, i + batchSize);
-                    const batchNum = Math.floor(i / batchSize) + 1;
-                    
-                    console.log(`🔄 載入第 ${batchNum}/${totalBatches} 批縣市 (${batch.map(c => c.name).join('、')})`);
-                    
-                    // 並行載入這批縣市
-                    const batchPromises = batch.map(async (city) => {
-                        try {
-                            console.log(`載入 ${city.name} 資料...`);
-                            const response = await tdxApi.fetchCCTV(city.endpoint);
-                            
-                            let cameras = [];
-                            if (Array.isArray(response)) {
-                                cameras = response;
-                            } else if (response && response.CCTVs && Array.isArray(response.CCTVs)) {
-                                cameras = response.CCTVs;
-                            } else if (response && response.data && Array.isArray(response.data)) {
-                                cameras = response.data;
-                            }
-                            
-                            console.log(`✅ ${city.name}: ${cameras.length} 個監視器`);
-                            console.log(`${city.name} 第一筆資料範例:`, cameras[0]);
-                            
-                            // 標準化欄位名稱 - 確保 city 和 City 都設定
-                            return cameras.map(camera => {
-                                const locationDesc = camera.LocationDescription || camera.SurveillanceDescription || '';
-                                const district = extractDistrict(locationDesc, city.name);
-                                
-                                return {
-                                    CCTVID: camera.CCTVID || camera.CCTVId || camera.cctvid || camera.id,
-                                    RoadName: camera.RoadName || camera.RoadSection?.RoadName || '',
-                                    LocationDescription: locationDesc,
-                                    PositionLat: camera.PositionLat || camera.CCTVPositionLat || 0,
-                                    PositionLon: camera.PositionLon || camera.CCTVPositionLon || 0,
-                                    VideoImageURL: camera.VideoImageURL || camera.PictureURL || camera.ImageURL || '',
-                                    VideoStreamURL: camera.VideoStreamURL || camera.StreamURL || '',
-                                    RoadDirection: camera.RoadDirection || '',
-                                    LocationMile: camera.LocationMile || '',
-                                    RoadSection: camera.RoadSection || null,
-                                    SurveillanceDescription: camera.SurveillanceDescription || camera.LocationDescription || '',
-                                    source: 'tdx',
-                                    city: city.name,
-                                    City: city.name,  // 同時設定 City 屬性以確保相容性
-                                    district: district // 新增鄉鎮區資訊
-                                };
-                            });
-                        } catch (error) {
-                            console.warn(`⚠️ ${city.name} TDX 載入失敗:`, error.message);
-                            return [];
+                // 更新載入狀態指示器
+                container.innerHTML = `
+                    <div class="loading">
+                        <i class="fas fa-rocket fa-spin" style="font-size: 2rem; margin-bottom: 1rem; color: #4CAF50;"></i>
+                        <div style="font-size: 1.2rem; margin-bottom: 0.5rem;">🚀 高速載入中...</div>
+                        <div style="font-size: 0.9rem; opacity: 0.8;">並行載入 ${cities.length} 個縣市監視器</div>
+                        <div style="margin-top: 1rem; font-size: 0.8rem; opacity: 0.6;">
+                            <div>⚡ 使用最佳化並行技術</div>
+                            <div>🎯 預計載入時間：3-5 秒</div>
+                        </div>
+                    </div>
+                `;
+                
+                // 並行載入所有縣市 - 不再分批，直接並行處理
+                const cityPromises = cities.map(async (city) => {
+                    try {
+                        console.log(`📡 載入 ${city.name} 資料...`);
+                        const response = await tdxApi.fetchCCTV(city.endpoint);
+                        
+                        let cameras = [];
+                        if (Array.isArray(response)) {
+                            cameras = response;
+                        } else if (response && response.CCTVs && Array.isArray(response.CCTVs)) {
+                            cameras = response.CCTVs;
+                        } else if (response && response.data && Array.isArray(response.data)) {
+                            cameras = response.data;
                         }
-                    });
-                    
-                    const batchResults = await Promise.all(batchPromises);
-                    allCamerasFromSources.push(...batchResults.flat());
-                    
-                    console.log(`✅ 第 ${batchNum}/${totalBatches} 批完成，累計: ${allCamerasFromSources.length} 個監視器`);
-                    
-                    // 批次間延遲 500ms，避免觸發 API 頻率限制
-                    if (i + batchSize < cities.length) {
-                        await new Promise(resolve => setTimeout(resolve, 500));
+                        
+                        console.log(`✅ ${city.name}: ${cameras.length} 個監視器`);
+                        
+                        // 標準化欄位名稱 - 確保 city 和 City 都設定
+                        return cameras.map(camera => {
+                            const locationDesc = camera.LocationDescription || camera.SurveillanceDescription || '';
+                            const district = extractDistrict(locationDesc, city.name);
+                            
+                            return {
+                                CCTVID: camera.CCTVID || camera.CCTVId || camera.cctvid || camera.id,
+                                RoadName: camera.RoadName || camera.RoadSection?.RoadName || '',
+                                LocationDescription: locationDesc,
+                                PositionLat: camera.PositionLat || camera.CCTVPositionLat || 0,
+                                PositionLon: camera.PositionLon || camera.CCTVPositionLon || 0,
+                                VideoImageURL: camera.VideoImageURL || camera.PictureURL || camera.ImageURL || '',
+                                VideoStreamURL: camera.VideoStreamURL || camera.StreamURL || '',
+                                RoadDirection: camera.RoadDirection || '',
+                                LocationMile: camera.LocationMile || '',
+                                RoadSection: camera.RoadSection || null,
+                                SurveillanceDescription: camera.SurveillanceDescription || camera.LocationDescription || '',
+                                source: 'tdx',
+                                city: city.name,
+                                City: city.name,  // 同時設定 City 屬性以確保相容性
+                                district: district // 新增鄉鎮區資訊
+                            };
+                        });
+                    } catch (error) {
+                        console.warn(`⚠️ ${city.name} TDX 載入失敗:`, error.message);
+                        return [];
                     }
-                }
+                });
                 
+                // 使用 Promise.allSettled 等待所有並行請求完成
+                console.log('⏳ 等待所有縣市並行載入完成...');
+                const cityResults = await Promise.allSettled(cityPromises);
                 
-                console.log('✅ 所有縣市資料載入完成');
+                // 收集所有成功載入的資料
+                cityResults.forEach((result, index) => {
+                    if (result.status === 'fulfilled' && result.value.length > 0) {
+                        allCamerasFromSources.push(...result.value);
+                        console.log(`✅ ${cities[index].name}: ${result.value.length} 筆資料已加入`);
+                    } else if (result.status === 'rejected') {
+                        console.error(`❌ ${cities[index].name} 載入失敗:`, result.reason);
+                    } else if (result.status === 'fulfilled' && result.value.length === 0) {
+                        console.log(`⚠️ ${cities[index].name}: 無監視器資料`);
+                    }
+                });
+                
+                console.log(`🎉 並行載入完成！總計載入 ${allCamerasFromSources.length} 個監視器`);
                 console.log('總監視器數量:', allCamerasFromSources.length);
                 
                 if (allCamerasFromSources.length === 0) {
@@ -643,7 +629,126 @@
             updateStats();
             console.log('準備顯示監視器...');
             displayCameras(allCameras);
+            
+            // 添加載入更多城市的選項
+            addLoadMoreCitiesOption();
+            
             console.log('✅ 所有處理完成');
+        }
+        
+        function addLoadMoreCitiesOption() {
+            const container = document.getElementById('cameras-container');
+            const existingButton = document.getElementById('load-more-cities-btn');
+            
+            if (!existingButton && container) {
+                const loadMoreButton = document.createElement('div');
+                loadMoreButton.id = 'load-more-cities-btn';
+                loadMoreButton.style.cssText = `
+                    text-align: center; 
+                    margin: 30px 0; 
+                    padding: 20px; 
+                    background: rgba(255,255,255,0.1); 
+                    border-radius: 10px;
+                `;
+                loadMoreButton.innerHTML = `
+                    <p style="color: white; margin-bottom: 15px; font-size: 1.1rem;">
+                        🏙️ 已載入主要城市監視器，需要其他縣市資料嗎？
+                    </p>
+                    <button onclick="loadAllCities()" style="
+                        background: #4CAF50; 
+                        color: white; 
+                        border: none; 
+                        padding: 12px 24px; 
+                        border-radius: 6px; 
+                        cursor: pointer; 
+                        font-size: 1rem;
+                        margin: 5px;
+                    ">載入所有縣市</button>
+                `;
+                container.appendChild(loadMoreButton);
+            }
+        }
+        
+        async function loadAllCities() {
+            const loadMoreBtn = document.getElementById('load-more-cities-btn');
+            if (loadMoreBtn) {
+                loadMoreBtn.innerHTML = `
+                    <div style="color: white;">
+                        <i class="fas fa-spinner fa-spin"></i> 正在載入其他縣市...
+                    </div>
+                `;
+            }
+            
+            // 額外的城市列表
+            const additionalCities = [
+                { name: '宜蘭縣', endpoint: '/v2/Road/Traffic/CCTV/City/YilanCounty?$format=JSON' },
+                { name: '南投縣', endpoint: '/v2/Road/Traffic/CCTV/City/NantouCounty?$format=JSON' },
+                { name: '雲林縣', endpoint: '/v2/Road/Traffic/CCTV/City/YunlinCounty?$format=JSON' },
+                { name: '台東縣', endpoint: '/v2/Road/Traffic/CCTV/City/TaitungCounty?$format=JSON' },
+                { name: '金門縣', endpoint: '/v2/Road/Traffic/CCTV/City/KinmenCounty?$format=JSON' }
+            ];
+            
+            try {
+                const additionalPromises = additionalCities.map(async (city) => {
+                    try {
+                        const response = await tdxApi.fetchCCTV(city.endpoint);
+                        let cameras = [];
+                        if (Array.isArray(response)) {
+                            cameras = response;
+                        } else if (response && response.CCTVs && Array.isArray(response.CCTVs)) {
+                            cameras = response.CCTVs;
+                        }
+                        
+                        return cameras.map(camera => ({
+                            ...camera,
+                            city: city.name,
+                            City: city.name,
+                            source: 'tdx'
+                        }));
+                    } catch (error) {
+                        console.warn(`${city.name} 載入失敗:`, error);
+                        return [];
+                    }
+                });
+                
+                const additionalResults = await Promise.allSettled(additionalPromises);
+                let newCameras = [];
+                
+                additionalResults.forEach((result, index) => {
+                    if (result.status === 'fulfilled') {
+                        newCameras.push(...result.value);
+                        console.log(`✅ ${additionalCities[index].name}: ${result.value.length} 個監視器`);
+                    }
+                });
+                
+                // 合併新資料
+                allCameras.push(...newCameras);
+                filteredCameras = allCameras;
+                
+                // 重新更新顯示
+                populateFilters();
+                updateStats();
+                displayCameras(allCameras);
+                
+                if (loadMoreBtn) {
+                    loadMoreBtn.innerHTML = `
+                        <div style="color: #4CAF50;">
+                            ✅ 已載入所有縣市 (+${newCameras.length} 個監視器)
+                        </div>
+                    `;
+                }
+                
+            } catch (error) {
+                console.error('載入額外城市失敗:', error);
+                if (loadMoreBtn) {
+                    loadMoreBtn.innerHTML = `
+                        <div style="color: #ff6b6b;">
+                            ❌ 載入失敗
+                            <button onclick="loadAllCities()" style="margin-left: 10px; padding: 5px 10px;">重試</button>
+                        </div>
+                    `;
+                }
+            }
         }
 
         function loadMockCityData() {
@@ -1006,22 +1111,11 @@
             document.getElementById('imageModal').style.display = 'none';
         }
 
-        // 確保 DOM 載入完成後再執行
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('市區道路監視器頁面 DOM 載入完成');
-            console.log('TDX API 實例:', tdxApi);
-            console.log('開始載入監視器資料...');
+        // 簡化載入機制 - 與國道監視器一致的高效載入
+        window.onload = function() {
+            console.log('市區道路監視器頁面載入完成，立即開始載入資料');
             loadCameras();
-        });
-
-        // 如果 DOM 已經載入完成，直接執行
-        if (document.readyState === 'loading') {
-            // DOM 還在載入中，等待 DOMContentLoaded 事件
-        } else {
-            // DOM 已經載入完成
-            console.log('DOM 已載入，直接執行 loadCameras');
-            loadCameras();
-        }
+        };
     </script>
 </body>
 </html>

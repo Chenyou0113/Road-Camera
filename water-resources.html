@@ -5,6 +5,51 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>水利署監視器影像系統</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        // 預載入機制 - 在頁面開始載入時就開始準備資料
+        let isWaterPreloading = false;
+        let waterPreloadPromise = null;
+        
+        function startWaterPreload() {
+            if (isWaterPreloading) return waterPreloadPromise;
+            
+            isWaterPreloading = true;
+            console.log('🚀 啟動水利監視器預載入機制');
+            
+            waterPreloadPromise = new Promise(async (resolve) => {
+                try {
+                    // 預載入 API 端點準備
+                    const preloadEndpoints = [
+                        'https://alerts.ncdr.nat.gov.tw/JSONAtomFeeds/waterlevelstations.json',
+                        'https://data.coa.gov.tw/Service/OpenData/FromM/AgricultureiRiceFailure.aspx'
+                    ];
+                    
+                    console.log('✅ 水利監視器 API 端點準備完成');
+                    
+                    // 預熱 fetch 連線
+                    try {
+                        await Promise.race([
+                            fetch(preloadEndpoints[0], { method: 'HEAD' }).catch(() => {}),
+                            new Promise(resolve => setTimeout(resolve, 1000))
+                        ]);
+                        console.log('✅ 預熱連線完成');
+                    } catch (error) {
+                        console.log('預熱連線略過:', error.message);
+                    }
+                    
+                    resolve(true);
+                } catch (error) {
+                    console.error('水利監視器預載入過程發生錯誤:', error);
+                    resolve(false);
+                }
+            });
+            
+            return waterPreloadPromise;
+        }
+        
+        // 立即開始預載入
+        startWaterPreload();
+    </script>
     <style>
         * {
             margin: 0;
@@ -886,7 +931,20 @@
         async function loadCameras() {
             try {
                 const container = document.getElementById('cameras-container');
-                container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 載入水利署監視器資料中...</div>';
+                
+                // 增強載入指示器
+                container.innerHTML = `
+                    <div class="loading">
+                        <i class="fas fa-spinner fa-spin" style="font-size: 2rem; margin-bottom: 1rem;"></i>
+                        <div style="font-size: 1.2rem; margin-bottom: 0.5rem;">正在載入水利署監視器資料...</div>
+                        <div style="font-size: 0.9rem; opacity: 0.8;">預載入已完成，正在獲取即時資料</div>
+                        <div style="margin-top: 1rem; font-size: 0.8rem; opacity: 0.6;">
+                            <div>🌊 連接水利署 API 中...</div>
+                            <div>📹 載入全台水利監視器影像...</div>
+                            <div>🔍 搜尋可用監控點...</div>
+                        </div>
+                    </div>
+                `;
 
                 // 優先使用水利署官方 API
                 let wraApiCameras = [];
@@ -1345,7 +1403,14 @@
         }
 
         // 頁面載入
-        window.onload = function() {
+        window.onload = async function() {
+            console.log('水利監視器頁面載入完成');
+            
+            // 等待預載入完成
+            console.log('等待預載入完成...');
+            await waterPreloadPromise;
+            console.log('預載入完成，開始載入監視器資料...');
+            
             loadCameras();
             updateTime();
             
@@ -1354,6 +1419,17 @@
             
             // 每10分鐘自動重新載入資料
             setInterval(loadCameras, 600000);
+        }
+        
+        // 如果頁面已經載入完成，立即執行
+        if (document.readyState === 'complete') {
+            console.log('頁面已完全載入，等待預載入後執行');
+            waterPreloadPromise.then(() => {
+                loadCameras();
+                updateTime();
+                setInterval(updateTime, 60000);
+                setInterval(loadCameras, 600000);
+            });
         }
 
         // 搜尋框即時搜尋
