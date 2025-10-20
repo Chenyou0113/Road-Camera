@@ -433,6 +433,11 @@
             try {
                 console.log('正在載入快速道路監視器資料...');
                 
+                // 檢查 TDX API 是否可用
+                if (typeof tdxApi === 'undefined') {
+                    throw new Error('TDX API 未初始化');
+                }
+                
                 container.innerHTML = `
                     <div class="loading">
                         <i class="fas fa-spinner fa-spin"></i> 正在載入快速道路監視器資料...<br>
@@ -440,9 +445,9 @@
                     </div>
                 `;
                 
-                // 使用 TDX Highway 端點載入全國省道監視器
-                const endpoint = '/v2/Road/Traffic/CCTV/Highway?$format=JSON';
-                console.log('📍 載入 Highway 端點資料...');
+                // 使用 TDX Road 端點載入省道監視器，然後篩選快速道路
+                const endpoint = '/v2/Road/Traffic/CCTV/Road?$format=JSON';
+                console.log('📍 載入 Road 端點資料...');
                 
                 const response = await tdxApi.fetchCCTV(endpoint);
                 
@@ -458,7 +463,7 @@
                     cameras = [];
                 }
                 
-                console.log(`📊 TDX Highway 原始資料: ${cameras.length} 筆`);
+                console.log(`📊 TDX Road 原始資料: ${cameras.length} 筆`);
                 
                 if (cameras.length > 0) {
                     // 篩選出快速道路監視器
@@ -675,10 +680,18 @@
                         <div class="camera-info">
                             <h3>${camera.RoadName || '快速道路監視器'} ${roadNumber} ${sourceIcon}</h3>
                             <p><i class="fas fa-map-marker-alt"></i> ${formatLocationInfo(camera)}</p>
-                            <p><i class="fas fa-map"></i> ${camera.City || '未知縣市'}</p>
+                            <p><i class="fas fa-map"></i> ${camera.City || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName)}</p>
                             <p><i class="fas fa-id-badge"></i> ${camera.CCTVID || '未知編號'}</p>
                             ${camera.PositionLat && camera.PositionLon ? 
-                                `<p><i class="fas fa-crosshairs"></i> ${camera.PositionLat.toFixed(4)}, ${camera.PositionLon.toFixed(4)}</p>` : ''
+                                `<p><i class="fas fa-crosshairs"></i> 
+                                  <a href="https://www.google.com/maps?q=${camera.PositionLat},${camera.PositionLon}" 
+                                     target="_blank" 
+                                     style="color: #4CAF50; text-decoration: none;" 
+                                     title="在Google地圖中查看">
+                                    ${camera.PositionLat.toFixed(4)}, ${camera.PositionLon.toFixed(4)}
+                                    <i class="fas fa-external-link-alt" style="font-size: 0.8rem; margin-left: 3px;"></i>
+                                  </a>
+                                </p>` : ''
                             }
                         </div>
                     </div>
@@ -728,11 +741,18 @@
             modalImg.src = camera.VideoImageUrl || camera.VideoStreamURL || '';
             modalTitle.textContent = camera.RoadName || '快速道路監視器';
             modalLocation.innerHTML = `<i class="fas fa-map-marker-alt"></i> <strong>位置：</strong>${formatLocationInfo(camera)}`;
-            modalRoad.innerHTML = `<i class="fas fa-road"></i> <strong>路線：</strong>${camera.RoadNumber || '未知路線'} (${camera.City || '未知縣市'})`;
+            modalRoad.innerHTML = `<i class="fas fa-road"></i> <strong>路線：</strong>${camera.RoadNumber || '未知路線'} (${camera.City || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName)})`;
             
             let coordsHtml = '';
             if (camera.PositionLat && camera.PositionLon) {
-                coordsHtml = `<i class="fas fa-crosshairs"></i> <strong>座標：</strong>${camera.PositionLat.toFixed(6)}, ${camera.PositionLon.toFixed(6)}`;
+                coordsHtml = `<i class="fas fa-crosshairs"></i> <strong>座標：</strong>
+                    <a href="https://www.google.com/maps?q=${camera.PositionLat},${camera.PositionLon}" 
+                       target="_blank" 
+                       style="color: #4CAF50; text-decoration: none;" 
+                       title="在Google地圖中查看">
+                        ${camera.PositionLat.toFixed(6)}, ${camera.PositionLon.toFixed(6)}
+                        <i class="fas fa-external-link-alt" style="font-size: 0.8rem; margin-left: 3px;"></i>
+                    </a>`;
             }
             const imageUrl = camera.VideoImageUrl || camera.VideoStreamURL;
             if (imageUrl) {
@@ -755,8 +775,44 @@
             }
         }
 
+        // 等待 TDX API 初始化
+        async function waitForTdxApi() {
+            let attempts = 0;
+            const maxAttempts = 30; // 最多等待30秒
+            
+            while (attempts < maxAttempts) {
+                if (typeof tdxApi !== 'undefined' && tdxApi && typeof tdxApi.fetchCCTV === 'function') {
+                    console.log('✅ TDX API 已就緒');
+                    return true;
+                }
+                console.log(`⏳ 等待 TDX API 初始化... (${attempts + 1}/${maxAttempts})`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                attempts++;
+            }
+            
+            console.error('❌ TDX API 初始化超時');
+            return false;
+        }
+
         // 初始載入
-        window.onload = function() {
+        window.onload = async function() {
+            console.log('🚀 快速道路監視器頁面載入完成');
+            
+            // 等待 TDX API 初始化
+            const apiReady = await waitForTdxApi();
+            if (!apiReady) {
+                document.getElementById('cameras-container').innerHTML = `
+                    <div class="loading">
+                        <i class="fas fa-exclamation-triangle"></i><br>
+                        TDX API 初始化失敗<br><br>
+                        <button onclick="window.location.reload()" style="padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                            <i class="fas fa-refresh"></i> 重新整理
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+            
             loadCameras();
         };
     </script>

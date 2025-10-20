@@ -39,25 +39,43 @@ class TDXApi {
         }
     }
 
-    async fetchCCTV(endpoint) {
-        try {
-            const token = await this.getAccessToken();
-            const response = await fetch(`https://tdx.transportdata.tw/api/basic${endpoint}`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Accept-Encoding': 'gzip'
+    async fetchCCTV(endpoint, retries = 3) {
+        for (let i = 0; i < retries; i++) {
+            try {
+                const token = await this.getAccessToken();
+                const response = await fetch(`https://tdx.transportdata.tw/api/basic${endpoint}`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Accept-Encoding': 'gzip'
+                    }
+                });
+
+                if (!response.ok) {
+                    if (response.status === 429) {
+                        // 處理請求過於頻繁的錯誤
+                        const retryAfter = response.headers.get('Retry-After') || (Math.pow(2, i) * 1000);
+                        console.warn(`API 請求過於頻繁 (429), 等待 ${retryAfter}ms 後重試...`);
+                        await this.delay(retryAfter);
+                        continue;
+                    }
+                    throw new Error(`HTTP error! status: ${response.status}`);
                 }
-            });
 
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                return await response.json();
+            } catch (error) {
+                if (i === retries - 1) {
+                    console.error('API 呼叫失敗:', error);
+                    throw error;
+                }
+                console.warn(`嘗試 ${i + 1} 失敗，重試中...`);
+                await this.delay(1000 * (i + 1)); // 漸進式延遲
             }
-
-            return await response.json();
-        } catch (error) {
-            console.error('API 呼叫失敗:', error);
-            throw error;
         }
+    }
+
+    // 延遲函數
+    delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 }
 
