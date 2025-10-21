@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>省道API測試</title>
+    <script src="assets/config.js"></script>
+    <script src="assets/tdx-api.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-result { margin: 10px 0; padding: 10px; border-radius: 5px; }
+        .success { background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+        .error { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+        .info { background-color: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; }
+    </style>
+</head>
+<body>
+    <h1>省道API端點測試</h1>
+    <div id="results"></div>
+    
+    <script>
+        const results = document.getElementById('results');
+        
+        async function addResult(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `test-result ${type}`;
+            div.textContent = message;
+            results.appendChild(div);
+        }
+        
+        async function testProvincialAPI() {
+            const tdxApi = new TDXApi();
+            
+            await addResult('開始測試省道API...', 'info');
+            
+            // 測試 Provincial 端點
+            try {
+                await addResult('測試 Provincial 端點...', 'info');
+                const provincialEndpoint = '/v2/Road/Traffic/CCTV/Provincial?$format=JSON';
+                const provincialResponse = await tdxApi.fetchCCTV(provincialEndpoint);
+                
+                if (provincialResponse && Array.isArray(provincialResponse) && provincialResponse.length > 0) {
+                    await addResult(`✅ Provincial API 成功！獲得 ${provincialResponse.length} 筆資料`, 'success');
+                    await addResult(`第一筆資料 CCTVID: ${provincialResponse[0].CCTVID || '未知'}`, 'info');
+                    await addResult(`第一筆資料 RoadName: ${provincialResponse[0].RoadName || '未知'}`, 'info');
+                } else if (provincialResponse && provincialResponse.CCTVs && Array.isArray(provincialResponse.CCTVs)) {
+                    await addResult(`✅ Provincial API 成功！獲得 ${provincialResponse.CCTVs.length} 筆資料`, 'success');
+                    await addResult(`第一筆資料 CCTVID: ${provincialResponse.CCTVs[0].CCTVID || '未知'}`, 'info');
+                    await addResult(`第一筆資料 RoadName: ${provincialResponse.CCTVs[0].RoadName || '未知'}`, 'info');
+                } else {
+                    await addResult('❌ Provincial API 無資料或格式異常', 'error');
+                    await addResult(`回應格式: ${JSON.stringify(provincialResponse).substring(0, 200)}...`, 'info');
+                }
+            } catch (error) {
+                await addResult(`❌ Provincial API 失敗: ${error.message}`, 'error');
+                
+                // 如果 Provincial 失敗，測試 Highway 端點作為備案
+                await addResult('Provincial 失敗，測試 Highway 端點...', 'info');
+                try {
+                    const highwayEndpoint = '/v2/Road/Traffic/CCTV/Highway?$format=JSON';
+                    const highwayResponse = await tdxApi.fetchCCTV(highwayEndpoint);
+                    
+                    if (highwayResponse && Array.isArray(highwayResponse)) {
+                        await addResult(`Highway API 可用，獲得 ${highwayResponse.length} 筆資料`, 'success');
+                        
+                        // 篩選省道資料
+                        const provincialData = highwayResponse.filter(camera => {
+                            const roadName = camera.RoadName || '';
+                            const locationDesc = camera.LocationDescription || '';
+                            const cctvId = camera.CCTVID || '';
+                            const allText = `${roadName} ${locationDesc}`;
+                            
+                            // 排除國道（編號以 CCTV-N 開頭）
+                            if (cctvId.startsWith('CCTV-N')) {
+                                return false;
+                            }
+                            
+                            // 排除明確標示為國道的
+                            if (allText.includes('國道')) {
+                                return false;
+                            }
+                            
+                            // 匹配省道格式：台1線、台9甲線等
+                            const match = allText.match(/[台臺](\d+)([甲乙丙丁]?)線?/);
+                            if (match) {
+                                const roadNum = parseInt(match[1]);
+                                // 省道通常編號在 1-200 範圍內，排除快速道路
+                                const expressways = ['台61', '台62', '台63', '台64', '台65', '台66', '台68', '台72', '台74', '台76', '台78', '台82', '台84', '台86', '台88'];
+                                const roadCode = `台${match[1]}`;
+                                if (!expressways.includes(roadCode) && roadNum >= 1 && roadNum <= 200) {
+                                    return true;
+                                }
+                            }
+                            return false;
+                        });
+                        
+                        await addResult(`從 Highway API 篩選出 ${provincialData.length} 筆省道資料`, 'info');
+                        if (provincialData.length > 0) {
+                            await addResult(`省道範例: ${provincialData[0].RoadName || '未知'}`, 'info');
+                        }
+                    }
+                } catch (hwError) {
+                    await addResult(`Highway API 也失敗: ${hwError.message}`, 'error');
+                }
+            }
+        }
+        
+        // 頁面載入後自動開始測試
+        window.addEventListener('load', testProvincialAPI);
+    </script>
+</body>
+</html>

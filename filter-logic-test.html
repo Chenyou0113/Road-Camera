@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>省道篩選邏輯測試</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test { margin: 10px 0; padding: 10px; border-radius: 5px; }
+        .pass { background-color: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+        .fail { background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+        .sample { background-color: #e2e3e5; padding: 5px; margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <h1>省道篩選邏輯測試</h1>
+    <div id="results"></div>
+    
+    <script>
+        // 快速道路列表（用於排除）
+        const EXPRESSWAYS = [
+            '台61', '台62', '台63', '台64', '台65', '台66', '台68', 
+            '台72', '台74', '台76', '台78', '台82', '台84', '台86', '台88'
+        ];
+        
+        // 判斷是否為省道（排除國道和快速道路）
+        function isProvincialRoad(camera) {
+            const roadName = camera.RoadName || '';
+            const locationDesc = camera.LocationDescription || '';
+            const cctvId = camera.CCTVID || '';
+            const allText = `${roadName} ${locationDesc}`;
+            
+            // 排除國道（編號以 CCTV-N 開頭）
+            if (cctvId.startsWith('CCTV-N')) {
+                return false;
+            }
+            
+            // 排除明確標示為國道的
+            if (allText.includes('國道')) {
+                return false;
+            }
+            
+            // 匹配省道格式：台1線、台9甲線等
+            const match = allText.match(/[台臺](\d+)([甲乙丙丁]?)線?/);
+            if (match) {
+                const roadNum = parseInt(match[1]);
+                const roadCode = `台${match[1]}`;
+                
+                // 排除快速道路
+                if (EXPRESSWAYS.includes(roadCode)) {
+                    return false;
+                }
+                
+                // 省道通常編號在 1-200 範圍內
+                if (roadNum >= 1 && roadNum <= 200) {
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+        
+        // 測試資料
+        const testCameras = [
+            // 國道 - 應該被排除
+            { CCTVID: 'CCTV-N1-S-0.000-M', RoadName: '國道1號', LocationDescription: '基隆市' },
+            { CCTVID: 'CCTV-N3-N-1.500-M', RoadName: '國道3號', LocationDescription: '土城區' },
+            
+            // 省道 - 應該保留
+            { CCTVID: 'CCTV-T1-001', RoadName: '台1線', LocationDescription: '台北市' },
+            { CCTVID: 'CCTV-T9-002', RoadName: '台9線', LocationDescription: '新北市' },
+            { CCTVID: 'CCTV-T3A-003', RoadName: '台3甲線', LocationDescription: '桃園市' },
+            
+            // 快速道路 - 應該被排除
+            { CCTVID: 'CCTV-T61-004', RoadName: '台61線', LocationDescription: '西濱快速道路' },
+            { CCTVID: 'CCTV-T74-005', RoadName: '台74線', LocationDescription: '中彰快速道路' },
+            
+            // 邊界測試
+            { CCTVID: 'CCTV-T15-006', RoadName: '台15線', LocationDescription: '關渡大橋' },
+            { CCTVID: 'CCTV-OTHER-007', RoadName: '其他道路', LocationDescription: '測試' }
+        ];
+        
+        const results = document.getElementById('results');
+        
+        function addResult(message, className = '') {
+            const div = document.createElement('div');
+            div.className = `test ${className}`;
+            div.innerHTML = message;
+            results.appendChild(div);
+        }
+        
+        // 執行測試
+        let passCount = 0;
+        let totalCount = testCameras.length;
+        
+        addResult('<strong>開始測試省道篩選邏輯...</strong>');
+        
+        testCameras.forEach((camera, index) => {
+            const isProvincial = isProvincialRoad(camera);
+            const expected = camera.CCTVID.includes('CCTV-T') && 
+                           !camera.CCTVID.includes('CCTV-N') && 
+                           !camera.RoadName.includes('61線') && 
+                           !camera.RoadName.includes('74線') &&
+                           !camera.RoadName.includes('其他道路');
+            
+            const testPass = isProvincial === expected;
+            if (testPass) passCount++;
+            
+            addResult(`
+                <div class="sample">
+                    <strong>測試 ${index + 1}:</strong> ${camera.CCTVID}<br>
+                    道路: ${camera.RoadName}<br>
+                    位置: ${camera.LocationDescription}<br>
+                    結果: ${isProvincial ? '✅ 省道' : '❌ 非省道'}<br>
+                    預期: ${expected ? '省道' : '非省道'}
+                </div>
+            `, testPass ? 'pass' : 'fail');
+        });
+        
+        addResult(`<strong>測試完成: ${passCount}/${totalCount} 通過 (${Math.round(passCount/totalCount*100)}%)</strong>`, 
+                 passCount === totalCount ? 'pass' : 'fail');
+        
+        if (passCount === totalCount) {
+            addResult('🎉 所有測試通過！省道篩選邏輯工作正常。', 'pass');
+        } else {
+            addResult('⚠️ 部分測試失敗，需要調整篩選邏輯。', 'fail');
+        }
+    </script>
+</body>
+</html>
