@@ -104,7 +104,7 @@
             .stats-panel { grid-template-columns: 1fr; }
         }
     </style>
-    
+把這ㄍ    
     <!-- 載入進度條 -->
     <script src="assets/loading-progress.js"></script>
     <script>
@@ -194,6 +194,10 @@
                 <div class="stat-number" id="expresswayCount">0</div>
                 <div class="stat-label">快速道路數</div>
             </div>
+            <div class="stat-card">
+                <div class="stat-number" id="directionCount">0</div>
+                <div class="stat-label">方向類型</div>
+            </div>
         </div>
 
         <!-- 篩選區域 -->
@@ -210,6 +214,12 @@
                     <label for="citySelect">縣市</label>
                     <select style="padding: 10px; border-radius: 5px; border: 2px solid #4CAF50; font-size: 1rem;" id="citySelect" onchange="applyFilters('city')">
                         <option value="">所有縣市</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="directionSelect"><i class="fas fa-compass"></i> 方向</label>
+                    <select style="padding: 10px; border-radius: 5px; border: 2px solid #4CAF50; font-size: 1rem;" id="directionSelect" onchange="applyFilters('direction')">
+                        <option value="">所有方向</option>
                     </select>
                 </div>
                 <div class="filter-group">
@@ -299,40 +309,50 @@
             return '';
         }
         
-        // 將英文方向轉換為中文
+        // 將英文方向轉換為中文，分為東向、西向、南向、北向
         function convertDirectionToChinese(direction) {
             if (!direction || typeof direction !== 'string') {
-                return direction;
+                return '未標示';
             }
             
-            const directionMap = {
-                'S': '南',
-                'N': '北', 
-                'E': '東',
-                'W': '西',
-                'South': '南',
-                'North': '北',
-                'East': '東',
-                'West': '西',
-                'southbound': '南下',
-                'northbound': '北上',
-                'eastbound': '東向',
-                'westbound': '西向'
-            };
+            // 轉換為大寫以便統一處理
+            const upperDirection = direction.toUpperCase().trim();
             
-            // 檢查是否有完全匹配
-            if (directionMap[direction]) {
-                return directionMap[direction];
+            // 判斷北向（優先順序：完整單字 > 單字母）
+            if (upperDirection.includes('NORTH') || upperDirection.includes('北')) {
+                return '北向';
             }
             
-            // 檢查是否包含方向關鍵字
-            for (const [english, chinese] of Object.entries(directionMap)) {
-                if (direction.toLowerCase().includes(english.toLowerCase())) {
-                    return direction.replace(new RegExp(english, 'gi'), chinese);
-                }
+            // 判斷南向
+            if (upperDirection.includes('SOUTH') || upperDirection.includes('南')) {
+                return '南向';
             }
             
-            return direction;
+            // 判斷東向
+            if (upperDirection.includes('EAST') || upperDirection.includes('東')) {
+                return '東向';
+            }
+            
+            // 判斷西向
+            if (upperDirection.includes('WEST') || upperDirection.includes('西')) {
+                return '西向';
+            }
+            
+            // 單字母判斷（當沒有完整單字時）
+            if (upperDirection === 'N' || upperDirection.startsWith('N ') || upperDirection.endsWith(' N')) {
+                return '北向';
+            }
+            if (upperDirection === 'S' || upperDirection.startsWith('S ') || upperDirection.endsWith(' S')) {
+                return '南向';
+            }
+            if (upperDirection === 'E' || upperDirection.startsWith('E ') || upperDirection.endsWith(' E')) {
+                return '東向';
+            }
+            if (upperDirection === 'W' || upperDirection.startsWith('W ') || upperDirection.endsWith(' W')) {
+                return '西向';
+            }
+            
+            return '未標示';
         }
         
         // 格式化位置資訊，包含里程、方向和路段
@@ -576,10 +596,11 @@
                 return;
             }
             
-            // 處理監視器資料
+            // 處理監視器資料，並標準化方向資訊
             allCameras = allCamerasFromSources.map(camera => ({
                 ...camera,
-                City: getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName)
+                City: getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName),
+                DirectionChinese: camera.RoadDirection ? convertDirectionToChinese(camera.RoadDirection) : '未標示'
             }));
             
             filteredCameras = allCameras;
@@ -591,6 +612,7 @@
         function populateFilters() {
             updateRoadSelect(allCameras);
             updateCitySelect(allCameras);
+            updateDirectionSelect(allCameras);
         }
 
         function updateStats() {
@@ -602,15 +624,22 @@
             // 計算快速道路數量
             const expressways = [...new Set(allCameras.map(c => c.RoadNumber).filter(Boolean))];
             document.getElementById('expresswayCount').textContent = expressways.length;
+            
+            // 計算方向類型數量
+            const directions = [...new Set(allCameras.map(c => c.DirectionChinese).filter(Boolean))];
+            document.getElementById('directionCount').textContent = directions.length;
         }
 
         function applyFilters(changedFilter = null) {
             const roadFilter = document.getElementById('roadSelect').value;
             const cityFilter = document.getElementById('citySelect').value;
+            const directionFilter = document.getElementById('directionSelect').value;
             
             if (changedFilter === 'road') {
                 if (roadFilter) {
                     const camerasForRoad = allCameras.filter(camera => camera.RoadNumber === roadFilter);
+                    
+                    // 更新縣市選單
                     const citiesForRoad = [...new Set(camerasForRoad.map(c => c.City).filter(Boolean))].sort();
                     const citySelect = document.getElementById('citySelect');
                     const currentCityValue = citySelect.value;
@@ -624,12 +653,18 @@
                     if (currentCityValue && citiesForRoad.includes(currentCityValue)) {
                         citySelect.value = currentCityValue;
                     }
+                    
+                    // 更新方向選單
+                    updateDirectionSelect(camerasForRoad, document.getElementById('directionSelect').value);
                 } else {
                     updateCitySelect(allCameras);
+                    updateDirectionSelect(allCameras);
                 }
             } else if (changedFilter === 'city') {
                 if (cityFilter) {
                     const camerasForCity = allCameras.filter(camera => camera.City === cityFilter);
+                    
+                    // 更新快速道路選單
                     const roadsForCity = [...new Set(camerasForCity.map(c => c.RoadNumber).filter(Boolean))].sort((a, b) => {
                         const numA = parseInt(a.match(/\d+/)?.[0] || '0');
                         const numB = parseInt(b.match(/\d+/)?.[0] || '0');
@@ -647,15 +682,33 @@
                     if (currentRoadValue && roadsForCity.includes(currentRoadValue)) {
                         roadSelect.value = currentRoadValue;
                     }
+                    
+                    // 更新方向選單
+                    updateDirectionSelect(camerasForCity, document.getElementById('directionSelect').value);
                 } else {
                     updateRoadSelect(allCameras);
+                    updateDirectionSelect(allCameras);
+                }
+            } else if (changedFilter === 'direction') {
+                if (directionFilter) {
+                    const camerasForDirection = allCameras.filter(camera => camera.DirectionChinese === directionFilter);
+                    
+                    // 更新快速道路選單
+                    updateRoadSelect(camerasForDirection, document.getElementById('roadSelect').value);
+                    
+                    // 更新縣市選單
+                    updateCitySelect(camerasForDirection, document.getElementById('citySelect').value);
+                } else {
+                    updateRoadSelect(allCameras, document.getElementById('roadSelect').value);
+                    updateCitySelect(allCameras, document.getElementById('citySelect').value);
                 }
             }
             
             filteredCameras = allCameras.filter(camera => {
                 const matchRoad = !roadFilter || camera.RoadNumber === roadFilter;
                 const matchCity = !cityFilter || camera.City === cityFilter;
-                return matchRoad && matchCity;
+                const matchDirection = !directionFilter || camera.DirectionChinese === directionFilter;
+                return matchRoad && matchCity && matchDirection;
             });
             
             currentPage = 1;
@@ -717,9 +770,44 @@
             }
         }
 
+        function updateDirectionSelect(cameras, selectedValue = '') {
+            const directions = [...new Set(cameras.map(c => c.DirectionChinese).filter(d => d && d !== '未標示'))];
+            
+            // 方向排序：東、西、南、北
+            const directionOrder = ['東向', '西向', '南向', '北向'];
+            const sortedDirections = directions.sort((a, b) => {
+                const indexA = directionOrder.indexOf(a);
+                const indexB = directionOrder.indexOf(b);
+                
+                if (indexA === -1 && indexB === -1) return a.localeCompare(b);
+                if (indexA === -1) return 1;
+                if (indexB === -1) return -1;
+                return indexA - indexB;
+            });
+            
+            const directionSelect = document.getElementById('directionSelect');
+            directionSelect.innerHTML = '<option value="">所有方向</option>' + 
+                sortedDirections.map(direction => {
+                    const count = cameras.filter(c => c.DirectionChinese === direction).length;
+                    // 添加方向圖標
+                    let icon = '🧭';
+                    if (direction === '北向') icon = '⬆️';
+                    else if (direction === '南向') icon = '⬇️';
+                    else if (direction === '東向') icon = '➡️';
+                    else if (direction === '西向') icon = '⬅️';
+                    
+                    return `<option value="${direction}">${icon} ${direction} (${count})</option>`;
+                }).join('');
+            
+            if (selectedValue && sortedDirections.includes(selectedValue)) {
+                directionSelect.value = selectedValue;
+            }
+        }
+        
         function resetFilters() {
             document.getElementById('roadSelect').value = '';
             document.getElementById('citySelect').value = '';
+            document.getElementById('directionSelect').value = '';
             applyFilters();
         }
 
@@ -762,6 +850,9 @@
                             <h3>${camera.RoadName || '快速道路監視器'} ${roadNumber} ${sourceIcon}</h3>
                             <p><i class="fas fa-map-marker-alt"></i> ${formatLocationInfo(camera)}</p>
                             <p><i class="fas fa-map"></i> ${camera.City || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName)}</p>
+                            ${camera.DirectionChinese && camera.DirectionChinese !== '未標示' ? 
+                                `<p><i class="fas fa-compass"></i> 方向：${camera.DirectionChinese}</p>` : ''
+                            }
                             <p><i class="fas fa-id-badge"></i> ${camera.CCTVID || '未知編號'}</p>
                             ${camera.PositionLat && camera.PositionLon ? 
                                 `<p><i class="fas fa-crosshairs"></i> 

@@ -30,7 +30,7 @@
         .camera-card { background: white; border-radius: 10px; padding: 0; box-shadow: 0 5px 15px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.3s; overflow: hidden; }
         .camera-card:hover { transform: translateY(-5px); }
         .camera-info { padding: 15px; }
-        .camera-info h3 { color: #FF9800; margin-bottom: 8px; font-size: 1.1rem; word-wrap: break-word; overflow-wrap: break-word; }
+        .camera-info h3 { color: #FF9800; margin-bottom: 8px; font-size: 24px; font-weight: bold; word-wrap: break-word; overflow-wrap: break-word; }
         .camera-info p { color: #666; margin: 4px 0; font-size: 0.9rem; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.5; }
         .camera-image { width: 100%; height: 200px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
         .camera-image img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
@@ -95,7 +95,7 @@
         /* 手機版響應式優化 */
         @media (max-width: 768px) {
             .camera-info { padding: 12px; }
-            .camera-info h3 { font-size: 1rem; }
+            .camera-info h3 { font-size: 24px; font-weight: bold; }
             .camera-info p { font-size: 0.85rem; }
             .filter-row { flex-direction: column; align-items: stretch; }
             .stats-panel { grid-template-columns: repeat(2, 1fr); }
@@ -143,7 +143,7 @@
             </h3>
             <div id="infoContent" style="color: #333; line-height: 1.6;">
                 <p style="margin: 0 0 10px 0;">
-                    本系統使用交通部 TDX 交通資料流通服務平台提供的即時省道監視器資料，涵蓋台1線、台61線等主要省道路線。
+                    本系統使用交通部 TDX 交通資料流通服務平台提供的即時省道監視器資料，涵蓋台1線、台3線、台9線等主要省道路線。
                 </p>
                 
                 <div style="margin: 15px 0;">
@@ -155,8 +155,8 @@
                             </a>
                         </p>
                         <p style="margin: 5px 0;">
-                            • <a href="https://1968.freeway.gov.tw" target="_blank" style="color: #F57C00; text-decoration: none;">
-                                高速公路1968 <i class="fas fa-external-link-alt" style="font-size: 0.8rem;"></i>
+                            • <a href="https://www.thb.gov.tw" target="_blank" style="color: #F57C00; text-decoration: none;">
+                                公路總局監視器系統 <i class="fas fa-external-link-alt" style="font-size: 0.8rem;"></i>
                             </a>
                         </p>
                     </div>
@@ -250,7 +250,7 @@
             <span class="close">&times;</span>
             <img class="modal-image" id="modalImage" alt="監視器影像">
             <div class="modal-info">
-                <h2 id="modalTitle">監視器資訊</h2>
+                <h2 id="modalTitle">省道監視器資訊</h2>
                 <p id="modalLocation"></p>
                 <p id="modalRoad"></p>
                 <p id="modalCoords"></p>
@@ -409,20 +409,24 @@
         function formatLocationInfo(camera) {
             let locationParts = [];
             
-            // 優先顯示里程（確保是字符串類型）
+            // 1. 優先加上道路線號
+            const roadPrefix = camera.RoadNumber || camera.RoadName || '省道';
+            locationParts.push(roadPrefix);
+            
+            // 2. 顯示里程（確保是字符串類型）
             if (camera.LocationMile && typeof camera.LocationMile === 'string') {
                 locationParts.push(camera.LocationMile);
             } else if (camera.LocationDescription && typeof camera.LocationDescription === 'string') {
                 locationParts.push(camera.LocationDescription);
             }
             
-            // 添加方向資訊（確保是字符串類型並轉換為中文）
+            // 3. 添加方向資訊（確保是字符串類型並轉換為中文）
             if (camera.RoadDirection && typeof camera.RoadDirection === 'string') {
                 const chineseDirection = convertDirectionToChinese(camera.RoadDirection);
                 locationParts.push(chineseDirection);
             }
             
-            // 添加路段資訊（確保是字符串類型）
+            // 4. 添加路段資訊（確保是字符串類型）
             if (camera.RoadSection && typeof camera.RoadSection === 'string') {
                 locationParts.push(camera.RoadSection);
             } else if (camera.LocationDescription && typeof camera.LocationDescription === 'string') {
@@ -477,10 +481,28 @@
             return '未知';
         }
 
-        // 處理影像載入錯誤 - 簡化版本
+        // 處理影像載入錯誤 - 改進版本，解決CORS問題
         function handleImageError(img, originalUrl) {
-            // 直接顯示錯誤訊息，不再重試
-            img.parentNode.innerHTML = '<i class="fas fa-exclamation-triangle" style="font-size: 2rem; color: #f44336;"></i><br><span style="font-size: 0.8rem;">影像載入失敗</span>';
+            // 嘗試使用代理或備用方案
+            if (originalUrl && !img.dataset.retried) {
+                img.dataset.retried = 'true';
+                // 添加時間戳避免快取問題
+                const separator = originalUrl.includes('?') ? '&' : '?';
+                const newUrl = `${originalUrl}${separator}t=${Date.now()}`;
+                img.src = newUrl;
+                return;
+            }
+            
+            // 最終失敗時顯示錯誤訊息
+            img.parentNode.innerHTML = `
+                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#999;background:#f5f5f5;border-radius:8px;padding:10px;">
+                    <i class="fas fa-exclamation-triangle" style="font-size:2rem;margin-bottom:8px;color:#f44336;"></i>
+                    <span style="font-size:0.85rem;text-align:center;line-height:1.4;">
+                        監視器影像<br>載入失敗
+                    </span>
+                    <small style="font-size:0.7rem;color:#999;margin-top:4px;">可能為CORS限制</small>
+                </div>
+            `;
         }
 
         // 確保進度條函數可用的輔助函數
@@ -617,12 +639,12 @@
             document.getElementById('roadCount').textContent = roads.length;
         }
         
-        // 新增：更新方向篩選下拉選單
+        // 更新方向篩選下拉選單
         function updateDirectionSelect(cameras, selectedValue = '') {
             const directions = [...new Set(cameras.map(c => extractDirection(c)).filter(Boolean))];
             
-            // 標準排序：北、南、東、西
-            const directionOrder = ['北', '南', '東', '西'];
+            // 方向排序：東、西、南、北
+            const directionOrder = ['東向', '西向', '南向', '北向'];
             const sortedDirections = directions.sort((a, b) => {
                 const indexA = directionOrder.indexOf(a);
                 const indexB = directionOrder.indexOf(b);
@@ -634,12 +656,19 @@
             
             const directionSelect = document.getElementById('directionSelect');
             directionSelect.innerHTML = '<option value="">所有方向</option>' + 
-                sortedDirections.map(dir => {
-                    const count = cameras.filter(c => extractDirection(c) === dir).length;
-                    return `<option value="${dir}">${dir} (${count})</option>`;
+                sortedDirections.map(direction => {
+                    const count = cameras.filter(c => extractDirection(c) === direction).length;
+                    // 添加方向圖標
+                    let icon = '🧭';
+                    if (direction === '北向') icon = '⬆️';
+                    else if (direction === '南向') icon = '⬇️';
+                    else if (direction === '東向') icon = '➡️';
+                    else if (direction === '西向') icon = '⬅️';
+                    
+                    return `<option value="${direction}">${icon} ${direction} (${count})</option>`;
                 }).join('');
             
-            if (selectedValue) {
+            if (selectedValue && sortedDirections.includes(selectedValue)) {
                 directionSelect.value = selectedValue;
             }
         }
@@ -675,44 +704,46 @@
             return null;
         }
         
-        // 新增：提取方向資訊
+        // 提取方向資訊，統一為東向、西向、南向、北向
         function extractDirection(camera) {
+            const roadDirection = camera.RoadDirection || '';
             const roadName = camera.RoadName || '';
             const locationDesc = camera.LocationDescription || '';
-            const allText = `${roadName} ${locationDesc}`;
+            const allText = `${roadDirection} ${roadName} ${locationDesc}`.toUpperCase();
             
-            // 嘗試匹配各種方向格式
-            const patterns = [
-                /往\s*([^，,。\s]+)/,          // 往台中、往花蓮
-                /向\s*([東西南北]+)/,           // 向東、向西南
-                /([東西南北]+)\s*向/,           // 東向、西向
-                /([東西南北]+)\s*行/,           // 東行、西行
-                /([東西南北]+)\s*bound/i,       // eastbound, westbound
-                /\s([東西南北]+)\s/,           // 文字中的東西南北
-                /([上下])\s*行/,               // 上行、下行
-                /([南北上下])\s*線/            // 南線、北線、上線、下線
-            ];
+            // 判斷北向（優先順序：完整單字 > 單字母）
+            if (allText.includes('NORTH') || allText.includes('北')) {
+                return '北向';
+            }
             
-            for (const pattern of patterns) {
-                const match = allText.match(pattern);
-                if (match) {
-                    let direction = match[1];
-                    
-                    // 標準化方向名稱
-                    switch (direction) {
-                        case '上': return '上行';
-                        case '下': return '下行';
-                        case '東': return '東向';
-                        case '西': return '西向';
-                        case '南': return '南向';  
-                        case '北': return '北向';
-                        case '東南': return '東南向';
-                        case '東北': return '東北向';
-                        case '西南': return '西南向';
-                        case '西北': return '西北向';
-                        default: return direction;
-                    }
-                }
+            // 判斷南向
+            if (allText.includes('SOUTH') || allText.includes('南')) {
+                return '南向';
+            }
+            
+            // 判斷東向
+            if (allText.includes('EAST') || allText.includes('東')) {
+                return '東向';
+            }
+            
+            // 判斷西向
+            if (allText.includes('WEST') || allText.includes('西')) {
+                return '西向';
+            }
+            
+            // 單字母判斷（當沒有完整單字時）
+            const upperRoadDirection = roadDirection.toUpperCase().trim();
+            if (upperRoadDirection === 'N' || upperRoadDirection.startsWith('N ') || upperRoadDirection.endsWith(' N')) {
+                return '北向';
+            }
+            if (upperRoadDirection === 'S' || upperRoadDirection.startsWith('S ') || upperRoadDirection.endsWith(' S')) {
+                return '南向';
+            }
+            if (upperRoadDirection === 'E' || upperRoadDirection.startsWith('E ') || upperRoadDirection.endsWith(' E')) {
+                return '東向';
+            }
+            if (upperRoadDirection === 'W' || upperRoadDirection.startsWith('W ') || upperRoadDirection.endsWith(' W')) {
+                return '西向';
             }
             
             return null;
@@ -1036,40 +1067,39 @@
                             }
                         </div>
                         <div class="camera-info">
-                            <h3>${camera.RoadName || '省道監視器'} ${roadNumber} ${sourceIcon}</h3>
-                            <p><i class="fas fa-map-marker-alt"></i> ${formatLocationInfo(camera)}</p>
-                            <p><i class="fas fa-map"></i> ${camera.City || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName)}</p>
-                            <p><i class="fas fa-id-badge"></i> ${camera.CCTVID || '未知編號'}</p>
+                            <h3>${roadNumber || '省道監視器'} ${sourceIcon}</h3>
                             ${(() => {
+                                const city = camera.City || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName);
                                 const mileageInfo = formatMileageDisplay(camera);
                                 const direction = extractDirection(camera);
+                                
                                 let infoHtml = '';
                                 
+                                // 1. 縣市
+                                if (city && city !== '未知') {
+                                    infoHtml += `<p><i class="fas fa-map-marker-alt" style="color: #FF9800;"></i> ${city}</p>`;
+                                }
+                                
+                                // 2. 里程（在里程前面必定顯示路線編號）
                                 if (mileageInfo.mileage) {
-                                    let mileageText = `里程：${mileageInfo.mileage}`;
+                                    let mileageText = mileageInfo.mileage;
                                     if (mileageInfo.segment) {
                                         mileageText += ` (${mileageInfo.segment})`;
                                     }
-                                    infoHtml = `<p><i class="fas fa-road" style="color: #FF9800;"></i> ${mileageText}</p>`;
+                                    // 在里程前面必須加上路線編號，若無則使用RoadName
+                                    const roadPrefix = camera.RoadNumber || camera.RoadName || '省道';
+                                    infoHtml += `<p><i class="fas fa-road" style="color: #FF9800;"></i> ${roadPrefix} ${mileageText}</p>`;
                                 }
                                 
+                                // 3. 方向
                                 if (direction) {
-                                    infoHtml += `<p><i class="fas fa-arrow-right" style="color: #FF9800;"></i> 方向：${direction}</p>`;
+                                    infoHtml += `<p><i class="fas fa-compass" style="color: #FF9800;"></i> ${direction}</p>`;
                                 }
+                                
+                                // 4. 省道編號已在標題顯示，不再重複顯示
                                 
                                 return infoHtml;
                             })()}
-                            ${camera.PositionLat && camera.PositionLon ? 
-                                `<p><i class="fas fa-crosshairs"></i> 
-                                  <a href="https://www.google.com/maps?q=${camera.PositionLat},${camera.PositionLon}" 
-                                     target="_blank" 
-                                     style="color: #FF9800; text-decoration: none;" 
-                                     title="在Google地圖中查看">
-                                    ${camera.PositionLat.toFixed(4)}, ${camera.PositionLon.toFixed(4)}
-                                    <i class="fas fa-external-link-alt" style="font-size: 0.8rem; margin-left: 3px;"></i>
-                                  </a>
-                                </p>` : ''
-                            }
                         </div>
                     </div>
                 `;
