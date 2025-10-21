@@ -10,6 +10,7 @@
     <script>window.CURRENT_PAGE = 'highway';</script>
     <script src="assets/config.js"></script>
     <script src="assets/tdx-api.js"></script>
+    <script src="assets/image-handler-simple.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Microsoft JhengHei', Arial, sans-serif; background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%); min-height: 100vh; }
@@ -414,20 +415,22 @@
             return '未知';
         }
 
-        // 處理影像載入錯誤
+        // 處理影像載入錯誤 - 使用簡化版本
         function handleImageError(img, originalUrl) {
-            if (img.dataset.retried) {
-                img.parentNode.innerHTML = '<i class="fas fa-exclamation-triangle" style="font-size: 2rem; color: #f44336;"></i><br><span style="font-size: 0.8rem;">影像載入失敗</span>';
-                return;
+            // 直接顯示錯誤訊息，不再重試
+            img.parentNode.innerHTML = '<i class="fas fa-exclamation-triangle" style="font-size: 2rem; color: #f44336;"></i><br><span style="font-size: 0.8rem;">影像載入失敗</span>';
+        }
+
+        // 確保進度條函數可用的輔助函數
+        function ensureProgressFunctions() {
+            if (typeof window.setLoadingProgress !== 'function') {
+                window.setLoadingProgress = function() { console.warn('setLoadingProgress not available'); };
             }
-            
-            img.dataset.retried = 'true';
-            if (originalUrl.includes('bmjpg')) {
-                img.src = originalUrl.replace('bmjpg', 'mjpg');
-            } else if (originalUrl.includes('mjpg')) {
-                img.src = originalUrl.replace('mjpg', 'jpg');
-            } else {
-                img.parentNode.innerHTML = '<i class="fas fa-exclamation-triangle" style="font-size: 2rem; color: #f44336;"></i><br><span style="font-size: 0.8rem;">影像載入失敗</span>';
+            if (typeof window.updateLoadingLabel !== 'function') {
+                window.updateLoadingLabel = function() { console.warn('updateLoadingLabel not available'); };
+            }
+            if (typeof window.finishLoading !== 'function') {
+                window.finishLoading = function() { console.warn('finishLoading not available'); };
             }
         }
 
@@ -435,8 +438,11 @@
             const container = document.getElementById('cameras-container');
             container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 載入國道監視器資料中...</div>';
             
-            // 更新進度
-            window.setLoadingProgress(20);
+            // 確保進度條函數可用
+            ensureProgressFunctions();
+            
+            // 更新進度 - 減少頻率
+            window.setLoadingProgress(25);
             window.updateLoadingLabel('連接TDX API...');
             
             let allCamerasFromSources = [];
@@ -451,9 +457,11 @@
                     </div>
                 `;
                 
-                // 更新進度
-                window.setLoadingProgress(40);
-                window.updateLoadingLabel('載入國道監視器資料...');
+                // 延遲進度更新以減少頻繁調用
+                setTimeout(() => {
+                    window.setLoadingProgress(50);
+                    window.updateLoadingLabel('載入國道監視器資料...');
+                }, 100);
                 
                 // 使用 TDX Highway 端點載入全國省道監視器
                 const endpoint = '/v2/Road/Traffic/CCTV/Freeway?$format=JSON';
@@ -462,7 +470,7 @@
                 const response = await tdxApi.fetchCCTV(endpoint);
                 
                 // 更新進度
-                window.setLoadingProgress(70);
+                window.setLoadingProgress(75);
                 window.updateLoadingLabel('處理監視器資料...');
                 
                 let cameras = [];
@@ -505,8 +513,8 @@
             
             console.log(`📊 國道監視器: ${allCamerasFromSources.length} 筆`);
             
-            // 更新進度
-            window.setLoadingProgress(85);
+            // 最終進度更新
+            window.setLoadingProgress(100);
             window.updateLoadingLabel('載入監視器影像...');
             
             if (allCamerasFromSources.length === 0) {
@@ -529,7 +537,7 @@
             // 完成載入進度
             setTimeout(() => {
                 window.finishLoading();
-            }, 500);
+            }, 200);
         }
 
         function populateFilters() {
@@ -693,8 +701,11 @@
                     <div class="camera-card" onclick="openModal(${startIndex + index})">
                         <div class="camera-image">
                             ${camera.VideoImageUrl || camera.VideoStreamURL ? 
-                                `<img src="${camera.VideoImageUrl || camera.VideoStreamURL}" alt="${camera.CCTVID || '監視器影像'}" 
-                                     onerror="handleImageError(this, '${camera.VideoImageUrl || camera.VideoStreamURL}')">
+                                `<img src="${camera.VideoImageUrl || camera.VideoStreamURL}" 
+                                     alt="${camera.CCTVID || '監視器影像'}" 
+                                     loading="lazy"
+                                     style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px;"
+                                     onerror="this.parentNode.innerHTML='<div style=&quot;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#999;background:#f5f5f5;border-radius:8px;&quot;><i class=&quot;fas fa-exclamation-triangle&quot; style=&quot;font-size:2rem;margin-bottom:8px;color:#f44336;&quot;></i><span style=&quot;font-size:0.85rem;text-align:center;&quot;>${camera.RoadName || '監視器'}<br>影像載入失敗</span></div>'">
                                  <div class="image-overlay">
                                      <i class="fas fa-search-plus" style="font-size: 2rem;"></i>
                                  </div>` : 
@@ -807,7 +818,10 @@
 
         // 初始載入
         window.onload = function() {
-            loadCameras();
+            // 確保進度條已初始化再開始載入
+            setTimeout(() => {
+                loadCameras();
+            }, 100);
         };
     </script>
 </body>

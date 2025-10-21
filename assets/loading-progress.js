@@ -18,6 +18,7 @@ class LoadingProgressBar {
         this.isFinished = false;
         this.timer = null;
         this.element = null;
+        this.updatePending = false;
         
         this.createProgressBar();
     }
@@ -156,10 +157,25 @@ class LoadingProgressBar {
     }
     
     set(percentage) {
-        this.progress = Math.max(0, Math.min(100, percentage));
-        const fillElement = this.element.querySelector('.loading-progress-fill');
-        if (fillElement) {
-            fillElement.style.width = this.progress + '%';
+        const newProgress = Math.max(0, Math.min(100, percentage));
+        
+        // 避免不必要的 DOM 更新
+        if (Math.abs(this.progress - newProgress) < 1 && newProgress !== 100) {
+            return this;
+        }
+        
+        this.progress = newProgress;
+        
+        // 使用 requestAnimationFrame 優化 DOM 更新
+        if (!this.updatePending) {
+            this.updatePending = true;
+            requestAnimationFrame(() => {
+                const fillElement = this.element.querySelector('.loading-progress-fill');
+                if (fillElement) {
+                    fillElement.style.width = this.progress + '%';
+                }
+                this.updatePending = false;
+            });
         }
         return this;
     }
@@ -187,7 +203,7 @@ class LoadingProgressBar {
             if (this.isStarted && this.progress < 99) {
                 this.trickle();
             }
-        }, this.options.trickleSpeed);
+        }, this.options.trickleSpeed * 2); // 減少頻率，從 200ms 改為 400ms
     }
     
     finish() {
