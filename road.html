@@ -190,7 +190,7 @@
 
         <!-- 篩選區域 -->
         <div class="filter-section">
-            <h3 style="color: #FF9800; margin-bottom: 15px;"><i class="fas fa-filter"></i> 篩選省道監視器</h3>
+            <h3 style="color: #FF9800; margin-bottom: 15px;"><i class="fas fa-filter"></i> 篩選與排序省道監視器</h3>
             <div class="filter-row">
                 <div class="filter-group">
                     <label for="roadSelect">省道</label>
@@ -202,6 +202,20 @@
                     <label for="citySelect">縣市</label>
                     <select style="padding: 10px; border-radius: 5px; border: 2px solid #FF9800; font-size: 1rem;" id="citySelect" onchange="applyFilters('city')">
                         <option value="">所有縣市</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="directionSelect">方向</label>
+                    <select style="padding: 10px; border-radius: 5px; border: 2px solid #FF9800; font-size: 1rem;" id="directionSelect" onchange="applyFilters('direction')">
+                        <option value="">所有方向</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="sortSelect">里程排序</label>
+                    <select style="padding: 10px; border-radius: 5px; border: 2px solid #FF9800; font-size: 1rem;" id="sortSelect" onchange="applySorting()">
+                        <option value="">預設排序</option>
+                        <option value="mile-asc">里程數 ↑ (小到大)</option>
+                        <option value="mile-desc">里程數 ↓ (大到小)</option>
                     </select>
                 </div>
                 <div class="filter-group">
@@ -282,6 +296,43 @@
             return false;
         }
         
+        // 判斷是否為省道（排除國道和快速道路）
+        function isProvincialRoad(camera) {
+            const roadName = camera.RoadName || '';
+            const locationDesc = camera.LocationDescription || '';
+            const cctvId = camera.CCTVID || '';
+            const allText = `${roadName} ${locationDesc}`;
+            
+            // 排除國道（編號以 CCTV-N 開頭）
+            if (cctvId.startsWith('CCTV-N')) {
+                return false;
+            }
+            
+            // 排除明確標示為國道的
+            if (allText.includes('國道')) {
+                return false;
+            }
+            
+            // 匹配省道格式：台1線、台9甲線等
+            const match = allText.match(/[台臺](\d+)([甲乙丙丁]?)線?/);
+            if (match) {
+                const roadNum = parseInt(match[1]);
+                const roadCode = `台${match[1]}`;
+                
+                // 排除快速道路
+                if (EXPRESSWAYS.includes(roadCode)) {
+                    return false;
+                }
+                
+                // 省道通常編號在 1-200 範圍內
+                if (roadNum >= 1 && roadNum <= 200) {
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+        
         // 從路段資訊中提取省道路線編號
         function extractroadNumber(camera) {
             const roadName = camera.RoadName || '';
@@ -290,13 +341,9 @@
             const allText = `${roadName} ${locationDesc} ${roadSection}`;
             
             // 匹配台1線、台9甲線等格式
-            const match1 = allText.match(/[台臺](\d+)([甲乙丙丁]?)線?/);
-            if (match1) {
-                const roadNumber = `台${match1[1]}${match1[2] ? match1[2] : ''}線`;
-                // 排除快速道路
-                if (EXPRESSWAYS.includes(`台${match1[1]}`)) {
-                    return '';
-                }
+            const match = allText.match(/[台臺](\d+)([甲乙丙丁]?)線?/);
+            if (match) {
+                const roadNumber = `台${match[1]}${match[2] ? match[2] : ''}線`;
                 return roadNumber;
             }
             
@@ -478,9 +525,9 @@
                     window.updateLoadingLabel('載入省道監視器資料...');
                 }, 100);
                 
-                // 使用 TDX Highway 端點載入全國省道監視器
+                // 使用 TDX Highway 端點載入全國道路監視器（包含省道）
                 const endpoint = '/v2/Road/Traffic/CCTV/Highway?$format=JSON';
-                console.log('📍 載入 Highway 端點資料...');
+                console.log('📍 載入 Highway 端點資料並篩選省道...');
                 
                 const response = await tdxApi.fetchCCTV(endpoint);
                 
@@ -503,14 +550,14 @@
                 console.log(`📊 TDX Highway 原始資料: ${cameras.length} 筆`);
                 
                 if (cameras.length > 0) {
-                    // 篩選出一般省道（排除快速道路）
+                    // 篩選並處理省道監視器資料
                     allCamerasFromSources = cameras
-                        .filter(camera => !isExpressway(camera))
+                        .filter(camera => isProvincialRoad(camera)) // 只保留省道
                         .map(camera => {
                             const roadNumber = extractroadNumber(camera);
-                            return {...camera, source: 'tdx', RoadNumber: roadNumber};
+                            return {...camera, source: 'tdx', RoadNumber: roadNumber || camera.RoadName || '省道'};
                         })
-                        .filter(camera => camera.RoadNumber); // 只保留有省道編號的
+                        .filter(camera => camera.RoadNumber); // 只保留有道路編號的
                 }
                 
             } catch (error) {
@@ -556,6 +603,7 @@
         function populateFilters() {
             updateRoadSelect(allCameras);
             updateCitySelect(allCameras);
+            updateDirectionSelect(allCameras);
         }
 
         function updateStats() {
@@ -568,17 +616,225 @@
             const roads = [...new Set(allCameras.map(c => c.RoadNumber).filter(Boolean))];
             document.getElementById('roadCount').textContent = roads.length;
         }
-
+        
+        // 新增：更新方向篩選下拉選單
+        function updateDirectionSelect(cameras, selectedValue = '') {
+            const directions = [...new Set(cameras.map(c => extractDirection(c)).filter(Boolean))];
+            
+            // 標準排序：北、南、東、西
+            const directionOrder = ['北', '南', '東', '西'];
+            const sortedDirections = directions.sort((a, b) => {
+                const indexA = directionOrder.indexOf(a);
+                const indexB = directionOrder.indexOf(b);
+                if (indexA === -1 && indexB === -1) return a.localeCompare(b);
+                if (indexA === -1) return 1;
+                if (indexB === -1) return -1;
+                return indexA - indexB;
+            });
+            
+            const directionSelect = document.getElementById('directionSelect');
+            directionSelect.innerHTML = '<option value="">所有方向</option>' + 
+                sortedDirections.map(dir => {
+                    const count = cameras.filter(c => extractDirection(c) === dir).length;
+                    return `<option value="${dir}">${dir} (${count})</option>`;
+                }).join('');
+            
+            if (selectedValue) {
+                directionSelect.value = selectedValue;
+            }
+        }
+        
+        // 新增：從里程資訊中提取數值
+        function extractMileageNumber(camera) {
+            const locationMile = camera.LocationMile || '';
+            const locationDesc = camera.LocationDescription || '';
+            const allText = `${locationMile} ${locationDesc}`;
+            
+            // 嘗試匹配各種里程格式
+            // 例如：125K、125.5K、125K+500、125公里、125km
+            const patterns = [
+                /(\d+\.?\d*)K\+(\d+)/i,  // 125K+500
+                /(\d+\.?\d*)K/i,          // 125K 或 125.5K
+                /(\d+\.?\d*)公里/,        // 125公里
+                /(\d+\.?\d*)km/i,         // 125km
+                /里程[：:]\s*(\d+\.?\d*)/  // 里程：125
+            ];
+            
+            for (const pattern of patterns) {
+                const match = allText.match(pattern);
+                if (match) {
+                    if (pattern === patterns[0]) {
+                        // K+格式：例如 125K+500 = 125.5
+                        return parseFloat(match[1]) + parseFloat(match[2]) / 1000;
+                    } else {
+                        return parseFloat(match[1]);
+                    }
+                }
+            }
+            
+            return null;
+        }
+        
+        // 新增：提取方向資訊
+        function extractDirection(camera) {
+            const roadName = camera.RoadName || '';
+            const locationDesc = camera.LocationDescription || '';
+            const allText = `${roadName} ${locationDesc}`;
+            
+            // 嘗試匹配各種方向格式
+            const patterns = [
+                /往\s*([^，,。\s]+)/,          // 往台中、往花蓮
+                /向\s*([東西南北]+)/,           // 向東、向西南
+                /([東西南北]+)\s*向/,           // 東向、西向
+                /([東西南北]+)\s*行/,           // 東行、西行
+                /([東西南北]+)\s*bound/i,       // eastbound, westbound
+                /\s([東西南北]+)\s/,           // 文字中的東西南北
+                /([上下])\s*行/,               // 上行、下行
+                /([南北上下])\s*線/            // 南線、北線、上線、下線
+            ];
+            
+            for (const pattern of patterns) {
+                const match = allText.match(pattern);
+                if (match) {
+                    let direction = match[1];
+                    
+                    // 標準化方向名稱
+                    switch (direction) {
+                        case '上': return '上行';
+                        case '下': return '下行';
+                        case '東': return '東向';
+                        case '西': return '西向';
+                        case '南': return '南向';  
+                        case '北': return '北向';
+                        case '東南': return '東南向';
+                        case '東北': return '東北向';
+                        case '西南': return '西南向';
+                        case '西北': return '西北向';
+                        default: return direction;
+                    }
+                }
+            }
+            
+            return null;
+        }
+        
+        // 新增：格式化里程顯示，保持原始格式並提取路段資訊
+        function formatMileageDisplay(camera) {
+            const locationMile = camera.LocationMile || '';
+            const locationDesc = camera.LocationDescription || '';
+            const roadName = camera.RoadName || '';
+            const allText = `${locationMile} ${locationDesc} ${roadName}`;
+            
+            let mileageDisplay = '';
+            let segmentInfo = '';
+            
+            // 提取原始里程格式
+            const mileagePatterns = [
+                /(\d+K\+\d+)/i,           // 125K+500 (保持原格式)
+                /(\d+\.?\d*K)/i,          // 125K 或 125.5K
+                /(\d+\.?\d*)公里/,        // 125公里
+                /(\d+\.?\d*)km/i,         // 125km
+                /里程[：:]\s*(\d+\.?\d*)/ // 里程：125
+            ];
+            
+            for (const pattern of mileagePatterns) {
+                const match = allText.match(pattern);
+                if (match) {
+                    mileageDisplay = match[1];
+                    // 如果不是K+格式，轉換為K格式
+                    if (!mileageDisplay.includes('K')) {
+                        const num = parseFloat(match[1]);
+                        mileageDisplay = `${num}K`;
+                    }
+                    break;
+                }
+            }
+            
+            // 提取路段資訊（交流道、橋樑、隧道等地標）
+            const segmentPatterns = [
+                /([^，,。\s]*(?:交流道|系統交流道))/g,     // 各種交流道
+                /([^，,。\s]*(?:橋|大橋|陸橋|天橋))/g,     // 各種橋樑  
+                /([^，,。\s]*(?:隧道))/g,                // 隧道
+                /([^，,。\s]*(?:收費站|服務區))/g,        // 收費站、服務區
+                /([^，,。\s]*(?:匝道|聯絡道))/g,          // 匝道、聯絡道
+                /([^，,。\s]*(?:路口|十字路口))/g,        // 路口
+                /([^，,。\s]*(?:車站|火車站|高鐵站))/g,    // 車站
+                /([^，,。\s]*(?:工業區|科學園區|工業園區))/g, // 工業區等
+                /(近\s*[^，,。\s]+)/g,                   // 近某地點
+                /(距\s*[^，,。\s]+)/g                    // 距某地點
+            ];
+            
+            const segments = [];
+            for (const pattern of segmentPatterns) {
+                const matches = allText.match(pattern);
+                if (matches) {
+                    segments.push(...matches);
+                }
+            }
+            
+            // 去重並取最相關的路段資訊（通常是最後一個或最長的）
+            const uniqueSegments = [...new Set(segments)];
+            if (uniqueSegments.length > 0) {
+                // 優先選擇包含交流道、橋、隧道等重要地標的
+                const importantSegments = uniqueSegments.filter(seg => 
+                    /交流道|橋|隧道|收費站|服務區/.test(seg)
+                );
+                segmentInfo = importantSegments.length > 0 ? importantSegments[0] : uniqueSegments[0];
+            }
+            
+            return {
+                mileage: mileageDisplay,
+                segment: segmentInfo
+            };
+        }
+        
+        // 新增：應用排序
+        function applySorting() {
+            const sortValue = document.getElementById('sortSelect').value;
+            
+            if (!sortValue) {
+                // 恢復預設排序
+                displayCameras(filteredCameras);
+                return;
+            }
+            
+            const sortedCameras = [...filteredCameras].sort((a, b) => {
+                const mileA = extractMileageNumber(a);
+                const mileB = extractMileageNumber(b);
+                
+                // 沒有里程資訊的放在最後
+                if (mileA === null && mileB === null) return 0;
+                if (mileA === null) return 1;
+                if (mileB === null) return -1;
+                
+                if (sortValue === 'mile-asc') {
+                    return mileA - mileB;  // 升序
+                } else if (sortValue === 'mile-desc') {
+                    return mileB - mileA;  // 降序
+                }
+                
+                return 0;
+            });
+            
+            currentPage = 1;
+            displayCameras(sortedCameras);
+        }
+        
         function applyFilters(changedFilter = null) {
             const roadFilter = document.getElementById('roadSelect').value;
             const cityFilter = document.getElementById('citySelect').value;
+            const directionFilter = document.getElementById('directionSelect').value;
             
             if (changedFilter === 'road') {
                 if (roadFilter) {
                     const camerasForRoad = allCameras.filter(camera => camera.RoadNumber === roadFilter);
                     const citiesForRoad = [...new Set(camerasForRoad.map(c => c.City).filter(Boolean))].sort();
+                    const directionsForRoad = [...new Set(camerasForRoad.map(c => extractDirection(c)).filter(Boolean))].sort();
+                    
                     const citySelect = document.getElementById('citySelect');
+                    const directionSelect = document.getElementById('directionSelect');
                     const currentCityValue = citySelect.value;
+                    const currentDirectionValue = directionSelect.value;
                     
                     citySelect.innerHTML = '<option value="">所有縣市</option>' + 
                         citiesForRoad.map(city => {
@@ -586,11 +842,21 @@
                             return `<option value="${city}">${city} (${count})</option>`;
                         }).join('');
                     
+                    directionSelect.innerHTML = '<option value="">所有方向</option>' + 
+                        directionsForRoad.map(direction => {
+                            const count = camerasForRoad.filter(c => extractDirection(c) === direction).length;
+                            return `<option value="${direction}">${direction} (${count})</option>`;
+                        }).join('');
+                    
                     if (currentCityValue && citiesForRoad.includes(currentCityValue)) {
                         citySelect.value = currentCityValue;
                     }
+                    if (currentDirectionValue && directionsForRoad.includes(currentDirectionValue)) {
+                        directionSelect.value = currentDirectionValue;
+                    }
                 } else {
                     updateCitySelect(allCameras);
+                    updateDirectionSelect(allCameras);
                 }
             } else if (changedFilter === 'city') {
                 if (cityFilter) {
@@ -600,8 +866,12 @@
                         const numB = parseInt(b.match(/\d+/)?.[0] || '0');
                         return numA - numB;
                     });
+                    const directionsForCity = [...new Set(camerasForCity.map(c => extractDirection(c)).filter(Boolean))].sort();
+                    
                     const roadSelect = document.getElementById('roadSelect');
+                    const directionSelect = document.getElementById('directionSelect');
                     const currentRoadValue = roadSelect.value;
+                    const currentDirectionValue = directionSelect.value;
                     
                     roadSelect.innerHTML = '<option value="">所有省道</option>' + 
                         roadsForCity.map(road => {
@@ -609,23 +879,86 @@
                             return `<option value="${road}">${road} (${count})</option>`;
                         }).join('');
                     
+                    directionSelect.innerHTML = '<option value="">所有方向</option>' + 
+                        directionsForCity.map(direction => {
+                            const count = camerasForCity.filter(c => extractDirection(c) === direction).length;
+                            return `<option value="${direction}">${direction} (${count})</option>`;
+                        }).join('');
+                    
                     if (currentRoadValue && roadsForCity.includes(currentRoadValue)) {
                         roadSelect.value = currentRoadValue;
                     }
+                    if (currentDirectionValue && directionsForCity.includes(currentDirectionValue)) {
+                        directionSelect.value = currentDirectionValue;
+                    }
                 } else {
                     updateRoadSelect(allCameras);
+                    updateDirectionSelect(allCameras);
+                }
+            } else if (changedFilter === 'direction') {
+                if (directionFilter) {
+                    const camerasForDirection = allCameras.filter(camera => extractDirection(camera) === directionFilter);
+                    const roadsForDirection = [...new Set(camerasForDirection.map(c => c.RoadNumber).filter(Boolean))].sort((a, b) => {
+                        const numA = parseInt(a.match(/\d+/)?.[0] || '0');
+                        const numB = parseInt(b.match(/\d+/)?.[0] || '0');
+                        return numA - numB;
+                    });
+                    const citiesForDirection = [...new Set(camerasForDirection.map(c => c.City).filter(Boolean))].sort();
+                    
+                    const roadSelect = document.getElementById('roadSelect');
+                    const citySelect = document.getElementById('citySelect');
+                    const currentRoadValue = roadSelect.value;
+                    const currentCityValue = citySelect.value;
+                    
+                    roadSelect.innerHTML = '<option value="">所有省道</option>' + 
+                        roadsForDirection.map(road => {
+                            const count = camerasForDirection.filter(c => c.RoadNumber === road).length;
+                            return `<option value="${road}">${road} (${count})</option>`;
+                        }).join('');
+                    
+                    citySelect.innerHTML = '<option value="">所有縣市</option>' + 
+                        citiesForDirection.map(city => {
+                            const count = camerasForDirection.filter(c => c.City === city).length;
+                            return `<option value="${city}">${city} (${count})</option>`;
+                        }).join('');
+                    
+                    if (currentRoadValue && roadsForDirection.includes(currentRoadValue)) {
+                        roadSelect.value = currentRoadValue;
+                    }
+                    if (currentCityValue && citiesForDirection.includes(currentCityValue)) {
+                        citySelect.value = currentCityValue;
+                    }
+                } else {
+                    updateRoadSelect(allCameras);
+                    updateCitySelect(allCameras);
                 }
             }
             
             filteredCameras = allCameras.filter(camera => {
                 const matchRoad = !roadFilter || camera.RoadNumber === roadFilter;
                 const matchCity = !cityFilter || camera.City === cityFilter;
-                return matchRoad && matchCity;
+                const matchDirection = !directionFilter || extractDirection(camera) === directionFilter;
+                return matchRoad && matchCity && matchDirection;
             });
             
             currentPage = 1;
             updateStats();
-            displayCameras(filteredCameras);
+            
+            // 應用當前的排序設定
+            const sortValue = document.getElementById('sortSelect').value;
+            if (sortValue) {
+                applySorting();
+            } else {
+                displayCameras(filteredCameras);
+            }
+        }
+
+        function resetFilters() {
+            document.getElementById('roadSelect').value = '';
+            document.getElementById('citySelect').value = '';
+            document.getElementById('directionSelect').value = '';
+            document.getElementById('sortSelect').value = '';
+            applyFilters();
         }
         
         function updateRoadSelect(cameras, selectedValue = '') {
@@ -639,53 +972,30 @@
             roadSelect.innerHTML = '<option value="">所有省道</option>' + 
                 roads.map(road => {
                     const count = cameras.filter(c => c.RoadNumber === road).length;
-                    return `<option value="${road}">${road} (${count})</option>`;
+                    return `<option value="${road}" ${road === selectedValue ? 'selected' : ''}>${road} (${count})</option>`;
                 }).join('');
-            
-            if (selectedValue) {
-                roadSelect.value = selectedValue;
-            }
         }
         
         function updateCitySelect(cameras, selectedValue = '') {
-            // 台灣縣市標準排序 - 由北到南，直轄市優先
-            const TAIWAN_CITY_ORDER = [
-                '台北市', '新北市', '桃園市', '台中市', '台南市', '高雄市',
-                '基隆市', '新竹市', '嘉義市',
-                '新竹縣', '苗栗縣', '彰化縣', '南投縣', '雲林縣', '嘉義縣', '屏東縣',
-                '宜蘭縣', '花蓮縣', '台東縣',
-                '澎湖縣', '金門縣', '連江縣'
-            ];
-            
-            const cities = [...new Set(cameras.map(c => c.City).filter(Boolean))];
-            // 按照台灣縣市標準順序排列
-            const sortedCities = cities.sort((a, b) => {
-                const indexA = TAIWAN_CITY_ORDER.indexOf(a);
-                const indexB = TAIWAN_CITY_ORDER.indexOf(b);
-                // 如果在標準順序中找不到，則放在最後並按字母排序
-                if (indexA === -1 && indexB === -1) return a.localeCompare(b);
-                if (indexA === -1) return 1;
-                if (indexB === -1) return -1;
-                return indexA - indexB;
-            });
+            const cities = [...new Set(cameras.map(c => c.City).filter(Boolean))].sort();
             
             const citySelect = document.getElementById('citySelect');
-            
             citySelect.innerHTML = '<option value="">所有縣市</option>' + 
-                sortedCities.map(city => {
+                cities.map(city => {
                     const count = cameras.filter(c => c.City === city).length;
-                    return `<option value="${city}">${city} (${count})</option>`;
+                    return `<option value="${city}" ${city === selectedValue ? 'selected' : ''}>${city} (${count})</option>`;
                 }).join('');
-            
-            if (selectedValue) {
-                citySelect.value = selectedValue;
-            }
         }
-
-        function resetFilters() {
-            document.getElementById('roadSelect').value = '';
-            document.getElementById('citySelect').value = '';
-            applyFilters();
+        
+        function updateDirectionSelect(cameras, selectedValue = '') {
+            const directions = [...new Set(cameras.map(c => extractDirection(c)).filter(Boolean))].sort();
+            
+            const directionSelect = document.getElementById('directionSelect');
+            directionSelect.innerHTML = '<option value="">所有方向</option>' + 
+                directions.map(direction => {
+                    const count = cameras.filter(c => extractDirection(c) === direction).length;
+                    return `<option value="${direction}" ${direction === selectedValue ? 'selected' : ''}>${direction} (${count})</option>`;
+                }).join('');
         }
 
         function displayCameras(cameras) {
@@ -730,6 +1040,25 @@
                             <p><i class="fas fa-map-marker-alt"></i> ${formatLocationInfo(camera)}</p>
                             <p><i class="fas fa-map"></i> ${camera.City || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName)}</p>
                             <p><i class="fas fa-id-badge"></i> ${camera.CCTVID || '未知編號'}</p>
+                            ${(() => {
+                                const mileageInfo = formatMileageDisplay(camera);
+                                const direction = extractDirection(camera);
+                                let infoHtml = '';
+                                
+                                if (mileageInfo.mileage) {
+                                    let mileageText = `里程：${mileageInfo.mileage}`;
+                                    if (mileageInfo.segment) {
+                                        mileageText += ` (${mileageInfo.segment})`;
+                                    }
+                                    infoHtml = `<p><i class="fas fa-road" style="color: #FF9800;"></i> ${mileageText}</p>`;
+                                }
+                                
+                                if (direction) {
+                                    infoHtml += `<p><i class="fas fa-arrow-right" style="color: #FF9800;"></i> 方向：${direction}</p>`;
+                                }
+                                
+                                return infoHtml;
+                            })()}
                             ${camera.PositionLat && camera.PositionLon ? 
                                 `<p><i class="fas fa-crosshairs"></i> 
                                   <a href="https://www.google.com/maps?q=${camera.PositionLat},${camera.PositionLon}" 
