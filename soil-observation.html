@@ -159,8 +159,8 @@
         <!-- 篩選選項 -->
         <div style="background: white; padding: 15px; margin: 20px 0; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
             <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
-                <select class="filter-select" id="riverSelect" onchange="applyFilters()">
-                    <option value="">選擇河川</option>
+                <select class="filter-select" id="countySelect" onchange="applyFilters()">
+                    <option value="">選擇縣市</option>
                 </select>
                 <select class="filter-select" id="authoritySelect" onchange="applyFilters()">
                     <option value="">選擇提供單位</option>
@@ -225,13 +225,14 @@
                 let response;
                 try {
                     container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 嘗試載入水利署即時資料...</div>';
-                    response = await fetch('https://opendata.wra.gov.tw/api/v2/65d61e4b-c250-4170-bcfc-5fd323fdd13e?limit=1000&sort=_importdate%20desc&format=JSON');
+                    // 使用水利署視訊監測影像監測資料 API，並使用 $top=1 只取最新一筆
+                    response = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations($top=1;$orderby=phenomenonTime%20desc)&$filter=Thing/properties/authority%20eq%20%27%E6%B0%B4%E5%88%A9%E7%BD%B2%27&$count=true');
                 } catch (corsError) {
                     console.log('直接連接失敗，嘗試使用 CORS 代理...');
                     container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 嘗試替代連接方式...</div>';
                     // 使用 CORS 代理
                     const proxyUrl = 'https://api.allorigins.win/raw?url=';
-                    const targetUrl = encodeURIComponent('https://opendata.wra.gov.tw/api/v2/65d61e4b-c250-4170-bcfc-5fd323fdd13e?limit=1000&sort=_importdate%20desc&format=JSON');
+                    const targetUrl = encodeURIComponent('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations($top=1;$orderby=phenomenonTime%20desc)&$filter=Thing/properties/authority%20eq%20%27%E6%B0%B4%E5%88%A9%E7%BD%B2%27&$count=true');
                     response = await fetch(proxyUrl + targetUrl);
                 }
                 
@@ -240,37 +241,57 @@
                 }
                 
                 const data = await response.json();
-                console.log('水利署河川分署 API 回應:', data);
+                console.log('水利署視訊監測 API 回應:', data);
                 
-                if (data && data.records && Array.isArray(data.records) && data.records.length > 0) {
+                if (data && data.value && Array.isArray(data.value) && data.value.length > 0) {
                     isUsingRealData = true;
-                    document.getElementById('dataSourceInfo').innerHTML = '• ✅ 即時資料載入成功（水利署開放資料平台）';
+                    document.getElementById('dataSourceInfo').innerHTML = '• ✅ 即時資料載入成功（水利署視訊監測系統 - 最新一筆資料）';
                     document.getElementById('dataSourceInfo').style.color = '#4CAF50';
                     
-                    // 轉換水利署河川分署資料格式
-                    allStations = data.records.map(station => ({
-                        // 基本資訊
-                        stationName: station.StationName || '未命名監控站',
-                        authority: station.Authority || '',
-                        ccdIdentifier: station.CCDIdentifier || '',
+                    // 轉換水利署視訊監測資料格式
+                    allStations = data.value.map(datastream => {
+                        const thing = datastream.Thing || {};
+                        const properties = thing.properties || {};
+                        const observedArea = datastream.observedArea || {};
+                        const coordinates = observedArea.coordinates || [];
+                        const latestObs = datastream.Observations && datastream.Observations[0] ? datastream.Observations[0] : null;
                         
-                        // 地理位置
-                        latitude: station.latitude_4326 || '',
-                        longitude: station.Longitude_4326 || '',
-                        coordinate: station.Coordinate || '',
+                        // 從 description 提取資訊
+                        const datastreamDesc = datastream.description || '';
+                        const thingDesc = thing.description || '';
                         
-                        // 河川資訊
-                        riverName: station.RiverName || '',
-                        riverCode: station.RiverCode || '',
-                        
-                        // 影像資訊
-                        imageURL: station.ImageURL || '',
-                        
-                        // 狀態
-                        status: station.Status || ''
-                    }));
+                        return {
+                            // 基本資訊
+                            stationName: properties.stationName || datastream.name || '未命名監控站',
+                            authority: properties.OrgName || properties.authority || '水利署',
+                            ccdIdentifier: properties.stationID || properties.stationCode || datastream['@iot.id'] || '',
+                            
+                            // 地理位置 - 從 observedArea.coordinates 取得
+                            latitude: coordinates[1] || '',
+                            longitude: coordinates[0] || '',
+                            coordinate: 'WGS84',
+                            
+                            // 河川資訊
+                            riverName: properties.basin || properties.river || '',
+                            riverCode: properties.riverCode || '',
+                            
+                            // 影像資訊 - 從最新一筆 Observation 取得
+                            imageURL: latestObs ? latestObs.result : '',
+                            phenomenonTime: latestObs ? latestObs.phenomenonTime : '',
+                            
+                            // 狀態
+                            status: '正常運作',
+                            
+                            // 額外資訊
+                            county: properties.city || properties.county || '',
+                            authorityType: '水利署河川分署',
+                            
+                            // 監測類別
+                            category: properties.ciCategory || ''
+                        };
+                    });
                     
-                    console.log('水利署河川監控資料載入成功:', allStations.length, '個監控站');
+                    console.log('水利署視訊監測資料載入成功:', allStations.length, '個監控站（每站最新一筆資料）');
                     if (allStations.length > 0) {
                         console.log('第一個監控站:', allStations[0]);
                     }
@@ -498,17 +519,29 @@
                 option.textContent = county;
                 countySelect.appendChild(option);
             });
+            
+            // 填充提供單位篩選
+            const authoritySelect = document.getElementById('authoritySelect');
+            const authorities = [...new Set(allStations.map(s => s.authority).filter(a => a))];
+            
+            authoritySelect.innerHTML = '<option value="">選擇提供單位</option>';
+            authorities.sort().forEach(authority => {
+                const option = document.createElement('option');
+                option.value = authority;
+                option.textContent = authority;
+                authoritySelect.appendChild(option);
+            });
         }
         
         function applyFilters() {
-            const selectedAuthorityType = document.getElementById('authorityTypeSelect').value;
+            const selectedAuthority = document.getElementById('authoritySelect').value;
             const selectedCounty = document.getElementById('countySelect').value;
             
             currentStations = allStations.filter(station => {
                 let match = true;
                 
-                if (selectedAuthorityType) {
-                    match = match && (station.authorityType === selectedAuthorityType);
+                if (selectedAuthority) {
+                    match = match && (station.authority === selectedAuthority);
                 }
                 
                 if (selectedCounty) {
@@ -524,7 +557,7 @@
         }
         
         function clearFilters() {
-            document.getElementById('authorityTypeSelect').value = '';
+            document.getElementById('authoritySelect').value = '';
             document.getElementById('countySelect').value = '';
             currentStations = [...allStations];
             updateStatistics();
