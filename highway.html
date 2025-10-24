@@ -205,6 +205,12 @@
                     </select>
                 </div>
                 <div class="filter-group">
+                    <label for="directionSelect">方向</label>
+                    <select style="padding: 10px; border-radius: 5px; border: 2px solid #2196F3; font-size: 1rem;" id="directionSelect" onchange="applyFilters('direction')">
+                        <option value="">所有方向</option>
+                    </select>
+                </div>
+                <div class="filter-group">
                     <label>&nbsp;</label>
                     <button onclick="resetFilters()"><i class="fas fa-refresh"></i> 重置篩選</button>
                 </div>
@@ -543,6 +549,7 @@
         function populateFilters() {
             updateRoadSelect(allCameras);
             updateCitySelect(allCameras);
+            updateDirectionSelect(allCameras);
         }
 
         function updateStats() {
@@ -559,6 +566,7 @@
         function applyFilters(changedFilter = null) {
             const roadFilter = document.getElementById('roadSelect').value;
             const cityFilter = document.getElementById('citySelect').value;
+            const directionFilter = document.getElementById('directionSelect').value;
             
             if (changedFilter === 'road') {
                 if (roadFilter) {
@@ -576,8 +584,12 @@
                     if (currentCityValue && citiesForRoad.includes(currentCityValue)) {
                         citySelect.value = currentCityValue;
                     }
+                    
+                    // 更新方向選擇器
+                    updateDirectionSelect(camerasForRoad);
                 } else {
                     updateCitySelect(allCameras);
+                    updateDirectionSelect(allCameras);
                 }
             } else if (changedFilter === 'city') {
                 if (cityFilter) {
@@ -599,15 +611,51 @@
                     if (currentRoadValue && roadsForCity.includes(currentRoadValue)) {
                         roadSelect.value = currentRoadValue;
                     }
+                    
+                    // 更新方向選擇器
+                    updateDirectionSelect(camerasForCity);
                 } else {
                     updateRoadSelect(allCameras);
+                    updateDirectionSelect(allCameras);
+                }
+            } else if (changedFilter === 'direction') {
+                if (directionFilter) {
+                    const camerasForDirection = allCameras.filter(camera => 
+                        convertDirectionToChinese(camera.RoadDirection) === directionFilter
+                    );
+                    
+                    // 更新國道選擇器
+                    const roadsForDirection = [...new Set(camerasForDirection.map(c => c.RoadNumber).filter(Boolean))].sort((a, b) => {
+                        const numA = parseInt(a.match(/\d+/)?.[0] || '0');
+                        const numB = parseInt(b.match(/\d+/)?.[0] || '0');
+                        return numA - numB;
+                    });
+                    const roadSelect = document.getElementById('roadSelect');
+                    const currentRoadValue = roadSelect.value;
+                    
+                    roadSelect.innerHTML = '<option value="">所有國道</option>' + 
+                        roadsForDirection.map(road => {
+                            const count = camerasForDirection.filter(c => c.RoadNumber === road).length;
+                            return `<option value="${road}">${road} (${count})</option>`;
+                        }).join('');
+                    
+                    if (currentRoadValue && roadsForDirection.includes(currentRoadValue)) {
+                        roadSelect.value = currentRoadValue;
+                    }
+                    
+                    // 更新縣市選擇器
+                    updateCitySelect(camerasForDirection);
+                } else {
+                    updateRoadSelect(allCameras);
+                    updateCitySelect(allCameras);
                 }
             }
             
             filteredCameras = allCameras.filter(camera => {
                 const matchRoad = !roadFilter || camera.RoadNumber === roadFilter;
                 const matchCity = !cityFilter || camera.City === cityFilter;
-                return matchRoad && matchCity;
+                const matchDirection = !directionFilter || convertDirectionToChinese(camera.RoadDirection) === directionFilter;
+                return matchRoad && matchCity && matchDirection;
             });
             
             currentPage = 1;
@@ -669,9 +717,31 @@
             }
         }
 
+        function updateDirectionSelect(cameras, selectedValue = '') {
+            const directions = [...new Set(cameras
+                .map(c => c.RoadDirection)
+                .filter(Boolean)
+                .map(d => convertDirectionToChinese(d))
+            )].sort();
+            
+            const directionSelect = document.getElementById('directionSelect');
+            directionSelect.innerHTML = '<option value="">所有方向</option>' + 
+                directions.map(direction => {
+                    const count = cameras.filter(c => 
+                        convertDirectionToChinese(c.RoadDirection) === direction
+                    ).length;
+                    return `<option value="${direction}">${direction} (${count})</option>`;
+                }).join('');
+            
+            if (selectedValue) {
+                directionSelect.value = selectedValue;
+            }
+        }
+
         function resetFilters() {
             document.getElementById('roadSelect').value = '';
             document.getElementById('citySelect').value = '';
+            document.getElementById('directionSelect').value = '';
             applyFilters();
         }
 
