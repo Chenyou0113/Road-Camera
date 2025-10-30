@@ -1,0 +1,928 @@
+﻿<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>捷運即時到離站看板 - TDX</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="assets/dark-mode.css">
+    <script>window.CURRENT_PAGE = 'metro-liveboard';</script>
+    <script src="assets/config.js"></script>
+    <script src="assets/tdx-api.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Microsoft JhengHei', Arial, sans-serif; 
+            background: linear-gradient(135deg, #00bcd4 0%, #0097a7 100%); 
+            min-height: 100vh; 
+        }
+        .header { 
+            background: white; 
+            padding: 20px 0; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+        }
+        .container { 
+            max-width: 1400px; 
+            margin: 0 auto; 
+            padding: 0 20px; 
+        }
+        .header h1 { 
+            color: #00bcd4; 
+            text-align: center; 
+            margin-bottom: 10px; 
+        }
+        .header p {
+            text-align: center;
+            color: #666;
+            font-size: 0.95rem;
+        }
+        .back-btn { 
+            display: inline-block; 
+            padding: 10px 20px; 
+            background: #00bcd4; 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 5px; 
+            margin: 20px 0; 
+            transition: background 0.3s;
+        }
+        .back-btn:hover { 
+            background: #0097a7; 
+        }
+        .loading { 
+            text-align: center; 
+            padding: 50px; 
+            color: white; 
+            font-size: 1.2rem; 
+        }
+        
+        /* 系統選擇區域 */
+        .system-selector { 
+            background: white; 
+            margin: 20px 0; 
+            padding: 25px; 
+            border-radius: 10px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+        }
+        .system-selector h3 { 
+            color: #00bcd4; 
+            margin-bottom: 15px; 
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .selector-row { 
+            display: grid;
+            grid-template-columns: 1fr 1fr auto;
+            gap: 15px; 
+            align-items: end;
+        }
+        .selector-group { 
+            display: flex; 
+            flex-direction: column; 
+        }
+        .selector-group label { 
+            margin-bottom: 8px; 
+            font-weight: bold; 
+            color: #333; 
+        }
+        .selector-group select { 
+            padding: 12px; 
+            border-radius: 8px; 
+            border: 2px solid #00bcd4; 
+            font-size: 1rem; 
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .selector-group select:hover {
+            border-color: #0097a7;
+        }
+        .selector-group select:focus {
+            outline: none;
+            border-color: #0097a7;
+            box-shadow: 0 0 0 3px rgba(0, 188, 212, 0.1);
+        }
+        .selector-group button { 
+            padding: 12px 25px; 
+            background: #00bcd4; 
+            color: white; 
+            cursor: pointer; 
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+        .selector-group button:hover { 
+            background: #0097a7; 
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 188, 212, 0.4);
+        }
+        .selector-group button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        /* 列車看板區域 */
+        .liveboard-container {
+            background: white;
+            margin: 20px 0;
+            padding: 0;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .liveboard-header {
+            background: linear-gradient(135deg, #00bcd4 0%, #0097a7 100%);
+            color: white;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .liveboard-header h2 {
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .update-time {
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+        
+        /* 列車表格 */
+        .train-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .train-table thead {
+            background: #f8f9fa;
+        }
+        .train-table th {
+            padding: 15px;
+            text-align: left;
+            font-weight: bold;
+            color: #00bcd4;
+            border-bottom: 2px solid #00bcd4;
+        }
+        .train-table td {
+            padding: 15px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .train-table tbody tr:hover {
+            background: #f8f9fa;
+        }
+        .train-number {
+            font-weight: bold;
+            color: #00bcd4;
+            font-size: 1.1rem;
+        }
+        .line-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 0.85rem;
+            font-weight: bold;
+            margin-right: 8px;
+            color: white;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: bold;
+        }
+        .status-badge.arriving { background: #4caf50; color: white; }
+        .status-badge.waiting { background: #ff9800; color: white; }
+        .status-badge.departed { background: #9e9e9e; color: white; }
+        
+        .direction-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            background: #00bcd4;
+            color: white;
+        }
+        
+        .no-data {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+        .no-data i {
+            font-size: 3rem;
+            margin-bottom: 15px;
+            display: block;
+        }
+        
+        /* 統計面板 */
+        .stats-panel { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+            gap: 15px; 
+            margin: 20px 0; 
+        }
+        .stat-card { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 10px; 
+            text-align: center; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+        }
+        .stat-number { 
+            font-size: 2rem; 
+            font-weight: bold; 
+            color: #00bcd4; 
+        }
+        .stat-label { 
+            color: #666; 
+            margin-top: 5px; 
+        }
+        
+        /* 資訊面板 */
+        .info-panel {
+            background: #e0f7fa;
+            border-left: 4px solid #00bcd4;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+        }
+        .info-panel h3 {
+            color: #00bcd4;
+            margin: 0 0 15px 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+        }
+        .info-panel p {
+            color: #333;
+            line-height: 1.6;
+            margin: 10px 0;
+        }
+        
+        /* 系統卡片 */
+        .system-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .system-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            cursor: pointer;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+        .system-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        }
+        .system-card.selected {
+            border-color: #00bcd4;
+            background: #e0f7fa;
+        }
+        .system-card h4 {
+            color: #00bcd4;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .system-card p {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        /* 深色模式 */
+        body.dark-mode {
+            background: linear-gradient(135deg, #0d47a1 0%, #1565c0 100%);
+        }
+        body.dark-mode .header {
+            background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(30,30,40,0.85) 100%);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        body.dark-mode .header h1 {
+            color: #4fc3f7;
+        }
+        body.dark-mode .header p {
+            color: rgba(255,255,255,0.7);
+        }
+        body.dark-mode .back-btn {
+            background: #4fc3f7;
+            color: #0d47a1;
+        }
+        body.dark-mode .back-btn:hover {
+            background: #81d4fa;
+        }
+        body.dark-mode .system-selector,
+        body.dark-mode .system-card {
+            background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(30,30,40,0.85) 100%);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        body.dark-mode .system-card.selected {
+            border-color: #4fc3f7;
+            background: rgba(79, 195, 247, 0.1);
+        }
+        body.dark-mode .system-selector h3,
+        body.dark-mode .system-card h4 {
+            color: #4fc3f7;
+        }
+        body.dark-mode .system-card p {
+            color: rgba(255,255,255,0.7);
+        }
+        body.dark-mode .selector-group label {
+            color: rgba(255,255,255,0.9);
+        }
+        body.dark-mode .selector-group select {
+            background: rgba(255,255,255,0.1);
+            color: white;
+            border-color: #4fc3f7;
+        }
+        body.dark-mode .selector-group select option {
+            background: #2a2a3e;
+            color: white;
+        }
+        body.dark-mode .selector-group button {
+            background: #4fc3f7;
+            color: #0d47a1;
+        }
+        body.dark-mode .selector-group button:hover {
+            background: #81d4fa;
+        }
+        body.dark-mode .liveboard-container {
+            background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(30,30,40,0.85) 100%);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        body.dark-mode .liveboard-header {
+            background: linear-gradient(135deg, #4fc3f7 0%, #81d4fa 100%);
+            color: #0d47a1;
+        }
+        body.dark-mode .train-table thead {
+            background: rgba(79, 195, 247, 0.1);
+        }
+        body.dark-mode .train-table th {
+            color: #4fc3f7;
+            border-bottom-color: #4fc3f7;
+        }
+        body.dark-mode .train-table td {
+            color: rgba(255,255,255,0.9);
+            border-bottom-color: rgba(255,255,255,0.1);
+        }
+        body.dark-mode .train-table tbody tr:hover {
+            background: rgba(79, 195, 247, 0.1);
+        }
+        body.dark-mode .train-number {
+            color: #4fc3f7;
+        }
+        body.dark-mode .stat-card {
+            background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(30,30,40,0.85) 100%);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        body.dark-mode .stat-number {
+            color: #4fc3f7;
+        }
+        body.dark-mode .stat-label {
+            color: rgba(255,255,255,0.7);
+        }
+        body.dark-mode .info-panel {
+            background: rgba(40,40,50,0.95);
+            border-left-color: #4fc3f7;
+        }
+        body.dark-mode .info-panel h3 {
+            color: #4fc3f7;
+        }
+        body.dark-mode .info-panel p {
+            color: rgba(255,255,255,0.8);
+        }
+        body.dark-mode .no-data {
+            color: rgba(255,255,255,0.5);
+        }
+        
+        /* 響應式設計 */
+        @media (max-width: 768px) {
+            .selector-row {
+                grid-template-columns: 1fr;
+            }
+            .train-table {
+                font-size: 0.9rem;
+            }
+            .train-table th,
+            .train-table td {
+                padding: 10px 8px;
+            }
+            .stats-panel {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .system-cards {
+                grid-template-columns: 1fr;
+            }
+            .liveboard-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .stats-panel {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+    
+    <!-- 載入進度條 -->
+    <script src="assets/loading-progress.js"></script>
+    <script>
+        window.AUTO_START_LOADING = false;
+        
+        window.addEventListener('DOMContentLoaded', () => {
+            window.startLoading({
+                labelText: '初始化捷運即時看板...',
+                color: '#00bcd4',
+                showLabel: true
+            });
+        });
+    </script>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1><i class="fas fa-subway"></i> 捷運即時到離站看板</h1>
+            <p>即時查詢捷運車站列車到離站資訊</p>
+        </div>
+    </div>
+
+    <div class="container">
+        <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 返回首頁</a>
+            <button class="theme-toggle" id="themeToggle" title="Toggle Dark Mode" style="width: 45px; height: 45px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; cursor: pointer; margin-left: 15px; font-size: 1.2rem;">
+                <i class="fas fa-moon"></i>
+            </button>
+        
+        <!-- 資訊面板 -->
+        <div class="info-panel" id="infoPanel">
+            <h3 onclick="toggleInfoPanel()">
+                <span>
+                    <i class="fas fa-info-circle"></i>
+                    TDX 捷運即時看板說明
+                </span>
+                <i id="toggleIcon" class="fas fa-chevron-up" style="transition: transform 0.3s ease;"></i>
+            </h3>
+            <div id="infoContent">
+                <p>
+                    <strong>📊 資料來源：</strong>交通部 TDX 交通資料流通服務平台
+                </p>
+                <p>
+                    <strong>🚇 支援系統：</strong>台北捷運、高雄捷運、高雄輕軌、桃園捷運
+                </p>
+                <p>
+                    <strong>🔄 更新頻率：</strong>即時更新
+                </p>
+                <p>
+                    <strong>ℹ️ 注意事項：</strong>桃園捷運目前僅提供 A1~A21 站的資料
+                </p>
+                <p style="margin-top: 15px;">
+                    🔗 <a href="https://tdx.transportdata.tw" target="_blank" style="color: #00bcd4; text-decoration: none;">
+                        TDX 交通資料流通服務平台 <i class="fas fa-external-link-alt" style="font-size: 0.8rem;"></i>
+                    </a>
+                </p>
+            </div>
+        </div>
+
+        <!-- 統計面板 -->
+        <div class="stats-panel">
+            <div class="stat-card">
+                <div class="stat-number" id="totalTrains">0</div>
+                <div class="stat-label">列車總數</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="arrivingTrains">0</div>
+                <div class="stat-label">即將到站</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="stationCount">0</div>
+                <div class="stat-label">車站數</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="lineCount">0</div>
+                <div class="stat-label">路線數</div>
+            </div>
+        </div>
+
+        <!-- 捷運系統選擇 -->
+        <div class="system-cards">
+            <div class="system-card" data-system="TRTC" onclick="selectSystem('TRTC')">
+                <h4><i class="fas fa-subway"></i> 台北捷運</h4>
+                <p>Taipei Metro (TRTC)</p>
+                <p style="font-size: 0.8rem; color: #999; margin-top: 5px;">涵蓋台北市及新北市</p>
+            </div>
+            <div class="system-card" data-system="KRTC" onclick="selectSystem('KRTC')">
+                <h4><i class="fas fa-subway"></i> 高雄捷運</h4>
+                <p>Kaohsiung Metro (KRTC)</p>
+                <p style="font-size: 0.8rem; color: #999; margin-top: 5px;">涵蓋高雄市</p>
+            </div>
+            <div class="system-card" data-system="KLRT" onclick="selectSystem('KLRT')">
+                <h4><i class="fas fa-train"></i> 高雄輕軌</h4>
+                <p>Kaohsiung LRT (KLRT)</p>
+                <p style="font-size: 0.8rem; color: #999; margin-top: 5px;">環狀輕軌系統</p>
+            </div>
+            <div class="system-card" data-system="TYMC" onclick="selectSystem('TYMC')">
+                <h4><i class="fas fa-subway"></i> 桃園捷運</h4>
+                <p>Taoyuan Metro (TYMC)</p>
+                <p style="font-size: 0.8rem; color: #999; margin-top: 5px;">僅提供 A1~A21 站</p>
+            </div>
+        </div>
+
+        <!-- 車站選擇 -->
+        <div class="system-selector" id="stationSelector" style="display: none;">
+            <h3><i class="fas fa-map-marker-alt"></i> 選擇車站</h3>
+            <div class="selector-row">
+                <div class="selector-group">
+                    <label for="lineSelect">路線</label>
+                    <select id="lineSelect" onchange="onLineChange()">
+                        <option value="">請選擇路線</option>
+                    </select>
+                </div>
+                <div class="selector-group">
+                    <label for="stationSelect">車站</label>
+                    <select id="stationSelect">
+                        <option value="">請先選擇路線</option>
+                    </select>
+                </div>
+                <div class="selector-group">
+                    <label>&nbsp;</label>
+                    <button onclick="queryLiveboard()" id="queryBtn">
+                        <i class="fas fa-search"></i> 查詢看板
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 看板容器 -->
+        <div id="liveboardContainer" style="display: none;">
+            <div class="liveboard-container">
+                <div class="liveboard-header">
+                    <h2 id="stationTitle">
+                        <i class="fas fa-subway"></i>
+                        <span id="systemName">捷運系統</span> - <span id="stationName">選擇車站</span>
+                    </h2>
+                    <div class="update-time">
+                        <i class="fas fa-clock"></i> 更新時間：<span id="updateTime">--</span>
+                    </div>
+                </div>
+                <table class="train-table">
+                    <thead>
+                        <tr>
+                            <th>車站</th>
+                            <th>路線</th>
+                            <th>方向</th>
+                            <th>終點站</th>
+                            <th>到站時間</th>
+                            <th>狀態</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trainTableBody">
+                        <tr>
+                            <td colspan="6" class="no-data">
+                                <i class="fas fa-subway"></i>
+                                <p>請選擇捷運系統和車站</p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="assets/navbar.js"></script>
+    <script src="assets/dark-mode.js"></script>
+    <script>
+        // 捷運系統配置
+        const metroSystems = {
+            TRTC: { name: '台北捷運', code: 'TRTC' },
+            KRTC: { name: '高雄捷運', code: 'KRTC' },
+            KLRT: { name: '高雄輕軌', code: 'KLRT' },
+            TYMC: { name: '桃園捷運', code: 'TYMC' }
+        };
+
+        // 路線顏色配置
+        const lineColors = {
+            // 台北捷運
+            'BR': '#C25523', // 文湖線（棕線）
+            'R': '#E3002C',  // 淡水信義線（紅線）
+            'G': '#008659',  // 松山新店線（綠線）
+            'O': '#F08226',  // 中和新蘆線（橘線）
+            'BL': '#005AB5', // 板南線（藍線）
+            'Y': '#FFD200',  // 環狀線（黃線）
+            // 高雄捷運
+            'RK': '#E3002C', // 紅線
+            'OK': '#F08226', // 橘線
+            // 高雄輕軌
+            'C': '#00A651',  // 環狀線
+            // 桃園捷運
+            'A': '#6A1B9A', // 機場線
+            'G': '#008659'   // 綠線
+        };
+
+        let currentSystem = '';
+        let currentStationId = '';
+        let currentStationName = '';
+        let allLiveboardData = [];
+        let autoRefreshInterval = null;
+
+        // 選擇捷運系統
+        function selectSystem(systemCode) {
+            currentSystem = systemCode;
+            
+            // 更新卡片選中狀態
+            document.querySelectorAll('.system-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            document.querySelector(`[data-system="${systemCode}"]`).classList.add('selected');
+            
+            // 顯示車站選擇器
+            document.getElementById('stationSelector').style.display = 'block';
+            
+            // 載入該系統的看板資料
+            loadSystemData(systemCode);
+        }
+
+        // 載入系統資料
+        async function loadSystemData(systemCode) {
+            const lineSelect = document.getElementById('lineSelect');
+            lineSelect.innerHTML = '<option value="">載入中...</option>';
+            
+            try {
+                const endpoint = `/v2/Rail/Metro/LiveBoard/${systemCode}?$format=JSON`;
+                const response = await tdxApi.fetch(endpoint);
+                
+                console.log(`${systemCode} API回應:`, response);
+                
+                allLiveboardData = Array.isArray(response) ? response : [];
+                
+                // 提取所有路線
+                const lines = [...new Set(allLiveboardData.map(item => item.LineName?.Zh_tw || item.LineID).filter(Boolean))];
+                
+                lineSelect.innerHTML = '<option value="">請選擇路線</option>' +
+                    lines.map(line => `<option value="${line}">${line}</option>`).join('');
+                
+                updateSystemStats();
+                
+            } catch (error) {
+                console.error(`載入${systemCode}資料失敗:`, error);
+                lineSelect.innerHTML = '<option value="">載入失敗，請重試</option>';
+            }
+        }
+
+        // 路線變更事件
+        function onLineChange() {
+            const lineSelect = document.getElementById('lineSelect');
+            const stationSelect = document.getElementById('stationSelect');
+            const selectedLine = lineSelect.value;
+
+            if (!selectedLine) {
+                stationSelect.innerHTML = '<option value="">請先選擇路線</option>';
+                return;
+            }
+
+            // 篩選該路線的車站
+            const lineStations = allLiveboardData
+                .filter(item => (item.LineName?.Zh_tw || item.LineID) === selectedLine)
+                .map(item => ({
+                    id: item.StationID,
+                    name: item.StationName?.Zh_tw || item.StationID
+                }));
+            
+            // 去重
+            const uniqueStations = Array.from(new Map(lineStations.map(s => [s.id, s])).values());
+            
+            stationSelect.innerHTML = '<option value="">請選擇車站</option>' +
+                uniqueStations.map(station => 
+                    `<option value="${station.id}">${station.name}</option>`
+                ).join('');
+        }
+
+        // 查詢看板
+        function queryLiveboard() {
+            const stationSelect = document.getElementById('stationSelect');
+            const selectedStationId = stationSelect.value;
+            
+            if (!selectedStationId) {
+                alert('請選擇車站');
+                return;
+            }
+
+            currentStationId = selectedStationId;
+            currentStationName = stationSelect.options[stationSelect.selectedIndex].text;
+
+            displayLiveboard();
+            
+            // 啟動自動刷新（每30秒）
+            if (autoRefreshInterval) {
+                clearInterval(autoRefreshInterval);
+            }
+            autoRefreshInterval = setInterval(() => {
+                loadSystemData(currentSystem).then(() => displayLiveboard());
+            }, 30000);
+        }
+
+        // 顯示看板
+        function displayLiveboard() {
+            const container = document.getElementById('liveboardContainer');
+            const systemNameEl = document.getElementById('systemName');
+            const stationNameEl = document.getElementById('stationName');
+            const tableBody = document.getElementById('trainTableBody');
+            
+            systemNameEl.textContent = metroSystems[currentSystem].name;
+            stationNameEl.textContent = currentStationName;
+            container.style.display = 'block';
+            
+            // 篩選該車站的列車資料
+            const stationTrains = allLiveboardData.filter(item => item.StationID === currentStationId);
+            
+            console.log('車站列車資料:', stationTrains);
+            
+            if (stationTrains.length === 0) {
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="no-data">
+                            <i class="fas fa-info-circle"></i>
+                            <p>目前沒有列車資訊</p>
+                            <p style="font-size: 0.85rem; margin-top: 10px;">StationID: ${currentStationId}</p>
+                        </td>
+                    </tr>
+                `;
+                updateUpdateTime();
+                return;
+            }
+
+            // 整理列車資訊
+            let trainRows = [];
+            stationTrains.forEach(item => {
+                console.log('處理項目:', item);
+                
+                // 檢查多種可能的資料結構
+                const estimates = item.Estimates || item.estimates || [];
+                
+                if (Array.isArray(estimates) && estimates.length > 0) {
+                    estimates.forEach(estimate => {
+                        // 嘗試多種欄位名稱
+                        const destName = estimate.DestinationStationName?.Zh_tw || 
+                                       estimate.DestinationStationName || 
+                                       estimate.DestinationStation?.Zh_tw ||
+                                       estimate.Direction || 
+                                       '未知';
+                        
+                        const estTime = estimate.EstimateTime !== undefined ? estimate.EstimateTime : 
+                                       estimate.estimateTime !== undefined ? estimate.estimateTime : 0;
+                        
+                        trainRows.push({
+                            stationName: item.StationName?.Zh_tw || item.StationName || currentStationName,
+                            lineName: item.LineName?.Zh_tw || item.LineName || item.LineID || '未知路線',
+                            lineID: item.LineID || item.LineId || '',
+                            direction: destName,
+                            estimateTime: estTime,
+                            trainNo: estimate.TrainNo || estimate.trainNo || '--'
+                        });
+                    });
+                } else {
+                    console.warn('沒有 Estimates 資料:', item);
+                }
+            });
+
+            console.log('整理後的列車資料:', trainRows);
+
+            if (trainRows.length === 0) {
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="no-data">
+                            <i class="fas fa-info-circle"></i>
+                            <p>此車站目前無即將到站的列車</p>
+                            <p style="font-size: 0.85rem; margin-top: 10px; color: #999;">
+                                資料已載入但無 Estimates 資訊<br>
+                                請稍後再試或選擇其他車站
+                            </p>
+                        </td>
+                    </tr>
+                `;
+                updateUpdateTime();
+                return;
+            }
+
+            // 依預估時間排序
+            trainRows.sort((a, b) => a.estimateTime - b.estimateTime);
+
+            const rows = trainRows.map(train => {
+                const lineColor = lineColors[train.lineID] || '#666';
+                const estimateMin = Math.floor(train.estimateTime / 60);
+                const status = getTrainStatus(estimateMin);
+                
+                return `
+                    <tr>
+                        <td>${train.stationName}</td>
+                        <td>
+                            <span class="line-badge" style="background: ${lineColor};">
+                                ${train.lineName}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="direction-badge">
+                                <i class="fas fa-arrow-right"></i>
+                                ${train.direction}
+                            </span>
+                        </td>
+                        <td>${train.direction}</td>
+                        <td>${estimateMin} 分鐘</td>
+                        <td><span class="status-badge ${status.class}">${status.text}</span></td>
+                    </tr>
+                `;
+            }).join('');
+
+            tableBody.innerHTML = rows;
+            updateUpdateTime();
+            updateTrainStats(trainRows);
+        }
+
+        // 取得列車狀態
+        function getTrainStatus(estimateMin) {
+            if (estimateMin <= 1) {
+                return { text: '進站中', class: 'arriving' };
+            } else if (estimateMin <= 3) {
+                return { text: '即將到站', class: 'arriving' };
+            } else {
+                return { text: '等候中', class: 'waiting' };
+            }
+        }
+
+        // 更新系統統計
+        function updateSystemStats() {
+            const stations = [...new Set(allLiveboardData.map(item => item.StationID))];
+            const lines = [...new Set(allLiveboardData.map(item => item.LineID || item.LineName?.Zh_tw))];
+            
+            document.getElementById('stationCount').textContent = stations.length;
+            document.getElementById('lineCount').textContent = lines.length;
+        }
+
+        // 更新列車統計
+        function updateTrainStats(trainRows) {
+            const total = trainRows.length;
+            const arriving = trainRows.filter(t => t.estimateTime <= 180).length; // 3分鐘內
+            
+            document.getElementById('totalTrains').textContent = total;
+            document.getElementById('arrivingTrains').textContent = arriving;
+        }
+
+        // 更新更新時間
+        function updateUpdateTime() {
+            const now = new Date();
+            const timeStr = now.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            document.getElementById('updateTime').textContent = timeStr;
+        }
+
+        // 切換資訊面板
+        function toggleInfoPanel() {
+            const content = document.getElementById('infoContent');
+            const icon = document.getElementById('toggleIcon');
+            const panel = document.getElementById('infoPanel');
+            
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.className = 'fas fa-chevron-up';
+                panel.style.background = '#e0f7fa';
+            } else {
+                content.style.display = 'none';
+                icon.className = 'fas fa-chevron-down';
+                panel.style.background = '#f5f5f5';
+            }
+        }
+
+        // 頁面載入完成
+        window.onload = function() {
+            // 完成載入進度
+            setTimeout(() => {
+                if (typeof window.finishLoading === 'function') {
+                    window.finishLoading();
+                }
+            }, 300);
+        };
+    </script>
+
+    <!-- Back to Top Button -->
+    <div class="back-to-top" id="backToTop" style="position: fixed; bottom: 30px; right: 30px; width: 50px; height: 50px; background: linear-gradient(135deg, #667eea, #764ba2); border-radius: 50%; display: none; align-items: center; justify-content: center; color: white; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.3); z-index: 999; font-size: 1.2rem;">
+        <i class="fas fa-arrow-up"></i>
+    </div>
+</body>
+</html>

@@ -1,0 +1,280 @@
+/**
+ * 台鐵路線分類資料
+ * 包含所有路線及其車站資訊
+ */
+
+const trainLineClassification = {
+    // 西部幹線（基隆→屏東）
+    westernMain: {
+        name: '西部幹線',
+        code: 'western-main',
+        description: '基隆 → 屏東主線',
+        color: '#3498db',
+        stations: [
+            {name:"基隆",code:"0900"},{name:"三坑",code:"0910"},{name:"八堵",code:"0920"},
+            {name:"七堵",code:"0930"},{name:"百福",code:"0940"},{name:"五堵",code:"0950"},
+            {name:"汐止",code:"0960"},{name:"汐科",code:"0970"},{name:"南港",code:"0980"},
+            {name:"松山",code:"0990"},{name:"臺北",code:"1000"},{name:"萬華",code:"1010"},
+            {name:"板橋",code:"1020"},{name:"浮洲",code:"1030"},{name:"樹林",code:"1040"},
+            {name:"南樹林",code:"1050"},{name:"山佳",code:"1060"},{name:"鶯歌",code:"1070"},
+            {name:"桃園",code:"1080"},{name:"內壢",code:"1090"},{name:"中壢",code:"1100"},
+            {name:"埔心",code:"1110"},{name:"楊梅",code:"1120"},{name:"富岡",code:"1130"},
+            {name:"新富",code:"1140"},{name:"北湖",code:"1150"},{name:"湖口",code:"1160"},
+            {name:"新豐",code:"1170"},{name:"竹北",code:"1180"},{name:"北新竹",code:"1190"},
+            {name:"新竹",code:"1210"},{name:"三姓橋",code:"1220"},{name:"香山",code:"1230"},
+            {name:"崎頂",code:"1240"},{name:"竹南",code:"1250"},{name:"造橋",code:"3140"},
+            {name:"豐富",code:"3150"},{name:"苗栗",code:"3160"},{name:"南勢",code:"3170"},
+            {name:"銅鑼",code:"3180"},{name:"三義",code:"3190"},{name:"泰安",code:"3210"},
+            {name:"后里",code:"3220"},{name:"豐原",code:"3230"},{name:"栗林",code:"3240"},
+            {name:"潭子",code:"3250"},{name:"頭家厝",code:"3260"},{name:"松竹",code:"3270"},
+            {name:"太原",code:"3280"},{name:"精武",code:"3290"},{name:"臺中",code:"3300"},
+            {name:"五權",code:"3310"},{name:"大慶",code:"3320"},{name:"烏日",code:"3330"},
+            {name:"新烏日",code:"3340"},{name:"成功",code:"3350"},{name:"彰化",code:"3360"},
+            {name:"花壇",code:"3370"},{name:"大村",code:"3380"},{name:"員林",code:"3390"},
+            {name:"永靖",code:"3400"},{name:"社頭",code:"3410"},{name:"田中",code:"3420"},
+            {name:"二水",code:"3430"},{name:"林內",code:"3450"},{name:"石榴",code:"3460"},
+            {name:"斗六",code:"3470"},{name:"斗南",code:"3480"},{name:"石龜",code:"3490"},
+            {name:"大林",code:"4050"},{name:"民雄",code:"4060"},{name:"嘉北",code:"4070"},
+            {name:"嘉義",code:"4080"},{name:"水上",code:"4090"},{name:"南靖",code:"4100"},
+            {name:"後壁",code:"4110"},{name:"新營",code:"4120"},{name:"柳營",code:"4130"},
+            {name:"林鳳營",code:"4140"},{name:"隆田",code:"4150"},{name:"拔林",code:"4160"},
+            {name:"善化",code:"4170"},{name:"南科",code:"4180"},{name:"新市",code:"4190"},
+            {name:"永康",code:"4200"},{name:"大橋",code:"4210"},{name:"臺南",code:"4220"},
+            {name:"林森",code:"4230"},{name:"南臺南",code:"4240"},{name:"保安",code:"4250"},
+            {name:"仁德",code:"4260"},{name:"中洲",code:"4270"},{name:"大湖",code:"4290"},
+            {name:"路竹",code:"4300"},{name:"岡山",code:"4310"},{name:"橋頭",code:"4320"},
+            {name:"楠梓",code:"4330"},{name:"新左營",code:"4340"},{name:"左營",code:"4350"},
+            {name:"內惟",code:"4360"},{name:"美術館",code:"4370"},{name:"鼓山",code:"4380"},
+            {name:"三塊厝",code:"4390"},{name:"高雄",code:"4400"},{name:"民族",code:"4410"},
+            {name:"科工館",code:"4420"},{name:"正義",code:"4430"},{name:"鳳山",code:"4440"},
+            {name:"後庄",code:"4450"},{name:"九曲堂",code:"4460"},{name:"六塊厝",code:"4470"},
+            {name:"屏東",code:"5000"}
+        ]
+    },
+
+    // 西部幹線-海線（談文→追分）
+    westernCoast: {
+        name: '西部幹線-海線',
+        code: 'western-coast',
+        description: '談文 → 追分（海線）',
+        color: '#1abc9c',
+        stations: [
+            {name:"談文",code:"2110"},{name:"大山",code:"2120"},{name:"後龍",code:"2130"},
+            {name:"龍港",code:"2140"},{name:"白沙屯",code:"2150"},{name:"新埔",code:"2160"},
+            {name:"通霄",code:"2170"},{name:"苑裡",code:"2180"},{name:"日南",code:"2190"},
+            {name:"大甲",code:"2200"},{name:"臺中港",code:"2210"},{name:"清水",code:"2220"},
+            {name:"沙鹿",code:"2230"},{name:"龍井",code:"2240"},{name:"大肚",code:"2250"},
+            {name:"追分",code:"2260"}
+        ]
+    },
+
+    // 東部幹線（八堵→臺東）
+    easternMain: {
+        name: '東部幹線',
+        code: 'eastern-main',
+        description: '八堵 → 臺東',
+        color: '#e74c3c',
+        stations: [
+            {name:"八堵",code:"0920"},{name:"暖暖",code:"7390"},{name:"四腳亭",code:"7380"},
+            {name:"瑞芳",code:"7360"},{name:"猴硐",code:"7350"},{name:"三貂嶺",code:"7330"},
+            {name:"牡丹",code:"7320"},{name:"雙溪",code:"7310"},{name:"貢寮",code:"7300"},
+            {name:"福隆",code:"7290"},{name:"石城",code:"7280"},{name:"大里",code:"7270"},
+            {name:"大溪",code:"7260"},{name:"龜山",code:"7250"},{name:"外澳",code:"7240"},
+            {name:"頭城",code:"7230"},{name:"頂埔",code:"7220"},{name:"礁溪",code:"7210"},
+            {name:"四城",code:"7200"},{name:"宜蘭",code:"7190"},{name:"二結",code:"7180"},
+            {name:"中里",code:"7170"},{name:"羅東",code:"7160"},{name:"冬山",code:"7150"},
+            {name:"蘇澳新站",code:"7130"},{name:"蘇澳",code:"7120"},{name:"永樂",code:"7110"},
+            {name:"東澳",code:"7100"},{name:"南澳",code:"7090"},{name:"武塔",code:"7080"},
+            {name:"漢本",code:"7070"},{name:"和平",code:"7060"},{name:"和仁",code:"7050"},
+            {name:"崇德",code:"7040"},{name:"新城",code:"7030"},{name:"景美",code:"7020"},
+            {name:"北埔",code:"7010"},{name:"花蓮",code:"7000"},{name:"吉安",code:"6250"},
+            {name:"志學",code:"6240"},{name:"平和",code:"6230"},{name:"壽豐",code:"6220"},
+            {name:"豐田",code:"6210"},{name:"林榮新光",code:"6200"},{name:"南平",code:"6190"},
+            {name:"鳳林",code:"6180"},{name:"萬榮",code:"6170"},{name:"光復",code:"6160"},
+            {name:"大富",code:"6150"},{name:"富源",code:"6140"},{name:"瑞穗",code:"6130"},
+            {name:"三民",code:"6120"},{name:"玉里",code:"6110"},{name:"東里",code:"6100"},
+            {name:"東竹",code:"6090"},{name:"富里",code:"6080"},{name:"池上",code:"6070"},
+            {name:"海端",code:"6060"},{name:"關山",code:"6050"},{name:"瑞和",code:"6040"},
+            {name:"瑞源",code:"6030"},{name:"鹿野",code:"6020"},{name:"山里",code:"6010"},
+            {name:"臺東",code:"6000"}
+        ]
+    },
+
+    // 屏東-南迴線（屏東→臺東）
+    southLink: {
+        name: '屏東-南迴線',
+        code: 'south-link',
+        description: '屏東 → 臺東（南迴線）',
+        color: '#f39c12',
+        stations: [
+            {name:"屏東",code:"5000"},{name:"歸來",code:"5010"},{name:"麟洛",code:"5020"},
+            {name:"西勢",code:"5030"},{name:"竹田",code:"5040"},{name:"潮州",code:"5050"},
+            {name:"崁頂",code:"5060"},{name:"南州",code:"5070"},{name:"鎮安",code:"5080"},
+            {name:"林邊",code:"5090"},{name:"佳冬",code:"5100"},{name:"東海",code:"5110"},
+            {name:"枋寮",code:"5120"},{name:"加祿",code:"5130"},{name:"內獅",code:"5140"},
+            {name:"枋山",code:"5160"},{name:"大武",code:"5190"},{name:"瀧溪",code:"5200"},
+            {name:"金崙",code:"5210"},{name:"太麻里",code:"5220"},{name:"知本",code:"5230"},
+            {name:"康樂",code:"5240"},{name:"臺東",code:"6000"}
+        ]
+    },
+
+    // 平溪線（三貂嶺→菁桐）
+    pingxiLine: {
+        name: '平溪線',
+        code: 'pingxi-line',
+        description: '三貂嶺 → 菁桐',
+        color: '#9b59b6',
+        stations: [
+            {name:"三貂嶺",code:"7330"},{name:"大華",code:"7331"},{name:"十分",code:"7332"},
+            {name:"望古",code:"7333"},{name:"嶺腳",code:"7334"},{name:"平溪",code:"7335"},
+            {name:"菁桐",code:"7336"}
+        ]
+    },
+
+    // 內灣線（新竹→內灣）
+    neiwanLine: {
+        name: '內灣線',
+        code: 'neiwan-line',
+        description: '新竹 → 內灣',
+        color: '#16a085',
+        stations: [
+            {name:"新竹",code:"1210"},{name:"北新竹",code:"1190"},{name:"千甲",code:"1191"},
+            {name:"新莊",code:"1192"},{name:"竹中",code:"1193"},{name:"上員",code:"1201"},
+            {name:"榮華",code:"1202"},{name:"竹東",code:"1203"},{name:"橫山",code:"1204"},
+            {name:"九讚頭",code:"1205"},{name:"合興",code:"1206"},{name:"富貴",code:"1207"},
+            {name:"內灣",code:"1208"}
+        ]
+    },
+
+    // 集集線（二水→車埕）
+    jijiLine: {
+        name: '集集線',
+        code: 'jiji-line',
+        description: '二水 → 車埕',
+        color: '#27ae60',
+        stations: [
+            {name:"二水",code:"3430"},{name:"源泉",code:"3431"},{name:"濁水",code:"3432"},
+            {name:"龍泉",code:"3433"},{name:"集集",code:"3434"},{name:"水里",code:"3435"},
+            {name:"車埕",code:"3436"}
+        ]
+    },
+
+    // 成追線（成功→追分）
+    chengzhuiLine: {
+        name: '成追線',
+        code: 'chengzhui-line',
+        description: '成功 → 追分',
+        color: '#d35400',
+        stations: [
+            {name:"成功",code:"3350"},{name:"追分",code:"2260"}
+        ]
+    },
+
+    // 沙崙線（中洲→沙崙）
+    shalunLine: {
+        name: '沙崙線',
+        code: 'shalun-line',
+        description: '中洲 → 沙崙',
+        color: '#c0392b',
+        stations: [
+            {name:"中洲",code:"4270"},{name:"長榮大學",code:"4271"},{name:"沙崙",code:"4272"}
+        ]
+    },
+
+    // 六家線（竹中→六家）
+    liujiaLine: {
+        name: '六家線',
+        code: 'liujia-line',
+        description: '竹中 → 六家',
+        color: '#8e44ad',
+        stations: [
+            {name:"竹中",code:"1193"},{name:"六家",code:"1194"}
+        ]
+    },
+
+    // 深澳線（瑞芳→八斗子）
+    shenaLine: {
+        name: '深澳線',
+        code: 'shena-line',
+        description: '瑞芳 → 八斗子',
+        color: '#2c3e50',
+        stations: [
+            {name:"瑞芳",code:"7360"},{name:"海科館",code:"7361"},{name:"八斗子",code:"7362"}
+        ]
+    }
+};
+
+/**
+ * 工具函數：根據車站代碼取得所屬路線
+ */
+function getLineByStationCode(stationCode) {
+    for (const [lineKey, lineData] of Object.entries(trainLineClassification)) {
+        if (lineData.stations.some(station => station.code === stationCode)) {
+            return {
+                lineKey: lineKey,
+                lineName: lineData.name,
+                lineCode: lineData.code,
+                lineColor: lineData.color
+            };
+        }
+    }
+    return null;
+}
+
+/**
+ * 工具函數：取得所有車站（依路線分組）
+ */
+function getAllStationsByLine() {
+    const result = {};
+    for (const [lineKey, lineData] of Object.entries(trainLineClassification)) {
+        result[lineKey] = {
+            name: lineData.name,
+            description: lineData.description,
+            color: lineData.color,
+            stations: lineData.stations.map(s => ({id: s.code, name: s.name}))
+        };
+    }
+    return result;
+}
+
+/**
+ * 工具函數：取得所有車站（扁平化列表）
+ */
+function getAllStationsFlat() {
+    const allStations = [];
+    const seenCodes = new Set();
+    
+    for (const lineData of Object.values(trainLineClassification)) {
+        for (const station of lineData.stations) {
+            if (!seenCodes.has(station.code)) {
+                allStations.push({id: station.code, name: station.name});
+                seenCodes.add(station.code);
+            }
+        }
+    }
+    
+    return allStations.sort((a, b) => a.code.localeCompare(b.code));
+}
+
+/**
+ * 工具函數：根據路線代碼取得路線資訊
+ */
+function getLineInfo(lineCode) {
+    for (const lineData of Object.values(trainLineClassification)) {
+        if (lineData.code === lineCode) {
+            return lineData;
+        }
+    }
+    return null;
+}
+
+// 匯出給其他模組使用
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        trainLineClassification,
+        getLineByStationCode,
+        getAllStationsByLine,
+        getAllStationsFlat,
+        getLineInfo
+    };
+}
