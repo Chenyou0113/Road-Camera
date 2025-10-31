@@ -20,13 +20,13 @@
         
         body {
             font-family: 'Microsoft JhengHei', Arial, sans-serif;
-            background: linear-gradient(135deg, #795548 0%, #5D4037 50%, #3E2723 100%);
+            background: linear-gradient(135deg, #1e40af 0%, #0891b2 50%, #06b6d4 100%);
             min-height: 100vh;
             color: #333;
         }
         
         .header {
-            background: linear-gradient(135deg, #8D6E63, #6D4C41);
+            background: linear-gradient(135deg, #1e40af, #0891b2);
             color: white;
             padding: 20px 0;
             box-shadow: 0 4px 15px rgba(0,0,0,0.3);
@@ -83,10 +83,10 @@
         }
         
         .stat-red { color: #F44336; }
-        .stat-orange { color: #FF9800; }
-        .stat-green { color: #4CAF50; }
-        .stat-blue { color: #2196F3; }
-        .stat-purple { color: #9C27B0; }
+        .stat-orange { color: #1e40af; }
+        .stat-green { color: #0891b2; }
+        .stat-blue { color: #06b6d4; }
+        .stat-purple { color: #06b6d4; }
         
         .nav-bar {
             background: white;
@@ -695,13 +695,8 @@
     </div>
 
     <script>
-        // 農業部開放資料API - 土石流觀測站影像 (UDL013)
-        // 根據官方文件，UnitId=111對應土石流觀測站影像資料
-        const MOA_API_BASE = 'https://data.moa.gov.tw/Service/OpenData/DataFileService.aspx';
-        const MOA_API_URL = `${MOA_API_BASE}?UnitId=111`;
-        
-        // 進階查詢API (可用於縣市篩選)
-        const MOA_API_ADVANCED = `${MOA_API_BASE}?UnitId=111`;
+        // 農業部土石流警戒服務API - 取得觀測站監控影像
+        const MOA_API_URL = 'https://data.moa.gov.tw/api/v1/DebrisAlertServices/GetStationMonitor';
         
         // 土石流監測站資料（將從API載入）
         let debrisFlowStations = [];
@@ -714,36 +709,85 @@
             try {
                 showLoading('正在連接農業部開放資料平台...');
                 
-                // 嘗試多種方式載入資料
+                // 嘗試直接載入新 API
                 let response;
+                let apiData;
+                let apiSuccess = false;
+                
                 try {
+                    console.log('🔄 嘗試連接 API:', MOA_API_URL);
                     response = await fetch(MOA_API_URL, {
                         method: 'GET',
                         mode: 'cors',
-                        cache: 'no-cache'
+                        cache: 'no-cache',
+                        headers: {
+                            'Accept': 'application/json'
+                        }
                     });
+                    
+                    console.log('📊 API 回應狀態:', response.status, response.statusText);
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status} ${response.statusText}`);
+                    }
+                    
+                    apiData = await response.json();
+                    console.log('✅ API 回傳成功');
+                    console.log('📦 API 資料結構:', Object.keys(apiData));
+                    console.log('📋 API 樣本資料:', apiData.DATA?.[0] || apiData[0]);
+                    apiSuccess = true;
+                    
                 } catch (corsError) {
-                    console.log('CORS錯誤，嘗試代理方式:', corsError);
-                    // 如果CORS失敗，使用代理服務
-                    response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(MOA_API_URL)}`);
-                    if (response.ok) {
-                        const proxyData = await response.json();
-                        response = {
-                            ok: true,
-                            json: () => JSON.parse(proxyData.contents)
-                        };
+                    console.warn('❌ 直接連接失敗:', corsError.message);
+                    
+                    try {
+                        // 如果CORS失敗，使用代理服務
+                        console.log('🔄 嘗試使用代理服務...');
+                        response = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(MOA_API_URL)}`);
+                        
+                        console.log('📊 代理服務回應狀態:', response.status);
+                        
+                        if (response.ok) {
+                            const proxyData = await response.json();
+                            apiData = JSON.parse(proxyData.contents);
+                            console.log('✅ 代理方式成功');
+                            apiSuccess = true;
+                        } else {
+                            throw new Error('代理服務失敗');
+                        }
+                    } catch (proxyError) {
+                        console.error('❌ 代理方式也失敗:', proxyError.message);
+                        throw corsError;
                     }
                 }
                 
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText || '無法連接'}`);
+                if (!apiData) {
+                    throw new Error('無法獲取 API 資料');
                 }
                 
                 showLoading('正在解析監測站資料...');
-                const data = await response.json();
                 
-                // 轉換API資料為內部格式 - 只使用API提供的字段
-                debrisFlowStations = data.map((item, index) => {
+                // 新 API 回傳格式：{ DATA: [...] } 或直接是陣列
+                let stationsData = apiData.DATA || apiData;
+                
+                // 如果是物件但沒有 DATA，嘗試找到陣列字段
+                if (!Array.isArray(stationsData) && typeof stationsData === 'object') {
+                    const arrayField = Object.keys(stationsData).find(key => Array.isArray(stationsData[key]));
+                    if (arrayField) {
+                        console.log(`📦 找到陣列字段: ${arrayField}`);
+                        stationsData = stationsData[arrayField];
+                    }
+                }
+                
+                if (!Array.isArray(stationsData)) {
+                    console.error('❌ API 回傳資料結構不是陣列:', apiData);
+                    throw new Error(`API 回傳格式錯誤，無法找到陣列資料`);
+                }
+                
+                console.log(`📊 成功獲取 ${stationsData.length} 個監測站資料`);
+                
+                // 轉換API資料為內部格式
+                debrisFlowStations = stationsData.map((item, index) => {
                     const county = item['縣市'] || '';
                     const district = item['行政區'] || '';
                     const location = county && district ? `${county}${district}` : (county || district || '未知地區');
@@ -755,9 +799,9 @@
                         county: county,
                         district: district,
                         address: item['架設或拍攝地點'] || '',
-                        image: item['影像連結網址'] || '',
+                        image: item['影像網址'] || '',
                         coordinates: { 
-                            lat: parseFloat(item['緯度']) || 0, 
+                            lat: parseFloat(item['緯度']) || 0,
                             lng: parseFloat(item['經度']) || 0 
                         },
                         lastUpdate: new Date().toISOString().slice(0, 19).replace('T', ' ')
@@ -770,7 +814,7 @@
                 );
                 
                 filteredStations = [...debrisFlowStations];
-                console.log(`成功載入 ${debrisFlowStations.length} 個監測站`);
+                console.log(`✅ 成功載入 ${debrisFlowStations.length} 個有效的監測站`);
                 
                 // 更新全域進度條
                 window.setLoadingProgress(90);
@@ -779,6 +823,7 @@
                 // 更新資料來源顯示
                 document.getElementById('dataSource').innerHTML = 
                     `<i class="fas fa-check-circle"></i> 資料來源：農業部開放資料平台 (${debrisFlowStations.length} 個監測站)`;
+                document.getElementById('dataSource').style.color = '#4CAF50';
                 
                 // 更新下拉選單選項
                 updateLocationOptions();
@@ -789,17 +834,19 @@
                 }, 500);
                 
             } catch (error) {
-                console.error('載入農業部資料失敗:', error);
+                console.error('❌ 載入農業部資料失敗:', error);
+                console.error('📋 錯誤訊息:', error.message);
+                console.error('🔍 錯誤堆疊:', error.stack);
                 
                 // 更新錯誤狀態顯示
                 document.getElementById('dataSource').innerHTML = 
-                    `<i class="fas fa-exclamation-triangle"></i> 無法連接農業部API，使用備用資料`;
+                    `<i class="fas fa-exclamation-triangle"></i> 無法連接農業部API，使用備用資料 (${error.message})`;
                 document.getElementById('dataSource').style.color = '#FF9800';
                 
                 // 使用備用模擬資料
                 debrisFlowStations = generateFallbackData();
                 filteredStations = [...debrisFlowStations];
-                console.log('使用備用資料，載入完成');
+                console.log(`⚠️ 使用備用資料，共 ${debrisFlowStations.length} 個監測站`);
                 
                 // 更新下拉選單選項
                 updateLocationOptions();
@@ -888,29 +935,95 @@
             filterStations();
         }
         
-        // 備用資料（當API無法存取時） - 僅包含API提供的字段
+        // 備用資料（當API無法存取時） - 包含示範圖像
         function generateFallbackData() {
             return [
                 {
                     id: 'FB001',
-                    name: '示範監測站一',
+                    name: '陽明山監測站',
                     location: '台北市北投區',
                     county: '台北市',
                     district: '北投區',
-                    address: '陽明山區域',
-                    image: '',
+                    address: '陽明山國家公園區域',
+                    image: 'https://via.placeholder.com/800x600?text=陽明山監測站&bg=4a90e2&fg=fff',
                     coordinates: { lat: 25.1825, lng: 121.5481 },
                     lastUpdate: new Date().toISOString().slice(0, 19).replace('T', ' ')
                 },
                 {
                     id: 'FB002',
-                    name: '示範監測站二',
+                    name: '烏來風景區監測站',
                     location: '新北市烏來區',
                     county: '新北市',
                     district: '烏來區',
-                    address: '烏來風景區',
-                    image: '',
+                    address: '烏來風景特定區',
+                    image: 'https://via.placeholder.com/800x600?text=烏來監測站&bg=7cc576&fg=fff',
                     coordinates: { lat: 24.8631, lng: 121.5509 },
+                    lastUpdate: new Date().toISOString().slice(0, 19).replace('T', ' ')
+                },
+                {
+                    id: 'FB003',
+                    name: '南山監測站',
+                    location: '台中市和平區',
+                    county: '台中市',
+                    district: '和平區',
+                    address: '南山部落周邊',
+                    image: 'https://via.placeholder.com/800x600?text=南山監測站&bg=f5a623&fg=fff',
+                    coordinates: { lat: 24.3967, lng: 121.0633 },
+                    lastUpdate: new Date().toISOString().slice(0, 19).replace('T', ' ')
+                },
+                {
+                    id: 'FB004',
+                    name: '太魯閣監測站',
+                    location: '花蓮縣秀林鄉',
+                    county: '花蓮縣',
+                    district: '秀林鄉',
+                    address: '太魯閣國家公園',
+                    image: 'https://via.placeholder.com/800x600?text=太魯閣監測站&bg=bd10e0&fg=fff',
+                    coordinates: { lat: 24.1440, lng: 121.1945 },
+                    lastUpdate: new Date().toISOString().slice(0, 19).replace('T', ' ')
+                },
+                {
+                    id: 'FB005',
+                    name: '阿里山監測站',
+                    location: '嘉義縣阿里山鄉',
+                    county: '嘉義縣',
+                    district: '阿里山鄉',
+                    address: '阿里山森林遊樂區',
+                    image: 'https://via.placeholder.com/800x600?text=阿里山監測站&bg=417505&fg=fff',
+                    coordinates: { lat: 23.5089, lng: 120.8123 },
+                    lastUpdate: new Date().toISOString().slice(0, 19).replace('T', ' ')
+                },
+                {
+                    id: 'FB006',
+                    name: '玉山監測站',
+                    location: '南投縣信義鄉',
+                    county: '南投縣',
+                    district: '信義鄉',
+                    address: '玉山國家公園',
+                    image: 'https://via.placeholder.com/800x600?text=玉山監測站&bg=9b9b9b&fg=fff',
+                    coordinates: { lat: 23.4725, lng: 120.9570 },
+                    lastUpdate: new Date().toISOString().slice(0, 19).replace('T', ' ')
+                },
+                {
+                    id: 'FB007',
+                    name: '獅頭山監測站',
+                    location: '苗栗縣南庄鄉',
+                    county: '苗栗縣',
+                    district: '南庄鄉',
+                    address: '獅頭山風景區',
+                    image: 'https://via.placeholder.com/800x600?text=獅頭山監測站&bg=50e3c2&fg=fff',
+                    coordinates: { lat: 24.5542, lng: 120.8808 },
+                    lastUpdate: new Date().toISOString().slice(0, 19).replace('T', ' ')
+                },
+                {
+                    id: 'FB008',
+                    name: '雪山監測站',
+                    location: '台中市和平區',
+                    county: '台中市',
+                    district: '和平區',
+                    address: '雪山主峰周邊',
+                    image: 'https://via.placeholder.com/800x600?text=雪山監測站&bg=1a1a1a&fg=fff',
+                    coordinates: { lat: 24.3624, lng: 121.0533 },
                     lastUpdate: new Date().toISOString().slice(0, 19).replace('T', ' ')
                 }
             ];
