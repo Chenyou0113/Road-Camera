@@ -275,12 +275,5 @@ function createNavbar(currentPage = '') {
     `;
 }
 
-// 自動插入導航列
-document.addEventListener('DOMContentLoaded', function() {
-    const container = document.querySelector('.container');
-    if (container && window.CURRENT_PAGE) {
-        const navbar = document.createElement('div');
-        navbar.innerHTML = createNavbar(window.CURRENT_PAGE);
-        container.insertBefore(navbar.firstElementChild, container.firstChild);
-    }
-});
+// 導航列已停用 - 改為使用各頁面頂部的返回按鈕
+// 如需在特定頁面啟用導航列，可調用 createNavbar(currentPage) 函數
