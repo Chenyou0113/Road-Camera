@@ -528,11 +528,12 @@
             // 確保進度條函數可用
             ensureProgressFunctions();
             
-            // 更新進度 - 減少頻率
-            window.setLoadingProgress(25);
-            window.updateLoadingLabel('連接TDX API...');
+            // 更新進度
+            window.setLoadingProgress(20);
+            window.updateLoadingLabel('連接 TDX API...');
             
-            let allCamerasFromSources = [];
+            let tdxCameras = [];
+            let thbCameras = [];
             
             try {
                 console.log('正在載入省道監視器資料...');
@@ -544,19 +545,15 @@
                     </div>
                 `;
                 
-                // 延遲進度更新以減少頻繁調用
-                setTimeout(() => {
-                    window.setLoadingProgress(50);
-                    window.updateLoadingLabel('載入省道監視器資料...');
-                }, 100);
+                // 載入 TDX 資料
+                window.setLoadingProgress(50);
+                window.updateLoadingLabel('載入省道監視器資料...');
                 
-                // 使用 TDX Highway 端點載入全國道路監視器（包含省道）
                 const endpoint = '/v2/Road/Traffic/CCTV/Highway?$format=JSON';
                 console.log('📍 載入 Highway 端點資料並篩選省道...');
                 
                 const response = await tdxApi.fetchCCTV(endpoint);
                 
-                // 更新進度
                 window.setLoadingProgress(75);
                 window.updateLoadingLabel('篩選省道監視器...');
                 
@@ -574,19 +571,20 @@
                 
                 console.log(`📊 TDX Highway 原始資料: ${cameras.length} 筆`);
                 
+                let allCamerasFromSources = [];
                 if (cameras.length > 0) {
                     // 篩選並處理省道監視器資料
                     allCamerasFromSources = cameras
-                        .filter(camera => isProvincialRoad(camera)) // 只保留省道
+                        .filter(camera => isProvincialRoad(camera))
                         .map(camera => {
                             const roadNumber = extractroadNumber(camera);
                             return {...camera, source: 'tdx', RoadNumber: roadNumber || camera.RoadName || '省道'};
                         })
-                        .filter(camera => camera.RoadNumber); // 只保留有道路編號的
+                        .filter(camera => camera.RoadNumber);
                 }
                 
             } catch (error) {
-                console.error('載入省道監視器資料失敗:', error);
+                console.error('❌ 載入省道監視器資料失敗:', error);
                 window.finishLoading();
                 container.innerHTML = `
                     <div class="loading">
@@ -600,20 +598,33 @@
                 return;
             }
             
-            console.log(`📊 省道監視器: ${allCamerasFromSources.length} 筆`);
+            console.log(`📊 省道監視器總計: ${allCamerasFromSources.length} 筆`);
             
             if (allCamerasFromSources.length === 0) {
-                container.innerHTML = '<div class="loading">目前沒有可用的省道監視器資料</div>';
+                window.finishLoading();
+                container.innerHTML = `
+                    <div class="loading">
+                        <i class="fas fa-exclamation-circle"></i><br>
+                        目前沒有可用的省道監視器資料<br><br>
+                        <button onclick="loadCameras()" style="padding: 10px 20px; background: #FF9800; color: white; border: none; border-radius: 5px; cursor: pointer;">
+                            <i class="fas fa-refresh"></i> 重新載入
+                        </button>
+                    </div>
+                `;
                 return;
             }
             
             // 處理監視器資料
+            console.log('🔄 處理監視器資料...');
             allCameras = allCamerasFromSources.map(camera => ({
                 ...camera,
-                City: getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName)
+                City: camera.City || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName)
             }));
             
+            console.log('✅ 資料處理完成');
             filteredCameras = allCameras;
+            
+            // 更新介面
             populateFilters();
             updateStats();
             displayCameras(allCameras);
@@ -622,6 +633,7 @@
             window.setLoadingProgress(100);
             setTimeout(() => {
                 window.finishLoading();
+                console.log('✅ 頁面載入完成');
             }, 200);
         }
 

@@ -679,30 +679,22 @@
             `;
 
             try {
-                // 使用TDX API v2 查詢列車延遲資訊
-                const endpoint = `/v2/Rail/TRA/LiveTrainDelay?$format=JSON`;
+                // 使用正確的 LiveBoard API 端點
+                const endpoint = `/v2/Rail/TRA/LiveBoard?StationID=${currentStationId}&$format=JSON`;
                 const response = await tdxApi.fetch(endpoint);
                 
                 console.log('API回應:', response);
                 
-                let allTrains = [];
+                let trains = [];
                 if (Array.isArray(response)) {
-                    allTrains = response;
+                    trains = response;
                 }
 
-                // 篩選出經過當前車站的列車
-                const stationTrains = allTrains.filter(train => {
-                    if (!train.StopStations || !Array.isArray(train.StopStations)) {
-                        return false;
-                    }
-                    return train.StopStations.some(stop => stop.StationID === currentStationId);
-                });
-
-                console.log(`找到 ${stationTrains.length} 班經過 ${currentStationName} 的列車`);
+                console.log(`取得 ${trains.length} 班列車資訊`);
 
                 updateUpdateTime();
-                displayDelayTrains(stationTrains);
-                updateStats(stationTrains);
+                displayTrains(trains);
+                updateStats(trains);
 
             } catch (error) {
                 console.error('載入看板資料失敗:', error);
@@ -720,8 +712,8 @@
             }
         }
 
-        // 顯示延遲列車資料
-        function displayDelayTrains(trains) {
+        // 顯示列車資料
+        function displayTrains(trains) {
             const tableBody = document.getElementById('trainTableBody');
             
             if (!trains || trains.length === 0) {
@@ -733,59 +725,6 @@
                             <p style="font-size: 0.85rem; margin-top: 10px; color: #999;">
                                 可能原因：此時段沒有列車經過此站，或列車尚未發車
                             </p>
-                        </td>
-                    </tr>
-                `;
-                return;
-            }
-
-            const rows = trains.map(train => {
-                const trainType = getTrainTypeInfo(train.TrainTypeName?.Zh_tw || train.TrainTypeID || '');
-                const direction = train.Direction || 0;
-                const directionIcon = direction === 0 ? 'arrow-down' : 'arrow-up';
-                const directionText = direction === 0 ? '南下' : '北上';
-                
-                // 找到當前車站的停靠資訊
-                const currentStop = train.StopStations?.find(s => s.StationID === currentStationId);
-                const arrivalTime = formatTime(currentStop?.ArrivalTime);
-                const departureTime = formatTime(currentStop?.DepartureTime);
-                
-                const status = {
-                    text: train.DelayTime > 0 ? `誤點 ${train.DelayTime}分` : '準點',
-                    class: train.DelayTime > 5 ? 'delayed' : 'ontime'
-                };
-                
-                return `
-                    <tr>
-                        <td><span class="train-number">${train.TrainNo || '未知'}</span></td>
-                        <td><span class="train-type ${trainType.class}">${trainType.name}</span></td>
-                        <td>
-                            <span class="direction-badge">
-                                <i class="fas fa-${directionIcon}"></i>
-                                ${directionText}
-                            </span>
-                        </td>
-                        <td>${train.EndingStationName?.Zh_tw || train.EndingStationID || '未知'}</td>
-                        <td>${arrivalTime}</td>
-                        <td>${departureTime}</td>
-                        <td><span class="status-badge ${status.class}">${status.text}</span></td>
-                    </tr>
-                `;
-            }).join('');
-
-            tableBody.innerHTML = rows;
-        }
-
-        // 顯示列車資料
-        function displayTrains(trains) {
-            const tableBody = document.getElementById('trainTableBody');
-            
-            if (!trains || trains.length === 0) {
-                tableBody.innerHTML = `
-                    <tr>
-                        <td colspan="7" class="no-data">
-                            <i class="fas fa-info-circle"></i>
-                            <p>目前沒有列車資訊</p>
                         </td>
                     </tr>
                 `;
