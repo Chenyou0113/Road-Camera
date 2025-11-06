@@ -1,12 +1,15 @@
 /**
  * 環保署空氣品質監測站 - 資料轉換工具
  * 用於處理空品測站即時影像資料
- * API: https://data.moenv.gov.tw/api/v2/aqx_p_01
+ * API: 通過本地代理服務調用（隱藏真實 API）
  */
 
 class AirQualityTransformer {
-    // API 端點
-    static API_BASE = 'https://data.moenv.gov.tw/api/v2/aqx_p_01';
+    // 使用本地代理而非直接調用環保署 API
+    static API_BASE = '/api/air-quality';
+    
+    // 備用：直接 API（如果代理不可用）
+    static DIRECT_API_BASE = 'https://data.moenv.gov.tw/api/v2/aqx_p_01';
     static API_KEY = '4c89a32a-a214-461b-bf29-30ff32a61a8a';
     
     // 空品測站編碼對應的中文名稱與座標
@@ -82,14 +85,36 @@ class AirQualityTransformer {
      */
     static async fetchLatestImagesList() {
         try {
-            const url = `${this.API_BASE}?api_key=${this.API_KEY}&limit=1000&format=JSON&sort=ImportDate%20desc`;
-            const response = await fetch(url);
+            // 優先使用本地代理
+            const proxyUrl = `${this.API_BASE}/images`;
+            
+            try {
+                const response = await fetch(proxyUrl);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('✅ 使用本地代理 API');
+                    
+                    if (!data.records || !Array.isArray(data.records)) {
+                        throw new Error('無效的 API 回應格式');
+                    }
+                    
+                    return data.records;
+                }
+            } catch (proxyError) {
+                console.warn('⚠️ 本地代理不可用，嘗試直接 API...');
+            }
+            
+            // 代理不可用時，使用直接 API（帶有公開密鑰）
+            const directUrl = `${this.DIRECT_API_BASE}?api_key=${this.API_KEY}&limit=1000&format=JSON&sort=ImportDate%20desc`;
+            const response = await fetch(directUrl);
             
             if (!response.ok) {
                 throw new Error(`API 錯誤: ${response.statusText}`);
             }
             
             const data = await response.json();
+            console.log('⚠️ 使用直接 API（建議運行本地代理）');
             
             if (!data.records || !Array.isArray(data.records)) {
                 throw new Error('無效的 API 回應格式');
