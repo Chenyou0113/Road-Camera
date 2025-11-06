@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>水利署 API 測試</title>
+    <style>
+        body {
+            font-family: 'Microsoft JhengHei', sans-serif;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #2c3e50; }
+        .status { 
+            padding: 15px; 
+            margin: 20px 0; 
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        pre { 
+            background: #f8f9fa; 
+            padding: 15px; 
+            border-radius: 5px;
+            overflow-x: auto;
+            max-height: 500px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover { background: #0056b3; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .card {
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .card img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌊 水利署河川監視器 API 測試</h1>
+        
+        <div class="info">
+            <strong>API 端點：</strong><br>
+            https://wra-od-testing.blueplanet.com.tw/api/v2/f71b74eb-cbe5-42c6-8be5-7500450e7db0
+        </div>
+
+        <button onclick="testAPI()">🚀 測試 API 連線</button>
+        <button onclick="loadCameras()">📹 載入監視器列表</button>
+        
+        <div id="status"></div>
+        <div id="stats"></div>
+        <div id="data"></div>
+        <div id="cameras" class="grid"></div>
+    </div>
+
+    <script>
+        const API_URL = 'https://wra-od-testing.blueplanet.com.tw/api/v2/f71b74eb-cbe5-42c6-8be5-7500450e7db0?sort=_importdate%20asc&format=JSON';
+        
+        let apiData = null;
+
+        async function testAPI() {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = '<div class="info">⏳ 正在測試 API 連線...</div>';
+            
+            try {
+                const response = await fetch(API_URL);
+                const data = await response.json();
+                
+                apiData = data;
+                
+                statusDiv.innerHTML = '<div class="success">✅ API 連線成功！</div>';
+                
+                // 顯示統計資訊
+                displayStats(data);
+                
+                // 顯示原始資料結構
+                displayRawData(data);
+                
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="error">❌ API 連線失敗：${error.message}</div>`;
+                console.error('API Error:', error);
+            }
+        }
+
+        function displayStats(data) {
+            const statsDiv = document.getElementById('stats');
+            
+            if (!data || !data.result) {
+                statsDiv.innerHTML = '<div class="error">無法取得資料</div>';
+                return;
+            }
+
+            const records = data.result.records || [];
+            const total = records.length;
+            
+            // 分析資料結構
+            const fields = data.result.fields || [];
+            const fieldNames = fields.map(f => f.id || f.name).join(', ');
+            
+            statsDiv.innerHTML = `
+                <div class="info">
+                    <h3>📊 資料統計</h3>
+                    <p><strong>總記錄數：</strong>${total}</p>
+                    <p><strong>欄位數量：</strong>${fields.length}</p>
+                    <p><strong>欄位名稱：</strong>${fieldNames}</p>
+                    <p><strong>資料來源：</strong>${data.result.resource_id || 'N/A'}</p>
+                </div>
+            `;
+        }
+
+        function displayRawData(data) {
+            const dataDiv = document.getElementById('data');
+            
+            // 只顯示前3筆記錄的詳細資訊
+            const sample = data.result.records ? data.result.records.slice(0, 3) : [];
+            
+            dataDiv.innerHTML = `
+                <h3>📝 資料結構範例（前3筆）</h3>
+                <pre>${JSON.stringify(sample, null, 2)}</pre>
+                
+                <h3>📋 完整欄位定義</h3>
+                <pre>${JSON.stringify(data.result.fields, null, 2)}</pre>
+            `;
+        }
+
+        async function loadCameras() {
+            const camerasDiv = document.getElementById('cameras');
+            camerasDiv.innerHTML = '<div class="info">⏳ 正在載入監視器資料...</div>';
+            
+            try {
+                if (!apiData) {
+                    const response = await fetch(API_URL);
+                    apiData = await response.json();
+                }
+                
+                const records = apiData.result.records || [];
+                
+                if (records.length === 0) {
+                    camerasDiv.innerHTML = '<div class="error">沒有找到監視器資料</div>';
+                    return;
+                }
+                
+                // 渲染監視器卡片
+                let html = '<h3>📹 監視器列表</h3><div class="grid">';
+                
+                records.slice(0, 20).forEach((record, index) => {
+                    // 根據實際 API 欄位調整
+                    const name = record.baseName || record.stationName || record.name || `監視器 #${index + 1}`;
+                    const location = record.locationName || record.city || record.location || '未知位置';
+                    const imageUrl = record.snapshotURL || record.imageUrl || record.snapshot || '';
+                    const status = record.status || (imageUrl ? '線上' : '離線');
+                    
+                    html += `
+                        <div class="card">
+                            ${imageUrl ? `<img src="${imageUrl}" alt="${name}" onerror="this.src='https://via.placeholder.com/300x200/667eea/ffffff?text=無影像'">` : '<img src="https://via.placeholder.com/300x200/999/ffffff?text=無影像">'}
+                            <h4>${name}</h4>
+                            <p>📍 ${location}</p>
+                            <p>狀態：${status}</p>
+                        </div>
+                    `;
+                });
+                
+                html += '</div>';
+                camerasDiv.innerHTML = html;
+                
+            } catch (error) {
+                camerasDiv.innerHTML = `<div class="error">❌ 載入失敗：${error.message}</div>`;
+                console.error('Load Error:', error);
+            }
+        }
+
+        // 頁面載入時自動測試
+        window.addEventListener('load', () => {
+            testAPI();
+        });
+    </script>
+</body>
+</html>

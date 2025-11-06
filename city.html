@@ -126,18 +126,6 @@
     
     <!-- 載入進度條 -->
     <script src="assets/loading-progress.js"></script>
-    <script>
-        // 市區監視器載入設定
-        window.AUTO_START_LOADING = false;
-        
-        window.addEventListener('DOMContentLoaded', () => {
-            window.startLoading({
-                labelText: '載入市區監視器...',
-                color: '#1e40af',
-                showLabel: true
-            });
-        });
-    </script>
 </head>
 <body>
     <!-- 清理腳本：防止 CSS 代碼意外顯示 -->
@@ -1424,50 +1412,92 @@
             document.getElementById('imageModal').style.display = 'none';
         }
 
-        // 等待 TDX API 初始化
-        async function waitForTdxApi() {
+        // 等待必要的依賴載入完成
+        async function waitForDependencies() {
             let attempts = 0;
-            const maxAttempts = 30; // 最多等待30秒
+            const maxAttempts = 50; // 最多等待50秒
             
             while (attempts < maxAttempts) {
-                if (typeof tdxApi !== 'undefined' && tdxApi && typeof tdxApi.fetchCCTV === 'function') {
-                    console.log('✅ TDX API 已就緒');
+                // 檢查所有必要的依賴
+                const configReady = typeof TDX_CONFIG !== 'undefined';
+                const tdxApiReady = typeof tdxApi !== 'undefined' && tdxApi && typeof tdxApi.fetchCCTV === 'function';
+                const loadingReady = typeof window.startLoading === 'function' && typeof window.setLoadingProgress === 'function';
+                
+                if (configReady && tdxApiReady && loadingReady) {
+                    console.log('✅ 所有依賴已就緒');
+                    console.log('  - TDX_CONFIG:', configReady);
+                    console.log('  - tdxApi:', tdxApiReady);
+                    console.log('  - loading-progress:', loadingReady);
                     return true;
                 }
-                console.log(`⏳ 等待 TDX API 初始化... (${attempts + 1}/${maxAttempts})`);
+                
+                if (attempts % 5 === 0 && attempts > 0) {
+                    console.log(`⏳ 等待依賴載入... (${attempts + 1}/${maxAttempts})`);
+                    console.log('  - TDX_CONFIG:', configReady);
+                    console.log('  - tdxApi:', tdxApiReady);
+                    console.log('  - loading-progress:', loadingReady);
+                }
+                
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 attempts++;
             }
             
-            console.error('❌ TDX API 初始化超時');
+            console.error('❌ 依賴載入超時');
             return false;
         }
 
-        // 載入機制 - 確保 TDX API 就緒後再載入資料
-        window.onload = async function() {
-            console.log('🚀 市區道路監視器頁面載入完成');
+        // 載入機制 - 使用 DOMContentLoaded 確保更早開始初始化
+        document.addEventListener('DOMContentLoaded', async function() {
+            console.log('🚀 市區道路監視器頁面 DOM 載入完成');
             
-            // 等待 TDX API 初始化
-            const apiReady = await waitForTdxApi();
-            if (!apiReady) {
+            // 立即啟動進度條（如果可用）
+            if (typeof window.startLoading === 'function') {
+                try {
+                    window.startLoading({
+                        labelText: '初始化市區監視器...',
+                        color: '#1e40af',
+                        showLabel: true
+                    });
+                } catch (error) {
+                    console.warn('進度條啟動失敗:', error);
+                }
+            }
+            
+            // 等待所有依賴初始化
+            const depsReady = await waitForDependencies();
+            if (!depsReady) {
                 const container = document.getElementById('cameras-container');
                 if (container) {
                     container.innerHTML = `
                         <div class="loading" style="color: #ff6b6b;">
                             <i class="fas fa-exclamation-triangle"></i><br>
-                            TDX API 初始化失敗<br><br>
+                            系統初始化失敗<br><br>
+                            <small style="color: #ffb3b3;">
+                                請檢查：<br>
+                                1. 確認 assets/config.js 存在且正確<br>
+                                2. 確認 TDX API 金鑰已設定<br>
+                                3. 檢查瀏覽器控制台錯誤訊息<br>
+                            </small><br><br>
                             <button onclick="window.location.reload()" style="padding: 10px 20px; background: #1e40af; color: white; border: none; border-radius: 5px; cursor: pointer;">
                                 <i class="fas fa-refresh"></i> 重新整理
                             </button>
                         </div>
                     `;
                 }
+                // 完成進度條（失敗狀態）
+                if (typeof window.finishLoading === 'function') {
+                    try {
+                        window.finishLoading();
+                    } catch (error) {
+                        console.warn('進度條完成失敗:', error);
+                    }
+                }
                 return;
             }
             
-            console.log('開始載入市區監視器資料');
+            console.log('✅ 開始載入市區監視器資料');
             loadCameras();
-        };
+        });
     </script>
 
     <!-- Back to Top Button -->
