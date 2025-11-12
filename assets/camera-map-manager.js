@@ -61,6 +61,9 @@ class CameraMapManager {
      */
     addMarkers(cameras) {
         this.clearMarkers();
+        
+        let validMarkers = 0;
+        let invalidMarkers = [];
 
         cameras.forEach(camera => {
             // 獲取坐標
@@ -68,6 +71,18 @@ class CameraMapManager {
             const lng = camera.PositionLon || camera.lng || camera.longitude;
 
             if (!lat || !lng) return;
+            
+            // 驗證坐標是否在台灣範圍內 (簡化檢查)
+            // 台灣大約範圍: 緯度 21-25, 經度 120-122
+            const isValidCoords = (lat >= 20 && lat <= 26 && lng >= 119 && lng <= 123);
+            
+            if (!isValidCoords) {
+                invalidMarkers.push({
+                    name: camera.RoadName || camera.name || '未知',
+                    lat: lat,
+                    lng: lng
+                });
+            }
 
             // 創建標記
             const marker = L.circleMarker([lat, lng], {
@@ -97,7 +112,17 @@ class CameraMapManager {
 
             marker.addTo(this.markerLayer);
             this.markers.push(marker);
+            validMarkers++;
         });
+
+        // 輸出診斷信息
+        console.log(`📍 地圖標記統計: ${validMarkers} 個有效標記`);
+        if (invalidMarkers.length > 0) {
+            console.warn(`⚠️ 發現 ${invalidMarkers.length} 個坐標可能不正確:`);
+            invalidMarkers.slice(0, 5).forEach(m => {
+                console.warn(`  - ${m.name}: [${m.lat}, ${m.lng}]`);
+            });
+        }
 
         // 自動調整視圖以適應所有標記
         if (this.markers.length > 0) {
@@ -112,6 +137,9 @@ class CameraMapManager {
         const name = camera.RoadName || camera.LocationDescription || camera.CCTVID || '監視器';
         const city = camera.City || '未知';
         const district = camera.District || camera.LocationAdministrativeAreaName || '未知';
+        
+        // 生成一個唯一的相機ID用於後續查找
+        const cameraId = camera.CCTVID || name;
         
         return `
             <div style="min-width: 250px; font-family: 'Microsoft JhengHei', Arial, sans-serif;">
@@ -129,14 +157,12 @@ class CameraMapManager {
                     ${camera.LocationMile ? `<p style="margin: 5px 0;"><strong>🛣️ 里程：</strong> ${this.escapeHtml(camera.LocationMile)}</p>` : ''}
                     ${camera.RoadNumber ? `<p style="margin: 5px 0;"><strong>🚗 路線編號：</strong> ${this.escapeHtml(camera.RoadNumber)}</p>` : ''}
                 </div>
-                ${camera.onPopupClick ? `
-                    <button onclick="${camera.onPopupClick}" 
-                            style="width: 100%; padding: 8px; margin-top: 10px; 
-                                   background: #1e40af; color: white; border: none; 
-                                   border-radius: 5px; cursor: pointer; font-weight: 600;">
-                        查看詳細資訊
-                    </button>
-                ` : ''}
+                <button onclick="openCameraDetails('${this.escapeHtml(cameraId)}')" 
+                        style="width: 100%; padding: 10px; margin-top: 12px; 
+                               background: #1e40af; color: white; border: none; 
+                               border-radius: 5px; cursor: pointer; font-weight: 600; font-size: 0.95rem;">
+                    📸 顯示詳細資訊
+                </button>
             </div>
         `;
     }
