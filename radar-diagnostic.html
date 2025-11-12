@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>雷達 API 完整診斷工具</title>
+    <style>
+        body { font-family: 'Courier New', monospace; background: #1a1a1a; color: #e0e0e0; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { color: #4ec9b0; margin-bottom: 20px; }
+        .radar-test { margin: 20px 0; padding: 15px; background: #252526; border-left: 3px solid #569cd6; border-radius: 5px; }
+        button { background: #007acc; color: white; border: none; padding: 8px 16px; cursor: pointer; border-radius: 3px; margin: 5px 0; }
+        button:hover { background: #005a9e; }
+        .output { background: #1e1e1e; border: 1px solid #444; padding: 15px; margin: 10px 0; border-radius: 3px; max-height: 400px; overflow-y: auto; font-size: 12px; }
+        .success { color: #4ec9b0; }
+        .error { color: #f48771; }
+        .info { color: #9cdcfe; }
+        .url { color: #ce9178; word-break: break-all; }
+        pre { background: #252526; padding: 10px; border-radius: 3px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 雷達 API 完整診斷工具</h1>
+
+        <div class="radar-test">
+            <h2>🎯 樹林雷達 (O-A0084-001)</h2>
+            <button onclick="testRadarDirect('O-A0084-001')">📡 直接 Fetch API</button>
+            <button onclick="parseXMLFromRadar('O-A0084-001')">🧬 解析 XML</button>
+            <div class="output" id="output-001"></div>
+        </div>
+
+        <div class="radar-test">
+            <h2>🎯 南屯雷達 (O-A0084-002)</h2>
+            <button onclick="testRadarDirect('O-A0084-002')">📡 直接 Fetch API</button>
+            <button onclick="parseXMLFromRadar('O-A0084-002')">🧬 解析 XML</button>
+            <div class="output" id="output-002"></div>
+        </div>
+
+        <div class="radar-test">
+            <h2>🎯 林園雷達 (O-A0084-003)</h2>
+            <button onclick="testRadarDirect('O-A0084-003')">📡 直接 Fetch API</button>
+            <button onclick="parseXMLFromRadar('O-A0084-003')">🧬 解析 XML</button>
+            <div class="output" id="output-003"></div>
+        </div>
+
+        <div class="radar-test">
+            <h2>🌐 台灣鄰近區域 (O-A0058-003)</h2>
+            <button onclick="testRadarDirect('O-A0058-003')">📡 直接 Fetch API</button>
+            <div class="output" id="output-101"></div>
+        </div>
+
+        <div class="radar-test">
+            <h2>🌐 台灣較大範圍 (O-A0058-001)</h2>
+            <button onclick="testRadarDirect('O-A0058-001')">📡 直接 Fetch API</button>
+            <div class="output" id="output-102"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_KEY = 'CWA-675CED45-09DF-4249-9599-B9B5A5AB761A';
+        const FILE_API_BASE = 'https://opendata.cwa.gov.tw/fileapi/v1/opendataapi';
+
+        const codeMap = {
+            'O-A0084-001': '001',
+            'O-A0084-002': '002',
+            'O-A0084-003': '003',
+            'O-A0058-003': '101',
+            'O-A0058-001': '102'
+        };
+
+        async function testRadarDirect(dataId) {
+            const code = codeMap[dataId];
+            const output = document.getElementById(`output-${code}`);
+            output.innerHTML = '<span class="info">⏳ 正在請求 API...</span>';
+
+            try {
+                const url = `${FILE_API_BASE}/${dataId}?Authorization=${API_KEY}&downloadType=WEB&format=JSON`;
+                
+                console.log('📡 正在請求:', url);
+                
+                const response = await fetch(url);
+                const text = await response.text();
+                
+                let html = `<span class="success">✅ HTTP ${response.status}</span>\n`;
+                html += `<span class="info">📝 回應長度: ${text.length} 字元</span>\n`;
+                html += `<span class="info">📝 首 100 字元:</span>\n`;
+                html += `<pre>${text.substring(0, 100)}</pre>\n`;
+
+                // 檢測格式
+                if (text.includes('<?xml') || text.includes('<dataset')) {
+                    html += `<span class="success">✅ 偵測到 XML 格式</span>\n`;
+                    
+                    // 嘗試解析 XML
+                    try {
+                        const parser = new DOMParser();
+                        const xmlDoc = parser.parseFromString(text, 'application/xml');
+                        
+                        if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
+                            html += `<span class="error">❌ XML 解析錯誤</span>\n`;
+                        } else {
+                            html += `<span class="success">✅ XML 解析成功</span>\n`;
+                            
+                            // 提取關鍵資訊
+                            const getElementText = (tagName) => {
+                                let elements = xmlDoc.getElementsByTagName(tagName);
+                                if (elements.length > 0) return elements[0].textContent;
+                                return null;
+                            };
+                            
+                            const productUrl = getElementText('ProductURL');
+                            const dateTime = getElementText('DateTime');
+                            const resourceDesc = getElementText('resourceDesc');
+                            const imageDim = getElementText('ImageDimension');
+                            
+                            html += `<span class="info">📊 提取的資訊:</span>\n`;
+                            html += `  ProductURL: ${productUrl ? '<span class="success">✅ 有</span>' : '<span class="error">❌ 無'}</span>\n`;
+                            html += `  DateTime: ${dateTime ? '<span class="success">✅ ' + dateTime + '</span>' : '<span class="error">❌ 無'}</span>\n`;
+                            html += `  resourceDesc: ${resourceDesc || '無'}\n`;
+                            html += `  imageDimension: ${imageDim || '無'}\n`;
+                            
+                            if (productUrl) {
+                                html += `<span class="success">🖼️ 影像 URL:</span>\n`;
+                                html += `<span class="url">${productUrl}</span>\n`;
+                                html += `<img src="${productUrl}" style="max-width: 100%; margin: 10px 0; border-radius: 5px;" onerror="this.src=''; this.innerHTML='無法載入圖片';">`;
+                            }
+                        }
+                    } catch (e) {
+                        html += `<span class="error">❌ XML 解析異常: ${e.message}</span>\n`;
+                    }
+                } else if (text.startsWith('{')) {
+                    html += `<span class="success">✅ 偵測到 JSON 格式</span>\n`;
+                    try {
+                        const json = JSON.parse(text);
+                        html += `<pre>${JSON.stringify(json, null, 2).substring(0, 500)}...</pre>`;
+                    } catch (e) {
+                        html += `<span class="error">❌ JSON 解析失敗</span>\n`;
+                    }
+                } else {
+                    html += `<span class="warning">⚠️ 未知格式</span>\n`;
+                    html += `<pre>${text.substring(0, 500)}</pre>`;
+                }
+
+                output.innerHTML = html;
+
+            } catch (error) {
+                output.innerHTML = `<span class="error">❌ 錯誤: ${error.message}</span>\n<pre>${error.stack}</pre>`;
+            }
+        }
+
+        async function parseXMLFromRadar(dataId) {
+            const code = codeMap[dataId];
+            const output = document.getElementById(`output-${code}`);
+            output.innerHTML = '<span class="info">⏳ 正在測試轉換工具...</span>';
+
+            try {
+                // 載入 transformer
+                if (typeof RadarTransformer === 'undefined') {
+                    output.innerHTML = '<span class="error">❌ RadarTransformer 未載入</span>';
+                    return;
+                }
+
+                const result = await RadarTransformer.getRadarEchoMap(code);
+                
+                let html = '<span class="info">📊 轉換工具結果:</span>\n';
+                html += `<pre>${JSON.stringify(result, null, 2)}</pre>`;
+                
+                if (result.error) {
+                    html += `<span class="error">❌ 錯誤: ${result.error}</span>\n`;
+                } else if (result.imageUrl) {
+                    html += `<span class="success">✅ 成功取得影像</span>\n`;
+                    html += `<span class="url">${result.imageUrl}</span>\n`;
+                }
+
+                output.innerHTML = html;
+
+            } catch (error) {
+                output.innerHTML = `<span class="error">❌ 異常: ${error.message}</span>`;
+            }
+        }
+
+        // 頁面載入時提示
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('✅ 診斷工具已加載');
+            if (typeof RadarTransformer !== 'undefined') {
+                console.log('✅ RadarTransformer 已加載');
+            } else {
+                console.warn('⚠️ RadarTransformer 未加載，請確保在 rainfall-radar.html 中正確引入');
+            }
+        });
+    </script>
+</body>
+</html>

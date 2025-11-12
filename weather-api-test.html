@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>天氣 API 測試工具</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Courier New', monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #4ec9b0;
+            margin-bottom: 20px;
+        }
+        .api-group {
+            margin-bottom: 30px;
+            border: 1px solid #444;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .api-group h2 {
+            color: #569cd6;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        .api-url {
+            background: #252526;
+            padding: 10px;
+            border-radius: 3px;
+            margin-bottom: 5px;
+            word-break: break-all;
+            font-size: 12px;
+            color: #ce9178;
+        }
+        button {
+            background: #007acc;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 3px;
+            cursor: pointer;
+            margin: 5px 5px 5px 0;
+        }
+        button:hover {
+            background: #005a9e;
+        }
+        .output {
+            background: #1e1e1e;
+            border: 1px solid #444;
+            padding: 15px;
+            margin-top: 10px;
+            border-radius: 3px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        .success { color: #4ec9b0; }
+        .error { color: #f48771; }
+        .info { color: #9cdcfe; }
+        .warning { color: #dcdcaa; }
+        pre {
+            margin: 10px 0;
+            font-size: 11px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .structure-info {
+            background: #252526;
+            padding: 10px;
+            margin: 10px 0;
+            border-left: 3px solid #569cd6;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌤️ 天氣預報 API 測試工具</h1>
+        
+        <div class="api-group">
+            <h2>📊 今明36小時預報 (F-C0032-001)</h2>
+            <p style="font-size: 12px; color: #888; margin-bottom: 10px;">
+                全台各地今明36小時天氣預報資料
+            </p>
+            <div class="api-url">
+https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization=CWA-675CED45-09DF-4249-9599-B9B5A5AB761A
+            </div>
+            <button onclick="testWeatherAPI()">🧪 測試</button>
+            <button onclick="testWeatherAPIStructure()">🏗️ 查看結構</button>
+            <div class="output" id="weather-output"></div>
+        </div>
+
+        <div class="structure-info">
+            <strong>ℹ️ 資料結構說明:</strong>
+            <pre>
+預期的資料層級:
+response
+  └─ data
+      └─ location (陣列)
+          └─ 縣市資訊
+              ├─ locationName: 縣市名稱
+              ├─ description: 描述
+              └─ weatherElement (陣列)
+                  ├─ elementName: 預報項目名稱
+                  └─ time (陣列)
+                      └─ dataTime: 預報時間
+                      └─ elementValue: 預報值
+            </pre>
+        </div>
+    </div>
+
+    <script>
+        async function testWeatherAPI() {
+            const output = document.getElementById('weather-output');
+            output.innerHTML = '<span class="info">⏳ 正在載入天氣資料...</span>';
+
+            try {
+                const url = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization=CWA-675CED45-09DF-4249-9599-B9B5A5AB761A';
+                
+                console.log('🔍 正在請求:', url);
+                const response = await fetch(url);
+                
+                output.innerHTML = `<span class="info">HTTP ${response.status}</span>\n`;
+                
+                if (!response.ok) {
+                    output.innerHTML += `<span class="error">❌ 請求失敗: ${response.statusText}</span>`;
+                    return;
+                }
+
+                const data = await response.json();
+                
+                let html = `<span class="success">✅ 成功取得資料</span>\n\n`;
+                
+                // 檢查基本結構
+                html += `<span class="info">📋 基本資訊:</span>\n`;
+                html += `  success: ${data.success}\n`;
+                html += `  result: ${data.result ? '✅' : '❌'}\n`;
+                
+                if (data.records) {
+                    html += `\n<span class="info">📍 地點數量: ${data.records.datasetInfo ? data.records.datasetInfo.length : 'N/A'}</span>\n`;
+                    
+                    if (data.records.location) {
+                        html += `<span class="success">✅ 位置資訊找到</span>\n`;
+                        html += `  位置總數: ${data.records.location.length}\n`;
+                        
+                        if (data.records.location.length > 0) {
+                            const firstLocation = data.records.location[0];
+                            html += `\n  第一個位置:\n`;
+                            html += `    locationName: ${firstLocation.locationName}\n`;
+                            html += `    description: ${firstLocation.description}\n`;
+                            
+                            if (firstLocation.weatherElement) {
+                                html += `    weatherElement 數量: ${firstLocation.weatherElement.length}\n`;
+                                
+                                firstLocation.weatherElement.slice(0, 3).forEach((elem, idx) => {
+                                    html += `\n    元素 ${idx + 1}:\n`;
+                                    html += `      elementName: ${elem.elementName}\n`;
+                                    if (elem.time && elem.time.length > 0) {
+                                        html += `      時間數據: ${elem.time.length} 筆\n`;
+                                        html += `      第一筆:\n`;
+                                        html += `        dataTime: ${elem.time[0].dataTime}\n`;
+                                        html += `        elementValue: ${JSON.stringify(elem.time[0].elementValue)}\n`;
+                                    }
+                                });
+                            }
+                        }
+                    }
+                }
+                
+                html += `\n\n<span class="warning">📊 完整 JSON 回應 (前 1000 字):</span>\n`;
+                html += `<pre>${JSON.stringify(data, null, 2).substring(0, 1000)}...</pre>`;
+                
+                output.innerHTML = html;
+                console.log('✅ 完整回應:', data);
+                
+            } catch (error) {
+                output.innerHTML = `<span class="error">❌ 錯誤: ${error.message}</span>\n<pre>${error.stack}</pre>`;
+                console.error('❌ 錯誤:', error);
+            }
+        }
+
+        async function testWeatherAPIStructure() {
+            const output = document.getElementById('weather-output');
+            output.innerHTML = '<span class="info">⏳ 分析資料結構...</span>';
+
+            try {
+                const url = 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization=CWA-675CED45-09DF-4249-9599-B9B5A5AB761A';
+                const response = await fetch(url);
+                
+                if (!response.ok) {
+                    output.innerHTML = `<span class="error">❌ 請求失敗</span>`;
+                    return;
+                }
+
+                const data = await response.json();
+                
+                let html = `<span class="success">✅ 資料結構分析</span>\n\n`;
+                html += `<span class="info">頂級鍵值:</span>\n`;
+                html += Object.keys(data).map(key => `  ✓ ${key}`).join('\n') + '\n';
+                
+                if (data.records && data.records.location && data.records.location.length > 0) {
+                    const loc = data.records.location[0];
+                    html += `\n<span class="info">location 物件鍵值 (第一個):</span>\n`;
+                    html += Object.keys(loc).map(key => `  ✓ ${key}`).join('\n') + '\n';
+                    
+                    if (loc.weatherElement && loc.weatherElement.length > 0) {
+                        html += `\n<span class="info">weatherElement 物件鍵值:</span>\n`;
+                        html += Object.keys(loc.weatherElement[0]).map(key => `  ✓ ${key}`).join('\n') + '\n';
+                        
+                        if (loc.weatherElement[0].time && loc.weatherElement[0].time.length > 0) {
+                            html += `\n<span class="info">time 物件鍵值:</span>\n`;
+                            html += Object.keys(loc.weatherElement[0].time[0]).map(key => `  ✓ ${key}`).join('\n') + '\n';
+                        }
+                    }
+                    
+                    html += `\n<span class="info">所有天氣元素:</span>\n`;
+                    loc.weatherElement.forEach(elem => {
+                        html += `  ✓ ${elem.elementName} (${elem.time.length} 筆預報)\n`;
+                    });
+                }
+                
+                output.innerHTML = html;
+                
+            } catch (error) {
+                output.innerHTML = `<span class="error">❌ 錯誤: ${error.message}</span>`;
+            }
+        }
+    </script>
+</body>
+</html>
