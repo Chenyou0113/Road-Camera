@@ -326,11 +326,22 @@
         let allCameras = [];
         let filteredCameras = [];
         let currentPage = 1;
-        let itemsPerPage = 30;
+        let itemsPerPage = 12;  // 優化：減少每頁顯示數量以提升初始加載速度
         let totalPages = 1;
         
         // 地圖管理器
         let cameraMapManager = null;
+        
+        // 優化：快取系統用於存儲計算結果以提升篩選速度
+        const computationCache = {
+            directionsByCamera: new Map(),     // 緩存每個監視器的方向
+            mileageByCamera: new Map(),        // 緩存每個監視器的里程
+            cityRanges: null,                  // 緩存城市範圍
+            clear() {
+                this.directionsByCamera.clear();
+                this.mileageByCamera.clear();
+            }
+        };
         
         // 快速道路列表（用於排除）
         const EXPRESSWAYS = [
@@ -718,9 +729,14 @@
         }
 
         function populateFilters() {
+            console.log('🔄 開始填充篩選下拉選單...');
             updateRoadSelect(allCameras);
+            console.log('✅ 省道篩選已填充');
             updateCitySelect(allCameras);
+            console.log('✅ 縣市篩選已填充');
             updateDirectionSelect(allCameras);
+            console.log('✅ 方向篩選已填充');
+            console.log('✅ 所有篩選下拉選單已完成初始化');
         }
 
         function updateStats() {
@@ -800,48 +816,60 @@
         }
         
         // 提取方向資訊，統一為東向、西向、南向、北向
+        // 優化版本：使用緩存加速多次調用
         function extractDirection(camera) {
+            // 檢查緩存
+            const cameraId = camera.CCTVID || camera.VideoImageUrl;
+            if (cameraId && computationCache.directionsByCamera.has(cameraId)) {
+                return computationCache.directionsByCamera.get(cameraId);
+            }
+            
             const roadDirection = camera.RoadDirection || '';
             const roadName = camera.RoadName || '';
             const locationDesc = camera.LocationDescription || '';
             const allText = `${roadDirection} ${roadName} ${locationDesc}`.toUpperCase();
             
+            let result = null;
+            
             // 判斷北向（優先順序：完整單字 > 單字母）
             if (allText.includes('NORTH') || allText.includes('北')) {
-                return '北向';
+                result = '北向';
             }
-            
             // 判斷南向
-            if (allText.includes('SOUTH') || allText.includes('南')) {
-                return '南向';
+            else if (allText.includes('SOUTH') || allText.includes('南')) {
+                result = '南向';
             }
-            
             // 判斷東向
-            if (allText.includes('EAST') || allText.includes('東')) {
-                return '東向';
+            else if (allText.includes('EAST') || allText.includes('東')) {
+                result = '東向';
             }
-            
             // 判斷西向
-            if (allText.includes('WEST') || allText.includes('西')) {
-                return '西向';
+            else if (allText.includes('WEST') || allText.includes('西')) {
+                result = '西向';
+            }
+            else {
+                // 單字母判斷（當沒有完整單字時）
+                const upperRoadDirection = roadDirection.toUpperCase().trim();
+                if (upperRoadDirection === 'N' || upperRoadDirection.startsWith('N ') || upperRoadDirection.endsWith(' N')) {
+                    result = '北向';
+                }
+                else if (upperRoadDirection === 'S' || upperRoadDirection.startsWith('S ') || upperRoadDirection.endsWith(' S')) {
+                    result = '南向';
+                }
+                else if (upperRoadDirection === 'E' || upperRoadDirection.startsWith('E ') || upperRoadDirection.endsWith(' E')) {
+                    result = '東向';
+                }
+                else if (upperRoadDirection === 'W' || upperRoadDirection.startsWith('W ') || upperRoadDirection.endsWith(' W')) {
+                    result = '西向';
+                }
             }
             
-            // 單字母判斷（當沒有完整單字時）
-            const upperRoadDirection = roadDirection.toUpperCase().trim();
-            if (upperRoadDirection === 'N' || upperRoadDirection.startsWith('N ') || upperRoadDirection.endsWith(' N')) {
-                return '北向';
-            }
-            if (upperRoadDirection === 'S' || upperRoadDirection.startsWith('S ') || upperRoadDirection.endsWith(' S')) {
-                return '南向';
-            }
-            if (upperRoadDirection === 'E' || upperRoadDirection.startsWith('E ') || upperRoadDirection.endsWith(' E')) {
-                return '東向';
-            }
-            if (upperRoadDirection === 'W' || upperRoadDirection.startsWith('W ') || upperRoadDirection.endsWith(' W')) {
-                return '西向';
+            // 存儲到緩存
+            if (cameraId) {
+                computationCache.directionsByCamera.set(cameraId, result);
             }
             
-            return null;
+            return result;
         }
         
         // 新增：格式化里程顯示，保持原始格式並提取路段資訊
@@ -1113,17 +1141,6 @@
                     return `<option value="${city}" ${city === selectedValue ? 'selected' : ''}>${city} (${count})</option>`;
                 }).join('');
         }
-        
-        function updateDirectionSelect(cameras, selectedValue = '') {
-            const directions = [...new Set(cameras.map(c => extractDirection(c)).filter(Boolean))].sort();
-            
-            const directionSelect = document.getElementById('directionSelect');
-            directionSelect.innerHTML = '<option value="">所有方向</option>' + 
-                directions.map(direction => {
-                    const count = cameras.filter(c => extractDirection(c) === direction).length;
-                    return `<option value="${direction}" ${direction === selectedValue ? 'selected' : ''}>${direction} (${count})</option>`;
-                }).join('');
-        }
 
         function displayCameras(cameras) {
             const container = document.getElementById('cameras-container');
@@ -1151,10 +1168,12 @@
                     <div class="camera-card" onclick="openModal(${startIndex + index})">
                         <div class="camera-image">
                             ${camera.VideoImageUrl || camera.VideoStreamURL ? 
-                                `<img src="${camera.VideoImageUrl || camera.VideoStreamURL}" 
+                                `<img 
+                                     data-src="${camera.VideoImageUrl || camera.VideoStreamURL}" 
                                      alt="${camera.CCTVID || '監視器影像'}" 
                                      loading="lazy"
-                                     style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px;"
+                                     data-camera-id="${camera.CCTVID || index}"
+                                     style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px; background: #f0f0f0;"
                                      onerror="this.parentNode.innerHTML='<div style=&quot;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#999;background:#f5f5f5;border-radius:8px;&quot;><i class=&quot;fas fa-exclamation-triangle&quot; style=&quot;font-size:2rem;margin-bottom:8px;color:#f44336;&quot;></i><span style=&quot;font-size:0.85rem;text-align:center;&quot;>${camera.RoadName || '監視器'}<br>影像載入失敗</span></div>'">
                                  <div class="image-overlay">
                                      <i class="fas fa-search-plus" style="font-size: 2rem;"></i>
@@ -1203,6 +1222,9 @@
 
             container.innerHTML = `<div class="cameras-grid">${grid}</div>`;
             
+            // 初始化Intersection Observer以進行懶加載
+            initializeLazyLoading();
+            
             // 更新分頁
             updatePagination();
         }
@@ -1233,6 +1255,36 @@
                 displayCameras(filteredCameras);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
             }
+        }
+
+        // 優化：使用 Intersection Observer API 實現高效的圖片懶加載
+        function initializeLazyLoading() {
+            if (!('IntersectionObserver' in window)) {
+                // 降級方案：如果瀏覽器不支持，直接加載所有圖片
+                document.querySelectorAll('img[data-src]').forEach(img => {
+                    img.src = img.dataset.src;
+                });
+                return;
+            }
+            
+            const imageObserver = new IntersectionObserver((entries, observer) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const img = entry.target;
+                        img.src = img.dataset.src;
+                        img.removeAttribute('data-src');
+                        observer.unobserve(img);
+                    }
+                });
+            }, {
+                rootMargin: '50px 0px',  // 提前50px開始加載
+                threshold: 0.01
+            });
+            
+            // 監視所有待加載的圖片
+            document.querySelectorAll('img[data-src]').forEach(img => {
+                imageObserver.observe(img);
+            });
         }
 
         function openModal(index) {

@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>公路監視器綜合 - TDX</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="assets/dark-mode.css">
+    <link rel="stylesheet" href="assets/responsive-camera.css">
+    <script>window.CURRENT_PAGE = 'combined';</script>
+    <script src="assets/config.js"></script>
+    <script src="assets/tdx-api.js"></script>
+    <script src="assets/image-handler-simple.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Microsoft JhengHei', Arial, sans-serif; background: linear-gradient(135deg, #1e40af 0%, #0891b2 100%); min-height: 100vh; }
+        .header { background: white; padding: 20px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .container { max-width: 1400px; margin: 0 auto; padding: 0 20px; }
+        .header h1 { color: #1e40af; text-align: center; margin-bottom: 10px; }
+        .back-btn { display: inline-block; padding: 10px 20px; background: #1e40af; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+        .back-btn:hover { background: #0891b2; }
+        .loading { text-align: center; padding: 50px; color: white; font-size: 1.2rem; }
+        
+        /* 地圖和監視器列表左右佈局 */
+        .cameras-map-wrapper { display: grid; grid-template-columns: 1fr 3fr; gap: 20px; margin: 20px 0; }
+        
+        .cameras-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 20px 0; }
+        @media (max-width: 1400px) {
+            .cameras-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 1200px) {
+            .cameras-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 768px) {
+            .cameras-grid { grid-template-columns: 1fr; }
+        }
+        .camera-card { background: white; border-radius: 10px; padding: 0; box-shadow: 0 5px 15px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.3s; overflow: hidden; }
+        .camera-card:hover { transform: translateY(-5px); }
+        .camera-info { padding: 15px; }
+        .camera-info h3 { color: #1e40af; margin-bottom: 8px; font-size: 1.1rem; word-wrap: break-word; overflow-wrap: break-word; }
+        .camera-info p { color: #666; margin: 4px 0; font-size: 0.9rem; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.5; }
+        .camera-image { width: 100%; height: 200px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+        .camera-image img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
+        .camera-image:hover img { transform: scale(1.05); }
+        .image-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); color: white; display: flex; align-items: center; justify-content: center; opacity: 0; transition: opacity 0.3s; }
+        .camera-image:hover .image-overlay { opacity: 1; }
+        .stream-placeholder, .no-image-placeholder, .image-placeholder { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #f8f9fa; }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); }
+        .modal-content { position: relative; margin: 2% auto; width: 90%; max-width: 1200px; }
+        .close { position: absolute; top: 15px; right: 35px; color: #fff; font-size: 40px; font-weight: bold; cursor: pointer; z-index: 1001; }
+        .close:hover { color: #1e40af; }
+        .modal-image { width: 100%; max-height: 80vh; object-fit: contain; }
+        .modal-info { background: white; padding: 20px; border-radius: 10px; margin-top: 20px; }
+        .modal-info h2 { color: #1e40af; margin-bottom: 10px; }
+        .modal-info p { color: #666; margin: 5px 0; word-wrap: break-word; overflow-wrap: break-word; }
+        
+        /* 類型標籤 */
+        .type-badge { background: #1e40af; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; display: inline-block; margin: 2px; font-weight: bold; }
+        .type-badge.highway { background: #1e40af; }
+        .type-badge.expressway { background: #0891b2; }
+        .type-badge.provincial { background: #14b8a6; }
+        
+        .stats-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+        .stat-card { background: white; padding: 20px; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .stat-number { font-size: 2rem; font-weight: bold; color: #1e40af; }
+        .stat-label { color: #666; margin-top: 5px; }
+        
+        /* 篩選區域 */
+        .filter-section { background: white; margin: 20px 0; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .filter-row { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
+        .filter-group { display: flex; flex-direction: column; }
+        .filter-group label { margin-bottom: 5px; font-weight: bold; color: #333; }
+        .filter-group select, .filter-group button { padding: 10px; border-radius: 5px; border: 2px solid #1e40af; font-size: 1rem; }
+        .filter-group button { background: #1e40af; color: white; cursor: pointer; }
+        .filter-group button:hover { background: #0891b2; }
+        
+        /* 地圖容器 */
+        #map {
+            width: 100%;
+            height: 600px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            margin: 0;
+            z-index: 1;
+        }
+        
+        .map-section {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            height: fit-content;
+        }
+        
+        .map-section h3 {
+            color: #1e40af;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        /* 分頁 */
+        .pagination { display: flex; justify-content: center; align-items: center; margin: 20px 0; gap: 10px; }
+        .pagination button { padding: 10px 15px; border: none; background: white; color: #1e40af; border-radius: 5px; cursor: pointer; }
+        .pagination button:hover, .pagination button.active { background: #1e40af; color: white; }
+        .pagination button:disabled { background: #ccc; cursor: not-allowed; }
+        .pagination span { color: white; font-weight: bold; padding: 10px 15px; }
+        
+        /* 深色模式下的分頁樣式 */
+        body.dark-mode .pagination button { background: rgba(255,255,255,0.1); color: #66BB6A; border: 1px solid rgba(255,255,255,0.2); }
+        body.dark-mode .pagination button:hover, body.dark-mode .pagination button.active { background: #66BB6A; color: #1a1a2e; }
+        body.dark-mode .pagination button:disabled { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.3); }
+        body.dark-mode .pagination span { color: #66BB6A; }
+        
+        /* 深色模式下的篩選區域和統計面板樣式 */
+        body.dark-mode .filter-section { background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(30,30,40,0.85) 100%); border: 1px solid rgba(255,255,255,0.1); }
+        body.dark-mode .filter-section h3 { color: #66BB6A; }
+        body.dark-mode .filter-group label { color: rgba(255,255,255,0.9); }
+        body.dark-mode .filter-group select { background: rgba(255,255,255,0.1); color: white; border-color: #66BB6A; }
+        body.dark-mode .filter-group select option { background: #2a2a3e; color: white; }
+        body.dark-mode .filter-group button { background: #66BB6A; color: #1a1a2e; border-color: #66BB6A; }
+        body.dark-mode .filter-group button:hover { background: #81C784; }
+        body.dark-mode .stat-card { background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(30,30,40,0.85) 100%); border: 1px solid rgba(255,255,255,0.1); }
+        body.dark-mode .stat-number { color: #66BB6A; }
+        body.dark-mode .stat-label { color: rgba(255,255,255,0.7); }
+        body.dark-mode #infoPanel { background: rgba(40,40,50,0.95); border-left-color: #66BB6A; }
+        body.dark-mode #infoPanel h3 { color: #66BB6A; }
+        body.dark-mode #infoContent { color: rgba(255,255,255,0.8); }
+        body.dark-mode #infoContent a { color: #66BB6A; }
+        
+        /* 深色模式下的白色背景元素 */
+        body.dark-mode .header { background: linear-gradient(135deg, rgba(30,30,40,0.95) 0%, rgba(25,25,35,0.95) 100%); border-bottom: 1px solid rgba(255,255,255,0.1); }
+        body.dark-mode .header h1 { color: #66BB6A; }
+        body.dark-mode .camera-card { background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(35,35,45,0.95) 100%); border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
+        body.dark-mode .camera-info h3 { color: #66BB6A; }
+        body.dark-mode .camera-info p { color: rgba(255,255,255,0.7); }
+        body.dark-mode .camera-image { background: rgba(20,20,30,0.6); }
+        body.dark-mode .stream-placeholder, body.dark-mode .no-image-placeholder, body.dark-mode .image-placeholder { background: rgba(20,20,30,0.8); color: rgba(255,255,255,0.5); }
+        body.dark-mode .modal-info { background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(35,35,45,0.95) 100%); border: 1px solid rgba(255,255,255,0.1); }
+        body.dark-mode .modal-info h2 { color: #66BB6A; }
+        body.dark-mode .modal-info p { color: rgba(255,255,255,0.8); }
+        body.dark-mode .map-section { background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(35,35,45,0.95) 100%); border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
+        body.dark-mode .map-section h3 { color: #66BB6A; }
+        body.dark-mode .back-btn { background: #66BB6A; color: #1a1a2e; }
+        body.dark-mode .back-btn:hover { background: #81C784; }
+        
+        /* 手機版響應式優化 */
+        @media (max-width: 768px) {
+            .cameras-map-wrapper { grid-template-columns: 1fr; }
+            .camera-info { padding: 12px; }
+            .camera-info h3 { font-size: 1rem; }
+            .camera-info p { font-size: 0.85rem; }
+            .filter-row { flex-direction: column; align-items: stretch; }
+            .stats-panel { grid-template-columns: repeat(2, 1fr); }
+        }
+        
+        @media (max-width: 480px) {
+            .stats-panel { grid-template-columns: 1fr; }
+        }
+    </style>
+    
+    <!-- 載入進度條 -->
+    <script src="assets/loading-progress.js"></script>
+    <script>
+        // 公路監視器綜合載入設定
+        window.AUTO_START_LOADING = false; // 手動控制
+        
+        window.addEventListener('DOMContentLoaded', () => {
+            window.startLoading({
+                labelText: '載入公路監視器...',
+                color: '#1e40af',
+                showLabel: true
+            });
+        });
+    </script>
+</head>
+<body>
+    <div class="header">
+        <div class="container">
+            <h1><i class="fas fa-road"></i> 公路監視器綜合</h1>
+            <p style="text-align: center; color: #666;">國道、快速公路、省道統一監控平台</p>
+        </div>
+    </div>
+
+    <div class="container">
+        <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 返回首頁</a>
+        <button class="theme-toggle" id="themeToggle" title="Toggle Dark Mode" style="width: 45px; height: 45px; border-radius: 50%; background: linear-gradient(135deg, #667eea, #764ba2); color: white; border: none; cursor: pointer; margin-left: 15px; font-size: 1.2rem;">
+            <i class="fas fa-moon"></i>
+        </button>
+        
+        <!-- 公路監視器說明 -->
+        <div id="infoPanel" style="background: #e8f5e8; border-left: 4px solid #1e40af; padding: 20px; margin: 20px 0; border-radius: 8px; transition: all 0.3s ease;">
+            <h3 style="color: #0891b2; margin: 0 0 15px 0; display: flex; align-items: center; justify-content: space-between; cursor: pointer;" onclick="toggleInfoPanel()">
+                <span>
+                    <i class="fas fa-info-circle" style="margin-right: 8px;"></i>
+                    TDX 公路監視器綜合服務說明
+                </span>
+                <i id="toggleIcon" class="fas fa-chevron-up" style="transition: transform 0.3s ease;"></i>
+            </h3>
+            <div id="infoContent" style="color: #333; line-height: 1.6;">
+                <p style="margin: 0 0 10px 0;">
+                    本系統整合交通部 TDX 交通資料流通服務平台提供的國道、快速公路、省道監視器資料，讓使用者在統一平台查看全國公路監視器影像。
+                </p>
+                
+                <div style="margin: 15px 0;">
+                    <p style="margin: 0 0 8px 0; font-weight: bold;">🛣️ 監控類型：</p>
+                    <div style="margin-left: 20px;">
+                        <p style="margin: 5px 0;">
+                            • <span class="type-badge highway">國道</span> - 國道 1、3、5 號及各交流道
+                        </p>
+                        <p style="margin: 5px 0;">
+                            • <span class="type-badge expressway">快速道路</span> - 西濱、台61、台64、台65、台66、台74、台86等快速道路
+                        </p>
+                        <p style="margin: 5px 0;">
+                            • <span class="type-badge provincial">省道</span> - 台1、台3、台9、台11等主要省道
+                        </p>
+                    </div>
+                </div>
+                
+                <p style="margin: 10px 0 0 0; font-size: 0.9rem; color: #666;">
+                    📊 本系統提供即時路況監控、地理位置標記、多條件篩選等功能。
+                </p>
+            </div>
+        </div>
+
+        <!-- 統計面板 -->
+        <div class="stats-panel">
+            <div class="stat-card">
+                <div class="stat-number" id="totalCameras">0</div>
+                <div class="stat-label">監視器總數</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="highwayCameras">0</div>
+                <div class="stat-label">國道監視器</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="expresswayCameras">0</div>
+                <div class="stat-label">快速道路監視器</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="provincialCameras">0</div>
+                <div class="stat-label">省道監視器</div>
+            </div>
+        </div>
+
+        <!-- 篩選區域 -->
+        <div class="filter-section">
+            <h3 style="color: #1e40af; margin-bottom: 15px;"><i class="fas fa-filter"></i> 篩選公路監視器</h3>
+            <div class="filter-row">
+                <div class="filter-group">
+                    <label for="typeSelect">道路類型</label>
+                    <select style="padding: 10px; border-radius: 5px; border: 2px solid #1e40af; font-size: 1rem;" id="typeSelect" onchange="applyFilters('type')">
+                        <option value="">所有類型</option>
+                        <option value="highway">國道</option>
+                        <option value="expressway">快速道路</option>
+                        <option value="provincial">省道</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="citySelect">縣市</label>
+                    <select style="padding: 10px; border-radius: 5px; border: 2px solid #1e40af; font-size: 1rem;" id="citySelect" onchange="applyFilters('city')">
+                        <option value="">所有縣市</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>&nbsp;</label>
+                    <button onclick="resetFilters()"><i class="fas fa-refresh"></i> 重置篩選</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 地圖和監視器列表並排布局 -->
+        <div class="cameras-map-wrapper">
+            <!-- 左側：地圖定位 -->
+            <div class="map-section">
+                <h3><i class="fas fa-map"></i> 監視器地理分佈圖</h3>
+                <div id="map"></div>
+                <p style="margin-top: 10px; color: #666; font-size: 0.9rem;">
+                    💡 提示：點擊地圖上的標記可查看監視器詳細資訊和坐標位置
+                </p>
+            </div>
+
+            <!-- 右側：監視器卡片列表 -->
+            <div id="cameras-container" class="loading">
+                <i class="fas fa-spinner fa-spin"></i> 載入公路監視器資料中...
+            </div>
+        </div>
+
+        <!-- 分頁 -->
+        <div id="pagination" class="pagination" style="display: none;">
+            <button onclick="changePage(-1)" id="prevBtn"><i class="fas fa-chevron-left"></i> 上一頁</button>
+            <span id="pageInfo">第 1 頁，共 1 頁</span>
+            <button onclick="changePage(1)" id="nextBtn">下一頁 <i class="fas fa-chevron-right"></i></button>
+        </div>
+    </div>
+
+    <!-- 影像彈窗 -->
+    <div id="imageModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeImageModal()">&times;</span>
+            <div id="modalImageContainer" style="text-align: center;">
+                <img id="modalImage" class="modal-image" alt="監視器影像">
+            </div>
+            <div class="modal-info">
+                <h2 id="modalTitle">監視器資訊</h2>
+                <p id="modalInfo"></p>
+            </div>
+        </div>
+    </div>
+
+    <script src="assets/dark-mode.js"></script>
+    <script src="assets/camera-map-manager.js"></script>
+    <script>
+        console.log('🔄 開始載入公路監視器綜合頁面...');
+        
+        // 頁面資料
+        const ITEMS_PER_PAGE = 12;
+        let allCameras = [];
+        let filteredCameras = [];
+        let currentPage = 1;
+        let cameraMap = null;
+        let markers = [];
+
+        // 初始化地圖
+        function initMap() {
+            console.log('🗺️ 初始化地圖...');
+            cameraMap = new CameraMapManager('map', {
+                center: [23.97, 120.97],
+                zoom: 7
+            });
+        }
+
+        // 載入所有監視器資料
+        async function loadAllCameras() {
+            try {
+                console.log('📡 開始載入監視器資料...');
+                
+                // 並行載入三個來源的數據
+                const [highways, expressways, provincial] = await Promise.all([
+                    TDXClient.getHighwayCamera(),
+                    TDXClient.getExpresswayCamera(),
+                    TDXClient.getProvincialCamera()
+                ]);
+
+                console.log(`✅ 國道監視器: ${highways.length} 個`);
+                console.log(`✅ 快速道路監視器: ${expressways.length} 個`);
+                console.log(`✅ 省道監視器: ${provincial.length} 個`);
+
+                // 標記資料來源並合併
+                const markedHighways = (highways || []).map(cam => ({
+                    ...cam,
+                    type: 'highway',
+                    typeName: '國道'
+                }));
+                
+                const markedExpressways = (expressways || []).map(cam => ({
+                    ...cam,
+                    type: 'expressway',
+                    typeName: '快速道路'
+                }));
+                
+                const markedProvincial = (provincial || []).map(cam => ({
+                    ...cam,
+                    type: 'provincial',
+                    typeName: '省道'
+                }));
+
+                allCameras = [...markedHighways, ...markedExpressways, ...markedProvincial];
+                console.log(`✅ 總共載入 ${allCameras.length} 個監視器`);
+
+                // 填充篩選選單
+                populateFilters();
+
+                // 顯示所有監視器
+                filteredCameras = [...allCameras];
+                displayCameras();
+                updateStats();
+
+                // 添加標記到地圖
+                addMarkersToMap();
+
+                window.finishLoading();
+            } catch (error) {
+                console.error('❌ 載入監視器資料失敗:', error);
+                document.getElementById('cameras-container').innerHTML = 
+                    `<div class="loading" style="color: red;">
+                        <i class="fas fa-exclamation-circle"></i> 載入失敗，請稍後重試
+                    </div>`;
+                window.finishLoading();
+            }
+        }
+
+        // 填充篩選下拉選單
+        function populateFilters() {
+            console.log('🔄 開始填充篩選下拉選單...');
+            
+            // 填充縣市選單 - 從所有攝像頭中提取唯一城市
+            const allCities = new Set();
+            allCameras.forEach(cam => {
+                if (cam.LocationCityName) {
+                    allCities.add(cam.LocationCityName);
+                }
+            });
+
+            const sortedCities = Array.from(allCities).sort();
+            const citySelect = document.getElementById('citySelect');
+            sortedCities.forEach(city => {
+                const option = document.createElement('option');
+                option.value = city;
+                option.textContent = city;
+                citySelect.appendChild(option);
+            });
+
+            console.log(`✅ 縣市篩選已填充 - 共 ${sortedCities.length} 個縣市`);
+            console.log('✅ 所有篩選下拉選單已完成初始化');
+        }
+
+        // 更新統計數字
+        function updateStats() {
+            console.log('📊 更新統計資訊...');
+            
+            const highwayCount = filteredCameras.filter(c => c.type === 'highway').length;
+            const expresswayCount = filteredCameras.filter(c => c.type === 'expressway').length;
+            const provincialCount = filteredCameras.filter(c => c.type === 'provincial').length;
+
+            document.getElementById('totalCameras').textContent = filteredCameras.length;
+            document.getElementById('highwayCameras').textContent = highwayCount;
+            document.getElementById('expresswayCameras').textContent = expresswayCount;
+            document.getElementById('provincialCameras').textContent = provincialCount;
+        }
+
+        // 應用篩選
+        function applyFilters(filterType) {
+            console.log(`🔍 應用篩選: ${filterType}`);
+            
+            const typeSelect = document.getElementById('typeSelect');
+            const citySelect = document.getElementById('citySelect');
+            
+            const selectedType = typeSelect.value;
+            const selectedCity = citySelect.value;
+
+            filteredCameras = allCameras.filter(cam => {
+                const typeMatch = !selectedType || cam.type === selectedType;
+                const cityMatch = !selectedCity || cam.LocationCityName === selectedCity;
+                return typeMatch && cityMatch;
+            });
+
+            currentPage = 1;
+            displayCameras();
+            updateStats();
+            updateMarkersVisibility();
+            
+            console.log(`✅ 篩選結果: ${filteredCameras.length} 個監視器`);
+        }
+
+        // 顯示監視器卡片
+        function displayCameras() {
+            console.log(`📄 顯示第 ${currentPage} 頁監視器...`);
+            
+            const container = document.getElementById('cameras-container');
+            
+            if (filteredCameras.length === 0) {
+                container.innerHTML = '<div class="loading">沒有找到符合條件的監視器</div>';
+                document.getElementById('pagination').style.display = 'none';
+                return;
+            }
+
+            const totalPages = Math.ceil(filteredCameras.length / ITEMS_PER_PAGE);
+            const startIdx = (currentPage - 1) * ITEMS_PER_PAGE;
+            const endIdx = Math.min(startIdx + ITEMS_PER_PAGE, filteredCameras.length);
+            const pageCameras = filteredCameras.slice(startIdx, endIdx);
+
+            let html = '<div class="cameras-grid">';
+            pageCameras.forEach(cam => {
+                const imageUrl = window.getCameraImageUrl(cam);
+                const typeBadgeClass = `type-badge ${cam.type}`;
+                const description = cam.Description || cam.LocationAreaName || '';
+                
+                html += `
+                    <div class="camera-card">
+                        <div class="camera-image" onclick="showImageModal('${imageUrl}', '${cam.Name}', '${cam.type}', '${description}', '${cam.LocationCityName}')">
+                            ${imageUrl ? `<img src="${imageUrl}" alt="${cam.Name}">` : '<div class="no-image-placeholder"><i class="fas fa-image"></i><p>無影像</p></div>'}
+                            <div class="image-overlay">
+                                <i class="fas fa-search-plus"></i> 點擊查看
+                            </div>
+                        </div>
+                        <div class="camera-info">
+                            <h3>${cam.Name}</h3>
+                            <p><span class="${typeBadgeClass}">${cam.typeName}</span></p>
+                            <p><i class="fas fa-map-marker-alt"></i> ${cam.LocationCityName}</p>
+                            <p style="font-size: 0.85rem; color: #888;">${description}</p>
+                            ${cam.LocationPoint ? `<p style="font-size: 0.8rem; color: #999;">📍 ${cam.LocationPoint.Latitude?.toFixed(4)}, ${cam.LocationPoint.Longitude?.toFixed(4)}</p>` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            container.innerHTML = html;
+
+            // 更新分頁
+            updatePagination(totalPages);
+        }
+
+        // 更新分頁控制
+        function updatePagination(totalPages) {
+            const paginationDiv = document.getElementById('pagination');
+            const pageInfo = document.getElementById('pageInfo');
+            
+            pageInfo.textContent = `第 ${currentPage} 頁，共 ${totalPages} 頁`;
+            
+            if (totalPages > 1) {
+                paginationDiv.style.display = 'flex';
+                document.getElementById('prevBtn').disabled = currentPage === 1;
+                document.getElementById('nextBtn').disabled = currentPage === totalPages;
+            } else {
+                paginationDiv.style.display = 'none';
+            }
+        }
+
+        // 更改頁碼
+        function changePage(direction) {
+            const totalPages = Math.ceil(filteredCameras.length / ITEMS_PER_PAGE);
+            const newPage = currentPage + direction;
+            
+            if (newPage > 0 && newPage <= totalPages) {
+                currentPage = newPage;
+                displayCameras();
+                window.scrollTo(0, 0);
+            }
+        }
+
+        // 重置篩選
+        function resetFilters() {
+            console.log('🔄 重置篩選...');
+            document.getElementById('typeSelect').value = '';
+            document.getElementById('citySelect').value = '';
+            filteredCameras = [...allCameras];
+            currentPage = 1;
+            displayCameras();
+            updateStats();
+            updateMarkersVisibility();
+            console.log('✅ 篩選已重置');
+        }
+
+        // 新增標記到地圖
+        function addMarkersToMap() {
+            console.log(`📍 添加 ${allCameras.length} 個標記到地圖...`);
+            
+            allCameras.forEach(cam => {
+                if (cam.LocationPoint) {
+                    const icon = getMarkerIcon(cam.type);
+                    cameraMap.addMarker(
+                        [cam.LocationPoint.Latitude, cam.LocationPoint.Longitude],
+                        cam.Name,
+                        {
+                            icon: icon,
+                            type: cam.type,
+                            city: cam.LocationCityName,
+                            description: cam.Description || cam.LocationAreaName || ''
+                        },
+                        () => {
+                            showImageModal(
+                                window.getCameraImageUrl(cam),
+                                cam.Name,
+                                cam.type,
+                                cam.Description || cam.LocationAreaName || '',
+                                cam.LocationCityName
+                            );
+                        }
+                    );
+                }
+            });
+        }
+
+        // 取得標記圖標
+        function getMarkerIcon(type) {
+            const colors = {
+                'highway': '#1e40af',
+                'expressway': '#0891b2',
+                'provincial': '#14b8a6'
+            };
+            const color = colors[type] || '#1e40af';
+            
+            return L.divIcon({
+                html: `<div style="background: ${color}; color: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
+                    <i class="fas fa-video"></i>
+                </div>`,
+                className: 'custom-marker',
+                iconSize: [30, 30],
+                iconAnchor: [15, 15],
+                popupAnchor: [0, -15]
+            });
+        }
+
+        // 更新標記可見性
+        function updateMarkersVisibility() {
+            if (!cameraMap) return;
+            
+            const visibleIds = new Set(filteredCameras.map(c => c.Name));
+            cameraMap.updateMarkersVisibility((markerData) => {
+                return visibleIds.has(markerData.title);
+            });
+        }
+
+        // 顯示影像彈窗
+        function showImageModal(imageUrl, name, type, description, city) {
+            const modal = document.getElementById('imageModal');
+            const modalImage = document.getElementById('modalImage');
+            const modalTitle = document.getElementById('modalTitle');
+            const modalInfo = document.getElementById('modalInfo');
+            
+            if (!imageUrl) {
+                return;
+            }
+
+            const typeNames = {
+                'highway': '國道',
+                'expressway': '快速道路',
+                'provincial': '省道'
+            };
+
+            modalImage.src = imageUrl;
+            modalTitle.textContent = name;
+            modalInfo.innerHTML = `
+                <p><strong>類型：</strong> ${typeNames[type] || type}</p>
+                <p><strong>縣市：</strong> ${city}</p>
+                <p><strong>位置：</strong> ${description || '未提供'}</p>
+            `;
+            
+            modal.style.display = 'block';
+        }
+
+        // 關閉影像彈窗
+        function closeImageModal() {
+            document.getElementById('imageModal').style.display = 'none';
+        }
+
+        // 切換資訊面板
+        function toggleInfoPanel() {
+            const infoContent = document.getElementById('infoContent');
+            const toggleIcon = document.getElementById('toggleIcon');
+            
+            infoContent.style.display = infoContent.style.display === 'none' ? 'block' : 'none';
+            toggleIcon.style.transform = infoContent.style.display === 'none' ? 'rotate(0deg)' : 'rotate(180deg)';
+        }
+
+        // 點擊模態框外部關閉
+        window.onclick = function(event) {
+            const modal = document.getElementById('imageModal');
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
+        };
+
+        // 頁面載入完成
+        window.addEventListener('DOMContentLoaded', () => {
+            initMap();
+            loadAllCameras();
+        });
+    </script>
+</body>
+</html>

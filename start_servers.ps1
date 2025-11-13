@@ -40,7 +40,7 @@ Start-Sleep -Seconds 2
 
 # 啟動主應用伺服器
 Write-Host "🚀 啟動主應用伺服器 (端口 8000)..." -ForegroundColor Yellow
-$httpProcess = Start-Process -FilePath python -ArgumentList "-m", "http.server", "8000" -WorkingDirectory $cameraDir -WindowStyle Normal -PassThru
+Start-Process -FilePath python -ArgumentList "-m", "http.server", "8000" -WorkingDirectory $cameraDir -WindowStyle Normal
 
 # 等待伺服器啟動
 Start-Sleep -Seconds 2
