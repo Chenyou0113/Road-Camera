@@ -733,28 +733,28 @@
                     throw new Error('TDX API 尚未初始化');
                 }
                 
-                // 使用 TDX API 載入國道監視器，增加重試機制
+                // 使用 TDX API 載入國道監視器（單一端點，避免過多請求）
                 const endpoint = '/v2/Road/Traffic/CCTV/Freeway?$format=JSON';
-                let response = null;
-                let retries = 0;
-                const maxRetries = 3;
                 
-                while (retries < maxRetries && !response) {
-                    try {
-                        response = await tdxApi.fetchCCTV(endpoint);
-                        break;
-                    } catch (fetchError) {
-                        retries++;
-                        console.warn(`國道數據載入重試 ${retries}/${maxRetries}:`, fetchError);
-                        if (retries < maxRetries) {
-                            await new Promise(resolve => setTimeout(resolve, 1000 * retries)); // 遞增延遲
-                        }
+                let response = null;
+                
+                try {
+                    console.log(`🔄 載入國道監視器: ${endpoint}`);
+                    response = await tdxApi.fetchCCTV(endpoint);
+                    
+                    if (response && Array.isArray(response) && response.length > 0) {
+                        console.log(`✅ 國道數據成功: ${response.length} 個監視器`);
                     }
+                } catch (fetchError) {
+                    console.warn(`❌ 國道API失敗:`, fetchError.message);
+                    response = null;
                 }
                 
                 if (response && Array.isArray(response) && response.length > 0) {
                     allSystemsData.highway.total = response.length;
-                    allSystemsData.highway.online = response.filter(c => c.VideoImageURL || c.PictureURL).length;
+                    allSystemsData.highway.online = response.filter(c => 
+                        c.VideoImageURL || c.PictureURL || c.LiveVideoImageURL || c.StreamURL
+                    ).length;
                     allSystemsData.highway.lastUpdate = new Date();
                     
                     // 添加動畫效果
@@ -775,11 +775,12 @@
                     throw new Error('無效的回應格式');
                 }
             } catch (error) {
-                console.error('載入國道數據錯誤:', error);
-                // 使用模擬數據作為備用
+                console.error('❌ 載入國道數據錯誤:', error.message);
+                
+                // 直接使用備用數據，不再嘗試估算避免429錯誤
                 const fallbackTotal = 1250;
                 allSystemsData.highway.total = fallbackTotal;
-                allSystemsData.highway.online = Math.floor(fallbackTotal * 0.985); // 98.5% 可用率
+                allSystemsData.highway.online = Math.floor(fallbackTotal * 0.985);
                 
                 animateNumber('highwayCameras', fallbackTotal);
                 animateNumber('highwayCount', fallbackTotal);
@@ -791,73 +792,19 @@
 
         // 載入省道監視器數據
         async function loadRoadData() {
-            try {
-                console.log('載入省道監視器數據...');
-                
-                // 顯示載入中狀態
-                document.getElementById('roadCameras').textContent = '載入中...';
-                document.getElementById('roadCount').textContent = '載入中...';
-                document.getElementById('roadLastCheck').textContent = '檢查中...';
-                
-                // 檢查 tdxApi 是否可用
-                if (typeof tdxApi === 'undefined' || !tdxApi) {
-                    throw new Error('TDX API 尚未初始化');
-                }
-                
-                // 使用 TDX API 載入省道監視器，增加重試機制
-                const endpoint = '/v2/Road/Traffic/CCTV/Road?$format=JSON';
-                let response = null;
-                let retries = 0;
-                const maxRetries = 3;
-                
-                while (retries < maxRetries && !response) {
-                    try {
-                        response = await tdxApi.fetchCCTV(endpoint);
-                        break;
-                    } catch (fetchError) {
-                        retries++;
-                        console.warn(`省道數據載入重試 ${retries}/${maxRetries}:`, fetchError);
-                        if (retries < maxRetries) {
-                            await new Promise(resolve => setTimeout(resolve, 1000 * retries)); // 遞增延遲
-                        }
-                    }
-                }
-                
-                if (response && Array.isArray(response) && response.length > 0) {
-                    allSystemsData.road.total = response.length;
-                    allSystemsData.road.online = response.filter(c => c.VideoImageURL || c.PictureURL).length;
-                    allSystemsData.road.lastUpdate = new Date();
-                    
-                    // 添加動畫效果
-                    animateNumber('roadCameras', allSystemsData.road.total);
-                    animateNumber('roadCount', allSystemsData.road.total);
-                    document.getElementById('roadLastCheck').textContent = new Date().toLocaleTimeString('zh-TW');
-                    
-                    console.log(`✅ 省道監視器載入成功: ${allSystemsData.road.total} 個`);
-                } else if (response && Array.isArray(response) && response.length === 0) {
-                    // API 成功但無數據
-                    allSystemsData.road.total = 0;
-                    allSystemsData.road.online = 0;
-                    document.getElementById('roadCameras').textContent = '0';
-                    document.getElementById('roadCount').textContent = '0';
-                    document.getElementById('roadLastCheck').textContent = new Date().toLocaleTimeString('zh-TW');
-                    console.log('⚠️ 省道監視器：API 回應成功但無資料');
-                } else {
-                    throw new Error('無效的回應格式');
-                }
-            } catch (error) {
-                console.error('載入省道數據錯誤:', error);
-                // 使用模擬數據作為備用
-                const fallbackTotal = 2180;
-                allSystemsData.road.total = fallbackTotal;
-                allSystemsData.road.online = Math.floor(fallbackTotal * 0.962); // 96.2% 可用率
-                
-                animateNumber('roadCameras', fallbackTotal);
-                animateNumber('roadCount', fallbackTotal);
-                document.getElementById('roadLastCheck').textContent = `${new Date().toLocaleTimeString('zh-TW')} (備用數據)`;
-                
-                console.log(`🔄 使用備用數據: ${fallbackTotal} 個省道監視器`);
-            }
+            console.log('載入省道監視器數據...');
+            
+            // 直接使用備用數據，避免429錯誤
+            console.log('⚠️ 使用備用數據避免API限制');
+            const fallbackTotal = 2180;
+            allSystemsData.road.total = fallbackTotal;
+            allSystemsData.road.online = Math.floor(fallbackTotal * 0.962);
+            
+            animateNumber('roadCameras', fallbackTotal);
+            animateNumber('roadCount', fallbackTotal);
+            document.getElementById('roadLastCheck').textContent = `${new Date().toLocaleTimeString('zh-TW')} (備用數據)`;
+            
+            console.log(`✅ 省道備用數據已載入: ${fallbackTotal} 個監視器`);
         }
 
         // 模擬其他系統數據（因為API可能不同）
@@ -938,12 +885,14 @@
                     updateDashboardProgress(3, '載入備用數據...');
                     loadFallbackData();
                 } else {
-                    // 並行載入所有數據
-                    updateDashboardProgress(3, '載入交通監視器數據...');
-                    await Promise.all([
-                        loadHighwayData(),
-                        loadRoadData()
-                    ]);
+                    // 序列載入數據以避免429錯誤
+                    updateDashboardProgress(3, '載入國道監視器數據...');
+                    await loadHighwayData();
+                    
+                    // 延遲載入省道數據，避免API限制
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    updateDashboardProgress(3.5, '載入省道監視器數據...');
+                    await loadRoadData();
                 }
                 
                 updateDashboardProgress(4, '載入其他系統數據...');
@@ -1645,17 +1594,20 @@
         `;
         document.head.appendChild(style);
 
-        // 定期更新數據
+        // 定期更新數據（暫時禁用）
         function startAutoUpdate() {
-            setInterval(() => {
+            console.log('⚠️ 自動更新已暫時禁用以避免API限制');
+            // 暫時禁用自動數據更新
+            /* setInterval(() => {
+                console.log('⏰ 執行定期更新（每5分鐘）');
                 loadAllData();
-                autoUpdateChart(); // 更新監視器可用率圖表
-                autoUpdateApiChart(); // 更新API狀態圖表
-            }, 60000); // 每分鐘更新一次
+                autoUpdateChart();
+                autoUpdateApiChart();
+            }, 300000); */
             
             setInterval(() => {
                 updateLastUpdateTime();
-            }, 1000); // 每秒更新時間
+            }, 1000);
         }
 
         // 頁面載入完成後執行

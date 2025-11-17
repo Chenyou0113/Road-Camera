@@ -52,8 +52,9 @@ class TDXApi {
 
                 if (!response.ok) {
                     if (response.status === 429) {
-                        // 處理請求過於頻繁的錯誤
-                        const retryAfter = response.headers.get('Retry-After') || (Math.pow(2, i) * 1000);
+                        // 處理請求過於頻繁的錯誤 - 使用更保守的等待時間
+                        const baseDelay = Math.pow(2, i) * 3000; // 從2秒改為3秒基準
+                        const retryAfter = response.headers.get('Retry-After') || baseDelay;
                         console.warn(`API 請求過於頻繁 (429), 等待 ${retryAfter}ms 後重試...`);
                         await this.delay(retryAfter);
                         continue;
@@ -112,6 +113,8 @@ class TDXApi {
     delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
+
+
 }
 
 // 創建全域實例供其他頁面使用

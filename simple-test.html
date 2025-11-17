@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>簡化測試 - 國道監視器</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .camera-card { 
+            border: 1px solid #ddd; 
+            margin: 10px; 
+            padding: 10px; 
+            border-radius: 8px; 
+            max-width: 320px;
+            display: inline-block;
+        }
+        .camera-image { 
+            width: 100%; 
+            height: 200px; 
+            object-fit: cover; 
+            border-radius: 6px;
+        }
+        .camera-info { padding: 10px 0; }
+        .log { background: #f5f5f5; padding: 5px; margin: 5px 0; border-radius: 3px; font-size: 12px; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e9; color: #2e7d32; }
+    </style>
+</head>
+<body>
+    <h1>簡化測試 - 國道監視器顯示</h1>
+    <button onclick="testCameras()">載入監視器</button>
+    <div id="log"></div>
+    <div id="cameras"></div>
+
+    <script src="assets/config.js"></script>
+    <script src="assets/tdx-api.js"></script>
+    <script>
+        const log = document.getElementById('log');
+        const cameras = document.getElementById('cameras');
+        
+        function addLog(message, type = 'log') {
+            const div = document.createElement('div');
+            div.className = `log ${type}`;
+            div.textContent = new Date().toLocaleTimeString() + ' - ' + message;
+            log.appendChild(div);
+            console.log(message);
+        }
+
+        async function testCameras() {
+            cameras.innerHTML = '';
+            log.innerHTML = '';
+            
+            try {
+                addLog('開始測試...');
+                
+                // 檢查設定
+                addLog('TDX_CONFIG: ' + (typeof TDX_CONFIG !== 'undefined' ? '✅' : '❌'));
+                
+                // 創建 API 實例
+                const tdxApi = new TDXApi();
+                
+                // 獲取國道監視器資料
+                addLog('正在獲取國道監視器資料...');
+                const data = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/Freeway?$format=JSON&$top=10');
+                addLog(`獲取成功: ${data.length} 筆資料`, 'success');
+                
+                // 顯示前幾個監視器
+                data.slice(0, 5).forEach((camera, index) => {
+                    addLog(`監視器 ${index + 1}: ${camera.RoadName || camera.RoadID || '未知'}`);
+                    
+                    // 檢查所有可能的圖片欄位
+                    const imageFields = [
+                        'SrcImageURL', 'VideoImageURL', 'ImageURL', 'PictureURL',
+                        'SnapshotURL', 'LiveImageURL', 'CameraImageURL'
+                    ];
+                    
+                    let imageUrl = null;
+                    for (const field of imageFields) {
+                        if (camera[field]) {
+                            imageUrl = camera[field];
+                            addLog(`  找到圖片URL (${field}): ${imageUrl}`, 'success');
+                            break;
+                        }
+                    }
+                    
+                    if (!imageUrl) {
+                        addLog(`  ❌ 沒有找到圖片URL`, 'error');
+                        addLog(`  可用欄位: ${Object.keys(camera).join(', ')}`);
+                    }
+                    
+                    // 創建監視器卡片
+                    const card = document.createElement('div');
+                    card.className = 'camera-card';
+                    
+                    const finalImageUrl = imageUrl || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZTVlN2ViIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNiIgZmlsbD0iIzZiNzI4MCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPuebuOapn+iLoeaWmDwvdGV4dD48L3N2Zz4=';
+                    
+                    card.innerHTML = `
+                        <img class="camera-image" 
+                             src="${finalImageUrl}" 
+                             alt="監視器 ${index + 1}"
+                             onload="console.log('✅ 圖片載入成功:', '${camera.RoadName || camera.RoadID}')"
+                             onerror="console.error('❌ 圖片載入失敗:', '${finalImageUrl}'); this.style.background='#ffebee';">
+                        <div class="camera-info">
+                            <strong>${camera.RoadName || camera.RoadID || '未知道路'}</strong><br>
+                            <small>位置: ${camera.PositionLat || 0}, ${camera.PositionLon || 0}</small>
+                        </div>
+                    `;
+                    
+                    cameras.appendChild(card);
+                });
+                
+            } catch (error) {
+                addLog('錯誤: ' + error.message, 'error');
+                console.error('詳細錯誤:', error);
+            }
+        }
+    </script>
+</body>
+</html>

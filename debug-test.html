@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TDX API 調試測試</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .log { background: #f5f5f5; padding: 10px; margin: 10px 0; border-radius: 5px; white-space: pre-wrap; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e9; color: #2e7d32; }
+    </style>
+</head>
+<body>
+    <h1>TDX API 調試測試</h1>
+    <button onclick="testAPI()">測試 API</button>
+    <div id="results"></div>
+
+    <script src="assets/config.js"></script>
+    <script src="assets/tdx-api.js"></script>
+    <script>
+        const results = document.getElementById('results');
+        
+        function log(message, type = 'log') {
+            const div = document.createElement('div');
+            div.className = `log ${type}`;
+            div.textContent = new Date().toLocaleTimeString() + ' - ' + message;
+            results.appendChild(div);
+            console.log(message);
+        }
+
+        async function testAPI() {
+            results.innerHTML = '';
+            
+            try {
+                // 檢查設定
+                log('檢查 TDX_CONFIG: ' + (typeof TDX_CONFIG !== 'undefined' ? '✅ 可用' : '❌ 不可用'));
+                if (typeof TDX_CONFIG !== 'undefined') {
+                    log('CLIENT_ID: ' + TDX_CONFIG.CLIENT_ID);
+                }
+                
+                // 創建 TDX API 實例
+                const tdxApi = new TDXApi();
+                log('TDX API 實例創建成功');
+                
+                // 獲取 Token
+                log('正在獲取 Token...');
+                const token = await tdxApi.getAccessToken();
+                log('Token 獲取成功: ' + (token ? token.substring(0, 20) + '...' : '無'), 'success');
+                
+                // 測試國道監視器 API
+                log('正在測試國道監視器 API...');
+                const freewayData = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/Freeway?$format=JSON&$top=5');
+                log('國道監視器資料獲取成功: ' + freewayData.length + ' 筆', 'success');
+                
+                if (freewayData.length > 0) {
+                    const firstCamera = freewayData[0];
+                    log('第一筆資料:');
+                    log(JSON.stringify(firstCamera, null, 2));
+                    
+                    // 檢查圖片 URL 欄位
+                    const imageFields = ['VideoImageURL', 'ImageURL', 'PictureURL', 'SnapshotURL', 'LiveImageURL', 'CameraImageURL'];
+                    log('圖片 URL 欄位檢查:');
+                    imageFields.forEach(field => {
+                        if (firstCamera[field]) {
+                            log(`  ${field}: ${firstCamera[field]}`, 'success');
+                        } else {
+                            log(`  ${field}: 無資料`);
+                        }
+                    });
+                }
+                
+            } catch (error) {
+                log('錯誤: ' + error.message, 'error');
+                console.error('詳細錯誤:', error);
+            }
+        }
+    </script>
+</body>
+</html>

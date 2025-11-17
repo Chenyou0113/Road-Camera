@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="台灣市區道路即時監視器影像查詢系統 - 整合 TDX 交通資料">
+    <title>市區道路監視器 - 即時路況監控系統</title>
+    
+    <!-- External Resources -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    
+    <!-- Project Stylesheets -->
+    <link rel="stylesheet" href="assets/dark-mode.css">
+    <link rel="stylesheet" href="assets/responsive-camera.css">
+    
+    <!-- Page Configuration -->
+    <script>window.CURRENT_PAGE = 'city';</script>
+    
+    <style>
+        /* ==================== 基礎樣式 ==================== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Microsoft JhengHei', 'PingFang TC', 'Noto Sans TC', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        /* ==================== 標頭區域 ==================== */
+        .header {
+            background: white;
+            padding: 25px 0;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .header h1 {
+            color: #667eea;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 2rem;
+            font-weight: 700;
+        }
+        
+        .header-subtitle {
+            text-align: center;
+            color: #666;
+            font-size: 1rem;
+            margin-top: 8px;
+        }
+        
+        /* ==================== 容器與佈局 ==================== */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        
+        /* ==================== 導航按鈕 ==================== */
+        .nav-section {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin: 20px 0;
+        }
+        
+        .back-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        .back-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .theme-toggle {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 1.3rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        
+        .theme-toggle:hover {
+            transform: scale(1.1) rotate(15deg);
+        }
+        
+        /* ==================== 資訊面板 ==================== */
+        .info-panel {
+            background: linear-gradient(135deg, #e8f5e9 0%, #f1f8f4 100%);
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        
+        .info-panel h3 {
+            color: #2E7D32;
+            margin: 0 0 15px 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            font-size: 1.2rem;
+        }
+        
+        .info-content {
+            color: #333;
+            line-height: 1.8;
+        }
+        
+        .info-content a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.3s ease;
+        }
+        
+        .info-content a:hover {
+            color: #764ba2;
+            text-decoration: underline;
+        }
+        
+        /* ==================== 篩選控制 ==================== */
+        .filter-section {
+            display: flex;
+            gap: 15px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .filter-control {
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 2px solid #667eea;
+            font-size: 1rem;
+            min-width: 150px;
+            transition: all 0.3s ease;
+            background: white;
+        }
+        
+        .filter-control:focus {
+            outline: none;
+            border-color: #764ba2;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .reset-btn {
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .reset-btn:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        /* ==================== 縣市按鈕 ==================== */
+        .city-buttons-panel {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            margin: 20px 0;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+        
+        .city-buttons-panel h3 {
+            margin: 0 0 20px 0;
+            color: #667eea;
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+        
+        .city-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        
+        .city-button {
+            padding: 10px 18px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border: 2px solid #667eea;
+            border-radius: 25px;
+            color: #667eea;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .city-button:hover {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+        
+        .city-button.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .city-button .count {
+            background: rgba(255, 255, 255, 0.25);
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        
+        /* ==================== 統計面板 ==================== */
+        .stats-panel {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            margin: 20px 0;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            text-align: center;
+        }
+        
+        .stat-item {
+            padding: 15px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+            transition: all 0.3s ease;
+        }
+        
+        .stat-item:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+        }
+        
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+        
+        .stat-label {
+            color: #666;
+            font-size: 0.95rem;
+            font-weight: 500;
+        }
+        
+        /* ==================== 監視器網格 ==================== */
+        .cameras-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 25px;
+            margin: 30px 0;
+        }
+        
+        @media (max-width: 768px) {
+            .cameras-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .camera-card {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .camera-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+        }
+        
+        .camera-image {
+            width: 100%;
+            height: 220px;
+            background: #f5f5f5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .camera-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.3s ease;
+        }
+        
+        .camera-card:hover .camera-image img {
+            transform: scale(1.08);
+        }
+        
+        .image-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(102, 126, 234, 0.85);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            font-size: 1.2rem;
+            font-weight: 500;
+        }
+        
+        .camera-image:hover .image-overlay {
+            opacity: 1;
+        }
+        
+        .camera-info {
+            padding: 20px;
+        }
+        
+        .camera-info h3 {
+            color: #667eea;
+            margin-bottom: 12px;
+            font-size: 1.15rem;
+            font-weight: 600;
+        }
+        
+        .camera-info p {
+            color: #666;
+            margin: 8px 0;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: start;
+            gap: 8px;
+        }
+        
+        .camera-info p i {
+            margin-top: 2px;
+            flex-shrink: 0;
+        }
+        
+        .camera-location {
+            color: #667eea !important;
+            font-weight: 600 !important;
+        }
+        
+        /* ==================== 載入動畫 ==================== */
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 60px 20px;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            margin: 30px auto;
+            max-width: 800px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        
+        .loading-icon {
+            font-size: 3.5rem;
+            margin-bottom: 20px;
+            color: #667eea;
+            animation: spin 2s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .loading-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 15px;
+            color: #667eea;
+        }
+        
+        .progress-bar-container {
+            width: 100%;
+            max-width: 500px;
+            height: 10px;
+            background: rgba(102, 126, 234, 0.2);
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 20px 0;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.5s ease;
+            border-radius: 10px;
+        }
+        
+        .loading-steps {
+            width: 100%;
+            max-width: 500px;
+            margin-top: 25px;
+        }
+        
+        .loading-step {
+            display: flex;
+            align-items: center;
+            margin: 12px 0;
+            padding: 10px 15px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            border-radius: 8px;
+        }
+        
+        .loading-step i {
+            margin-right: 12px;
+            width: 20px;
+            text-align: center;
+        }
+        
+        .loading-step.active {
+            background: rgba(102, 126, 234, 0.1);
+        }
+        
+        .loading-stats {
+            margin-top: 25px;
+            font-size: 0.95rem;
+            color: #666;
+        }
+        
+        /* ==================== 模態視窗 ==================== */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.9);
+            overflow: auto;
+        }
+        
+        .modal-content {
+            position: relative;
+            margin: 3% auto;
+            width: 90%;
+            max-width: 1200px;
+            animation: modalFadeIn 0.3s ease;
+        }
+        
+        @keyframes modalFadeIn {
+            from { opacity: 0; transform: translateY(-30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .close {
+            position: absolute;
+            top: 20px;
+            right: 40px;
+            color: white;
+            font-size: 40px;
+            font-weight: bold;
+            cursor: pointer;
+            z-index: 1001;
+            transition: all 0.3s ease;
+        }
+        
+        .close:hover {
+            color: #667eea;
+            transform: rotate(90deg);
+        }
+        
+        .modal-image {
+            width: 100%;
+            max-height: 70vh;
+            object-fit: contain;
+            border-radius: 12px;
+        }
+        
+        .modal-info {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            margin-top: 20px;
+        }
+        
+        .modal-info h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.8rem;
+        }
+        
+        .modal-info p {
+            color: #666;
+            margin: 10px 0;
+            line-height: 1.8;
+        }
+        
+        /* ==================== 分頁控制 ==================== */
+        .pagination {
+            margin: 40px 0;
+            text-align: center;
+        }
+        
+        .pagination-content {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            display: inline-block;
+        }
+        
+        .pagination button {
+            padding: 12px 20px;
+            margin: 0 5px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .pagination button:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+        }
+        
+        .pagination button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .page-info {
+            margin: 0 15px;
+            font-size: 1.1rem;
+            color: #667eea;
+            font-weight: 600;
+        }
+        
+        /* ==================== 返回頂部按鈕 ==================== */
+        .back-to-top {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 55px;
+            height: 55px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 50%;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            z-index: 999;
+            font-size: 1.3rem;
+            transition: all 0.3s ease;
+        }
+        
+        .back-to-top:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 6px 25px rgba(0,0,0,0.4);
+        }
+        
+        /* ==================== 深色模式 ==================== */
+        body.dark-mode {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        }
+        
+        body.dark-mode .header {
+            background: linear-gradient(135deg, rgba(30,30,40,0.95) 0%, rgba(25,25,35,0.95) 100%);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        body.dark-mode .header h1 {
+            color: #66BB6A;
+        }
+        
+        body.dark-mode .header-subtitle {
+            color: rgba(255,255,255,0.7);
+        }
+        
+        body.dark-mode .back-btn {
+            background: linear-gradient(135deg, #66BB6A 0%, #81C784 100%);
+            color: #1a1a2e;
+        }
+        
+        body.dark-mode .info-panel {
+            background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(35,35,45,0.95) 100%);
+            border-left-color: #66BB6A;
+        }
+        
+        body.dark-mode .info-panel h3 {
+            color: #66BB6A;
+        }
+        
+        body.dark-mode .info-content {
+            color: rgba(255,255,255,0.8);
+        }
+        
+        body.dark-mode .filter-control {
+            background: rgba(40,40,50,0.8);
+            border-color: #66BB6A;
+            color: white;
+        }
+        
+        body.dark-mode .city-buttons-panel,
+        body.dark-mode .stats-panel {
+            background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(35,35,45,0.95) 100%);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        body.dark-mode .city-buttons-panel h3,
+        body.dark-mode .stat-value {
+            color: #66BB6A;
+        }
+        
+        body.dark-mode .stat-label {
+            color: rgba(255,255,255,0.7);
+        }
+        
+        body.dark-mode .city-button {
+            background: linear-gradient(135deg, rgba(40,40,50,0.8) 0%, rgba(35,35,45,0.8) 100%);
+            border-color: #66BB6A;
+            color: #66BB6A;
+        }
+        
+        body.dark-mode .city-button:hover,
+        body.dark-mode .city-button.active {
+            background: linear-gradient(135deg, #66BB6A 0%, #81C784 100%);
+            color: #1a1a2e;
+        }
+        
+        body.dark-mode .camera-card {
+            background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(35,35,45,0.95) 100%);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        body.dark-mode .camera-info h3 {
+            color: #66BB6A;
+        }
+        
+        body.dark-mode .camera-info p {
+            color: rgba(255,255,255,0.7);
+        }
+        
+        body.dark-mode .modal-info {
+            background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(35,35,45,0.95) 100%);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        body.dark-mode .modal-info h2 {
+            color: #66BB6A;
+        }
+        
+        body.dark-mode .modal-info p {
+            color: rgba(255,255,255,0.8);
+        }
+        
+        body.dark-mode .pagination-content {
+            background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(35,35,45,0.95) 100%);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+    </style>
+    
+    <!-- Loading Progress Script -->
+    <script src="assets/loading-progress.js"></script>
+    <script src="assets/image-handler-simple.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <div class="container">
+            <h1><i class="fas fa-city"></i> 市區道路監視器</h1>
+            <p class="header-subtitle">即時市區道路路況監控系統 - 整合 TDX 交通資料</p>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Navigation Section -->
+        <div class="nav-section">
+            <a href="index.html" class="back-btn">
+                <i class="fas fa-arrow-left"></i> 返回首頁
+            </a>
+            <button class="theme-toggle" id="themeToggle" title="切換深色模式">
+                <i class="fas fa-moon"></i>
+            </button>
+        </div>
+
+        <!-- Info Panel -->
+        <div class="info-panel" id="infoPanel">
+            <h3 onclick="toggleInfoPanel()">
+                <span>
+                    <i class="fas fa-database"></i>
+                    TDX 交通資料服務說明
+                </span>
+                <i id="toggleIcon" class="fas fa-chevron-down"></i>
+            </h3>
+            <div class="info-content" id="infoContent" style="display: none;">
+                <p>本系統使用<strong>交通部 TDX 交通資料流通服務平台</strong>提供的即時市區道路監視器資料。</p>
+                <div style="margin: 15px 0;">
+                    <p><strong>🔗 相關資源：</strong></p>
+                    <ul style="margin-left: 20px;">
+                        <li>
+                            <a href="https://tdx.transportdata.tw" target="_blank">
+                                TDX 交通資料流通服務平台 <i class="fas fa-external-link-alt"></i>
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+                <p style="font-size: 0.9rem; color: #666; font-style: italic;">
+                    📊 本系統整合多個縣市的市區道路監視器，提供全台灣即時路況查詢服務。
+                </p>
+            </div>
+        </div>
+
+        <!-- Filter Section -->
+        <div class="filter-section">
+            <select class="filter-control" id="citySelect" onchange="onCityChange()">
+                <option value="">所有縣市</option>
+            </select>
+            <select class="filter-control" id="districtSelect" onchange="applyFilters()" disabled>
+                <option value="">請先選擇縣市</option>
+            </select>
+            <input type="text" 
+                   class="filter-control" 
+                   id="searchInput" 
+                   placeholder="搜尋路段或地點..." 
+                   onkeyup="applyFilters()">
+            <button class="reset-btn" onclick="resetFilters()">
+                <i class="fas fa-redo"></i> 重置篩選
+            </button>
+        </div>
+
+        <!-- City Buttons Panel -->
+        <div class="city-buttons-panel">
+            <h3><i class="fas fa-map-marker-alt"></i> 縣市快速篩選</h3>
+            <div class="city-buttons" id="cityButtons">
+                <!-- 縣市按鈕將動態生成 -->
+            </div>
+        </div>
+
+        <!-- Stats Panel -->
+        <div class="stats-panel">
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-value" id="totalCameras">0</div>
+                    <div class="stat-label">監視器總數</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="availableCameras">0</div>
+                    <div class="stat-label">可用影像</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="filteredCameras">0</div>
+                    <div class="stat-label">顯示數量</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cameras Container -->
+        <div id="cameras-container" class="loading">
+            <div class="loading-icon">
+                <i class="fas fa-road fa-spin"></i>
+            </div>
+            <div class="loading-title">載入市區道路監視器中...</div>
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination" id="pagination" style="display: none;">
+            <div class="pagination-content">
+                <button onclick="changePage('first')">
+                    <i class="fas fa-angle-double-left"></i> 首頁
+                </button>
+                <button onclick="changePage('prev')">
+                    <i class="fas fa-angle-left"></i> 上一頁
+                </button>
+                <span class="page-info">
+                    第 <span id="currentPageNum">1</span> 頁，共 <span id="totalPagesNum">1</span> 頁
+                </span>
+                <button onclick="changePage('next')">
+                    下一頁 <i class="fas fa-angle-right"></i>
+                </button>
+                <button onclick="changePage('last')">
+                    末頁 <i class="fas fa-angle-double-right"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal -->
+    <div id="imageModal" class="modal" onclick="closeModal()">
+        <span class="close">&times;</span>
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <img id="modalImage" class="modal-image" src="" alt="監視器大圖">
+            <div class="modal-info">
+                <h2 id="modalTitle"></h2>
+                <div id="modalDescription"></div>
+                <div id="modalLocation"></div>
+                <p id="modalStream"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Back to Top Button -->
+    <div class="back-to-top" id="backToTop">
+        <i class="fas fa-arrow-up"></i>
+    </div>
+
+    <!-- Scripts -->
+    <script src="assets/navbar.js"></script>
+    <script src="assets/config.js"></script>
+    <script src="assets/tdx-api.js"></script>
+    <script src="assets/dark-mode.js"></script>
+    
+    <script>
+        // ==================== 全局變數 ====================
+        let allCameras = [];
+        let filteredCameras = [];
+        let currentPage = 1;
+        let itemsPerPage = 12;
+        let totalPages = 1;
+
+        // ==================== 工具函數 ====================
+        
+        // 切換資訊面板
+        function toggleInfoPanel() {
+            const content = document.getElementById('infoContent');
+            const icon = document.getElementById('toggleIcon');
+            
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.className = 'fas fa-chevron-up';
+            } else {
+                content.style.display = 'none';
+                icon.className = 'fas fa-chevron-down';
+            }
+        }
+
+        // 根據經緯度判斷縣市
+        function getCityFromCoordinates(lon, lat) {
+            if (!lon || !lat) return '未知';
+            
+            const cityRanges = [
+                { name: '台北市', lonMin: 121.45, lonMax: 121.65, latMin: 24.95, latMax: 25.20 },
+                { name: '新北市', lonMin: 121.30, lonMax: 121.80, latMin: 24.60, latMax: 25.30 },
+                { name: '桃園市', lonMin: 121.00, lonMax: 121.50, latMin: 24.80, latMax: 25.10 },
+                { name: '台中市', lonMin: 120.50, lonMax: 121.20, latMin: 24.00, latMax: 24.50 },
+                { name: '台南市', lonMin: 120.00, lonMax: 120.50, latMin: 22.90, latMax: 23.40 },
+                { name: '高雄市', lonMin: 120.20, lonMax: 120.50, latMin: 22.50, latMax: 23.10 }
+            ];
+            
+            for (const city of cityRanges) {
+                if (lon >= city.lonMin && lon <= city.lonMax && 
+                    lat >= city.latMin && lat <= city.latMax) {
+                    return city.name;
+                }
+            }
+            
+            return '其他地區';
+        }
+
+        // 提取鄉鎮區資訊
+        function extractDistrict(locationDescription) {
+            if (!locationDescription) return '';
+            
+            const districtKeywords = ['區', '市', '鄉', '鎮'];
+            for (const keyword of districtKeywords) {
+                const regex = new RegExp(`([^\\s]{1,4}${keyword})`, 'g');
+                const matches = locationDescription.match(regex);
+                if (matches) return matches[0];
+            }
+            
+            return '';
+        }
+
+        // ==================== 載入函數 ====================
+        
+        async function loadCameras() {
+            console.log('開始載入市區道路監視器資料...');
+            
+            const container = document.getElementById('cameras-container');
+            const progressBar = document.getElementById('progress-bar');
+            
+            try {
+                // 模擬載入進度
+                let progress = 0;
+                const progressInterval = setInterval(() => {
+                    progress += 10;
+                    if (progressBar) progressBar.style.width = `${Math.min(progress, 90)}%`;
+                    if (progress >= 90) clearInterval(progressInterval);
+                }, 200);
+                
+                // 縣市列表
+                const cities = [
+                    { name: '台北市', endpoint: '/v2/Road/Traffic/CCTV/City/Taipei?$format=JSON' },
+                    { name: '新北市', endpoint: '/v2/Road/Traffic/CCTV/City/NewTaipei?$format=JSON' },
+                    { name: '桃園市', endpoint: '/v2/Road/Traffic/CCTV/City/Taoyuan?$format=JSON' },
+                    { name: '台中市', endpoint: '/v2/Road/Traffic/CCTV/City/Taichung?$format=JSON' },
+                    { name: '台南市', endpoint: '/v2/Road/Traffic/CCTV/City/Tainan?$format=JSON' },
+                    { name: '高雄市', endpoint: '/v2/Road/Traffic/CCTV/City/Kaohsiung?$format=JSON' }
+                ];
+                
+                let allCamerasData = [];
+                
+                // 載入各縣市資料
+                for (const city of cities) {
+                    try {
+                        console.log(`載入 ${city.name}...`);
+                        const response = await tdxApi.fetchCCTV(city.endpoint);
+                        
+                        let cameras = Array.isArray(response) ? response : 
+                                     (response.CCTVs || response.data || []);
+                        
+                        cameras = cameras.map(camera => ({
+                            ...camera,
+                            city: city.name,
+                            City: city.name,
+                            district: extractDistrict(camera.LocationDescription || '')
+                        }));
+                        
+                        allCamerasData.push(...cameras);
+                        console.log(`✅ ${city.name}: ${cameras.length} 個監視器`);
+                    } catch (error) {
+                        console.warn(`${city.name} 載入失敗:`, error.message);
+                    }
+                }
+                
+                allCameras = allCamerasData;
+                filteredCameras = allCameras;
+                
+                clearInterval(progressInterval);
+                if (progressBar) progressBar.style.width = '100%';
+                
+                populateFilters();
+                updateStats();
+                displayCameras(allCameras);
+                
+                console.log(`✅ 載入完成，共 ${allCameras.length} 個監視器`);
+                
+            } catch (error) {
+                console.error('載入失敗:', error);
+                container.innerHTML = `
+                    <div class="loading" style="color: #ff6b6b;">
+                        <i class="fas fa-exclamation-triangle"></i><br>
+                        載入監視器資料時發生錯誤<br><br>
+                        <small>${error.message}</small>
+                    </div>
+                `;
+            }
+        }
+
+        // ==================== UI 更新函數 ====================
+        
+        function populateFilters() {
+            const cities = [...new Set(allCameras.map(c => c.city || c.City).filter(Boolean))].sort();
+            
+            const citySelect = document.getElementById('citySelect');
+            citySelect.innerHTML = '<option value="">所有縣市</option>' + 
+                cities.map(city => {
+                    const count = allCameras.filter(c => (c.city || c.City) === city).length;
+                    return `<option value="${city}">${city} (${count})</option>`;
+                }).join('');
+            
+            generateCityButtons(cities);
+        }
+
+        function generateCityButtons(cities)

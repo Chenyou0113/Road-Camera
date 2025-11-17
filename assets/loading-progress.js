@@ -20,7 +20,12 @@ class LoadingProgressBar {
         this.element = null;
         this.updatePending = false;
         
-        this.createProgressBar();
+        // 延遲創建進度條直到DOM準備就緒
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => this.createProgressBar());
+        } else {
+            this.createProgressBar();
+        }
     }
     
     createProgressBar() {
@@ -40,7 +45,18 @@ class LoadingProgressBar {
         
         // 隱藏進度條
         this.element.style.display = 'none';
-        document.body.appendChild(this.element);
+        
+        // 確保document.body存在後再添加元素
+        if (document.body) {
+            document.body.appendChild(this.element);
+        } else {
+            // 如果body還未準備好，等待DOM載入完成
+            document.addEventListener('DOMContentLoaded', () => {
+                if (document.body && this.element) {
+                    document.body.appendChild(this.element);
+                }
+            });
+        }
     }
     
     addStyles() {
@@ -138,13 +154,20 @@ class LoadingProgressBar {
     start() {
         if (this.isStarted) return this;
         
+        // 確保元素已創建
+        if (!this.element) {
+            this.createProgressBar();
+        }
+        
         this.isStarted = true;
         this.isFinished = false;
         this.progress = 0;
         
         // 顯示進度條
-        this.element.style.display = 'block';
-        this.element.classList.remove('hidden');
+        if (this.element) {
+            this.element.style.display = 'block';
+            this.element.classList.remove('hidden');
+        }
         
         // 開始進度
         this.set(0);
@@ -170,9 +193,11 @@ class LoadingProgressBar {
         if (!this.updatePending) {
             this.updatePending = true;
             requestAnimationFrame(() => {
-                const fillElement = this.element.querySelector('.loading-progress-fill');
-                if (fillElement) {
-                    fillElement.style.width = this.progress + '%';
+                if (this.element) {
+                    const fillElement = this.element.querySelector('.loading-progress-fill');
+                    if (fillElement) {
+                        fillElement.style.width = percentage + '%';
+                    }
                 }
                 this.updatePending = false;
             });
@@ -226,31 +251,39 @@ class LoadingProgressBar {
     hide() {
         if (!this.isStarted) return this;
         
-        this.element.classList.add('hidden');
-        
-        setTimeout(() => {
-            this.element.style.display = 'none';
-            this.isStarted = false;
-            this.progress = 0;
-        }, 300);
+        if (this.element) {
+            this.element.classList.add('hidden');
+            
+            setTimeout(() => {
+                if (this.element) {
+                    this.element.style.display = 'none';
+                }
+                this.isStarted = false;
+                this.progress = 0;
+            }, 300);
+        }
         
         return this;
     }
     
     updateLabel(text) {
-        const labelElement = this.element.querySelector('.loading-progress-label');
-        if (labelElement) {
-            labelElement.textContent = text;
+        if (this.element) {
+            const labelElement = this.element.querySelector('.loading-progress-label');
+            if (labelElement) {
+                labelElement.textContent = text;
+            }
         }
         return this;
     }
     
     setColor(color) {
         this.options.color = color;
-        const fillElement = this.element.querySelector('.loading-progress-fill');
-        if (fillElement) {
-            fillElement.style.background = `linear-gradient(90deg, ${color}, ${color}AA, ${color})`;
-            fillElement.style.boxShadow = `0 0 10px ${color}66`;
+        if (this.element) {
+            const fillElement = this.element.querySelector('.loading-progress-fill');
+            if (fillElement) {
+                fillElement.style.background = `linear-gradient(90deg, ${color}, ${color}AA, ${color})`;
+                fillElement.style.boxShadow = `0 0 10px ${color}66`;
+            }
         }
         return this;
     }
