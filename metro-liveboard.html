@@ -202,6 +202,7 @@
         .status-badge.arriving { background: #4caf50; color: white; }
         .status-badge.waiting { background: #ff9800; color: white; }
         .status-badge.departed { background: #9e9e9e; color: white; }
+        .status-badge.no-service { background: #f44336; color: white; }
         
         .direction-badge {
             display: inline-flex;
@@ -649,11 +650,18 @@
         let currentStationId = '';
         let currentStationName = '';
         let allLiveboardData = [];
+        let currentLiveboardData = []; // 當前系統的實時列車資訊
         let autoRefreshInterval = null;
 
         // 選擇捷運系統
         function selectSystem(systemCode) {
             currentSystem = systemCode;
+            
+            // 重置統計面板
+            document.getElementById('totalTrains').textContent = '0';
+            document.getElementById('arrivingTrains').textContent = '0';
+            document.getElementById('stationCount').textContent = '0';
+            document.getElementById('lineCount').textContent = '0';
             
             // 更新卡片選中狀態
             document.querySelectorAll('.system-card').forEach(card => {
@@ -674,15 +682,114 @@
             lineSelect.innerHTML = '<option value="">載入中...</option>';
             
             try {
-                const endpoint = `/v2/Rail/Metro/LiveBoard/${systemCode}?$format=JSON`;
-                const response = await tdxApi.fetch(endpoint);
+                // 第一步：從 Station 端點獲取完整的車站列表
+                let stationData = [];
+                try {
+                    const stationEndpoint = `/v2/Rail/Metro/Station/${systemCode}?$format=JSON&$top=500`;
+                    stationData = await tdxApi.fetch(stationEndpoint);
+                    console.log(`${systemCode} Station API 回應數量:`, stationData?.length || 0);
+                } catch (e) {
+                    console.warn(`Station 端點失敗:`, e.message);
+                }
                 
-                console.log(`${systemCode} API回應:`, response);
+                // 第二步：從 LiveBoard 端點獲取路線和列車資訊
+                let liveboardData = [];
+                try {
+                    // 方法1：先嘗試標準查詢
+                    let liveboardEndpoint = `/v2/Rail/Metro/LiveBoard/${systemCode}?$format=JSON&$top=1000`;
+                    liveboardData = await tdxApi.fetch(liveboardEndpoint);
+                    console.log(`${systemCode} LiveBoard API 回應數量:`, liveboardData?.length || 0);
+                } catch (e) {
+                    console.warn(`LiveBoard 端點失敗:`, e.message);
+                }
                 
-                allLiveboardData = Array.isArray(response) ? response : [];
+                // 保存到全局變量
+                currentLiveboardData = liveboardData || [];
+                // 從 Station 資料中提取 LineName（因為 LiveBoard 可能不完整）
+                const lineSet = new Set();
+                const stationLineMap = {}; // 車站 ID -> 路線陣列
                 
-                // 提取所有路線
-                const lines = [...new Set(allLiveboardData.map(item => item.LineName?.Zh_tw || item.LineID).filter(Boolean))];
+                // TRTC 路線代碼對應表
+                const lineCodeMap = {
+                    'BL': '板南線',
+                    'SL': '淡水信義線',
+                    'CL': '新店線',
+                    'C': '中和新蘆線',
+                    'LC': '環狀線',
+                    'F': '文湖線',
+                    'R': '紅線',
+                    'G': '綠線',
+                    'O': '橙線',
+                    'Y': '黃線'
+                };
+                
+                // 首先從 Station 資料中收集所有可能的路線
+                if (Array.isArray(stationData) && stationData.length > 0) {
+                    stationData.forEach(item => {
+                        const lineID = item.LineID || '';
+                        const lineCode = lineID.substring(0, 2).toUpperCase();
+                        
+                        // 優先使用 lineCodeMap，其次使用 LineName，最後使用 LineID
+                        let lineName = lineCodeMap[lineCode];
+                        if (!lineName || lineName === '未知') {
+                            lineName = item.LineName?.Zh_tw;
+                        }
+                        if (!lineName || lineName === '未知') {
+                            lineName = lineID;
+                        }
+                        
+                        if (lineName && lineName !== '未知') {
+                            lineSet.add(lineName);
+                        }
+                    });
+                }
+                
+                console.log(`${systemCode} 從 Station 提取的路線:`, Array.from(lineSet));
+                
+                // 如果 Station 資料中沒有完整的路線資訊，再從 LiveBoard 補充
+                if (Array.isArray(liveboardData) && liveboardData.length > 0) {
+                    liveboardData.forEach(item => {
+                        const lineName = item.LineName?.Zh_tw;
+                        if (lineName && lineName !== '未知') {
+                            lineSet.add(lineName);
+                        }
+                        if (item.StationID) {
+                            if (!stationLineMap[item.StationID]) {
+                                stationLineMap[item.StationID] = [];
+                            }
+                            if (lineName && lineName !== '未知' && !stationLineMap[item.StationID].includes(lineName)) {
+                                stationLineMap[item.StationID].push(lineName);
+                            }
+                        }
+                    });
+                }
+                
+                // 增強 Station 資料，添加路線資訊
+                const enhancedStationData = Array.isArray(stationData) ? stationData.map(station => ({
+                    ...station,
+                    LineName: stationLineMap[station.StationID] ? { Zh_tw: stationLineMap[station.StationID].join('、') } : { Zh_tw: '未知' },
+                    LineID: station.StationID,
+                    source: 'station'
+                })) : [];
+                
+                console.log(`${systemCode} 從 LiveBoard 提取的路線:`, Array.from(lineSet));
+                
+                // 使用增強後的 Station 資料作為主要資料源
+                allLiveboardData = enhancedStationData.length > 0 ? enhancedStationData : liveboardData;
+                
+                console.log(`${systemCode} 最終使用的資料來源:`, enhancedStationData.length > 0 ? 'Station (增強)' : 'LiveBoard');
+                console.log(`${systemCode} 總資料數:`, allLiveboardData.length);
+                
+                // 詳細記錄第一筆資料的結構
+                if (allLiveboardData && allLiveboardData.length > 0) {
+                    console.log(`${systemCode} 第一筆資料:`, JSON.stringify(allLiveboardData[0], null, 2));
+                }
+                
+                // 提取所有路線（從 LiveBoard 資料中提取）
+                const lines = Array.from(lineSet);
+                
+                console.log(`${systemCode} 找到 ${lines.length} 條路線:`, lines);
+                console.log(`${systemCode} 找到 ${new Set(allLiveboardData.map(item => item.StationID)).size} 個車站`);
                 
                 lineSelect.innerHTML = '<option value="">請選擇路線</option>' +
                     lines.map(line => `<option value="${line}">${line}</option>`).join('');
@@ -758,8 +865,9 @@
             stationNameEl.textContent = currentStationName;
             container.style.display = 'block';
             
-            // 篩選該車站的列車資料
-            const stationTrains = allLiveboardData.filter(item => item.StationID === currentStationId);
+            // 篩選該車站的列車資料（從 currentLiveboardData 而不是 allLiveboardData）
+            // allLiveboardData 是 Station 資料，currentLiveboardData 是實時列車資訊
+            const stationTrains = currentLiveboardData.filter(item => item.StationID === currentStationId);
             
             console.log('車站列車資料:', stationTrains);
             
@@ -781,18 +889,24 @@
             let trainRows = [];
             stationTrains.forEach(item => {
                 console.log('處理項目:', item);
+                console.log('項目完整結構:', JSON.stringify(item, null, 2));
                 
-                // 檢查多種可能的資料結構
-                const estimates = item.Estimates || item.estimates || [];
+                // 檢查是否有 Estimates 陣列（台北捷運、台中捷運格式）
+                const estimates = item.Estimates || item.estimates || item.NextBuses || item.Buses || [];
                 
                 if (Array.isArray(estimates) && estimates.length > 0) {
+                    // 台北捷運、台中捷運格式
                     estimates.forEach(estimate => {
-                        // 嘗試多種欄位名稱
                         const destName = estimate.DestinationStationName?.Zh_tw || 
                                        estimate.DestinationStationName || 
                                        estimate.DestinationStation?.Zh_tw ||
                                        estimate.Direction || 
                                        '未知';
+                        
+                        // 嘗試提取方向信息
+                        const directionText = estimate.Direction || 
+                                            estimate.TripHeadSign || 
+                                            (estimate.DestinationStationName?.Zh_tw ? `往${estimate.DestinationStationName.Zh_tw}` : '');
                         
                         const estTime = estimate.EstimateTime !== undefined ? estimate.EstimateTime : 
                                        estimate.estimateTime !== undefined ? estimate.estimateTime : 0;
@@ -801,13 +915,38 @@
                             stationName: item.StationName?.Zh_tw || item.StationName || currentStationName,
                             lineName: item.LineName?.Zh_tw || item.LineName || item.LineID || '未知路線',
                             lineID: item.LineID || item.LineId || '',
-                            direction: destName,
+                            tripHeadSign: directionText,
+                            destinationName: destName,
+                            direction: directionText,
                             estimateTime: estTime,
                             trainNo: estimate.TrainNo || estimate.trainNo || '--'
                         });
                     });
+                } else if (item.EstimateTime !== undefined || item.DestinationStationName) {
+                    // KLRT 格式：直接在物件上有列車資訊
+                    const destName = item.DestinationStationName?.Zh_tw || 
+                                   item.DestinationStationName || 
+                                   item.TripHeadSign || 
+                                   '未知';
+                    
+                    const estTime = item.EstimateTime !== undefined ? item.EstimateTime : 0;
+                    
+                    // 只顯示有到達時間的列車，或顯示所有項目
+                    trainRows.push({
+                        stationName: item.StationName?.Zh_tw || item.StationName || currentStationName,
+                        lineName: item.LineName?.Zh_tw || item.LineName || item.LineID || '未知路線',
+                        lineID: item.LineID || item.LineId || '',
+                        tripHeadSign: item.TripHeadSign || destName,
+                        destinationName: item.DestinationStationName?.Zh_tw || item.DestinationStationName || '未知終點',
+                        direction: item.TripHeadSign || destName,
+                        estimateTime: estTime,
+                        trainNo: item.TrainNo || '--',
+                        serviceStatus: item.ServiceStatus // 0=正常, 3=不行駛
+                    });
+                    
+                    console.log('✅ KLRT 格式列車:', { direction: item.TripHeadSign, dest: destName, time: estTime });
                 } else {
-                    console.warn('沒有 Estimates 資料:', item);
+                    console.warn('⚠️ 無法識別的數據格式，顯示全部欄位:', Object.keys(item));
                 }
             });
 
@@ -836,7 +975,20 @@
             const rows = trainRows.map(train => {
                 const lineColor = lineColors[train.lineID] || '#666';
                 const estimateMin = Math.floor(train.estimateTime / 60);
-                const status = getTrainStatus(estimateMin);
+                const estimateSec = train.estimateTime % 60;
+                
+                // 格式化時間顯示：分鐘和秒數
+                const timeDisplay = estimateMin > 0 
+                    ? `${estimateMin}分${estimateSec}秒`
+                    : `${estimateSec}秒`;
+                
+                // 根據 serviceStatus 決定狀態
+                let status;
+                if (train.serviceStatus === 3) {
+                    status = { text: '不行駛', class: 'no-service' };
+                } else {
+                    status = getTrainStatus(estimateMin);
+                }
                 
                 return `
                     <tr>
@@ -849,11 +1001,11 @@
                         <td>
                             <span class="direction-badge">
                                 <i class="fas fa-arrow-right"></i>
-                                ${train.direction}
+                                ${train.tripHeadSign || train.direction}
                             </span>
                         </td>
-                        <td>${train.direction}</td>
-                        <td>${estimateMin} 分鐘</td>
+                        <td>${train.destinationName || '未知終點'}</td>
+                        <td>${timeDisplay}</td>
                         <td><span class="status-badge ${status.class}">${status.text}</span></td>
                     </tr>
                 `;
@@ -878,7 +1030,18 @@
         // 更新系統統計
         function updateSystemStats() {
             const stations = [...new Set(allLiveboardData.map(item => item.StationID))];
-            const lines = [...new Set(allLiveboardData.map(item => item.LineID || item.LineName?.Zh_tw))];
+            const lines = [...new Set(allLiveboardData.map(item => {
+                if (item.LineName?.Zh_tw && item.LineName.Zh_tw !== '未知') {
+                    return item.LineName.Zh_tw;
+                }
+                return null;
+            }).filter(Boolean))];
+            
+            console.log('🚇 系統統計:', { 
+                stations: stations.length, 
+                lines: lines.length,
+                lineDetails: lines
+            });
             
             document.getElementById('stationCount').textContent = stations.length;
             document.getElementById('lineCount').textContent = lines.length;
@@ -888,6 +1051,8 @@
         function updateTrainStats(trainRows) {
             const total = trainRows.length;
             const arriving = trainRows.filter(t => t.estimateTime <= 180).length; // 3分鐘內
+            
+            console.log('📊 更新統計:', { total, arriving, trainRows });
             
             document.getElementById('totalTrains').textContent = total;
             document.getElementById('arrivingTrains').textContent = arriving;

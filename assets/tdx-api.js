@@ -40,36 +40,64 @@ class TDXApi {
     }
 
     async fetchCCTV(endpoint, retries = 3) {
+        console.log(`📡 fetchCCTV 被調用，端點: ${endpoint}`);
+        
         for (let i = 0; i < retries; i++) {
             try {
+                console.log(`🔐 嘗試獲取 Token (第 ${i + 1}/${retries} 次)...`);
                 const token = await this.getAccessToken();
-                const response = await fetch(`https://tdx.transportdata.tw/api/basic${endpoint}`, {
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Accept-Encoding': 'gzip'
-                    }
-                });
+                console.log(`✅ Token 已取得`);
+                
+                const fullUrl = `https://tdx.transportdata.tw/api/basic${endpoint}`;
+                console.log(`🌐 正在請求: ${fullUrl}`);
+                
+                // 添加超時控制 (30 秒)
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 30000);
+                
+                try {
+                    const response = await fetch(fullUrl, {
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Accept-Encoding': 'gzip'
+                        },
+                        signal: controller.signal
+                    });
 
-                if (!response.ok) {
-                    if (response.status === 429) {
-                        // 處理請求過於頻繁的錯誤 - 使用更保守的等待時間
-                        const baseDelay = Math.pow(2, i) * 3000; // 從2秒改為3秒基準
-                        const retryAfter = response.headers.get('Retry-After') || baseDelay;
-                        console.warn(`API 請求過於頻繁 (429), 等待 ${retryAfter}ms 後重試...`);
-                        await this.delay(retryAfter);
-                        continue;
+                    clearTimeout(timeoutId);
+                    console.log(`📊 API 回應狀態: ${response.status} ${response.statusText}`);
+
+                    if (!response.ok) {
+                        if (response.status === 429) {
+                            // 處理請求過於頻繁的錯誤 - 使用更保守的等待時間
+                            const baseDelay = Math.pow(2, i) * 3000; // 從2秒改為3秒基準
+                            const retryAfter = response.headers.get('Retry-After') || baseDelay;
+                            console.warn(`⚠️ API 請求過於頻繁 (429), 等待 ${retryAfter}ms 後重試...`);
+                            await this.delay(retryAfter);
+                            continue;
+                        }
+                        throw new Error(`HTTP error! status: ${response.status}`);
                     }
-                    throw new Error(`HTTP error! status: ${response.status}`);
+
+                    const data = await response.json();
+                    console.log(`✅ 數據已取得，共 ${Array.isArray(data) ? data.length : (data?.data?.length || data?.records?.length || 0)} 筆紀錄`);
+                    console.log(`📋 API 回應結構:`, Object.keys(data));
+                    return data;
+                } catch (fetchError) {
+                    clearTimeout(timeoutId);
+                    throw fetchError;
                 }
-
-                return await response.json();
             } catch (error) {
+                console.error(`❌ 第 ${i + 1} 次嘗試失敗:`, error.message);
+                
                 if (i === retries - 1) {
-                    console.error('API 呼叫失敗:', error);
+                    console.error('🔴 所有重試都已失敗，拋出錯誤');
                     throw error;
                 }
-                console.warn(`嘗試 ${i + 1} 失敗，重試中...`);
-                await this.delay(1000 * (i + 1)); // 漸進式延遲
+                
+                const delay = 1000 * (i + 1);
+                console.warn(`⏳ 等待 ${delay}ms 後重試...`);
+                await this.delay(delay);
             }
         }
     }
