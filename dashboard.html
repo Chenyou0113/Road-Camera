@@ -672,6 +672,28 @@
                 </div>
             </div>
         </div>
+
+        <!-- 即時影像展示 -->
+        <div class="chart-section">
+            <h3><i class="fas fa-video"></i> 即時監視器影像</h3>
+            <div style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap;">
+                <button id="live-highway-btn" class="chart-btn active" onclick="switchLiveView('highway')">
+                    <i class="fas fa-road"></i> 國道
+                </button>
+                <button id="live-expressway-btn" class="chart-btn" onclick="switchLiveView('expressway')">
+                    <i class="fas fa-route"></i> 快速公路
+                </button>
+                <button id="live-city-btn" class="chart-btn" onclick="switchLiveView('city')">
+                    <i class="fas fa-city"></i> 省道
+                </button>
+            </div>
+            <div id="live-cameras-container" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 15px; margin-top: 15px;">
+                <div style="text-align: center; padding: 40px; color: #999;">
+                    <i class="fas fa-spinner fa-spin" style="font-size: 2rem; margin-bottom: 10px;"></i><br>
+                    載入即時影像中...
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="assets/navbar.js"></script>
@@ -684,6 +706,14 @@
             water: { total: 0, online: 0, lastUpdate: null },
             debris: { total: 0, online: 0, lastUpdate: null }
         };
+
+        // 即時影像相關變數
+        let liveViewData = {
+            highway: [],
+            expressway: [],
+            city: []
+        };
+        let currentLiveView = 'highway';
 
         // 數字動畫效果
         function animateNumber(elementId, targetValue, duration = 1000) {
@@ -1650,6 +1680,104 @@
                     element.textContent = '準備中...';
                 }
             });
+        });
+
+        // 即時影像功能
+        function switchLiveView(type) {
+            currentLiveView = type;
+            document.querySelectorAll('[id^="live-"]').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(`live-${type}-btn`).classList.add('active');
+            displayLiveView(type);
+        }
+
+        function displayLiveView(type) {
+            const container = document.getElementById('live-cameras-container');
+            const cameras = liveViewData[type] || [];
+            
+            if (cameras.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #999; grid-column: 1/-1;">
+                        <i class="fas fa-video-slash" style="font-size: 2rem; margin-bottom: 10px;"></i><br>
+                        目前沒有可用的即時影像
+                    </div>
+                `;
+                return;
+            }
+            
+            const html = cameras.slice(0, 12).map((camera, index) => {
+                const imageUrl = camera.VideoImageUrl || camera.VideoImageURL || camera.VideoStreamURL || camera.PictureURL || '';
+                const title = camera.RoadName || camera.FreewayNumber || '監視器';
+                const location = camera.LocationMile || camera.LocationDescription || camera.City || '';
+                
+                return `
+                    <div style="border: 1px solid #ddd; border-radius: 8px; overflow: hidden; background: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                        <div style="height: 200px; background: #f0f0f0; position: relative; overflow: hidden;">
+                            ${imageUrl ? 
+                                `<img src="${imageUrl}" alt="${title}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.parentNode.innerHTML+='<div style=\"display:flex;align-items:center;justify-content:center;height:100%;color:#999;\"><i class=\"fas fa-exclamation-triangle\" style=\"font-size:1.5rem;\"></i></div>'">` :
+                                `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#ccc;"><i class="fas fa-video-slash" style="font-size:2rem;"></i></div>`
+                            }
+                        </div>
+                        <div style="padding: 12px;">
+                            <h4 style="margin: 0 0 8px 0; color: #1e40af; font-size: 0.95rem;">${title}</h4>
+                            <p style="margin: 0 0 4px 0; font-size: 0.85rem; color: #666;">
+                                <i class="fas fa-map-marker-alt" style="color: #FF9800;"></i> ${location}
+                            </p>
+                            <p style="margin: 0; font-size: 0.75rem; color: #999;">
+                                <i class="fas fa-camera"></i> ${camera.CCTVID || '未知'}
+                            </p>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            container.innerHTML = html || '<div style="text-align: center; padding: 40px; color: #999; grid-column: 1/-1;">無可用影像</div>';
+        }
+
+        // 載入即時影像數據
+        async function loadLiveViewData() {
+            try {
+                // 載入國道
+                const hwayResponse = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/Freeway?$format=JSON');
+                if (hwayResponse && Array.isArray(hwayResponse)) {
+                    liveViewData.highway = hwayResponse.slice(0, 12);
+                } else if (hwayResponse && hwayResponse.data && Array.isArray(hwayResponse.data)) {
+                    liveViewData.highway = hwayResponse.data.slice(0, 12);
+                }
+                
+                // 載入快速公路
+                const expayResponse = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/ExpressWay?$format=JSON');
+                if (expayResponse && Array.isArray(expayResponse)) {
+                    liveViewData.expressway = expayResponse.slice(0, 12);
+                } else if (expayResponse && expayResponse.data && Array.isArray(expayResponse.data)) {
+                    liveViewData.expressway = expayResponse.data.slice(0, 12);
+                }
+                
+                // 載入省道（使用Highway端點並篩選）
+                const provResponse = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/Highway?$format=JSON');
+                if (provResponse && Array.isArray(provResponse)) {
+                    liveViewData.city = provResponse.slice(0, 12);
+                } else if (provResponse && provResponse.data && Array.isArray(provResponse.data)) {
+                    liveViewData.city = provResponse.data.slice(0, 12);
+                }
+                
+                displayLiveView('highway');
+            } catch (error) {
+                console.error('載入即時影像失敗:', error);
+                document.getElementById('live-cameras-container').innerHTML = `
+                    <div style="text-align: center; padding: 40px; color: #999; grid-column: 1/-1;">
+                        <i class="fas fa-exclamation-triangle" style="font-size: 2rem; margin-bottom: 10px;"></i><br>
+                        載入即時影像失敗
+                    </div>
+                `;
+            }
+        }
+
+        // 頁面載入完成後載入即時影像
+        window.addEventListener('load', () => {
+            setTimeout(loadLiveViewData, 2000);
+        });
         });
     </script>
 

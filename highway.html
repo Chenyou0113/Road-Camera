@@ -363,37 +363,18 @@
         
         // 格式化位置資訊，包含里程、方向和路段
         function formatLocationInfo(camera) {
-            let locationParts = [];
-            
-            // 優先顯示里程（確保是字符串類型）
-            if (camera.LocationMile && typeof camera.LocationMile === 'string') {
-                locationParts.push(camera.LocationMile);
-            } else if (camera.LocationDescription && typeof camera.LocationDescription === 'string') {
-                locationParts.push(camera.LocationDescription);
+            // 優先顯示里程數（主要資訊）
+            if (camera.LocationMile && typeof camera.LocationMile === 'string' && camera.LocationMile.trim()) {
+                return camera.LocationMile.trim();
             }
             
-            // 添加方向資訊（確保是字符串類型並轉換為中文）
-            if (camera.RoadDirection && typeof camera.RoadDirection === 'string') {
-                const chineseDirection = convertDirectionToChinese(camera.RoadDirection);
-                locationParts.push(chineseDirection);
+            // 其次顯示位置描述
+            if (camera.LocationDescription && typeof camera.LocationDescription === 'string' && camera.LocationDescription.trim()) {
+                return camera.LocationDescription.trim();
             }
             
-            // 添加路段資訊（確保是字符串類型）
-            if (camera.RoadSection && typeof camera.RoadSection === 'string') {
-                locationParts.push(camera.RoadSection);
-            } else if (camera.LocationDescription && typeof camera.LocationDescription === 'string') {
-                // 如果沒有專門的路段欄位，嘗試從位置描述中提取路段信息
-                const sectionMatches = camera.LocationDescription.match(/(.*?段|.*?線|.*?交流道|.*?收費站|.*?服務區)/);
-                if (sectionMatches) {
-                    const sectionInfo = sectionMatches[1];
-                    // 只有當sectionInfo不同於已有的LocationMile時才添加
-                    if (!camera.LocationMile || !camera.LocationMile.includes(sectionInfo)) {
-                        locationParts.push(sectionInfo);
-                    }
-                }
-            }
-            
-            return locationParts.length > 0 ? locationParts.join(' ') : '未提供位置資訊';
+            // 如果都沒有,返回未提供
+            return '未提供位置資訊';
         }
 
         // 國道列表
@@ -591,6 +572,17 @@
             
             console.log(`📊 國道監視器: ${allCamerasFromSources.length} 筆`);
             
+            // 調試: 檢查第一筆資料的影像欄位
+            if (allCamerasFromSources.length > 0) {
+                const firstCamera = allCamerasFromSources[0];
+                console.log('🔍 第一筆監視器資料:');
+                console.log('  - VideoImageUrl:', firstCamera.VideoImageUrl);
+                console.log('  - VideoImageURL:', firstCamera.VideoImageURL);
+                console.log('  - VideoStreamURL:', firstCamera.VideoStreamURL);
+                console.log('  - PictureURL:', firstCamera.PictureURL);
+                console.log('  - 所有欄位:', Object.keys(firstCamera));
+            }
+            
             // 最終進度更新
             window.setLoadingProgress(100);
             window.updateLoadingLabel('載入監視器影像...');
@@ -650,7 +642,7 @@
 
         function updateStats() {
             document.getElementById('totalCameras').textContent = allCameras.length;
-            const available = allCameras.filter(c => c.VideoImageUrl || c.VideoStreamURL).length;
+            const available = allCameras.filter(c => c.VideoImageUrl || c.VideoImageURL || c.VideoStreamURL || c.PictureURL).length;
             document.getElementById('availableCameras').textContent = available;
             document.getElementById('filteredCameras').textContent = filteredCameras.length;
             
@@ -867,12 +859,12 @@
                 return `
                     <div class="camera-card" onclick="openModal(${startIndex + index})">
                         <div class="camera-image">
-                            ${camera.VideoImageUrl || camera.VideoStreamURL ? 
-                                `<img src="${camera.VideoImageUrl || camera.VideoStreamURL}" 
+                            ${camera.VideoImageUrl || camera.VideoImageURL || camera.VideoStreamURL || camera.PictureURL ? 
+                                `<img src="${camera.VideoImageUrl || camera.VideoImageURL || camera.VideoStreamURL || camera.PictureURL}" 
                                      alt="${camera.CCTVID || '監視器影像'}" 
                                      loading="lazy"
                                      style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px;"
-                                     onerror="this.parentNode.innerHTML='<div style=&quot;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#999;background:#f5f5f5;border-radius:8px;&quot;><i class=&quot;fas fa-exclamation-triangle&quot; style=&quot;font-size:2rem;margin-bottom:8px;color:#f44336;&quot;></i><span style=&quot;font-size:0.85rem;text-align:center;&quot;>${camera.RoadName || '監視器'}<br>影像載入失敗</span></div>'">
+                                     onerror="this.parentNode.innerHTML='<div style=\"display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#999;background:#f5f5f5;border-radius:8px;\"><i class=\"fas fa-exclamation-triangle\" style=\"font-size:2rem;margin-bottom:8px;color:#f44336;\"></i><span style=\"font-size:0.85rem;text-align:center;\">${camera.RoadName || '監視器'}<br>影像載入失敗</span></div>'">
                                  <div class="image-overlay">
                                      <i class="fas fa-search-plus" style="font-size: 2rem;"></i>
                                  </div>` : 
@@ -940,7 +932,7 @@
             const modalRoad = document.getElementById('modalRoad');
             const modalCoords = document.getElementById('modalCoords');
             
-            modalImg.src = camera.VideoImageUrl || camera.VideoStreamURL || '';
+            modalImg.src = camera.VideoImageUrl || camera.VideoImageURL || camera.VideoStreamURL || camera.PictureURL || '';
             modalTitle.textContent = camera.RoadName || '國道監視器';
             
             // 顯示里程資訊 - 優先使用 LocationMile，格式化為"第XXk+XXX"
@@ -961,7 +953,7 @@
                     </a>`;
             }
             
-            const imageUrl = camera.VideoImageUrl || camera.VideoStreamURL;
+            const imageUrl = camera.VideoImageUrl || camera.VideoImageURL || camera.VideoStreamURL || camera.PictureURL;
             if (imageUrl) {
                 coordsHtml += `<br><i class="fas fa-external-link-alt"></i> <a href="${imageUrl}" target="_blank" style="color: #1e40af; text-decoration: none; margin-left: 5px;">查看原始影像</a>`;
             }
