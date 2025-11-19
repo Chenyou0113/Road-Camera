@@ -8,51 +8,6 @@
     <link rel="stylesheet" href="assets/dark-mode.css">
     <link rel="stylesheet" href="assets/responsive-camera.css">
     <script src="assets/image-handler-simple.js"></script>
-    <script>
-        // 預載入機制 - 在頁面開始載入時就開始準備資料
-        let isWaterPreloading = false;
-        let waterPreloadPromise = null;
-        
-        function startWaterPreload() {
-            if (isWaterPreloading) return waterPreloadPromise;
-            
-            isWaterPreloading = true;
-            console.log('🚀 啟動水利監視器預載入機制');
-            
-            waterPreloadPromise = new Promise(async (resolve) => {
-                try {
-                    // 預載入 API 端點準備
-                    const preloadEndpoints = [
-                        'https://alerts.ncdr.nat.gov.tw/JSONAtomFeeds/waterlevelstations.json',
-                        'https://data.coa.gov.tw/Service/OpenData/FromM/AgricultureiRiceFailure.aspx'
-                    ];
-                    
-                    console.log('✅ 水利監視器 API 端點準備完成');
-                    
-                    // 預熱 fetch 連線
-                    try {
-                        await Promise.race([
-                            fetch(preloadEndpoints[0], { method: 'HEAD' }).catch(() => {}),
-                            new Promise(resolve => setTimeout(resolve, 1000))
-                        ]);
-                        console.log('✅ 預熱連線完成');
-                    } catch (error) {
-                        console.log('預熱連線略過:', error.message);
-                    }
-                    
-                    resolve(true);
-                } catch (error) {
-                    console.error('水利監視器預載入過程發生錯誤:', error);
-                    resolve(false);
-                }
-            });
-            
-            return waterPreloadPromise;
-        }
-        
-        // 立即開始預載入
-        startWaterPreload();
-    </script>
     <style>
         * {
             margin: 0;
@@ -1197,238 +1152,116 @@
                 
                 // 初始化載入指示器
                 container.innerHTML = createProgressIndicator();
-                updateProgress(1, 10, '連接水利署官方 API...');
+                updateProgress(1, 10, '連接水利署 SensorThings API...');
 
-                // 優先使用水利署官方 API
-                let wraApiCameras = [];
+                // 直接使用 STA API（最穩定的來源）
                 try {
-                    console.log('🔄 嘗試載入水利署官方 API...');
-                    await new Promise(resolve => setTimeout(resolve, 800)); // 模擬連接時間
-                    
-                    const wraApiResponse = await fetch('https://fmg.wra.gov.tw/swagger/api/cctv_citynew');
-                    updateProgress(1, 20, '正在獲取水利署資料...');
-                    
-                    if (wraApiResponse.ok) {
-                        const wraApiData = await wraApiResponse.json();
-                        if (wraApiData.cctvs && wraApiData.cctvs.length > 0) {
-                            console.log(`✅ 成功載入水利署官方 API: ${wraApiData.cctvs.length} 筆資料`);
-                            updateProgress(2, 35, '處理水利署監視器資料...', wraApiData.cctvs.length);
-                            
-                            wraApiCameras = wraApiData.cctvs.map(camera => ({
-                                '@iot.id': `wra_${camera.cctv_name}_${camera.lat}_${camera.lon}`,
-                                Thing: {
-                                    name: camera.cctv_name,
-                                    properties: {
-                                        stationName: camera.cctv_name,
-                                        authority: camera.wraunit_name || '水利署',
-                                        location: `${camera.city_name}${camera.town_name}`,
-                                        station_name: camera.station_name
-                                    },
-                                    location: {
-                                        coordinates: [camera.lon, camera.lat]
-                                    }
-                                },
-                                Observations: camera.new_imgurl ? [{
-                                    result: camera.new_imgurl,
-                                    phenomenonTime: new Date().toISOString()
-                                }] : [],
-                                source: 'wra_official',
-                                sourceLabel: '水利署官方API',
-                                streamUrl: camera.stream_url
-                            }));
-                        }
-                    }
-                } catch (error) {
-                    console.warn('⚠️ 水利署官方 API 載入失敗，改用 STA API:', error.message);
-                    updateProgress(2, 25, '水利署 API 連接失敗，切換備用 API...');
-                }
-
-                // 如果官方API無資料或失敗，使用備用的 STA API
-                if (wraApiCameras.length === 0) {
-                    console.log('🔄 使用 STA API 載入監視器資料...');
+                    console.log('🔄 載入 SensorThings API 監視器資料...');
                     updateProgress(2, 30, '連接 SensorThings API...');
                     
-                    // 先嘗試全域搜尋了解總共有多少監視器
-                    try {
-                        await new Promise(resolve => setTimeout(resolve, 600)); // 模擬連接時間
-                        const allCamerasResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$count=true&$top=0');
-                        if (allCamerasResponse.ok) {
-                            const allCamerasData = await allCamerasResponse.json();
-                            console.log(`📊 STA 資料庫總共有 ${allCamerasData['@iot.count']} 個監視器`);
-                        }
-                    } catch (e) {
-                        console.warn('無法獲取總監視器數量');
+                    // 使用最穩定的STA API批次查詢
+                    updateProgress(2, 40, '查詢水利署監視器...');
+                    const wraResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$filter=contains(Thing/properties/authority,\'水利\')&$expand=Thing($select=name,description,properties,Locations),Observations($top=1;$orderby=phenomenonTime desc)&$top=500&$count=true');
+                    
+                    if (!wraResponse.ok) {
+                        throw new Error('STA API 回應錯誤');
                     }
                     
-                    // 載入水利署直轄監視器
-                    updateProgress(2, 40, '載入水利署直轄監視器...');
-                    const wraResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%B0%B4%E5%88%A9%E7%BD%B2%27&$count=true');
-                
-                    // 載入水利署與地方政府合建監視器
-                    updateProgress(2, 50, '載入合作建置監視器...');
-                    const cooperativeResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%B0%B4%E5%88%A9%E7%BD%B2%EF%BC%88%E8%88%87%E7%B8%A3%E5%B8%82%E6%94%BF%E5%BA%9C%E5%90%88%E5%BB%BA%EF%BC%89%27&$count=true');
-                    
-                    // 嘗試載入更多相關的水利單位
-                    updateProgress(2, 60, '搜尋地方水利單位監視器...');
-                    const extendedLocalResponses = await Promise.allSettled([
-                        // 原有的查詢
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%8A%B1%E8%93%AE%E7%B8%A3%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E7%A7%91%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%8A%B1%E8%93%AE%E7%B8%A3%E6%94%BF%E5%BA%9C%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%8A%B1%E8%93%AE%E7%B8%A3%E5%BB%BA%E8%A8%AD%E8%99%95%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E5%8F%B0%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E5%8F%B0%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E5%B7%A5%E5%8B%99%E5%B1%80%E6%B0%B4%E5%88%A9%E5%B7%A5%E7%A8%8B%E8%99%95%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%96%B0%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E6%A1%83%E5%9C%92%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%8B%99%E5%B1%80%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E5%8F%B0%E4%B8%AD%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E9%AB%98%E9%9B%84%E5%B8%82%E6%94%BF%E5%BA%9C%E6%B0%B4%E5%88%A9%E5%B1%80%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E8%87%BA%E5%8C%97%E5%B8%82%E6%94%BF%E5%BA%9C%E5%B7%A5%E5%8B%99%E5%B1%80%27&$count=true'),
-                        
-                        // 嘗試更廣泛的搜尋
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=contains(Thing/properties/authority,%27%E6%B0%B4%E5%88%A9%27)&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=contains(Thing/properties/authority,%27%E6%B2%B3%E5%B7%9D%27)&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=contains(Thing/properties/authority,%27%E5%88%86%E7%BD%B2%27)&$count=true'),
-                        
-                        // 其他可能的水利相關單位
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E7%B6%93%E6%BF%9F%E9%83%A8%E6%B0%B4%E5%88%A9%E7%BD%B2%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E7%AC%AC%E4%B8%80%E6%B2%B3%E5%B7%9D%E5%B1%80%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E7%AC%AC%E4%BA%8C%E6%B2%B3%E5%B7%9D%E5%B1%80%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E7%AC%AC%E4%B8%89%E6%B2%B3%E5%B7%9D%E5%B1%80%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E7%AC%AC%E5%9B%9B%E6%B2%B3%E5%B7%9D%E5%B1%80%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E7%AC%AC%E4%BA%94%E6%B2%B3%E5%B7%9D%E5%B1%80%27&$count=true'),
-                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$expand=Thing,Observations&$filter=Thing/properties/authority%20eq%20%27%E7%AC%AC%E5%85%AD%E6%B2%B3%E5%B7%9D%E5%B1%80%27&$count=true')
-                    ]);
-                    
-                    if (!wraResponse.ok || !cooperativeResponse.ok) {
-                        throw new Error('API 回應錯誤');
-                    }
-
                     const wraData = await wraResponse.json();
-                    const cooperativeData = await cooperativeResponse.json();
-                    
                     updateProgress(3, 70, '處理監視器資料中...', wraData.value?.length || 0);
                     
-                    // 處理地方政府水利單位的回應
-                    const localCameras = [];
-                    let processedCount = 0;
-                    
-                    for (const response of extendedLocalResponses) {
-                        if (response.status === 'fulfilled' && response.value.ok) {
-                            const data = await response.value.json();
-                            if (data.value && data.value.length > 0) {
-                                console.log(`找到地方水利單位資料: ${data.value.length} 筆`, data.value[0]?.Thing?.properties?.authority);
-                                const cameras = data.value.map(camera => ({
-                                    ...camera,
-                                    source: 'local',
-                                    sourceLabel: '地方水利單位'
-                                }));
-                                localCameras.push(...cameras);
-                                processedCount += data.value.length;
-                                
-                                // 更新處理進度
-                                updateProgress(3, 70 + (processedCount / 50), '處理地方水利單位資料...', processedCount);
-                            }
+                    // 標記來源並根據 authority 分類
+                    allCameras = (wraData.value || []).map(camera => {
+                        const authority = camera.Thing?.properties?.authority || '';
+                        let source = 'other';
+                        let sourceLabel = '其他水利單位';
+                        
+                        if (authority.includes('水利署') && !authority.includes('合建')) {
+                            source = 'wra';
+                            sourceLabel = '水利署直轄';
+                        } else if (authority.includes('合建')) {
+                            source = 'cooperative';
+                            sourceLabel = '水利署與地方合建';
+                        } else if (authority.includes('河川局')) {
+                            source = 'river';
+                            sourceLabel = '河川局';
                         }
-                    }
-                    
-                    console.log(`STA API 載入: 水利署 ${wraData.value?.length || 0} 筆, 合建 ${cooperativeData.value?.length || 0} 筆, 地方 ${localCameras.length} 筆`);
-                    
-                    // 合併STA API資料並標記來源
-                    const wraCameras = (wraData.value || []).map(camera => ({
-                        ...camera,
-                        source: 'wra',
-                        sourceLabel: '水利署直轄'
-                    }));
-
-                    const cooperativeCameras = (cooperativeData.value || []).map(camera => ({
-                        ...camera,
-                        source: 'cooperative',
-                        sourceLabel: '水利署與地方合建'
-                    }));
-                    
-                    // 合併STA API的資料
-                    const staCameras = [...wraCameras, ...cooperativeCameras, ...localCameras];
-                    wraApiCameras = [...wraApiCameras, ...staCameras];
-                }
-
-                updateProgress(3, 85, '合併並去除重複資料...');
-                
-                // 去除重複項目並合併資料
-                const allCamerasMap = new Map();
-                wraApiCameras.forEach(camera => {
-                    const id = camera['@iot.id'];
-                    if (!allCamerasMap.has(id)) {
-                        allCamerasMap.set(id, camera);
-                    }
-                });
-                
-                allCameras = Array.from(allCamerasMap.values());
-                
-                updateProgress(4, 90, '生成監視器卡片...', allCameras.length);
-                
-                if (allCameras.length === 0) {
-                    container.innerHTML = '<div class="loading">無水利署監視器資料</div>';
-                    return;
-                }
-
-                filteredCameras = allCameras;
-                
-                // 最終步驟：生成介面
-                updateProgress(4, 95, '生成監視器介面...', allCameras.length);
-                await new Promise(resolve => setTimeout(resolve, 300)); // 讓使用者看到進度完成
-                
-                updateStats();
-                populateAuthorityFilter();
-                applyCurrentFilter();
-                
-                // 載入完成
-                updateProgress(4, 100, '載入完成！', allCameras.length);
-                
-                // 完成全域載入進度
-                setTimeout(() => {
-                    if (typeof window.finishLoading === 'function') {
-                        window.finishLoading();
-                    }
-                }, 1000);
-                
-                // 短暫延遲後顯示完成狀態，然後顯示監視器內容
-                setTimeout(() => {
-                    const steps = document.querySelectorAll('.loading-step');
-                    steps.forEach(stepEl => {
-                        const icon = stepEl.querySelector('i');
-                        stepEl.style.opacity = '1';
-                        icon.className = 'fas fa-check-circle';
-                        icon.style.color = '#4CAF50';
+                        
+                        return {
+                            ...camera,
+                            source,
+                            sourceLabel
+                        };
                     });
                     
-                    // 0.5秒後顯示監視器內容並淡出載入畫面
+                    console.log(`✅ STA API 載入成功: 共 ${allCameras.length} 筆水利相關監視器`);
+                    
+                    updateProgress(4, 90, '生成監視器卡片...', allCameras.length);
+                    
+                    if (allCameras.length === 0) {
+                        container.innerHTML = '<div class="loading">無水利署監視器資料</div>';
+                        return;
+                    }
+
+                    filteredCameras = allCameras;
+                    
+                    // 最終步驟：生成介面
+                    updateProgress(4, 95, '生成監視器介面...', allCameras.length);
+                    await new Promise(resolve => setTimeout(resolve, 300)); // 讓使用者看到進度完成
+                    
+                    updateStats();
+                    populateAuthorityFilter();
+                    applyCurrentFilter();
+                    
+                    // 載入完成
+                    updateProgress(4, 100, '載入完成！', allCameras.length);
+                    
+                    // 完成全域載入進度
                     setTimeout(() => {
-                        // 先顯示監視器內容
-                        displayCameras();
-                        
-                        // 然後淡出載入畫面
-                        const loadingEl = document.querySelector('.loading');
-                        if (loadingEl) {
-                            loadingEl.style.transition = 'opacity 0.5s ease';
-                            loadingEl.style.opacity = '0';
-                            setTimeout(() => {
-                                if (loadingEl.parentNode) {
-                                    loadingEl.remove();
-                                }
-                            }, 500);
+                        if (typeof window.finishLoading === 'function') {
+                            window.finishLoading();
                         }
-                    }, 500);
-                }, 200);
-                
-                console.log(`成功載入 ${allCameras.length} 個水利署監視器`);
-                
-                // 除錯資訊：檢查影像URL
-                const imagesWithUrl = allCameras.filter(c => c.Observations && c.Observations[0] && c.Observations[0].result);
-                const imagesWithoutUrl = allCameras.filter(c => !c.Observations || !c.Observations[0] || !c.Observations[0].result);
-                console.log(`有影像URL: ${imagesWithUrl.length}, 無影像URL: ${imagesWithoutUrl.length}`);
-                
-                if (imagesWithUrl.length > 0) {
-                    console.log('範例影像URL:', imagesWithUrl[0].Observations[0].result);
-                }
+                    }, 1000);
+                    
+                    // 短暫延遲後顯示完成狀態，然後顯示監視器內容
+                    setTimeout(() => {
+                        const steps = document.querySelectorAll('.loading-step');
+                        steps.forEach(stepEl => {
+                            const icon = stepEl.querySelector('i');
+                            stepEl.style.opacity = '1';
+                            icon.className = 'fas fa-check-circle';
+                            icon.style.color = '#4CAF50';
+                        });
+                        
+                        // 0.5秒後顯示監視器內容並淡出載入畫面
+                        setTimeout(() => {
+                            // 先顯示監視器內容
+                            displayCameras();
+                            
+                            // 然後淡出載入畫面
+                            const loadingEl = document.querySelector('.loading');
+                            if (loadingEl) {
+                                loadingEl.style.transition = 'opacity 0.5s ease';
+                                loadingEl.style.opacity = '0';
+                                setTimeout(() => {
+                                    if (loadingEl.parentNode) {
+                                        loadingEl.remove();
+                                    }
+                                }, 500);
+                            }
+                        }, 500);
+                    }, 200);
+                    
+                    console.log(`成功載入 ${allCameras.length} 個水利署監視器`);
+                    
+                    // 除錯資訊：檢查影像URL
+                    const imagesWithUrl = allCameras.filter(c => c.Observations && c.Observations[0] && c.Observations[0].result);
+                    const imagesWithoutUrl = allCameras.filter(c => !c.Observations || !c.Observations[0] || !c.Observations[0].result);
+                    console.log(`有影像URL: ${imagesWithUrl.length}, 無影像URL: ${imagesWithoutUrl.length}`);
+                    
+                    if (imagesWithUrl.length > 0) {
+                        console.log('範例影像URL:', imagesWithUrl[0].Observations[0].result);
+                    }
                 
             } catch (error) {
                 console.error('載入失敗:', error);
@@ -1437,6 +1270,15 @@
                         <i class="fas fa-exclamation-triangle"></i><br>
                         載入失敗：${error.message}<br><br>
                         <button onclick="loadCameras()" class="search-btn">重新嘗試</button>
+                    </div>`;
+            }
+            } catch (outerError) {
+                console.error('外層錯誤:', outerError);
+                document.getElementById('cameras-container').innerHTML = 
+                    `<div class="loading">
+                        <i class="fas fa-exclamation-triangle"></i><br>
+                        系統錯誤：${outerError.message}<br><br>
+                        <button onclick="loadCameras()" class="search-btn">重新載入</button>
                     </div>`;
             }
         }
@@ -1723,14 +1565,8 @@
         }
 
         // 頁面載入
-        window.onload = async function() {
-            console.log('水利監視器頁面載入完成');
-            
-            // 等待預載入完成
-            console.log('等待預載入完成...');
-            await waterPreloadPromise;
-            console.log('預載入完成，開始載入監視器資料...');
-            
+        window.onload = function() {
+            console.log('✅ 水利監視器頁面載入完成');
             loadCameras();
             updateTime();
             
@@ -1739,17 +1575,6 @@
             
             // 每10分鐘自動重新載入資料
             setInterval(loadCameras, 600000);
-        }
-        
-        // 如果頁面已經載入完成，立即執行
-        if (document.readyState === 'complete') {
-            console.log('頁面已完全載入，等待預載入後執行');
-            waterPreloadPromise.then(() => {
-                loadCameras();
-                updateTime();
-                setInterval(updateTime, 60000);
-                setInterval(loadCameras, 600000);
-            });
         }
 
         // 搜尋框即時搜尋
