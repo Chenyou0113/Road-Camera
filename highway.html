@@ -11,6 +11,7 @@
     <script>window.CURRENT_PAGE = 'highway';</script>
     <script src="assets/config.js"></script>
     <script src="assets/tdx-api.js"></script>
+    <script src="assets/city-boundaries.js"></script>
     <script src="assets/image-handler-simple.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -37,8 +38,8 @@
         }
         .camera-card { background: white; border-radius: 10px; padding: 0; box-shadow: 0 5px 15px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.3s; overflow: hidden; }
         .camera-card:hover { transform: translateY(-5px); }
-        .camera-info { padding: 15px; }
-        .camera-info h3 { color: #1e40af; margin-bottom: 8px; font-size: 1.1rem; word-wrap: break-word; overflow-wrap: break-word; }
+        .camera-info { padding: 15px; background: white; position: relative; z-index: 2; }
+        .camera-info h3 { color: #1e40af; margin-bottom: 8px; font-size: 1.1rem; word-wrap: break-word; overflow-wrap: break-word; font-weight: 600; }
         .camera-info p { color: #666; margin: 4px 0; font-size: 0.9rem; word-wrap: break-word; overflow-wrap: break-word; line-height: 1.5; }
         .camera-image { width: 100%; height: 200px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
         .camera-image img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
@@ -56,7 +57,8 @@
         .modal-info p { color: #666; margin: 5px 0; word-wrap: break-word; overflow-wrap: break-word; }
         
         /* 國道特色樣式 */
-        .highway-badge { background: #1e40af; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; display: inline-block; margin: 2px; }
+        .highway-badge { background: #1e40af; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; display: inline-block; margin: 2px; font-weight: 600; vertical-align: middle; }
+        .loading-text { color: #333 !important; font-weight: 500; }
         .stats-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
         .stat-card { background: white; padding: 20px; border-radius: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         .stat-number { font-size: 2rem; font-weight: bold; color: #1e40af; }
@@ -131,8 +133,10 @@
         body.dark-mode .header { background: linear-gradient(135deg, rgba(30,30,40,0.95) 0%, rgba(25,25,35,0.95) 100%); border-bottom: 1px solid rgba(255,255,255,0.1); }
         body.dark-mode .header h1 { color: #66BB6A; }
         body.dark-mode .camera-card { background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(35,35,45,0.95) 100%); border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
-        body.dark-mode .camera-info h3 { color: #66BB6A; }
+        body.dark-mode .camera-info { background: transparent; }
+        body.dark-mode .camera-info h3 { color: #66BB6A; text-shadow: 0 1px 3px rgba(0,0,0,0.5); }
         body.dark-mode .camera-info p { color: rgba(255,255,255,0.7); }
+        body.dark-mode .loading-text { color: rgba(255,255,255,0.85) !important; }
         body.dark-mode .camera-image { background: rgba(20,20,30,0.6); }
         body.dark-mode .stream-placeholder, body.dark-mode .no-image-placeholder, body.dark-mode .image-placeholder { background: rgba(20,20,30,0.8); color: rgba(255,255,255,0.5); }
         body.dark-mode .modal-info { background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(35,35,45,0.95) 100%); border: 1px solid rgba(255,255,255,0.1); }
@@ -438,47 +442,9 @@
         }
 
         // 根據經緯度判斷縣市
-        function getCityFromCoordinates(lon, lat, roadName = '') {
-            if (!lon || !lat) return '未知';
-            
-            // 台灣各縣市經緯度範圍
-            const cityRanges = [
-                { name: '台北市', lonMin: 121.45, lonMax: 121.65, latMin: 24.95, latMax: 25.20 },
-                { name: '基隆市', lonMin: 121.65, lonMax: 121.85, latMin: 25.10, latMax: 25.25 },
-                { name: '新北市', lonMin: 121.20, lonMax: 121.95, latMin: 24.70, latMax: 25.30 },
-                { name: '桃園市', lonMin: 121.05, lonMax: 121.50, latMin: 24.75, latMax: 25.05 },
-                { name: '新竹縣', lonMin: 120.80, lonMax: 121.30, latMin: 24.55, latMax: 24.85 },
-                { name: '新竹市', lonMin: 120.90, lonMax: 121.05, latMin: 24.75, latMax: 24.85 },
-                { name: '苗栗縣', lonMin: 120.55, lonMax: 121.15, latMin: 24.25, latMax: 24.75 },
-                { name: '台中市', lonMin: 120.45, lonMax: 121.25, latMin: 24.05, latMax: 24.55 },
-                { name: '彰化縣', lonMin: 120.35, lonMax: 120.75, latMin: 23.85, latMax: 24.25 },
-                { name: '南投縣', lonMin: 120.65, lonMax: 121.25, latMin: 23.45, latMax: 24.15 },
-                { name: '雲林縣', lonMin: 120.15, lonMax: 120.65, latMin: 23.45, latMax: 23.85 },
-                { name: '嘉義縣', lonMin: 120.15, lonMax: 120.75, latMin: 23.15, latMax: 23.65 },
-                { name: '嘉義市', lonMin: 120.40, lonMax: 120.50, latMin: 23.45, latMax: 23.52 },
-                { name: '台南市', lonMin: 120.05, lonMax: 120.65, latMin: 22.85, latMax: 23.45 },
-                { name: '高雄市', lonMin: 120.15, lonMax: 120.95, latMin: 22.45, latMax: 23.15 },
-                { name: '屏東縣', lonMin: 120.25, lonMax: 120.95, latMin: 21.85, latMax: 22.85 },
-                { name: '宜蘭縣', lonMin: 121.55, lonMax: 122.05, latMin: 24.25, latMax: 24.95 },
-                { name: '花蓮縣', lonMin: 121.15, lonMax: 121.75, latMin: 23.00, latMax: 24.45 },
-                { name: '台東縣', lonMin: 120.95, lonMax: 121.65, latMin: 22.35, latMax: 23.55 }
-            ];
-            
-            for (const city of cityRanges) {
-                if (lon >= city.lonMin && lon <= city.lonMax && 
-                    lat >= city.latMin && lat <= city.latMax) {
-                    return city.name;
-                }
-            }
-            
-            return '未知';
-        }
+        // 縣市判斷函數已移至 assets/city-boundaries.js
 
-        // 處理影像載入錯誤 - 使用簡化版本
-        function handleImageError(img, originalUrl) {
-            // 直接顯示錯誤訊息，不再重試
-            img.parentNode.innerHTML = '<i class="fas fa-exclamation-triangle" style="font-size: 2rem; color: #f44336;"></i><br><span style="font-size: 0.8rem;">影像載入失敗</span>';
-        }
+        // （移除舊的簡化錯誤處理，改用後方進階版本）
 
         // 確保進度條函數可用的輔助函數
         function ensureProgressFunctions() {
@@ -852,27 +818,47 @@
             const endIndex = startIndex + itemsPerPage;
             const displayCameras = cameras.slice(startIndex, endIndex);
 
+            // 避免路線重複顯示（例如 "台62線 台62線"）
+            function buildRoadTitle(camera) {
+                const roadName = (camera.RoadName || '').trim();
+                const roadNumber = (camera.RoadNumber || '').trim();
+                if (!roadName && !roadNumber) return '國道監視器';
+                if (roadName && roadNumber) {
+                    // 去除相同或包含關係的重複（忽略「線」字差異）
+                    const normalizedName = roadName.replace(/線$/,'');
+                    const normalizedNumber = roadNumber.replace(/線$/,'');
+                    if (normalizedName === normalizedNumber) return roadName || roadNumber;
+                    return `${roadName} ${roadNumber}`;
+                }
+                return roadName || roadNumber || '國道監視器';
+            }
+
             const grid = displayCameras.map((camera, index) => {
                 const sourceIcon = camera.source === 'tdx' ? '<i class="fas fa-database" title="TDX資料" style="color: #1e40af;"></i>' : '';
-                const roadNumber = camera.RoadNumber ? `<span class="highway-badge">${camera.RoadNumber}</span>` : '';
-                
+                const badge = camera.RoadNumber ? `<span class="highway-badge">${camera.RoadNumber}</span>` : '';
+                const imageId = `img-${startIndex + index}-${Date.now()}`;
+                const imageUrl = camera.VideoImageUrl || camera.VideoImageURL || camera.VideoStreamURL || camera.PictureURL;
+                const roadTitle = buildRoadTitle(camera);
                 return `
                     <div class="camera-card" onclick="openModal(${startIndex + index})">
-                        <div class="camera-image">
-                            ${camera.VideoImageUrl || camera.VideoImageURL || camera.VideoStreamURL || camera.PictureURL ? 
-                                `<img src="${camera.VideoImageUrl || camera.VideoImageURL || camera.VideoStreamURL || camera.PictureURL}" 
-                                     alt="${camera.CCTVID || '監視器影像'}" 
-                                     loading="lazy"
-                                     style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px;"
-                                     onerror="this.parentNode.innerHTML='<div style=\"display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#999;background:#f5f5f5;border-radius:8px;\"><i class=\"fas fa-exclamation-triangle\" style=\"font-size:2rem;margin-bottom:8px;color:#f44336;\"></i><span style=\"font-size:0.85rem;text-align:center;\">${camera.RoadName || '監視器'}<br>影像載入失敗</span></div>'">
-                                 <div class="image-overlay">
+                        <div class="camera-image" id="container-${imageId}">
+                            ${imageUrl ? 
+                                `<div class="image-loading-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;background:#f5f5f5;border-radius:8px;">
+                                    <i class="fas fa-spinner fa-pulse" style="font-size:2rem;margin-bottom:8px;color:#667eea;"></i>
+                                    <span class="loading-text" style="font-size:0.85rem;color:#444;">載入中...</span>
+                                </div>
+                                <img id="${imageId}" data-src="${imageUrl}" alt="${camera.CCTVID || '監視器影像'}" 
+                                     style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px; display: none;"
+                                     onload="handleImageLoad(this)"
+                                     onerror="handleImageError(this, '${imageUrl}')">
+                                 <div class="image-overlay" style="display: none;">
                                      <i class="fas fa-search-plus" style="font-size: 2rem;"></i>
                                  </div>` : 
                                 '<div class="no-image-placeholder"><i class="fas fa-video-slash" style="font-size: 2rem; color: #ccc; margin-bottom: 10px;"></i><span style="color: #666;">無影像資料</span></div>'
                             }
                         </div>
                         <div class="camera-info">
-                            <h3>${camera.RoadName || '國道監視器'} ${roadNumber} ${sourceIcon}</h3>
+                            <h3>${roadTitle} ${badge} ${sourceIcon}</h3>
                             <p><i class="fas fa-map-marker-alt"></i> ${formatLocationInfo(camera)}</p>
                             <p><i class="fas fa-map"></i> ${camera.City || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName)}</p>
                             <p><i class="fas fa-id-badge"></i> ${camera.CCTVID || '未知編號'}</p>
@@ -896,6 +882,104 @@
             
             // 更新分頁
             updatePagination();
+            
+            // 使用漸進式載入圖片,避免HTTP/2連線過載
+            setTimeout(() => {
+                progressiveImageLoading();
+            }, 100);
+        }
+
+        // 漸進式圖片載入 - 修復 HTTP/2 協議錯誤
+        let imageLoadQueue = [];
+        let currentLoadingCount = 0;
+        // 固定保守參數，避免伺服器連線重置
+        const MAX_CONCURRENT_LOADS = 2; // 固定為 2，不再動態調整
+        const LOAD_DELAY = 800; // 固定延遲 800ms，給伺服器足夠緩衝時間
+        const MAX_RETRIES = 3; // 最大重試次數
+        const RETRY_DELAY = 2000; // 重試延遲 2 秒
+        const COOLDOWN_DURATION = 10 * 60 * 1000; // 冷卻時間 10 分鐘
+        const cameraCooldown = new Map(); // cameraId -> timestamp until available
+        const imageRetryAttempts = new Map(); // imageId -> retry count
+
+        function progressiveImageLoading() {
+            // 收集所有待載入的圖片
+            const images = document.querySelectorAll('img[data-src]:not([src])');
+            imageLoadQueue = Array.from(images);
+            
+            console.log(`🖼️ 開始漸進式載入 ${imageLoadQueue.length} 張圖片 (併發: ${MAX_CONCURRENT_LOADS}, 延遲: ${LOAD_DELAY}ms)`);
+            
+            // 開始載入佇列
+            processImageQueue();
+        }
+
+        function processImageQueue() {
+            // 過濾掉處於冷卻中的相機
+            const now = Date.now();
+            imageLoadQueue = imageLoadQueue.filter(img => {
+                const camId = img.dataset.src?.match(/camera=(\d+)/)?.[1];
+                if (!camId) return true;
+                const cooldownUntil = cameraCooldown.get(camId);
+                return !cooldownUntil || cooldownUntil <= now;
+            });
+
+            while (currentLoadingCount < MAX_CONCURRENT_LOADS && imageLoadQueue.length > 0) {
+                const img = imageLoadQueue.shift();
+                if (img && img.dataset.src) {
+                    loadImageWithDelay(img);
+                }
+            }
+        }
+
+        function loadImageWithDelay(img) {
+            currentLoadingCount++;
+            setTimeout(() => {
+                const container = img.closest('.camera-image');
+                const loadingPlaceholder = container?.querySelector('.image-loading-placeholder');
+                const overlay = container?.querySelector('.image-overlay');
+                const src = img.dataset.src;
+                const camId = src?.match(/camera=(\d+)/)?.[1];
+                const imgId = img.id || src;
+
+                img.onload = function() {
+                    handleImageLoad(this);
+                    if (loadingPlaceholder) loadingPlaceholder.style.display = 'none';
+                    if (overlay) overlay.style.display = 'flex';
+                    this.style.display = 'block';
+                    // 清除重試計數
+                    imageRetryAttempts.delete(imgId);
+                    currentLoadingCount--;
+                    processImageQueue();
+                };
+
+                img.onerror = function(e) {
+                    console.warn(`❌ 圖片載入失敗: camera=${camId}`);
+                    const retryCount = imageRetryAttempts.get(imgId) || 0;
+                    
+                    if (retryCount < MAX_RETRIES) {
+                        // 重試邏輯
+                        imageRetryAttempts.set(imgId, retryCount + 1);
+                        console.log(`🔄 重試載入 (${retryCount + 1}/${MAX_RETRIES}): camera=${camId}`);
+                        
+                        setTimeout(() => {
+                            this.src = `${src}&_retry=${retryCount + 1}&t=${Date.now()}`;
+                        }, RETRY_DELAY);
+                    } else {
+                        // 超過重試次數，進入冷卻
+                        if (camId) {
+                            cameraCooldown.set(camId, Date.now() + COOLDOWN_DURATION);
+                            console.log(`⏸️ 相機 ${camId} 進入冷卻，時長: ${COOLDOWN_DURATION / 1000 / 60} 分鐘`);
+                        }
+                        
+                        handleImageError(this, src);
+                        imageRetryAttempts.delete(imgId);
+                    }
+                    
+                    currentLoadingCount--;
+                    processImageQueue();
+                };
+
+                img.src = src; // 觸發載入
+            }, LOAD_DELAY);
         }
 
         function updatePagination() {
@@ -921,6 +1005,25 @@
                 currentPage = newPage;
                 displayCameras(filteredCameras);
             }
+        }
+
+        // 處理圖片載入錯誤 - 顯示錯誤狀態
+        function handleImageError(imgElement, originalSrc) {
+            const camId = originalSrc.match(/camera=(\d+)/)?.[1];
+            
+            if (imgElement.parentNode) {
+                const cooldownMinutes = Math.floor(COOLDOWN_DURATION / 1000 / 60);
+                imgElement.parentNode.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#999;background:#f5f5f5;border-radius:8px;">
+                    <i class="fas fa-exclamation-triangle" style="font-size:2rem;margin-bottom:8px;color:#f44336;"></i>
+                    <span style="font-size:0.85rem;text-align:center;">影像暫時無法載入<br>${camId ? `相機 ${camId}` : ''}<br>冷卻中 (${cooldownMinutes}分鐘)</span>
+                </div>`;
+            }
+        }
+        
+        // 圖片載入成功處理
+        function handleImageLoad(imgElement) {
+            // 載入成功，不需要特別處理
+            console.log(`✅ 圖片載入成功:`, imgElement.id);
         }
 
         function openModal(index) {

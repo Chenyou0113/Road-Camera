@@ -778,42 +778,58 @@
                     console.log(`🔄 載入國道監視器: ${endpoint}`);
                     response = await tdxApi.fetchCCTV(endpoint);
                     
-                    if (response && Array.isArray(response) && response.length > 0) {
-                        console.log(`✅ 國道數據成功: ${response.length} 個監視器`);
+                    // 解析 TDX 回應格式
+                    let cameras = [];
+                    if (Array.isArray(response)) {
+                        cameras = response;
+                    } else if (response && response.CCTVs && Array.isArray(response.CCTVs)) {
+                        cameras = response.CCTVs;
+                    } else if (response && response.data && Array.isArray(response.data)) {
+                        cameras = response.data;
+                    }
+                    
+                    console.log(`📊 解析後監視器數量: ${cameras.length}`);
+                    
+                    if (cameras.length > 0) {
+                        allSystemsData.highway.total = cameras.length;
+                        allSystemsData.highway.online = cameras.filter(c => 
+                            c.VideoImageUrl || c.VideoImageURL || c.VideoStreamURL || c.PictureURL
+                        ).length;
+                        allSystemsData.highway.lastUpdate = new Date();
+                        
+                        // 添加動畫效果
+                        animateNumber('highwayCameras', allSystemsData.highway.total);
+                        animateNumber('highwayCount', allSystemsData.highway.total);
+                        document.getElementById('highwayLastCheck').textContent = new Date().toLocaleTimeString('zh-TW');
+                        
+                        console.log(`✅ 國道監視器載入成功: ${allSystemsData.highway.total} 個`);
+                    } else {
+                        // API 成功但無數據
+                        allSystemsData.highway.total = 0;
+                        allSystemsData.highway.online = 0;
+                        document.getElementById('highwayCameras').textContent = '0';
+                        document.getElementById('highwayCount').textContent = '0';
+                        document.getElementById('highwayLastCheck').textContent = new Date().toLocaleTimeString('zh-TW');
+                        console.log('⚠️ 國道監視器：API 回應成功但無資料');
                     }
                 } catch (fetchError) {
                     console.warn(`❌ 國道API失敗:`, fetchError.message);
-                    response = null;
-                }
-                
-                if (response && Array.isArray(response) && response.length > 0) {
-                    allSystemsData.highway.total = response.length;
-                    allSystemsData.highway.online = response.filter(c => 
-                        c.VideoImageURL || c.PictureURL || c.LiveVideoImageURL || c.StreamURL
-                    ).length;
-                    allSystemsData.highway.lastUpdate = new Date();
                     
-                    // 添加動畫效果
-                    animateNumber('highwayCameras', allSystemsData.highway.total);
-                    animateNumber('highwayCount', allSystemsData.highway.total);
-                    document.getElementById('highwayLastCheck').textContent = new Date().toLocaleTimeString('zh-TW');
+                    // 使用備用數據，不再嘗試估算避免429錯誤
+                    const fallbackTotal = 1250;
+                    allSystemsData.highway.total = fallbackTotal;
+                    allSystemsData.highway.online = Math.floor(fallbackTotal * 0.985);
                     
-                    console.log(`✅ 國道監視器載入成功: ${allSystemsData.highway.total} 個`);
-                } else if (response && Array.isArray(response) && response.length === 0) {
-                    // API 成功但無數據
-                    allSystemsData.highway.total = 0;
-                    allSystemsData.highway.online = 0;
-                    document.getElementById('highwayCameras').textContent = '0';
-                    document.getElementById('highwayCount').textContent = '0';
-                    document.getElementById('highwayLastCheck').textContent = new Date().toLocaleTimeString('zh-TW');
-                    console.log('⚠️ 國道監視器：API 回應成功但無資料');
-                } else {
-                    throw new Error('無效的回應格式');
+                    animateNumber('highwayCameras', fallbackTotal);
+                    animateNumber('highwayCount', fallbackTotal);
+                    document.getElementById('highwayLastCheck').textContent = `${new Date().toLocaleTimeString('zh-TW')} (備用數據)`;
+                    
+                    console.log(`🔄 使用備用數據: ${fallbackTotal} 個國道監視器`);
                 }
             } catch (error) {
                 console.error('❌ 載入國道數據錯誤:', error.message);
                 
-                // 直接使用備用數據，不再嘗試估算避免429錯誤
+                // 最終備用數據
                 const fallbackTotal = 1250;
                 allSystemsData.highway.total = fallbackTotal;
                 allSystemsData.highway.online = Math.floor(fallbackTotal * 0.985);
@@ -1746,27 +1762,43 @@
             try {
                 // 載入國道
                 const hwayResponse = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/Freeway?$format=JSON');
-                if (hwayResponse && Array.isArray(hwayResponse)) {
-                    liveViewData.highway = hwayResponse.slice(0, 12);
+                let hwayCameras = [];
+                if (Array.isArray(hwayResponse)) {
+                    hwayCameras = hwayResponse;
+                } else if (hwayResponse && hwayResponse.CCTVs && Array.isArray(hwayResponse.CCTVs)) {
+                    hwayCameras = hwayResponse.CCTVs;
                 } else if (hwayResponse && hwayResponse.data && Array.isArray(hwayResponse.data)) {
-                    liveViewData.highway = hwayResponse.data.slice(0, 12);
+                    hwayCameras = hwayResponse.data;
                 }
+                liveViewData.highway = hwayCameras.slice(0, 12);
                 
-                // 載入快速公路
-                const expayResponse = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/ExpressWay?$format=JSON');
-                if (expayResponse && Array.isArray(expayResponse)) {
-                    liveViewData.expressway = expayResponse.slice(0, 12);
+                // 載入快速公路（使用 Freeway 端點，TDX 將快速道路與國道合併在此端點）
+                const expayResponse = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/Freeway?$format=JSON');
+                let expayCameras = [];
+                if (Array.isArray(expayResponse)) {
+                    expayCameras = expayResponse;
+                } else if (expayResponse && expayResponse.CCTVs && Array.isArray(expayResponse.CCTVs)) {
+                    expayCameras = expayResponse.CCTVs;
                 } else if (expayResponse && expayResponse.data && Array.isArray(expayResponse.data)) {
-                    liveViewData.expressway = expayResponse.data.slice(0, 12);
+                    expayCameras = expayResponse.data;
                 }
+                // 篩選快速道路（台61-台88）
+                liveViewData.expressway = expayCameras.filter(c => {
+                    const road = c.RoadName || '';
+                    return /台6[1-8]|台7[0-9]|台8[0-9]/.test(road);
+                }).slice(0, 12);
                 
                 // 載入省道（使用Highway端點並篩選）
                 const provResponse = await tdxApi.fetchCCTV('/v2/Road/Traffic/CCTV/Highway?$format=JSON');
-                if (provResponse && Array.isArray(provResponse)) {
-                    liveViewData.city = provResponse.slice(0, 12);
+                let provCameras = [];
+                if (Array.isArray(provResponse)) {
+                    provCameras = provResponse;
+                } else if (provResponse && provResponse.CCTVs && Array.isArray(provResponse.CCTVs)) {
+                    provCameras = provResponse.CCTVs;
                 } else if (provResponse && provResponse.data && Array.isArray(provResponse.data)) {
-                    liveViewData.city = provResponse.data.slice(0, 12);
+                    provCameras = provResponse.data;
                 }
+                liveViewData.city = provCameras.slice(0, 12);
                 
                 displayLiveView('highway');
             } catch (error) {

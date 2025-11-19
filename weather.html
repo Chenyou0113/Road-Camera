@@ -1,43 +1,1068 @@
 <!DOCTYPE html>
-<html lang='zh-TW'>
+<html lang="zh-TW">
 <head>
-<meta charset='UTF-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1.0'>
-<title>氣象查詢</title>
-<style>
-body{font-family:'Segoe UI',sans-serif;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);margin:0;padding:0}
-header{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;padding:20px;text-align:center}
-h1{margin:0;font-size:28px}
-.container{max-width:1200px;margin:20px auto;padding:0 20px}
-.btn-group{display:flex;flex-wrap:wrap;gap:8px;margin:20px 0}
-.btn{padding:8px 16px;background:white;color:#667eea;border:2px solid #667eea;border-radius:20px;cursor:pointer;font-weight:600}
-.btn.active{background:#667eea;color:white}
-.weather-box{background:white;border-radius:15px;padding:30px;margin:20px 0;box-shadow:0 4px 15px rgba(0,0,0,0.1)}
-.temp-display{font-size:48px;font-weight:bold;color:#667eea;margin:20px 0}
-.forecast-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:15px;margin:20px 0}
-.forecast-item{background:linear-gradient(135deg,#f5f7fa,#c3cfe2);border-radius:10px;padding:15px;text-align:center}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>氣象觀測 | 中央氣象署即時資料</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <style>
+        :root {
+            --bg-gradient-start: #1976D2;
+            --bg-gradient-end: #0D47A1;
+            --card-bg: white;
+            --text-primary: #333;
+            --text-secondary: #666;
+            --border-color: #e0e0e0;
+            --modal-bg: white;
+            --input-bg: white;
+            --input-border: #e0e0e0;
+        }
+
+        body.dark-mode {
+            --bg-gradient-start: #1a1a2e;
+            --bg-gradient-end: #0f0f1e;
+            --card-bg: #2d2d44;
+            --text-primary: #e0e0e0;
+            --text-secondary: #b0b0b0;
+            --border-color: #444;
+            --modal-bg: #2d2d44;
+            --input-bg: #1a1a2e;
+            --input-border: #444;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', 'Microsoft JhengHei', sans-serif;
+            background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
+            min-height: 100vh;
+            padding-bottom: 40px;
+            transition: background 0.3s ease;
+        }
+
+        header {
+            background: linear-gradient(135deg, #1976D2 0%, #0D47A1 100%);
+            color: white;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header-title h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .back-button {
+            background-color: rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 8px 20px;
+            border-radius: 20px;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .back-button:hover {
+            background-color: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .theme-toggle {
+            background-color: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 18px;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .theme-toggle:hover {
+            background-color: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .main-container {
+            max-width: 1400px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+
+        .map-container {
+            background: var(--card-bg);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            animation: fadeInUp 0.6s ease-out;
+            transition: background 0.3s ease;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .map-container h2 {
+            font-size: 18px;
+            color: #1976D2;
+            margin-bottom: 10px;
+        }
+
+        body.dark-mode .map-container h2 {
+            color: #64B5F6;
+        }
+
+        #map {
+            height: 400px;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .leaflet-popup-content-wrapper {
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .popup-content {
+            padding: 8px;
+            min-width: 180px;
+        }
+
+        .popup-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #1976D2;
+            margin-bottom: 8px;
+            border-bottom: 2px solid #E3F2FD;
+            padding-bottom: 5px;
+        }
+
+        .popup-info {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+            font-size: 14px;
+        }
+
+        .popup-label {
+            color: #666;
+        }
+
+        .popup-value {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .stats-panel {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            overflow-x: auto;
+            padding: 10px 0;
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            min-width: 150px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+        }        .stat-number {
+            font-size: 32px;
+            font-weight: bold;
+            color: var(--text-primary);
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .controls {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .controls h2 {
+            font-size: 18px;
+            color: #1976D2;
+            margin-bottom: 15px;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .filter-btn {
+            background-color: white;
+            color: #1976D2;
+            border: 2px solid #1976D2;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+
+        .filter-btn:hover {
+            background-color: #E3F2FD;
+        }
+
+        .filter-btn.active {
+            background-color: #1976D2;
+            color: white;
+        }
+
+        .search-box {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 10px 15px;
+            border: 2px solid var(--input-border);
+            border-radius: 20px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+            background: var(--input-bg);
+            color: var(--text-primary);
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #1976D2;
+        }
+
+        .btn-refresh {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+
+        .btn-refresh:hover {
+            background-color: #45a049;
+            transform: translateY(-2px);
+        }
+
+        .stations-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .station-card {
+            background: var(--card-bg);
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            transition: all 0.3s ease;
+            cursor: pointer;
+            opacity: 0;
+            transform: translateY(30px);
+            animation: cardFadeIn 0.5s ease-out forwards;
+        }
+
+        @keyframes cardFadeIn {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .station-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+        }
+
+        .station-header {
+            background: linear-gradient(135deg, #1976D2 0%, #0D47A1 100%);
+            color: white;
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .station-header h3 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .weather-icon {
+            font-size: 32px;
+        }
+
+        .station-body {
+            padding: 15px;
+        }
+
+        .temp-main {
+            font-size: 48px;
+            font-weight: bold;
+            color: #1976D2;
+            text-align: center;
+            margin: 15px 0;
+        }
+
+        .station-info {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin: 15px 0;
+            font-size: 14px;
+            color: #555;
+        }
+
+        .station-info span {
+            padding: 6px 10px;
+            background-color: #f5f5f5;
+            border-radius: 6px;
+        }
+
+        .station-location {
+            font-size: 13px;
+            color: #666;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .station-time {
+            font-size: 12px;
+            color: #999;
+            margin-top: 5px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px 20px;
+            color: white;
+            font-size: 18px;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background-color: #ffebee;
+            border-left: 4px solid #c62828;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            overflow: auto;
+        }
+
+        .modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background-color: white;
+            padding: 0;
+            border-radius: 10px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 85vh;
+            overflow-y: auto;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-header {
+            background: linear-gradient(135deg, #1976D2 0%, #0D47A1 100%);
+            color: white;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h2 {
+            font-size: 22px;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 28px;
+            cursor: pointer;
+            color: white;
+        }
+
+        .close-btn:hover {
+            opacity: 0.8;
+        }
+
+        .modal-body {
+            padding: 20px;
+            color: var(--text-primary);
+        }
+
+        .modal-section {
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .modal-section:last-child {
+            border-bottom: none;
+        }
+
+        .modal-section h3 {
+            color: #1976D2;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+
+        body.dark-mode .modal-section h3 {
+            color: #64B5F6;
+        }
+
+        .modal-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .modal-label {
+            font-weight: bold;
+            color: #1976D2;
+        }
+
+        .modal-value {
+            color: #666;
+        }
+
+        /* 深色模式滾動條 */
+        body.dark-mode::-webkit-scrollbar {
+            width: 12px;
+        }
+
+        body.dark-mode::-webkit-scrollbar-track {
+            background: #1a1a2e;
+        }
+
+        body.dark-mode::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 6px;
+        }
+
+        body.dark-mode::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        @media (max-width: 768px) {
+            .header-content {
+                flex-direction: column;
+                text-align: center;
+            }
+
+            .stats-panel {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .stations-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .filter-group {
+                justify-content: center;
+            }
+        }
+    </style>
 </head>
 <body>
-<header>
-<h1>🌤️ 氣象查詢</h1>
-<a href='index.html' style='color:white;text-decoration:none'>← 返回首頁</a>
-</header>
-<div class='container'>
-<div class='btn-group' id='counties'></div>
-<div id='weather' class='weather-box'><p>載入中...</p></div>
-</div>
-<script>
-const COUNTIES=['臺北市','新北市','桃園市','臺中市','臺南市','高雄市','基隆市','新竹市','嘉義市','新竹縣','苗栗縣','彰化縣','南投縣','雲林縣','嘉義縣','屏東縣','宜蘭縣','花蓮縣','臺東縣','金門縣','澎湖縣','連江縣'];
-const API='https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization=CWA-675CED45-09DF-4249-9599-B9B5A5AB761A';
-let county='臺北市';
-let data=null;
+    <header>
+        <div class="header-content">
+                        <div class="header-title">
+                <span style="font-size: 32px;">⛅</span>
+                <h1>🌡️ 氣象觀測站 - 中央氣象署即時資料</h1>
+            </div>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <button class="theme-toggle" onclick="toggleTheme()">
+                    <span id="theme-icon">🌙</span>
+                </button>
+                <a href="index.html" class="back-button">← 返回主頁</a>
+            </div>
+        </div>
+    </header>
 
-function initBtns(){const c=document.getElementById('counties');c.innerHTML=COUNTIES.map(x=><button class='btn 'onclick='switchCounty(\"\")'></button>).join('')}
-function switchCounty(c){county=c;initBtns();render()}
-async function loadData(){try{const r=await fetch(API);data=await r.json();render()}catch(e){document.getElementById('weather').innerHTML='<p>錯誤:'+e.message+'</p>'}}
-function render(){if(!data)return;const loc=data.records.location.find(x=>x.locationName===county);if(!loc){document.getElementById('weather').innerHTML='<p>無資料</p>';return}const items={};loc.weatherElement.forEach(e=>{if(e.time)e.time.forEach(t=>{items[t.dataTime]=items[t.dataTime]||{};items[t.dataTime][e.elementName]=t.elementValue})});const times=Object.keys(items).sort();const curr=items[times[0]]||{};let html='<div><div class="temp-display">'+curr.Temp+'°C</div><p>'+curr.Wx+'</p><p>溼度:'+curr.RH+'% 風速:'+curr.WS+'m/s</p></div><div class="forecast-grid">';times.slice(0,8).forEach(t=>{const it=items[t];const d=new Date(t);html+='<div class="forecast-item"><div>'+d.getMonth()+1+'/'+d.getDate()+'</div><div>'+it.Wx+'</div><div>'+it.Temp+'°</div></div>'});html+='</div>';document.getElementById('weather').innerHTML=html}
-window.onload=()=>{initBtns();loadData()}
-</script>
+    <div class="main-container">
+        <!-- 統計面板 -->
+        <div class="stats-panel" id="stats-panel">
+            <div class="stat-card">
+                <div class="stat-number">-</div>
+                <div class="stat-label">觀測站數</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">-</div>
+                <div class="stat-label">平均氣溫</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">-</div>
+                <div class="stat-label">最高氣溫</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">-</div>
+                <div class="stat-label">最低氣溫</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">-</div>
+                <div class="stat-label">降雨站數</div>
+            </div>
+        </div>
+
+        <!-- 地圖容器 -->
+        <div class="map-container">
+            <h2>🗺️ 觀測站分布地圖</h2>
+            <div id="map"></div>
+        </div>
+
+        <!-- 控制面板 -->
+        <div class="controls">
+            <h2>🔍 篩選條件</h2>
+            <div class="filter-group" id="county-filters"></div>
+            <div class="search-box">
+                <input type="text" class="search-input" id="search-input" placeholder="搜尋站名或鄉鎮...">
+                <button class="btn-refresh" onclick="refreshData()">🔄 刷新資料</button>
+            </div>
+        </div>
+
+        <!-- 錯誤訊息 -->
+        <div id="error-message"></div>
+
+        <!-- 載入中 -->
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>載入氣象觀測資料中...</p>
+        </div>
+
+        <!-- 觀測站網格 -->
+        <div class="stations-grid" id="stations-grid"></div>
+    </div>
+
+    <!-- 詳細資訊模態視窗 -->
+    <div class="modal" id="stationModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">觀測站詳細資訊</h2>
+                <button class="close-btn" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody"></div>
+        </div>
+    </div>
+
+    <script src="assets/weather-transformer.js"></script>
+    <script>
+        let allStations = [];
+        let filteredStations = [];
+        let selectedCounty = '全部';
+        let searchKeyword = '';
+        let map = null;
+        let markersLayer = null;
+
+        // 初始化
+        async function init() {
+            try {
+                console.log('🚀 初始化氣象觀測頁面...');
+                await loadStationData();
+                setupCountyFilters();
+                setupSearch();
+                console.log('✅ 初始化完成');
+            } catch (error) {
+                console.error('❌ 初始化失敗:', error);
+                showError('應用初始化失敗: ' + error.message);
+            }
+        }
+
+        // 載入觀測站資料
+        async function loadStationData() {
+            try {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('stations-grid').innerHTML = '';
+                
+                allStations = await WeatherTransformer.getAllStations();
+                filteredStations = allStations;
+                
+                initMap();
+                renderStats();
+                renderStations();
+                
+                document.getElementById('loading').style.display = 'none';
+                console.log(`✅ 已載入 ${allStations.length} 個觀測站`);
+            } catch (error) {
+                document.getElementById('loading').style.display = 'none';
+                throw error;
+            }
+        }
+
+        // 設置縣市篩選器
+        function setupCountyFilters() {
+            const counties = ['全部', ...new Set(allStations.map(s => s.county).filter(c => c))].sort();
+            const filterContainer = document.getElementById('county-filters');
+            
+            filterContainer.innerHTML = counties.map(county => 
+                `<button class="filter-btn ${county === selectedCounty ? 'active' : ''}" 
+                         onclick="filterByCounty('${county}')">
+                    ${county}
+                </button>`
+            ).join('');
+        }
+
+        // 縣市篩選
+        function filterByCounty(county) {
+            selectedCounty = county;
+            
+            if (county === '全部') {
+                filteredStations = allStations;
+            } else {
+                filteredStations = allStations.filter(s => s.county === county);
+            }
+            
+            setupCountyFilters();
+            renderStats();
+            renderStations();
+        }
+
+        // 設置搜尋功能
+        function setupSearch() {
+            const searchInput = document.getElementById('search-input');
+            searchInput.addEventListener('input', (e) => {
+                const keyword = e.target.value.toLowerCase().trim();
+                
+                if (!keyword) {
+                    filterByCounty(selectedCounty);
+                    return;
+                }
+                
+                filteredStations = allStations.filter(s => 
+                    s.stationName?.toLowerCase().includes(keyword) ||
+                    s.town?.toLowerCase().includes(keyword) ||
+                    s.county?.toLowerCase().includes(keyword)
+                );
+                
+                renderStats();
+                renderStations();
+            });
+        }
+
+        // 渲染統計資料
+        function renderStats() {
+            const statsPanel = document.getElementById('stats-panel');
+            statsPanel.innerHTML = WeatherTransformer.createStatsPanel(filteredStations);
+        }
+
+        // 初始化地圖
+        function initMap() {
+            if (!map) {
+                map = L.map('map').setView([23.5, 121], 7);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors',
+                    maxZoom: 18
+                }).addTo(map);
+                markersLayer = L.layerGroup().addTo(map);
+            }
+        }
+
+        // 更新地圖標記
+        function updateMapMarkers() {
+            if (!markersLayer) return;
+            
+            markersLayer.clearLayers();
+            
+            filteredStations.forEach((station, index) => {
+                if (station.lat && station.lon) {
+                    // 創建帶彈跳動畫的標記
+                    const marker = L.marker([station.lat, station.lon], {
+                        icon: L.icon({
+                            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
+                            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+                            iconSize: [25, 41],
+                            iconAnchor: [12, 41],
+                            popupAnchor: [1, -34],
+                            shadowSize: [41, 41]
+                        })
+                    });
+                    
+                    const temp = station.temperature !== null ? `${station.temperature}°C` : '無資料';
+                    const weather = station.weather || '無資料';
+                    const humidity = station.humidity !== null ? `${station.humidity}%` : '無資料';
+                    const precipitation = station.precipitation !== null ? `${station.precipitation}mm` : '無資料';
+                    const stationName = station.stationName || station.name || '未知測站';
+                    
+                    // 創建更豐富的popup內容
+                    const popupContent = `
+                        <div class="popup-content">
+                            <div class="popup-title">📍 ${stationName}</div>
+                            <div class="popup-info">
+                                <span class="popup-label">🌡️ 溫度:</span>
+                                <span class="popup-value">${temp}</span>
+                            </div>
+                            <div class="popup-info">
+                                <span class="popup-label">💧 濕度:</span>
+                                <span class="popup-value">${humidity}</span>
+                            </div>
+                            <div class="popup-info">
+                                <span class="popup-label">🌧️ 降雨:</span>
+                                <span class="popup-value">${precipitation}</span>
+                            </div>
+                            <div class="popup-info">
+                                <span class="popup-label">☁️ 天氣:</span>
+                                <span class="popup-value">${weather}</span>
+                            </div>
+                            <div style="text-align: center; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee;">
+                                <small style="color: #999;">點擊查看詳細資訊</small>
+                            </div>
+                        </div>
+                    `;
+                    
+                    marker.bindPopup(popupContent);
+                    
+                    marker.on('click', () => {
+                        showStationDetail(station.stationId);
+                    });
+                    
+                    // 延遲添加標記以產生動畫效果
+                    setTimeout(() => {
+                        markersLayer.addLayer(marker);
+                    }, index * 10); // 每個標記延遲10ms
+                }
+            });
+        }
+
+        // 地理排序 (南→北, 西→東)
+        function sortStationsByGeography(stations) {
+            return stations.sort((a, b) => {
+                // 無座標的排最後
+                if (!a.lat || !a.lon) return 1;
+                if (!b.lat || !b.lon) return -1;
+                
+                // 先按緯度降序 (南到北)
+                const latDiff = b.lat - a.lat;
+                if (Math.abs(latDiff) > 0.01) return latDiff;
+                
+                // 同緯度則按經度升序 (西到東)
+                return a.lon - b.lon;
+            });
+        }
+
+        // 渲染觀測站卡片
+        function renderStations() {
+            const grid = document.getElementById('stations-grid');
+            
+            // 地理排序
+            filteredStations = sortStationsByGeography(filteredStations);
+            
+            // 更新地圖標記
+            updateMapMarkers();
+            
+            if (filteredStations.length === 0) {
+                grid.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: white; padding: 40px;">無符合條件的觀測站</p>';
+                return;
+            }
+            
+            grid.innerHTML = filteredStations.map((station, index) => {
+                const card = WeatherTransformer.createStationCard(station);
+                // 為每個卡片添加延遲動畫
+                return card.replace('<div class="station-card"', 
+                    `<div class="station-card" style="animation-delay: ${index * 0.05}s"`);
+            }).join('');
+        }
+
+        // 顯示觀測站詳細資訊
+        function showStationDetail(stationId) {
+            const station = allStations.find(s => s.stationId === stationId);
+            if (!station) return;
+
+            const modal = document.getElementById('stationModal');
+            const modalTitle = document.getElementById('modalTitle');
+            const modalBody = document.getElementById('modalBody');
+
+            modalTitle.textContent = station.stationName;
+
+            const obsTime = station.obsTime ? new Date(station.obsTime).toLocaleString('zh-TW') : 'N/A';
+            const windDir = WeatherTransformer.getWindDirection(station.windDirection);
+
+            modalBody.innerHTML = `
+                <div class="modal-section">
+                    <h3>📍 基本資訊</h3>
+                    <div class="modal-row">
+                        <span class="modal-label">測站名稱：</span>
+                        <span class="modal-value">${station.stationName}</span>
+                    </div>
+                    <div class="modal-row">
+                        <span class="modal-label">測站編號：</span>
+                        <span class="modal-value">${station.stationId}</span>
+                    </div>
+                    <div class="modal-row">
+                        <span class="modal-label">位置：</span>
+                        <span class="modal-value">${station.county} ${station.town || ''}</span>
+                    </div>
+                    <div class="modal-row">
+                        <span class="modal-label">座標：</span>
+                        <span class="modal-value">${station.lat?.toFixed(6)}, ${station.lon?.toFixed(6)}</span>
+                    </div>
+                    <div class="modal-row">
+                        <span class="modal-label">海拔高度：</span>
+                        <span class="modal-value">${station.altitude !== null ? station.altitude + ' m' : 'N/A'}</span>
+                    </div>
+                </div>
+
+                <div class="modal-section">
+                    <h3>🌡️ 氣象資料</h3>
+                    <div class="modal-row">
+                        <span class="modal-label">觀測時間：</span>
+                        <span class="modal-value">${obsTime}</span>
+                    </div>
+                    <div class="modal-row">
+                        <span class="modal-label">天氣狀況：</span>
+                        <span class="modal-value">${station.weather || 'N/A'}</span>
+                    </div>
+                    <div class="modal-row">
+                        <span class="modal-label">氣溫：</span>
+                        <span class="modal-value">${station.temperature !== null ? station.temperature.toFixed(1) + '°C' : 'N/A'}</span>
+                    </div>
+                    <div class="modal-row">
+                        <span class="modal-label">相對濕度：</span>
+                        <span class="modal-value">${station.humidity !== null ? station.humidity + '%' : 'N/A'}</span>
+                    </div>
+                    <div class="modal-row">
+                        <span class="modal-label">氣壓：</span>
+                        <span class="modal-value">${station.pressure !== null ? station.pressure.toFixed(1) + ' hPa' : 'N/A'}</span>
+                    </div>
+                </div>
+
+                <div class="modal-section">
+                    <h3>💨 風力資料</h3>
+                    <div class="modal-row">
+                        <span class="modal-label">風向：</span>
+                        <span class="modal-value">${windDir} (${station.windDirection !== null ? station.windDirection + '°' : 'N/A'})</span>
+                    </div>
+                    <div class="modal-row">
+                        <span class="modal-label">風速：</span>
+                        <span class="modal-value">${station.windSpeed !== null ? station.windSpeed.toFixed(1) + ' m/s' : 'N/A'}</span>
+                    </div>
+                    ${station.peakGustSpeed !== null && station.peakGustSpeed > 0 ? `
+                        <div class="modal-row">
+                            <span class="modal-label">最大陣風：</span>
+                            <span class="modal-value">${station.peakGustSpeed.toFixed(1)} m/s 
+                                ${station.peakGustDirection !== null ? `(${WeatherTransformer.getWindDirection(station.peakGustDirection)})` : ''}
+                                ${station.peakGustTime ? `<br><small>發生時間: ${new Date(station.peakGustTime).toLocaleTimeString('zh-TW')}</small>` : ''}
+                            </span>
+                        </div>
+                    ` : ''}
+                </div>
+
+                <div class="modal-section">
+                    <h3>🌧️ 降雨資料</h3>
+                    <div class="modal-row">
+                        <span class="modal-label">當日累積降雨量：</span>
+                        <span class="modal-value">${station.precipitation !== null ? station.precipitation.toFixed(1) + ' mm' : 'N/A'}</span>
+                    </div>
+                </div>
+
+                ${station.uvi !== null && station.uvi >= 0 || station.sunshineDuration !== null ? `
+                    <div class="modal-section">
+                        <h3>☀️ 日照與紫外線</h3>
+                        ${station.uvi !== null && station.uvi >= 0 ? `
+                            <div class="modal-row">
+                                <span class="modal-label">紫外線指數：</span>
+                                <span class="modal-value">
+                                    <strong style="color: ${WeatherTransformer.getUVILevel(station.uvi).color}">
+                                        ${station.uvi.toFixed(1)} (${WeatherTransformer.getUVILevel(station.uvi).level})
+                                    </strong>
+                                </span>
+                            </div>
+                        ` : ''}
+                        ${station.sunshineDuration !== null && station.sunshineDuration > 0 ? `
+                            <div class="modal-row">
+                                <span class="modal-label">日照時數：</span>
+                                <span class="modal-value">${station.sunshineDuration.toFixed(2)} 小時</span>
+                            </div>
+                        ` : ''}
+                    </div>
+                ` : ''}
+
+                ${station.dailyHighTemp || station.dailyLowTemp ? `
+                    <div class="modal-section">
+                        <h3>📊 今日極值</h3>
+                        ${station.dailyHighTemp ? `
+                            <div class="modal-row">
+                                <span class="modal-label">最高溫：</span>
+                                <span class="modal-value">${station.dailyHighTemp.temperature.toFixed(1)}°C 
+                                    (${new Date(station.dailyHighTemp.occurredAt).toLocaleTimeString('zh-TW', {hour: '2-digit', minute: '2-digit'})})</span>
+                            </div>
+                        ` : ''}
+                        ${station.dailyLowTemp ? `
+                            <div class="modal-row">
+                                <span class="modal-label">最低溫：</span>
+                                <span class="modal-value">${station.dailyLowTemp.temperature.toFixed(1)}°C 
+                                    (${new Date(station.dailyLowTemp.occurredAt).toLocaleTimeString('zh-TW', {hour: '2-digit', minute: '2-digit'})})</span>
+                            </div>
+                        ` : ''}
+                    </div>
+                ` : ''}
+            `;
+
+            modal.classList.add('active');
+        }
+
+        // 關閉模態視窗
+        function closeModal() {
+            document.getElementById('stationModal').classList.remove('active');
+        }
+
+        // 刷新資料
+        async function refreshData() {
+            try {
+                const button = event?.target;
+                if (button) {
+                    button.disabled = true;
+                    button.style.opacity = '0.5';
+                }
+
+                await loadStationData();
+                setupCountyFilters();
+
+                if (button) {
+                    button.disabled = false;
+                    button.style.opacity = '1';
+                }
+
+                console.log('✅ 資料已刷新');
+            } catch (error) {
+                console.error('❌ 刷新失敗:', error);
+                showError('資料刷新失敗: ' + error.message);
+            }
+        }
+
+        // 顯示錯誤訊息
+        function showError(message) {
+            const errorDiv = document.getElementById('error-message');
+            errorDiv.innerHTML = `<div class="error-message">❌ ${message}</div>`;
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        // 深色模式切換
+        function toggleTheme() {
+            const body = document.body;
+            const themeIcon = document.getElementById('theme-icon');
+            
+            body.classList.toggle('dark-mode');
+            const isDark = body.classList.contains('dark-mode');
+            
+            themeIcon.textContent = isDark ? '☀️' : '🌙';
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+        }
+
+        // 載入主題偏好
+        function loadThemePreference() {
+            const savedTheme = localStorage.getItem('theme');
+            const themeIcon = document.getElementById('theme-icon');
+            
+            if (savedTheme === 'dark') {
+                document.body.classList.add('dark-mode');
+                themeIcon.textContent = '☀️';
+            }
+        }
+
+        // 頁面載入時初始化
+        window.addEventListener('DOMContentLoaded', () => {
+            loadThemePreference();
+            init();
+        });
+
+        // 點擊模態視窗外部關閉
+        document.addEventListener('click', (e) => {
+            const modal = document.getElementById('stationModal');
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+
+        // 定時刷新（每 5 分鐘,因為資料每 10 分鐘更新）
+        setInterval(refreshData, 300000);
+    </script>
 </body>
 </html>

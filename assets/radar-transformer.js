@@ -187,8 +187,73 @@ class RadarTransformer {
                 console.log(`✅ 偵測到 JSON 格式`);
                 try {
                     const jsonData = JSON.parse(text);
-                    // 轉換 JSON 格式為標準格式
-                    if (jsonData.data && jsonData.data.length > 0) {
+                    console.log(`🔍 JSON 結構:`, Object.keys(jsonData));
+                    
+                    // 處理氣象局新 API 格式（cwaopendata）
+                    if (jsonData.cwaopendata) {
+                        console.log(`📡 偵測到氣象局 cwaopendata 格式`);
+                        const cwaData = jsonData.cwaopendata;
+                        
+                        // 檢查是否有 dataset 或 location
+                        if (cwaData.dataset) {
+                            console.log(`📦 找到 dataset:`, Object.keys(cwaData.dataset));
+                            
+                            // 嘗試從 dataset 提取資料
+                            const dataset = cwaData.dataset;
+                            
+                            // resource 可能是物件或陣列
+                            if (dataset.resource) {
+                                console.log(`📦 resource 類型: ${Array.isArray(dataset.resource) ? '陣列' : typeof dataset.resource}`);
+                                console.log(`📦 resource 內容:`, dataset.resource);
+                                
+                                let resource;
+                                if (Array.isArray(dataset.resource)) {
+                                    resource = dataset.resource[0];
+                                } else if (typeof dataset.resource === 'object') {
+                                    resource = dataset.resource;
+                                }
+                                
+                                // 嘗試多種可能的 URL 欄位名稱
+                                const imageUrl = resource?.ProductURL || resource?.uri || resource?.url;
+                                
+                                if (imageUrl) {
+                                    // 嘗試從多個位置取得時間戳
+                                    const timestamp = dataset.DateTime || 
+                                                     dataset.datasetInfo?.parameterSet?.parameter?.find(p => p.parameterName === 'DATETIME')?.parameterValue || 
+                                                     new Date().toISOString();
+                                    
+                                    parsedData = {
+                                        imageUrl: imageUrl,
+                                        timestamp: timestamp,
+                                        contentType: resource.mimeType || 'image/png',
+                                        success: true
+                                    };
+                                    console.log(`✅ 從 cwaopendata.dataset.resource 提取資料: ${imageUrl}`);
+                                } else {
+                                    console.warn(`⚠️ resource 無 ProductURL/uri/url 欄位，resource 結構:`, resource);
+                                    parsedData = { success: false, error: '無可用資料 (resource 無圖片URL)' };
+                                }
+                            } else {
+                                console.warn(`⚠️ dataset 中無 resource`);
+                                parsedData = { success: false, error: '無可用資料 (dataset 無 resource)' };
+                            }
+                        } else if (cwaData.location && Array.isArray(cwaData.location)) {
+                            console.log(`📍 找到 location 陣列`);
+                            const location = cwaData.location[0];
+                            if (location && location.weatherElement) {
+                                // 處理 weatherElement 資料
+                                parsedData = { success: false, error: 'weatherElement 格式尚未實作' };
+                            } else {
+                                parsedData = { success: false, error: '無可用資料 (location 無 weatherElement)' };
+                            }
+                        } else {
+                            console.warn(`⚠️ cwaopendata 無 dataset 或 location`);
+                            console.log(`cwaopendata 結構:`, Object.keys(cwaData));
+                            parsedData = { success: false, error: '無可用資料 (cwaopendata 格式不符)' };
+                        }
+                    }
+                    // 處理舊版 JSON 格式
+                    else if (jsonData.data && jsonData.data.length > 0) {
                         const latestImage = jsonData.data[0];
                         parsedData = {
                             imageUrl: latestImage.url || latestImage.imageUrl,
@@ -206,6 +271,8 @@ class RadarTransformer {
                             success: true
                         };
                     } else {
+                        console.warn(`⚠️ JSON 無 cwaopendata、data 或 records 欄位`);
+                        console.log(`JSON 頂層鍵值:`, Object.keys(jsonData));
                         parsedData = { success: false, error: '無可用資料' };
                     }
                 } catch (e) {
@@ -294,6 +361,8 @@ class RadarTransformer {
     static createRadarCard(station, data) {
         const timestamp = new Date(data.timestamp).toLocaleString('zh-TW');
         const statusIcon = data.error ? '❌' : '✅';
+        const imageId = `radar-img-${station.code}`;
+        const loadingId = `loading-${station.code}`;
         
         return `
             <div class="radar-card">
@@ -312,8 +381,23 @@ class RadarTransformer {
                         `<p><strong>📊 檔案大小:</strong> ${this.formatFileSize(data.fileSize)}</p>`
                     }
                     ${!data.error && data.imageUrl ? 
-                        `<button class="btn btn-view" onclick="openRadarModal('${station.code}')">
-                            👁️ 查看回波圖
+                        `<div class="card-image-container">
+                            <div class="card-image-loading" id="${loadingId}">
+                                <div class="spinner"></div>
+                                <span>載入回波圖中...</span>
+                            </div>
+                            <img 
+                                id="${imageId}"
+                                class="card-radar-image" 
+                                src="${data.imageUrl}"
+                                alt="${station.name}回波圖"
+                                crossorigin="anonymous"
+                                onload="this.classList.add('loaded');document.getElementById('${loadingId}').style.display='none';"
+                                onerror="this.remove();document.getElementById('${loadingId}').innerHTML='<div style=&quot;text-align:center;padding:20px;color:#c62828;&quot;>❌ 圖片載入失敗<br><small style=&quot;color:#999;&quot;>請稍後重試或刷新頁面</small></div>';"
+                            />
+                        </div>
+                        <button class="btn btn-view" onclick="openRadarModal('${station.code}')" style="margin-top: 10px;">
+                            🔍 查看詳細資訊
                         </button>` : 
                         ''
                     }
@@ -346,42 +430,16 @@ class RadarTransformer {
         const integratedRadars = stations.filter(s => s.type === 'integrated').length;
         
         return `
-            <div class="radar-stats">
-                <div class="stat-item">
-                    <div class="stat-icon">📡</div>
-                    <div class="stat-info">
-                        <div class="stat-number">${stations.length}</div>
-                        <div class="stat-label">雷達資料源</div>
-                    </div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-icon">🎯</div>
-                    <div class="stat-info">
-                        <div class="stat-number">${individualRadars}</div>
-                        <div class="stat-label">個站雷達</div>
-                    </div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-icon">🌐</div>
-                    <div class="stat-info">
-                        <div class="stat-number">${integratedRadars}</div>
-                        <div class="stat-label">整合雷達</div>
-                    </div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-icon">📍</div>
-                    <div class="stat-info">
-                        <div class="stat-number">${counties.size}</div>
-                        <div class="stat-label">涵蓋縣市</div>
-                    </div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-icon">🔄</div>
-                    <div class="stat-info">
-                        <div class="stat-label">自動更新</div>
-                        <div class="stat-label" style="font-size: 12px;">每 10 分鐘</div>
-                    </div>
-                </div>
+            <div class="radar-stats-compact">
+                <span class="stat-compact">📡 <strong>${stations.length}</strong> 雷達資料源</span>
+                <span class="stat-divider">|</span>
+                <span class="stat-compact">🎯 <strong>${individualRadars}</strong> 個站雷達</span>
+                <span class="stat-divider">|</span>
+                <span class="stat-compact">🌐 <strong>${integratedRadars}</strong> 整合雷達</span>
+                <span class="stat-divider">|</span>
+                <span class="stat-compact">📍 <strong>${counties.size}</strong> 涵蓋縣市</span>
+                <span class="stat-divider">|</span>
+                <span class="stat-compact">🔄 自動更新 <strong>每 10 分鐘</strong></span>
             </div>
         `;
     }

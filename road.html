@@ -11,6 +11,7 @@
     <script>window.CURRENT_PAGE = 'road';</script>
     <script src="assets/config.js"></script>
     <script src="assets/tdx-api.js"></script>
+    <script src="assets/city-boundaries.js"></script>
     <script src="assets/image-handler-simple.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -520,42 +521,7 @@
             return locationParts.length > 0 ? locationParts.join(' ') : '未提供位置資訊';
         }
 
-        // 根據經緯度判斷縣市
-        function getCityFromCoordinates(lon, lat, roadName = '') {
-            if (!lon || !lat) return '未知';
-            
-            // 台灣各縣市經緯度範圍
-            const cityRanges = [
-                { name: '台北市', lonMin: 121.45, lonMax: 121.65, latMin: 24.95, latMax: 25.20 },
-                { name: '基隆市', lonMin: 121.65, lonMax: 121.85, latMin: 25.10, latMax: 25.25 },
-                { name: '新北市', lonMin: 121.20, lonMax: 121.95, latMin: 24.70, latMax: 25.30 },
-                { name: '桃園市', lonMin: 121.05, lonMax: 121.50, latMin: 24.75, latMax: 25.05 },
-                { name: '新竹縣', lonMin: 120.80, lonMax: 121.30, latMin: 24.55, latMax: 24.85 },
-                { name: '新竹市', lonMin: 120.90, lonMax: 121.05, latMin: 24.75, latMax: 24.85 },
-                { name: '苗栗縣', lonMin: 120.55, lonMax: 121.15, latMin: 24.25, latMax: 24.75 },
-                { name: '台中市', lonMin: 120.45, lonMax: 121.25, latMin: 24.05, latMax: 24.55 },
-                { name: '彰化縣', lonMin: 120.35, lonMax: 120.75, latMin: 23.85, latMax: 24.25 },
-                { name: '南投縣', lonMin: 120.65, lonMax: 121.25, latMin: 23.45, latMax: 24.15 },
-                { name: '雲林縣', lonMin: 120.15, lonMax: 120.65, latMin: 23.45, latMax: 23.85 },
-                { name: '嘉義縣', lonMin: 120.15, lonMax: 120.75, latMin: 23.15, latMax: 23.65 },
-                { name: '嘉義市', lonMin: 120.40, lonMax: 120.50, latMin: 23.45, latMax: 23.52 },
-                { name: '台南市', lonMin: 120.05, lonMax: 120.65, latMin: 22.85, latMax: 23.45 },
-                { name: '高雄市', lonMin: 120.15, lonMax: 120.95, latMin: 22.45, latMax: 23.15 },
-                { name: '屏東縣', lonMin: 120.25, lonMax: 120.95, latMin: 21.85, latMax: 22.85 },
-                { name: '宜蘭縣', lonMin: 121.55, lonMax: 122.05, latMin: 24.25, latMax: 24.95 },
-                { name: '花蓮縣', lonMin: 121.15, lonMax: 121.75, latMin: 23.00, latMax: 24.45 },
-                { name: '台東縣', lonMin: 120.95, lonMax: 121.65, latMin: 22.35, latMax: 23.55 }
-            ];
-            
-            for (const city of cityRanges) {
-                if (lon >= city.lonMin && lon <= city.lonMax && 
-                    lat >= city.latMin && lat <= city.latMax) {
-                    return city.name;
-                }
-            }
-            
-            return '未知';
-        }
+        // 縣市判斷函數已移至 assets/city-boundaries.js
 
         // 處理影像載入錯誤 - 改進版本，解決CORS問題
         function handleImageError(img, originalUrl) {
@@ -1163,19 +1129,25 @@
             const grid = displayCameras.map((camera, index) => {
                 const sourceIcon = camera.source === 'tdx' ? '<i class="fas fa-database" title="TDX資料" style="color: #2196F3;"></i>' : '';
                 const roadNumber = camera.RoadNumber ? `<span class="road-badge">${camera.RoadNumber}</span>` : '';
+                const imageId = `img-${startIndex + index}-${Date.now()}`;
+                const imageUrl = camera.VideoImageUrl || camera.VideoImageURL || camera.VideoStreamURL || camera.PictureURL;
                 
                 return `
                     <div class="camera-card" onclick="openModal(${startIndex + index})">
-                        <div class="camera-image">
-                            ${camera.VideoImageUrl || camera.VideoStreamURL ? 
-                                `<img 
-                                     data-src="${camera.VideoImageUrl || camera.VideoStreamURL}" 
+                        <div class="camera-image" id="container-${imageId}">
+                            ${imageUrl ? 
+                                `<div class="image-loading-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;background:#f5f5f5;border-radius:8px;">
+                                    <i class="fas fa-spinner fa-pulse" style="font-size:2rem;margin-bottom:8px;color:#FF9800;"></i>
+                                    <span style="font-size:0.85rem;color:#666;">載入中...</span>
+                                </div>
+                                <img id="${imageId}"
+                                     data-src="${imageUrl}" 
                                      alt="${camera.CCTVID || '監視器影像'}" 
-                                     loading="lazy"
                                      data-camera-id="${camera.CCTVID || index}"
-                                     style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px; background: #f0f0f0;"
-                                     onerror="this.parentNode.innerHTML='<div style=&quot;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#999;background:#f5f5f5;border-radius:8px;&quot;><i class=&quot;fas fa-exclamation-triangle&quot; style=&quot;font-size:2rem;margin-bottom:8px;color:#f44336;&quot;></i><span style=&quot;font-size:0.85rem;text-align:center;&quot;>${camera.RoadName || '監視器'}<br>影像載入失敗</span></div>'">
-                                 <div class="image-overlay">
+                                     style="width: 100%; height: 100%; object-fit: cover; border-radius: 8px; background: #f0f0f0; display: none;"
+                                     onload="handleImageLoad(this)"
+                                     onerror="handleImageError(this, '${imageUrl}')">
+                                 <div class="image-overlay" style="display: none;">
                                      <i class="fas fa-search-plus" style="font-size: 2rem;"></i>
                                  </div>` : 
                                 '<div class="no-image-placeholder"><i class="fas fa-video-slash" style="font-size: 2rem; color: #ccc; margin-bottom: 10px;"></i><span style="color: #666;">無影像資料</span></div>'
@@ -1222,11 +1194,64 @@
 
             container.innerHTML = `<div class="cameras-grid">${grid}</div>`;
             
-            // 初始化Intersection Observer以進行懶加載
-            initializeLazyLoading();
+            // 使用漸進式載入取代懶加載,避免HTTP/2連線過載
+            setTimeout(() => {
+                progressiveImageLoading();
+            }, 100);
             
             // 更新分頁
             updatePagination();
+        }
+
+        // 漸進式圖片載入 - 避免HTTP/2協議錯誤
+        let imageLoadQueue = [];
+        let currentLoadingCount = 0;
+        const MAX_CONCURRENT_LOADS = 6;
+        const LOAD_DELAY = 150;
+
+        function progressiveImageLoading() {
+            const images = document.querySelectorAll('img[data-src]:not([src])');
+            imageLoadQueue = Array.from(images);
+            
+            console.log(`🖼️ 開始漸進式載入 ${imageLoadQueue.length} 張圖片 (最大併發: ${MAX_CONCURRENT_LOADS})`);
+            processImageQueue();
+        }
+
+        function processImageQueue() {
+            while (currentLoadingCount < MAX_CONCURRENT_LOADS && imageLoadQueue.length > 0) {
+                const img = imageLoadQueue.shift();
+                if (img && img.dataset.src) {
+                    loadImageWithDelay(img);
+                }
+            }
+        }
+
+        function loadImageWithDelay(img) {
+            currentLoadingCount++;
+            
+            setTimeout(() => {
+                const container = img.closest('.camera-image');
+                const loadingPlaceholder = container?.querySelector('.image-loading-placeholder');
+                const overlay = container?.querySelector('.image-overlay');
+                
+                img.onload = function() {
+                    handleImageLoad(this);
+                    if (loadingPlaceholder) loadingPlaceholder.style.display = 'none';
+                    if (overlay) overlay.style.display = 'flex';
+                    this.style.display = 'block';
+                    
+                    currentLoadingCount--;
+                    processImageQueue();
+                };
+                
+                img.onerror = function() {
+                    handleImageError(this, this.dataset.src);
+                    currentLoadingCount--;
+                    processImageQueue();
+                };
+                
+                img.src = img.dataset.src;
+            }, LOAD_DELAY);
         }
 
         function updatePagination() {
@@ -1254,6 +1279,68 @@
                 currentPage = newPage;
                 displayCameras(filteredCameras);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+        }
+
+        // 處理圖片載入錯誤,添加重試機制和超時處理
+        const imageRetryCount = new Map();
+        const imageTimeouts = new Map();
+        
+        function handleImageError(imgElement, originalSrc) {
+            const imgId = imgElement.id || imgElement.dataset.cameraId || originalSrc;
+            const retryCount = imageRetryCount.get(imgId) || 0;
+            
+            // 清除可能存在的超時計時器
+            if (imageTimeouts.has(imgId)) {
+                clearTimeout(imageTimeouts.get(imgId));
+                imageTimeouts.delete(imgId);
+            }
+            
+            // 最多重試2次
+            if (retryCount < 2) {
+                imageRetryCount.set(imgId, retryCount + 1);
+                
+                // 延遲重試,避免立即重複請求
+                setTimeout(() => {
+                    // 添加時間戳避免快取
+                    const separator = originalSrc.includes('?') ? '&' : '?';
+                    imgElement.src = `${originalSrc}${separator}_retry=${retryCount + 1}&t=${Date.now()}`;
+                    
+                    // 設定30秒超時
+                    const timeoutId = setTimeout(() => {
+                        if (imgElement.parentNode) {
+                            imgElement.parentNode.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#999;background:#f5f5f5;border-radius:8px;">
+                                <i class="fas fa-clock" style="font-size:2rem;margin-bottom:8px;color:#ff9800;"></i>
+                                <span style="font-size:0.85rem;text-align:center;">影像載入超時<br>請稍後重新整理</span>
+                            </div>`;
+                        }
+                        imageTimeouts.delete(imgId);
+                    }, 30000);
+                    
+                    imageTimeouts.set(imgId, timeoutId);
+                }, 1000 * (retryCount + 1)); // 漸進式延遲
+                
+            } else {
+                // 重試失敗,顯示錯誤訊息
+                if (imgElement.parentNode) {
+                    imgElement.parentNode.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#999;background:#f5f5f5;border-radius:8px;">
+                        <i class="fas fa-exclamation-triangle" style="font-size:2rem;margin-bottom:8px;color:#f44336;"></i>
+                        <span style="font-size:0.85rem;text-align:center;">省道監視器<br>影像暫時無法載入</span>
+                    </div>`;
+                }
+                imageRetryCount.delete(imgId);
+            }
+        }
+        
+        // 圖片載入成功時清除超時計時器
+        function handleImageLoad(imgElement) {
+            const imgId = imgElement.id || imgElement.dataset.cameraId;
+            if (imageTimeouts.has(imgId)) {
+                clearTimeout(imageTimeouts.get(imgId));
+                imageTimeouts.delete(imgId);
+            }
+            if (imageRetryCount.has(imgId)) {
+                imageRetryCount.delete(imgId);
             }
         }
 

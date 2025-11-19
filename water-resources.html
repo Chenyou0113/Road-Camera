@@ -704,8 +704,36 @@
         let filteredCameras = [];
         let currentDataSource = 'all';
         
+        // 時間驗證輔助函式
+        function isValidTimestamp(timeStr) {
+            if (!timeStr) return false;
+            const timestamp = new Date(timeStr);
+            const now = new Date();
+            const year = timestamp.getFullYear();
+            // 過濾異常時間：1970之前或 2030 之後的都視為無效
+            return year >= 1970 && year <= 2030 && timestamp <= now;
+        }
+        
+        function formatTimestamp(timeStr) {
+            if (!timeStr || !isValidTimestamp(timeStr)) {
+                return '<span style="color: #f44336; font-style: italic;">時間資訊異常</span>';
+            }
+            return new Date(timeStr).toLocaleString('zh-TW', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+        
         // 處理主管機關顯示 - 從描述中提取具體的河川分署或地方政府部門
         function formatAuthority(camera) {
+            // 優先使用快取的值,避免重複計算
+            if (camera._cachedAuthority) {
+                return camera._cachedAuthority;
+            }
+            
             const thing = camera.Thing || {};
             const authority = thing.properties?.authority || '';
             const description = thing.description || thing.properties?.description || '';
@@ -799,7 +827,6 @@
                 // 對於無法從地名判斷的監視器，嘗試從其他資訊推斷
                 // 首先檢查是否為編號式監視器
                 if (locationStr.match(/^[a-z]\d+$|^[A-Z]\d+$/)) {  // 純編號式監視器(如 C8, B6)
-                    console.log(`監視器編號 ${location} 無法確定分署，暫時歸類為第一河川分署`);
                     return '第一河川分署（待確認）';
                 }
                 
@@ -809,7 +836,6 @@
                     
                     // 根據常見的河川系統推斷可能的分署
                     if (locationStr.match(/[a-z]\d+|[A-Z]\d+/)) {  // 包含編號的水利設施
-                        console.log(`水利設施 ${location} 無法確定分署，暫時歸類為第一河川分署`);
                         return '第一河川分署（待確認）';
                     }
                 }
@@ -1159,42 +1185,62 @@
                     console.log('🔄 載入 SensorThings API 監視器資料...');
                     updateProgress(2, 30, '連接 SensorThings API...');
                     
-                    // 使用最穩定的STA API批次查詢
+                    // 使用最穩定的STA API批次查詢 - 分批查詢各類水利單位
                     updateProgress(2, 40, '查詢水利署監視器...');
-                    const wraResponse = await fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$filter=contains(Thing/properties/authority,\'水利\')&$expand=Thing($select=name,description,properties,Locations),Observations($top=1;$orderby=phenomenonTime desc)&$top=500&$count=true');
                     
-                    if (!wraResponse.ok) {
-                        throw new Error('STA API 回應錯誤');
-                    }
+                    const [wraRes, cooperativeRes, riverRes] = await Promise.all([
+                        // 水利署直轄
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$filter=startswith(Thing/properties/authority,%27水利署%27)&$expand=Thing($select=name,description,properties,Locations),Observations($top=1;$orderby=phenomenonTime desc)&$top=200&$count=true'),
+                        // 合建單位
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$filter=substringof(%27合建%27,Thing/properties/authority)&$expand=Thing($select=name,description,properties,Locations),Observations($top=1;$orderby=phenomenonTime desc)&$top=200&$count=true'),
+                        // 河川局
+                        fetch('https://sta.ci.taiwan.gov.tw/STA_CCTV/v1.0/Datastreams?$filter=substringof(%27河川局%27,Thing/properties/authority)&$expand=Thing($select=name,description,properties,Locations),Observations($top=1;$orderby=phenomenonTime desc)&$top=200&$count=true')
+                    ]);
                     
-                    const wraData = await wraResponse.json();
-                    updateProgress(3, 70, '處理監視器資料中...', wraData.value?.length || 0);
+                    console.log('API 回應狀態:', wraRes.status, cooperativeRes.status, riverRes.status);
                     
-                    // 標記來源並根據 authority 分類
-                    allCameras = (wraData.value || []).map(camera => {
-                        const authority = camera.Thing?.properties?.authority || '';
-                        let source = 'other';
-                        let sourceLabel = '其他水利單位';
-                        
-                        if (authority.includes('水利署') && !authority.includes('合建')) {
-                            source = 'wra';
-                            sourceLabel = '水利署直轄';
-                        } else if (authority.includes('合建')) {
-                            source = 'cooperative';
-                            sourceLabel = '水利署與地方合建';
-                        } else if (authority.includes('河川局')) {
-                            source = 'river';
-                            sourceLabel = '河川局';
-                        }
-                        
-                        return {
+                    const wraData = wraRes.ok ? await wraRes.json() : { value: [] };
+                    const cooperativeData = cooperativeRes.ok ? await cooperativeRes.json() : { value: [] };
+                    const riverData = riverRes.ok ? await riverRes.json() : { value: [] };
+                    
+                    const totalCount = (wraData.value?.length || 0) + (cooperativeData.value?.length || 0) + (riverData.value?.length || 0);
+                    updateProgress(3, 70, '處理監視器資料中...', totalCount);
+                    
+                    // 合併所有資料並標記來源,同時預先計算分署資訊(避免重複計算)
+                    const wraCameras = (wraData.value || []).map(camera => {
+                        const formatted = {
                             ...camera,
-                            source,
-                            sourceLabel
+                            source: 'wra',
+                            sourceLabel: '水利署直轄'
                         };
+                        // 預先計算並快取 authority 資訊
+                        formatted._cachedAuthority = formatAuthority(formatted);
+                        return formatted;
                     });
                     
-                    console.log(`✅ STA API 載入成功: 共 ${allCameras.length} 筆水利相關監視器`);
+                    const cooperativeCameras = (cooperativeData.value || []).map(camera => {
+                        const formatted = {
+                            ...camera,
+                            source: 'cooperative',
+                            sourceLabel: '水利署與地方合建'
+                        };
+                        formatted._cachedAuthority = formatAuthority(formatted);
+                        return formatted;
+                    });
+                    
+                    const riverCameras = (riverData.value || []).map(camera => {
+                        const formatted = {
+                            ...camera,
+                            source: 'river',
+                            sourceLabel: '河川局'
+                        };
+                        formatted._cachedAuthority = formatAuthority(formatted);
+                        return formatted;
+                    });
+                    
+                    allCameras = [...wraCameras, ...cooperativeCameras, ...riverCameras];
+                    
+                    console.log(`✅ STA API 載入成功: 水利署 ${wraCameras.length} 筆, 合建 ${cooperativeCameras.length} 筆, 河川局 ${riverCameras.length} 筆`);
                     
                     updateProgress(4, 90, '生成監視器卡片...', allCameras.length);
                     
@@ -1448,6 +1494,14 @@
                 const imageUrl = latestObs?.result || '';
                 const hasImage = imageUrl && imageUrl.trim() !== '';
                 const updateTime = latestObs?.phenomenonTime || '';
+                const isValidTime = isValidTimestamp(updateTime);
+                const displayTime = isValidTime ? new Date(updateTime).toLocaleString('zh-TW', {
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                }) : '資料時間異常';
                 
                 return `
                     <div class="camera-card" onclick="showModal(${allCameras.indexOf(camera)})">
@@ -1493,8 +1547,8 @@
                             <span class="camera-status ${hasImage ? 'status-online' : 'status-offline'}">
                                 ${hasImage ? '● 有影像' : '● 無影像'}
                             </span>
-                            ${updateTime ? `<div style="font-size: 0.8rem; color: #999; margin-top: 8px;">
-                                <i class="fas fa-clock"></i> ${new Date(updateTime).toLocaleString('zh-TW')}
+                            ${updateTime ? `<div style="font-size: 0.8rem; color: ${isValidTime ? '#999' : '#f44336'}; margin-top: 8px;">
+                                <i class="fas fa-clock"></i> ${displayTime}
                             </div>` : ''}
                         </div>
                     </div>
@@ -1536,9 +1590,11 @@
             document.getElementById('modalStationID').innerHTML = `<strong><i class="fas fa-id-card"></i> 監測站名稱：</strong>${thing.properties?.stationName || thing.name || '未知'}`;
             
             if (latestObs?.phenomenonTime) {
-                document.getElementById('modalUpdateTime').innerHTML = `<strong><i class="fas fa-clock"></i> 資料時間：</strong>${new Date(latestObs.phenomenonTime).toLocaleString('zh-TW')}`;
+                const formattedTime = formatTimestamp(latestObs.phenomenonTime);
+                const timeClass = isValidTimestamp(latestObs.phenomenonTime) ? '' : 'style="color: #f44336;"';
+                document.getElementById('modalUpdateTime').innerHTML = `<strong><i class="fas fa-clock"></i> 資料時間：</strong><span ${timeClass}>${formattedTime}</span>`;
             } else {
-                document.getElementById('modalUpdateTime').innerHTML = '';
+                document.getElementById('modalUpdateTime').innerHTML = '<strong><i class="fas fa-clock"></i> 資料時間：</strong><span style="color: #999;">未提供</span>';
             }
 
             // 顯示座標資訊（如果有的話）
@@ -1587,8 +1643,45 @@
         document.getElementById('filterAuthority').addEventListener('change', filterCameras);
         document.getElementById('filterStatus').addEventListener('change', filterCameras);
         document.getElementById('sortBy').addEventListener('change', filterCameras);
+        
+        // 深色模式切換功能
+        (function() {
+            const themeToggle = document.getElementById('themeToggle');
+            if (!themeToggle) return;
+            
+            const body = document.body;
+            const themeIcon = themeToggle.querySelector('i');
+            
+            // 從 localStorage 讀取使用者偏好
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme === 'dark') {
+                body.classList.add('dark-mode');
+                if (themeIcon) {
+                    themeIcon.classList.remove('fa-moon');
+                    themeIcon.classList.add('fa-sun');
+                }
+            }
+            
+            // 切換深色模式
+            themeToggle.addEventListener('click', function() {
+                body.classList.toggle('dark-mode');
+                
+                if (body.classList.contains('dark-mode')) {
+                    if (themeIcon) {
+                        themeIcon.classList.remove('fa-moon');
+                        themeIcon.classList.add('fa-sun');
+                    }
+                    localStorage.setItem('theme', 'dark');
+                } else {
+                    if (themeIcon) {
+                        themeIcon.classList.remove('fa-sun');
+                        themeIcon.classList.add('fa-moon');
+                    }
+                    localStorage.setItem('theme', 'light');
+                }
+            });
+        })();
     </script>
-    <script src="assets/dark-mode.js"></script>
 
     <!-- Back to Top Button -->
     <div class="back-to-top" id="backToTop" style="position: fixed; bottom: 30px; right: 30px; width: 50px; height: 50px; background: linear-gradient(135deg, #1e40af, #0891b2); border-radius: 50%; display: none; align-items: center; justify-content: center; color: white; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.3); z-index: 999; font-size: 1.2rem;">
