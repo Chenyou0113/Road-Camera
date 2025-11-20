@@ -9,8 +9,10 @@
     <script>window.CURRENT_PAGE = 'train-liveboard';</script>
     <script src="assets/config.js"></script>
     <script src="assets/tdx-api.js"></script>
+    <script src="assets/station-code-mapping.js"></script>
     <script src="assets/train-line-classification.js"></script>
     <script src="assets/train-data-transformer.js"></script>
+    <script src="assets/train-liveboard-manager.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -218,6 +220,82 @@
             color: white;
         }
         
+        /* 篩選按鈕 */
+        .filter-btn {
+            padding: 8px 15px;
+            background: white;
+            border: 2px solid #1e40af;
+            color: #1e40af;
+            border-radius: 20px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            font-size: 0.9rem;
+        }
+        
+        .filter-btn:hover {
+            background: #f0f7ff;
+            transform: translateY(-2px);
+        }
+        
+        .filter-btn.active {
+            background: #1e40af;
+            color: white;
+            box-shadow: 0 4px 12px rgba(30, 64, 175, 0.3);
+        }
+        
+        /* 動畫 */
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+        }
+        
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .train-table tbody tr {
+            animation: slideIn 0.3s ease-out;
+        }
+
+        /* 已離站列車樣式 */
+        .train-table tr.departed-train {
+            opacity: 0.6;
+        }
+        .train-table tr.departed-train td {
+            color: #999;
+            text-decoration: line-through;
+        }
+        .train-table tr.departed-train .train-number,
+        .train-table tr.departed-train .status-badge,
+        .train-table tr.departed-train .direction-badge,
+        .train-table tr.departed-train .train-type {
+            opacity: 0.6;
+        }
+        
         .no-data {
             text-align: center;
             padding: 40px;
@@ -253,27 +331,50 @@
             margin-top: 5px; 
         }
         
-        /* 資訊面板 */
+        /* 資訊面板 - 增強版 */
         .info-panel {
-            background: #e8f5e8;
-            border-left: 4px solid #1e40af;
+            background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
+            border-left: 5px solid #d32f2f;
+            border-right: 1px solid #ddd;
+            border-top: 1px solid #ddd;
+            border-bottom: 1px solid #ddd;
             padding: 20px;
             margin: 20px 0;
             border-radius: 8px;
             transition: all 0.3s ease;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
         .info-panel h3 {
-            color: #1e40af;
+            color: #d32f2f;
             margin: 0 0 15px 0;
             display: flex;
             align-items: center;
             justify-content: space-between;
             cursor: pointer;
+            font-size: 1.1rem;
+            font-weight: bold;
+        }
+        .info-panel h3 i:first-child {
+            margin-right: 10px;
         }
         .info-panel p {
             color: #333;
             line-height: 1.6;
             margin: 10px 0;
+        }
+        .info-panel ul {
+            color: #333;
+            line-height: 1.8;
+        }
+        .info-panel ol {
+            color: #333;
+            line-height: 1.8;
+        }
+        .info-panel details {
+            color: #666;
+        }
+        .info-panel summary {
+            color: #1e40af;
         }
         
         /* 深色模式 */
@@ -359,14 +460,46 @@
             color: rgba(255,255,255,0.7);
         }
         body.dark-mode .info-panel {
-            background: rgba(40,40,50,0.95);
-            border-left-color: #66BB6A;
+            background: linear-gradient(135deg, rgba(60,50,50,0.95) 0%, rgba(50,40,40,0.95) 100%);
+            border-left-color: #ff6b6b;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.5);
         }
         body.dark-mode .info-panel h3 {
-            color: #66BB6A;
+            color: #ff6b6b;
         }
         body.dark-mode .info-panel p {
+            color: rgba(255,255,255,0.85);
+        }
+        body.dark-mode .info-panel ul {
+            color: rgba(255,255,255,0.85);
+        }
+        body.dark-mode .info-panel ol {
+            color: rgba(255,255,255,0.85);
+        }
+        body.dark-mode .info-panel ol li {
+            color: rgba(255,255,255,0.85) !important;
+        }
+        body.dark-mode .info-panel ul li {
+            color: rgba(255,255,255,0.85) !important;
+        }
+        body.dark-mode .info-panel details {
+            background: rgba(30,30,40,0.8);
             color: rgba(255,255,255,0.8);
+        }
+        body.dark-mode .info-panel details > div {
+            background: rgba(40,40,50,0.95) !important;
+        }
+        body.dark-mode .info-panel details p,
+        body.dark-mode .info-panel details ol,
+        body.dark-mode .info-panel details li,
+        body.dark-mode .info-panel details strong {
+            color: rgba(255,255,255,0.9) !important;
+        }
+        body.dark-mode .info-panel a {
+            color: #66BB6A !important;
+        }
+        body.dark-mode .info-panel summary {
+            color: #66BB6A;
         }
         body.dark-mode .no-data {
             color: rgba(255,255,255,0.5);
@@ -424,31 +557,117 @@
                 <i class="fas fa-moon"></i>
             </button>
         
-        <!-- 資訊面板 -->
+        <!-- 資訊面板 - 包含重要數據延遲和來源說明 -->
         <div class="info-panel" id="infoPanel">
             <h3 onclick="toggleInfoPanel()">
                 <span>
                     <i class="fas fa-info-circle"></i>
-                    TDX 台鐵即時看板說明
+                    重要說明 - 台鐵即時看板數據來源
                 </span>
                 <i id="toggleIcon" class="fas fa-chevron-up" style="transition: transform 0.3s ease;"></i>
             </h3>
             <div id="infoContent">
-                <p>
-                    <strong>📊 資料來源：</strong>交通部 TDX 交通資料流通服務平台
+                <!-- 重要警告 - 數據延遲 -->
+                <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin-bottom: 15px; border-radius: 4px;">
+                    <p style="margin: 0; color: #856404;">
+                        <strong style="font-size: 1.1em;">⏱️ 重要提示：本看板資料延遲約 <span style="color: #d32f2f; font-size: 1.15em;">2 分鐘</span></strong>
+                    </p>
+                    <p style="margin: 5px 0 0 0; color: #856404; font-size: 0.95em;">
+                        本資料來自台鐵官方 TDX 平台，是經過處理轉換的數據，不是即時直播資料。
+                    </p>
+                </div>
+
+                <!-- 數據來源說明 -->
+                <div style="margin-bottom: 15px;">
+                    <p style="margin: 0 0 8px 0;">
+                        <strong>📊 資料來源與處理方式：</strong>
+                    </p>
+                    <ul style="margin: 5px 0; padding-left: 20px; color: #555;">
+                        <li>本看板資料來自交通部 TDX 交通資料流通服務平台</li>
+                        <li>TDX 將台鐵「列車即時準點/誤點資料」與「每日時刻表」結合轉換而成</li>
+                        <li>資料會經過約 2 分鐘的處理和傳輸延遲</li>
+                        <li>本看板每 2 分鐘自動更新一次</li>
+                    </ul>
+                </div>
+
+                <!-- 與站內顯示的差異 -->
+                <div style="background: #f3e5f5; border-left: 4px solid #9c27b0; padding: 12px; margin-bottom: 15px; border-radius: 4px;">
+                    <p style="margin: 0 0 8px 0; color: #4a148c;">
+                        <strong>⚠️ 與站內 TIDS 顯示的差異：</strong>
+                    </p>
+                    <p style="margin: 0; color: #4a148c; font-size: 0.95em;">
+                        本看板資料（來自 TDX）與站內月台上顯示的「列車即時到離站電子看板」（TIDS）資料來源不同，
+                        <strong>無法保證完全一致</strong>。建議查詢後直接進入車站月台區域，
+                        <strong style="color: #d32f2f;">以站內 TIDS 顯示為主</strong>。
+                    </p>
+                </div>
+
+                <!-- 使用建議 -->
+                <div style="margin-bottom: 15px;">
+                    <p style="margin: 0 0 8px 0;">
+                        <strong>👥 使用建議：</strong>
+                    </p>
+                    <ul style="margin: 5px 0; padding-left: 20px; color: #555;">
+                        <li>本看板適合了解車次到離狀態或規劃行程使用</li>
+                        <li>重要行程請進入車站後以站內 TIDS 月台顯示為準</li>
+                        <li>遇到異常延誤可詢問站務人員最新狀況</li>
+                    </ul>
+                </div>
+
+                <!-- 技術細節（可選展開） -->
+                <details style="background: #f5f5f5; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+                    <summary style="cursor: pointer; font-weight: bold; color: #1e40af;">
+                        🔧 技術細節（資料轉換方法）
+                    </summary>
+                    <div style="margin-top: 10px; font-size: 0.9em; color: #333; padding: 10px; background: #ffffff; border-radius: 3px;">
+                        <p style="margin: 0 0 8px 0; color: #333;">
+                            <strong style="color: #222;">TDX 資料轉換流程：</strong>
+                        </p>
+                        <ol style="margin: 5px 0; padding-left: 20px; color: #333;">
+                            <li style="color: #333;">台鐵提供：日常時刻表 + 即時列車延誤資訊</li>
+                            <li style="color: #333;">TDX 處理：結合時刻表和延誤資訊，轉換成車站別、方向別的到離站資料</li>
+                            <li style="color: #333;">資料輸出：以「StationLiveBoard」格式提供前後 30 分鐘列車資訊</li>
+                            <li style="color: #333;">本看板：進一步篩選和組織成用戶友善的表格形式</li>
+                        </ol>
+                        <p style="margin: 8px 0 0 0; font-style: italic; color: #666;">
+                            因此本資料為「準實時」而非「完全實時」
+                        </p>
+
+                        <p style="margin: 15px 0 8px 0; color: #333;">
+                            <strong style="color: #222;">車站代碼系統說明：</strong>
+                        </p>
+                        <table style="width: 100%; border-collapse: collapse; margin: 8px 0; color: #333;">
+                            <tr style="background: #f9f9f9;">
+                                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;"><strong>代碼類型</strong></th>
+                                <th style="border: 1px solid #ddd; padding: 8px; text-align: left;"><strong>用途</strong></th>
+                            </tr>
+                            <tr>
+                                <td style="border: 1px solid #ddd; padding: 8px; color: #333;"><strong>StationID</strong></td>
+                                <td style="border: 1px solid #ddd; padding: 8px; color: #333;">列車排點系統代碼（本看板使用 TDX API 查詢）</td>
+                            </tr>
+                            <tr style="background: #f9f9f9;">
+                                <td style="border: 1px solid #ddd; padding: 8px; color: #333;"><strong>StationCode</strong></td>
+                                <td style="border: 1px solid #ddd; padding: 8px; color: #333;">票務系統車站簡碼（訂票系統使用）</td>
+                            </tr>
+                        </table>
+                        <p style="margin: 8px 0 0 0; font-size: 0.85em; color: #666;">
+                            ℹ️ <strong>注意：</strong>兩個系統的代碼可能不同。加值業者（如本看板）需了解差異並進行適當的系統轉換。
+                        </p>
+                    </div>
+                </details>
+
+                <!-- 相關資源連結 -->
+                <p style="margin-top: 15px; margin-bottom: 5px;">
+                    <strong>📚 相關資源：</strong>
                 </p>
-                <p>
-                    <strong>🔄 更新頻率：</strong>每 2 分鐘更新一次
+                <p style="margin: 5px 0;">
+                    🔗 <a href="https://tdx.transportdata.tw" target="_blank" style="color: #1e40af; text-decoration: none; font-weight: bold;">
+                        TDX 交通資料流通服務平台 <i class="fas fa-external-link-alt" style="font-size: 0.75rem;"></i>
+                    </a>
                 </p>
-                <p>
-                    <strong>⏰ 顯示範圍：</strong>當前時間前後 30 分鐘內的列車資訊
-                </p>
-                <p>
-                    <strong>ℹ️ 注意事項：</strong>本資料已過濾已離站車次，僅顯示即將到站及尚未離站的列車
-                </p>
-                <p style="margin-top: 15px;">
-                    🔗 <a href="https://tdx.transportdata.tw" target="_blank" style="color: #1e40af; text-decoration: none;">
-                        TDX 交通資料流通服務平台 <i class="fas fa-external-link-alt" style="font-size: 0.8rem;"></i>
+                <p style="margin: 5px 0;">
+                    🔗 <a href="https://www.tra.gov.tw" target="_blank" style="color: #1e40af; text-decoration: none; font-weight: bold;">
+                        台灣鐵路管理局官方網站 <i class="fas fa-external-link-alt" style="font-size: 0.75rem;"></i>
                     </a>
                 </p>
             </div>
@@ -521,6 +740,37 @@
                     </h2>
                     <div class="update-time">
                         <i class="fas fa-clock"></i> 更新時間：<span id="updateTime">--</span>
+                        <i class="fas fa-sync-alt" id="refreshIcon" style="margin-left: 15px; cursor: pointer; transition: transform 0.3s ease;" title="立即刷新"></i>
+                    </div>
+                </div>
+
+                <!-- 篩選和排序控件 -->
+                <div style="background: #f8f9fa; padding: 15px 20px; border-bottom: 1px solid #e0e0e0; display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
+                    <div style="display: flex; gap: 10px;">
+                        <button class="filter-btn" data-filter="all" onclick="setFilter('all')" title="顯示全部列車">
+                            <i class="fas fa-list"></i> 全部
+                        </button>
+                        <button class="filter-btn" data-filter="arrival" onclick="setFilter('arrival')" title="只顯示即將到站">
+                            <i class="fas fa-arrow-down"></i> 到站
+                        </button>
+                        <button class="filter-btn" data-filter="departure" onclick="setFilter('departure')" title="只顯示即將離站">
+                            <i class="fas fa-arrow-up"></i> 離站
+                        </button>
+                        <button class="filter-btn" data-filter="delayed" onclick="setFilter('delayed')" title="只顯示延誤列車">
+                            <i class="fas fa-exclamation-triangle"></i> 延誤
+                        </button>
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px; margin-left: auto;">
+                        <select id="sortSelect" onchange="setSort(this.value)" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 5px; background: white; cursor: pointer;">
+                            <option value="time">時間順序</option>
+                            <option value="trainNo">車次排序</option>
+                            <option value="type">車種分類</option>
+                            <option value="delay">延誤排序</option>
+                        </select>
+                        <button onclick="exportTableData()" style="padding: 8px 12px; background: #1e40af; color: white; border: none; border-radius: 5px; cursor: pointer; transition: all 0.3s;">
+                            <i class="fas fa-download"></i> 匯出
+                        </button>
                     </div>
                 </div>
                 <table class="train-table">
@@ -571,7 +821,65 @@
         let allStations = [];
         let currentStationId = '';
         let currentStationName = '';
+        let allTrains = []; // 保存所有原始列車資料 - 初始為空
+        let currentFilterMode = 'arrival'; // 預設篩選模式
+        let currentSortMode = 'time';
         let autoRefreshInterval = null;
+        let isDataLoaded = false; // 用於追蹤是否已查詢過車站
+
+        /**
+         * 設置篩選模式
+         */
+        function setFilter(mode) {
+            currentFilterMode = mode;
+            
+            // 更新按鈕狀態
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelector(`[data-filter="${mode}"]`).classList.add('active');
+            
+            // 重新顯示列車
+            applyFiltersAndSort();
+        }
+
+        /**
+         * 設置排序模式
+         */
+        function setSort(mode) {
+            currentSortMode = mode;
+            applyFiltersAndSort();
+        }
+
+        /**
+         * 應用篩選和排序
+         */
+        function applyFiltersAndSort() {
+            let filtered = trainLiveboardManager.filterTrains(allTrains, currentFilterMode);
+            let sorted = trainLiveboardManager.sortTrains(filtered, currentSortMode);
+            displayTrains(sorted);
+        }
+
+        /**
+         * 立即刷新
+         */
+        function quickRefresh() {
+            const icon = document.getElementById('refreshIcon');
+            if (icon) {
+                icon.style.animation = 'spin 1s linear';
+                setTimeout(() => {
+                    icon.style.animation = '';
+                }, 1000);
+            }
+            loadLiveboard();
+        }
+
+        /**
+         * 匯出表格資料
+         */
+        function exportTableData() {
+            trainLiveboardManager.exportToCSV(allTrains);
+        }
 
         // 載入車站代碼資料（使用新的路線分類系統）
         function loadStationData() {
@@ -580,17 +888,23 @@
             // 使用新的路線分類系統
             if (typeof trainLineClassification !== 'undefined') {
                 // 將路線分類轉換為頁面使用的格式
+                // 注意：使用 StationID 而不是 StationCode
                 stationsByLine = {};
                 for (const [lineKey, lineData] of Object.entries(trainLineClassification)) {
-                    stationsByLine[lineKey] = lineData.stations.map(s => ({
-                        id: s.code, 
-                        name: s.name
-                    }));
+                    stationsByLine[lineKey] = lineData.stations.map(s => {
+                        const stationId = getStationIdFromCode(s.code);
+                        return {
+                            id: stationId,        // 使用 StationID（用於 API 查詢）
+                            code: s.code,         // 保留 StationCode（票務系統用）
+                            name: s.name
+                        };
+                    });
                 }
                 
                 initAllStations();
-                console.log('車站資料載入完成，總共', allStations.length, '個車站');
-                console.log('路線數量:', Object.keys(stationsByLine).length);
+                console.log('✅ 車站資料載入完成，總共', allStations.length, '個車站');
+                console.log('📍 路線數量:', Object.keys(stationsByLine).length);
+                console.log('📋 提示：系統使用 StationID 查詢 API，可透過 StationCode 進行票務系統轉換');
             } else {
                 console.error('trainLineClassification 未載入');
             }
@@ -683,21 +997,74 @@
                 const endpoint = `/v2/Rail/TRA/LiveBoard?StationID=${currentStationId}&$format=JSON`;
                 const response = await tdxApi.fetch(endpoint);
                 
-                console.log('API回應:', response);
+                console.log('✅ API回應:', response);
+                console.log('🔍 查詢車站 ID:', currentStationId, '車站名:', currentStationName);
                 
                 let trains = [];
                 if (Array.isArray(response)) {
                     trains = response;
                 }
 
-                console.log(`取得 ${trains.length} 班列車資訊`);
+                console.log(`📊 API 返回 ${trains.length} 班列車資訊（包含前後站點）`);
+
+                // 【重要修復】客戶端篩選：利用 StationID + StationName 雙重驗證
+                // TDX API 可能返回時間窗口內的所有列車，需要同時驗證 StationID 和 StationName
+                const filteredTrains = trains.filter(train => {
+                    // 獲取當前查詢車站的名稱
+                    const currentStationOption = document.getElementById('stationSelect').options[document.getElementById('stationSelect').selectedIndex];
+                    const currentStationName = currentStationOption.text;
+                    
+                    // 雙重驗證：StationID 和 StationName 都必須匹配
+                    const stationIdMatch = train.StationID === currentStationId;
+                    const stationNameMatch = train.StationName?.Zh_tw === currentStationName || 
+                                           train.StationName?.En === currentStationName;
+                    
+                    const hasStationStop = stationIdMatch && stationNameMatch;
+                    
+                    if (!hasStationStop) {
+                        const trainStationName = train.StationName?.Zh_tw || train.StationName?.En || '未知';
+                        if (!stationIdMatch && !stationNameMatch) {
+                            console.warn(`⚠️ 列車 ${train.TrainNo} 被過濾：[ID: ${train.StationID} vs ${currentStationId}] [名稱: ${trainStationName} vs ${currentStationName}]`);
+                        } else if (!stationIdMatch) {
+                            console.warn(`⚠️ 列車 ${train.TrainNo} 被過濾：StationID 不符 (${train.StationID} ≠ ${currentStationId})`);
+                        } else {
+                            console.warn(`⚠️ 列車 ${train.TrainNo} 被過濾：StationName 不符 (${trainStationName} ≠ ${currentStationName})`);
+                        }
+                    }
+                    
+                    return hasStationStop;
+                });
+
+                console.log(`✅ 篩選結果：${filteredTrains.length} 班列車真實停靠在 ${currentStationName} (${currentStationId})`);
+
+                // 保存過濾後的列車資料
+                allTrains = filteredTrains;
+                
+                // 標記已載入過資料（防止顯示示例數據）
+                isDataLoaded = true;
+                
+                // 預設篩選為 'arrival'（即將到站）
+                currentFilterMode = 'arrival';
+                document.querySelectorAll('.filter-btn').forEach(btn => {
+                    btn.classList.remove('active');
+                });
+                document.querySelector('[data-filter="arrival"]').classList.add('active');
 
                 updateUpdateTime();
-                displayTrains(trains);
-                updateStats(trains);
+                applyFiltersAndSort(); // 使用篩選和排序顯示
+                updateStats(filteredTrains);
+
+                // 檢測異常
+                const anomalies = trainLiveboardManager.detectAnomalies(filteredTrains);
+                if (anomalies.critical.length > 0) {
+                    trainLiveboardManager.showToast(
+                        '⚠️ 嚴重警示',
+                        `有 ${anomalies.critical.length} 班列車嚴重延誤！`
+                    );
+                }
 
             } catch (error) {
-                console.error('載入看板資料失敗:', error);
+                console.error('❌ 載入看板資料失敗:', error);
                 tableBody.innerHTML = `
                     <tr>
                         <td colspan="7" class="no-data">
@@ -716,6 +1083,24 @@
         function displayTrains(trains) {
             const tableBody = document.getElementById('trainTableBody');
             
+            // 如果未查詢過車站，顯示提示
+            if (!isDataLoaded) {
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="7" class="no-data">
+                            <i class="fas fa-train"></i>
+                            <p>請選擇車站並查詢</p>
+                            <p style="font-size: 0.85rem; margin-top: 10px; color: #999;">
+                                1. 在上方選擇路線<br>
+                                2. 選擇車站<br>
+                                3. 點擊「查詢看板」按鈕
+                            </p>
+                        </td>
+                    </tr>
+                `;
+                return;
+            }
+            
             if (!trains || trains.length === 0) {
                 tableBody.innerHTML = `
                     <tr>
@@ -723,7 +1108,9 @@
                             <i class="fas fa-info-circle"></i>
                             <p>目前沒有列車資訊</p>
                             <p style="font-size: 0.85rem; margin-top: 10px; color: #999;">
-                                可能原因：此時段沒有列車經過此站，或列車尚未發車
+                                ${currentFilterMode === 'all' 
+                                    ? '可能原因：此時段沒有列車經過此站，或列車尚未發車'
+                                    : '沒有符合篩選條件的列車'}
                             </p>
                         </td>
                     </tr>
@@ -731,28 +1118,31 @@
                 return;
             }
 
-            // 依預計到站時間排序
-            trains.sort((a, b) => {
-                const timeA = a.ScheduledArrivalTime || a.ScheduledDepartureTime || '';
-                const timeB = b.ScheduledArrivalTime || b.ScheduledDepartureTime || '';
-                return timeA.localeCompare(timeB);
-            });
-
             const rows = trains.map(train => {
-                const trainType = getTrainTypeInfo(train.TrainTypeName?.Zh_tw || train.TrainTypeCode || '');
+                const trainType = trainLiveboardManager.getTrainTypeInfo(train);
                 const direction = train.Direction || 0;
                 const directionIcon = direction === 0 ? 'arrow-down' : 'arrow-up';
                 const directionText = direction === 0 ? '南下' : '北上';
                 
-                const arrivalTime = formatTime(train.ScheduledArrivalTime);
-                const departureTime = formatTime(train.ScheduledDepartureTime);
+                const arrivalTime = trainLiveboardManager.formatTime(train.ScheduledArrivalTime);
+                const departureTime = trainLiveboardManager.formatTime(train.ScheduledDepartureTime);
                 
-                const status = getTrainStatus(train);
+                const status = trainLiveboardManager.getTrainStatus(train);
+                
+                // 判斷列車是否已離站
+                const isDeparted = train.ActualDepartureTime ? true : false;
+                const rowClass = isDeparted ? 'departed-train' : '';
                 
                 return `
-                    <tr>
-                        <td><span class="train-number">${train.TrainNo || '未知'}</span></td>
-                        <td><span class="train-type ${trainType.class}">${trainType.name}</span></td>
+                    <tr class="${rowClass}">
+                        <td>
+                            <span class="train-number">${train.TrainNo || '未知'}</span>
+                        </td>
+                        <td>
+                            <span class="train-type ${trainType.class}">
+                                <i class="${trainType.icon}"></i> ${trainType.name}
+                            </span>
+                        </td>
                         <td>
                             <span class="direction-badge">
                                 <i class="fas fa-${directionIcon}"></i>
@@ -762,54 +1152,16 @@
                         <td>${train.EndingStationName?.Zh_tw || '未知'}</td>
                         <td>${arrivalTime}</td>
                         <td>${departureTime}</td>
-                        <td><span class="status-badge ${status.class}">${status.text}</span></td>
+                        <td>
+                            <span class="status-badge ${status.class}">
+                                <i class="${status.icon}"></i> ${status.text}
+                            </span>
+                        </td>
                     </tr>
                 `;
             }).join('');
 
             tableBody.innerHTML = rows;
-        }
-
-        // 取得列車類型資訊
-        function getTrainTypeInfo(typeName) {
-            const typeMap = {
-                '自強': { name: '自強號', class: 'tze-chiang' },
-                '莒光': { name: '莒光號', class: 'chu-kuang' },
-                '區間': { name: '區間車', class: 'local' },
-                '區間快': { name: '區間快', class: 'express' },
-                '普悠瑪': { name: '普悠瑪', class: 'express' },
-                '太魯閣': { name: '太魯閣', class: 'express' },
-                '復興': { name: '復興號', class: 'limited' }
-            };
-            
-            for (const [key, value] of Object.entries(typeMap)) {
-                if (typeName.includes(key)) {
-                    return value;
-                }
-            }
-            
-            return { name: typeName || '一般車', class: 'local' };
-        }
-
-        // 格式化時間
-        function formatTime(timeStr) {
-            if (!timeStr) return '--:--';
-            // 格式: "2024-01-01 12:30:00" 或 "12:30:00"
-            const timePart = timeStr.includes(' ') ? timeStr.split(' ')[1] : timeStr;
-            return timePart.substring(0, 5); // 只取 HH:MM
-        }
-
-        // 取得列車狀態
-        function getTrainStatus(train) {
-            const delayTime = train.DelayTime || 0;
-            
-            if (delayTime > 5) {
-                return { text: `誤點 ${delayTime}分`, class: 'delayed' };
-            } else if (delayTime < -2) {
-                return { text: `早到 ${Math.abs(delayTime)}分`, class: 'early' };
-            } else {
-                return { text: '準點', class: 'ontime' };
-            }
         }
 
         // 更新統計資料
@@ -853,6 +1205,12 @@
         window.onload = async function() {
             // 先載入車站資料
             await loadStationData();
+            
+            // 添加事件監聽器
+            const refreshIcon = document.getElementById('refreshIcon');
+            if (refreshIcon) {
+                refreshIcon.addEventListener('click', quickRefresh);
+            }
             
             // 完成載入進度
             setTimeout(() => {
