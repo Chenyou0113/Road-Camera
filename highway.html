@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="assets/responsive-camera.css">
     <script>window.CURRENT_PAGE = 'highway';</script>
     <script src="assets/config.js"></script>
+    <script src="assets/coordinate-validator.js"></script>
     <script src="assets/tdx-api.js"></script>
     <script src="assets/city-boundaries.js"></script>
     <script src="assets/image-handler-simple.js"></script>
@@ -133,7 +134,7 @@
         body.dark-mode .header { background: linear-gradient(135deg, rgba(30,30,40,0.95) 0%, rgba(25,25,35,0.95) 100%); border-bottom: 1px solid rgba(255,255,255,0.1); }
         body.dark-mode .header h1 { color: #66BB6A; }
         body.dark-mode .camera-card { background: linear-gradient(135deg, rgba(40,40,50,0.95) 0%, rgba(35,35,45,0.95) 100%); border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
-        body.dark-mode .camera-info { background: transparent; }
+        body.dark-mode .camera-info { background: linear-gradient(135deg, rgba(35,35,45,0.95) 0%, rgba(30,30,40,0.95) 100%); }
         body.dark-mode .camera-info h3 { color: #66BB6A; text-shadow: 0 1px 3px rgba(0,0,0,0.5); }
         body.dark-mode .camera-info p { color: rgba(255,255,255,0.7); }
         body.dark-mode .loading-text { color: rgba(255,255,255,0.85) !important; }
@@ -843,7 +844,7 @@
                     <div class="camera-card" onclick="openModal(${startIndex + index})">
                         <div class="camera-image" id="container-${imageId}">
                             ${imageUrl ? 
-                                `<div class="image-loading-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;background:#f5f5f5;border-radius:8px;">
+                                `<div class="image-loading-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;background:#f5f5f5;border-radius:8px;">
                                     <i class="fas fa-spinner fa-pulse" style="font-size:2rem;margin-bottom:8px;color:#667eea;"></i>
                                     <span class="loading-text" style="font-size:0.85rem;color:#444;">載入中...</span>
                                 </div>
@@ -854,12 +855,19 @@
                                  <div class="image-overlay" style="display: none;">
                                      <i class="fas fa-search-plus" style="font-size: 2rem;"></i>
                                  </div>` : 
-                                '<div class="no-image-placeholder"><i class="fas fa-video-slash" style="font-size: 2rem; color: #ccc; margin-bottom: 10px;"></i><span style="color: #666;">無影像資料</span></div>'
+                                '<div class="no-image-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;background:#f5f5f5;border-radius:8px;"><i class="fas fa-video-slash" style="font-size: 2rem; color: #ccc; margin-bottom: 10px;"></i><span style="color: #666;">無影像資料</span></div>'
                             }
                         </div>
                         <div class="camera-info">
                             <h3>${roadTitle} ${badge} ${sourceIcon}</h3>
-                            <p><i class="fas fa-map-marker-alt"></i> ${formatLocationInfo(camera)}</p>
+                            ${camera.LocationMile || camera.LocationDescription ? `
+                                <p><i class="fas fa-map-marker-alt"></i> 
+                                   ${camera.LocationMile || camera.LocationDescription}
+                                   ${camera.DirectionChinese && camera.DirectionChinese !== '未標示' ? 
+                                       `<span style="margin-left: 8px; color: #2196F3;"><i class="fas fa-compass"></i> ${camera.DirectionChinese}</span>` : ''
+                                   }
+                                </p>
+                            ` : ''}
                             <p><i class="fas fa-map"></i> ${camera.City || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName)}</p>
                             <p><i class="fas fa-id-badge"></i> ${camera.CCTVID || '未知編號'}</p>
                             ${camera.PositionLat && camera.PositionLon ? 
@@ -961,7 +969,14 @@
                         console.log(`🔄 重試載入 (${retryCount + 1}/${MAX_RETRIES}): camera=${camId}`);
                         
                         setTimeout(() => {
-                            this.src = `${src}&_retry=${retryCount + 1}&t=${Date.now()}`;
+                            // 重試時更新時間戳記
+                            if (this.src.includes('weserv.nl')) {
+                                const currentSrc = this.src;
+                                const newUrl = currentSrc.replace(/&t=\d+/, `&t=${Date.now()}`);
+                                this.src = newUrl;
+                            } else {
+                                this.src = `${src}${src.includes('?') ? '&' : '?'}retry=${retryCount + 1}&t=${Date.now()}`;
+                            }
                         }, RETRY_DELAY);
                     } else {
                         // 超過重試次數，進入冷卻
@@ -978,7 +993,32 @@
                     processImageQueue();
                 };
 
-                img.src = src; // 觸發載入
+                // 直接使用 data-src 中儲存的完整 VideoStreamURL
+                let imageUrl = src;
+                
+                if (!imageUrl) {
+                    console.warn('⚠️ 缺少影像網址');
+                    currentLoadingCount--;
+                    processImageQueue();
+                    return;
+                }
+                
+                // 確保使用 HTTPS 和正確的伺服器
+                if (imageUrl.includes('freeway.gov.tw')) {
+                    imageUrl = imageUrl.replace(/^http:/, 'https:')
+                                      .replace('cctv.freeway.gov.tw', 'cctvn.freeway.gov.tw')
+                                      .replace('cctvs.freeway.gov.tw', 'cctvn.freeway.gov.tw');
+                    
+                    // 加上時間戳記避免快取
+                    imageUrl = `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+                    
+                    // 使用 corsproxy.io 代理 (解決 HTTP/2 Protocol Error)
+                    img.src = `https://corsproxy.io/?${encodeURIComponent(imageUrl)}`;
+                    console.log(`🖼️ 載入: ${imageUrl.substring(0, 60)}...`);
+                } else {
+                    // 非高公局來源，直接使用
+                    img.src = imageUrl;
+                }
             }, LOAD_DELAY);
         }
 

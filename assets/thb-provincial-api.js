@@ -147,7 +147,8 @@ class THBProvincialAPI {
             }
         });
 
-        return cameras;
+        // 驗證和修復座標
+        return this.validateAndFixCoordinates(cameras);
     }
 
     /**
@@ -249,6 +250,36 @@ class THBProvincialAPI {
         }
         
         return direction;
+    }
+
+    /**
+     * 驗證和修復座標，過濾無效的監視器
+     * @param {Array} cameras - 監視器陣列
+     * @returns {Array} 經過驗證的監視器陣列
+     */
+    validateAndFixCoordinates(cameras) {
+        if (typeof CoordinateValidator === 'undefined') {
+            console.warn('⚠️  CoordinateValidator 未加載，跳過座標驗證');
+            return cameras;
+        }
+
+        const result = CoordinateValidator.validateCameraArray(cameras);
+        const { valid, swapped, invalid, report } = result;
+
+        // 記錄驗證結果
+        console.log(CoordinateValidator.generateReport(result));
+
+        // 合併有效和可修復的監視器
+        const validatedCameras = [...valid, ...swapped];
+
+        if (invalid.length > 0) {
+            console.warn(`❌ 過濾了 ${invalid.length} 個無效座標的監視器:`);
+            invalid.forEach(camera => {
+                console.warn(`   - ${camera.CCTVID}: (${camera.PositionLon}, ${camera.PositionLat})`);
+            });
+        }
+
+        return validatedCameras;
     }
 
     /**
