@@ -223,6 +223,7 @@
         .status-badge.waiting { background: #ff9800; color: white; }
         .status-badge.departed { background: #9e9e9e; color: white; }
         .status-badge.no-service { background: #f44336; color: white; }
+        .status-badge.closed { background: #666; color: white; }
         
         .direction-badge {
             display: inline-flex;
@@ -693,7 +694,7 @@
             <h3 onclick="togglePanel('railInfoContent', 'railToggleIcon')">
                 <span>
                     <i class="fas fa-bullhorn"></i>
-                    捷運系統公告
+                    捷運系統營運通阻
                 </span>
                 <i id="railToggleIcon" class="fas fa-chevron-up"></i>
             </h3>
@@ -866,11 +867,15 @@
 
         // ★ 新增這個變數：用來快取各系統的車站資料，避免重複請求
         const stationDataCache = {};
+        
+        // ★ 新增：首末班車時刻表快取 (避免頻繁 API 呼叫)
+        const firstLastTimetableCache = {};
+        const FIRST_LAST_TIMETABLE_TTL = 6 * 3600 * 1000; // 6小時快取
 
         const trtcStationMap = {
             'BR01': '動物園', 'BR02': '木柵', 'BR03': '萬芳社區', 'BR04': '萬芳醫院', 'BR05': '辛亥',
             'R02': '象山', 'R03': '台北101/世貿', 'R04': '信義安和', 'R05': '大安', 'R06': '大安森林公園',
-            'G01': '新店', 'G02': '新店區公所', 'G03': '七張', 'G04': '大坪林', 'G05': '景美',
+            'G01': '新店', 'G02': '新店區公所', 'G03': '七張', 'G04': '大坪林', 'G05': '景美', 'G06': '萬隆',
             'O01': '南勢角', 'O02': '景安', 'O03': '永安市場', 'O04': '頂溪', 'O05': '古亭',
             'BL01': '頂埔', 'BL02': '永寧', 'BL03': '土城', 'BL04': '海山', 'BL05': '亞東醫院'
         };
@@ -886,7 +891,7 @@
 
         const tymcStationMap = {
             'A1': '台北車站', 'A2': '三重', 'A3': '新北產業園區', 'A4': '新莊', 'A5': '泰山',
-            'A6': '桃園', 'A7': '興南', 'A8': '機場第一航廈', 'A9': '機場第二航廈'
+            'A6': '桃園', 'A7': '興南', 'A8': '長庚醫院', 'A9': '機場第一航廈', 'A10': '機場第二航廈', 'A11': '環北'
         };
 
         function selectSystem(systemCode) {
@@ -902,7 +907,85 @@
             loadSystemData(systemCode);
         }
 
-        // 載入系統資料 (修正版：強制補全路線名稱，解決選單篩選不到的問題)
+        // ★ 新增：獲取首末班車時刻表資料
+        async function getFirstLastTimetable(systemCode) {
+            try {
+                // 檢查快取是否有效
+                if (firstLastTimetableCache[systemCode] && firstLastTimetableCache[systemCode].expiry > Date.now()) {
+                    console.log(`📋 使用快取的首末班車時刻表: ${systemCode}`);
+                    return firstLastTimetableCache[systemCode].data;
+                }
+
+                console.log(`📡 正在下載首末班車時刻表: ${systemCode}`);
+                const endpoint = `/v2/Rail/Metro/FirstLastTimetable/${systemCode}?$format=JSON`;
+                const data = await tdxApi.fetch(endpoint);
+                
+                // 快取資料
+                firstLastTimetableCache[systemCode] = {
+                    data: Array.isArray(data) ? data : [],
+                    expiry: Date.now() + FIRST_LAST_TIMETABLE_TTL
+                };
+                
+                console.log(`✅ 已取得首末班車時刻表: ${systemCode} (${firstLastTimetableCache[systemCode].data.length} 條路線)`);
+                return firstLastTimetableCache[systemCode].data;
+            } catch (error) {
+                console.warn(`⚠️ 無法取得首末班車時刻表 ${systemCode}:`, error);
+                return [];
+            }
+        }
+
+        // ★ 新增：判斷列車是否已超過末班車時間
+        async function checkIfPassedLastTrain(lineID, systemCode, currentTime = new Date()) {
+            try {
+                const timetables = await getFirstLastTimetable(systemCode);
+                
+                // 找到該路線的時刻表
+                const lineTimetable = timetables.find(t => t.LineID === lineID);
+                if (!lineTimetable) {
+                    console.warn(`⚠️ 找不到路線 ${lineID} 的末班車時刻表`);
+                    return false;
+                }
+
+                // 獲取末班車時間
+                const lastTrainTime = lineTimetable.LastTrainTime;
+                if (!lastTrainTime) {
+                    return false;
+                }
+
+                // 解析時間 (格式: "HH:mm" 或 "HH:mm:ss")
+                const [hours, minutes] = lastTrainTime.split(':').map(Number);
+                const lastTrainMinutes = hours * 60 + minutes;
+                const currentMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
+
+                // 判斷邏輯：
+                // 1. 如果末班車時間是 00:00-04:00 (通宵線)，用不同邏輯判斷
+                // 2. 如果現在時間在 23:00-23:59 或 00:00-05:00，且已超過末班車時間，則視為營運結束
+                // 3. 正常營運時間，比較時間即可
+                
+                const isLateNight = currentMinutes >= 23 * 60 || currentMinutes < 5 * 60;
+                const isLastTrainLateNight = lastTrainMinutes >= 23 * 60 || lastTrainMinutes < 5 * 60;
+                
+                // 夜間營運結束判斷
+                if (isLateNight) {
+                    // 如果現在是夜間，且末班車也是夜間
+                    if (isLastTrainLateNight) {
+                        // 都在夜間，直接比較
+                        return currentMinutes > lastTrainMinutes;
+                    } else {
+                        // 現在是夜間，末班車是日間，表示已過營運時間
+                        return true;
+                    }
+                } else {
+                    // 現在是日間，比較是否超過末班車
+                    return currentMinutes > lastTrainMinutes;
+                }
+            } catch (error) {
+                console.warn(`⚠️ 檢查末班車時發生錯誤:`, error);
+                return false;
+            }
+        }
+
+        // ★ 新增：取得路線末班車時間顯示文字
         // 載入系統資料 (強固版：確保路線名稱一定會被補上)
         async function loadSystemData(systemCode) {
             const lineSelect = document.getElementById('lineSelect');
@@ -1230,6 +1313,15 @@
             // --- 以下為資料處理與 HTML 生成邏輯 ---
             let trainRows = [];
             stationTrains.forEach(item => {
+                // 🔍 調試：印出 API 回應結構 (前 3 筆)
+                if (trainRows.length < 3) {
+                    console.log(`🔍 API 回應項目:`, item);
+                    console.log(`   EstimateTime: ${item.EstimateTime}, Estimates: ${JSON.stringify(item.Estimates?.slice(0, 1))}`);
+                }
+                
+                // ★ 單位轉換函式：將秒轉換成分鐘
+
+                
                 // 1. 處理 Estimates 陣列
                 const estimates = item.Estimates || item.estimates || item.NextBuses || item.Buses || [];
                 if (Array.isArray(estimates) && estimates.length > 0) {
@@ -1244,7 +1336,8 @@
                             tripHeadSign: directionText,
                             destinationName: destName,
                             estimateTime: estimate.EstimateTime || 0,
-                            serviceStatus: 0
+                            serviceStatus: 0,
+                            isPassedLastTrain: false // ★ 預設為 false，在異步檢查後更新
                         });
                     });
                 } 
@@ -1258,7 +1351,8 @@
                         tripHeadSign: item.TripHeadSign || destName,
                         destinationName: destName,
                         estimateTime: item.EstimateTime || 0,
-                        serviceStatus: item.ServiceStatus
+                        serviceStatus: item.ServiceStatus,
+                        isPassedLastTrain: false // ★ 預設為 false，在異步檢查後更新
                     });
                 }
             });
@@ -1266,38 +1360,62 @@
             // 排序
             trainRows.sort((a, b) => a.estimateTime - b.estimateTime);
 
-            // 生成 HTML
-            const rows = trainRows.map(train => {
-                const lineColor = lineColors[train.lineID] || '#666';
-                let timeDisplay;
-                
-                // 修正：<= 0 都視為進站中
-                if (train.estimateTime <= 0) {
-                    timeDisplay = `<span style="color: #d32f2f; font-weight: bold;">進站中</span>`;
-                } else {
-                    const minutes = Math.ceil(train.estimateTime / 60);
-                    timeDisplay = `約 <strong>${minutes}</strong> 分鐘`;
-                }
-                
-                const statusClass = train.estimateTime <= 60 ? 'arriving' : 'waiting';
-                const statusText = train.estimateTime <= 60 ? '即將到站' : '行駛中';
+            // 生成 HTML (非同步，需要檢查末班車時刻)
+            (async () => {
+                const rows = await Promise.all(trainRows.map(async (train) => {
+                    const lineColor = lineColors[train.lineID] || '#666';
+                    let timeDisplay;
+                    
+                    // 修正：<= 0 都視為進站中
+                    if (train.estimateTime <= 0) {
+                        timeDisplay = `<span style="color: #d32f2f; font-weight: bold;">進站中</span>`;
+                    } else {
+                        const minutes = Math.ceil(train.estimateTime / 60);
+                        timeDisplay = `<strong>${minutes}</strong>分鐘`;
+                    }
+                    
+                    // ★ 新增：檢查是否已過營運時間
+                    let statusClass, statusText;
+                    if (train.isPassedLastTrain) {
+                        statusClass = 'closed';
+                        statusText = '已過營運時間';
+                    } else if (train.estimateTime <= 60) {
+                        statusClass = 'arriving';
+                        statusText = '即將到站';
+                    } else {
+                        statusClass = 'waiting';
+                        statusText = '行駛中';
+                    }
 
-                return `
-                    <tr>
-                        <td>${train.stationName}</td>
-                        <td><span class="line-badge" style="background: ${lineColor};">${train.lineName}</span></td>
-                        <td><span class="direction-badge"><i class="fas fa-arrow-right"></i> ${train.tripHeadSign}</span></td>
-                        <td>${train.destinationName}</td>
-                        <td>${timeDisplay}</td>
-                        <td><span class="status-badge ${statusClass}">${statusText}</span></td>
-                        <td>-</td>
-                    </tr>
-                `;
-            }).join('');
+                    // ★ 檢查是否已超過末班車時間
+                    let timeInfo = timeDisplay;
+                    try {
+                        const isPassedLastTrain = await checkIfPassedLastTrain(train.lineID, currentSystem);
+                        if (isPassedLastTrain) {
+                            timeInfo = `<span style="color: #999; font-style: italic;">末班車已離開<br/>已過營運時間</span>`;
+                            train.isPassedLastTrain = true; // ★ 更新狀態欄位
+                        }
+                    } catch (error) {
+                        // 如果檢查失敗，保持原時間顯示
+                    }
 
-            tableBody.innerHTML = rows;
-            updateUpdateTime();
-            updateTrainStats(trainRows);
+                    return `
+                        <tr>
+                            <td>${train.stationName}</td>
+                            <td><span class="line-badge" style="background: ${lineColor};">${train.lineName}</span></td>
+                            <td><span class="direction-badge"><i class="fas fa-arrow-right"></i> ${train.tripHeadSign}</span></td>
+                            <td>${train.destinationName}</td>
+                            <td>${timeInfo}</td>
+                            <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                            <td>-</td>
+                        </tr>
+                    `;
+                }));
+
+                tableBody.innerHTML = rows.join('');
+                updateUpdateTime();
+                updateTrainStats(trainRows);
+            })();
         }
 
         function updateSystemStats() {
@@ -1340,53 +1458,71 @@
             if (typeof tdxApi === 'undefined') {
                 systems.forEach(sys => {
                     const el = document.getElementById(`newsContainer-${sys}`);
-                    if(el) el.innerHTML = '<p class="no-data">無法載入公告（API 未就緒）</p>';
+                    if(el) el.innerHTML = '<p class="no-data">無法載入營運通阻（API 未就緒）</p>';
                 });
                 return;
             }
             
-            // ★ 修改重點：使用 for...of 迴圈 + await，讓請求「排隊」執行
+            // ★ 改用 Alert API (營運通阻)，使用 for...of 迴圈 + await 排隊執行
             for (const systemCode of systems) {
                 try {
-                    // 每次請求前稍微暫停 300ms，給 API 喘息空間
+                    // 每次請求前暫停 300ms，給 API 喘息空間
                     await new Promise(r => setTimeout(r, 300));
 
-                    const endpoint = `/v2/Rail/Metro/News/${systemCode}?$format=JSON&$top=5&$orderby=PublishTime%20desc`;
+                    // ★ 改為 Alert API 端點
+                    const endpoint = `/v2/Rail/Metro/Alert/${systemCode}?$format=JSON&$top=5&$orderby=PublishTime%20desc`;
                     const apiResponse = await tdxApi.fetch(endpoint);
                     
-                    let newsData = [];
-                    if (apiResponse && apiResponse.Newses && Array.isArray(apiResponse.Newses)) {
-                        newsData = apiResponse.Newses;
+                    let alertData = [];
+                    if (apiResponse && apiResponse.Alerts && Array.isArray(apiResponse.Alerts)) {
+                        alertData = apiResponse.Alerts;
                     } else if (Array.isArray(apiResponse)) {
-                        newsData = apiResponse;
+                        alertData = apiResponse;
                     }
                     
                     const container = document.getElementById(`newsContainer-${systemCode}`);
                     if (!container) continue;
                     
-                    if (!newsData || newsData.length === 0) {
-                        container.innerHTML = '<p style="color: #999; text-align: center; padding: 15px; font-size: 0.9rem;">目前沒有新公告</p>';
+                    if (!alertData || alertData.length === 0) {
+                        container.innerHTML = '<p style="color: #999; text-align: center; padding: 15px; font-size: 0.9rem;">目前沒有營運通阻</p>';
                         continue;
                     }
                     
                     let html = '';
-                    newsData.slice(0, 5).forEach((news) => {
-                        const updateTime = news.UpdateTime ? new Date(news.UpdateTime).toLocaleString('zh-TW', {
+                    alertData.slice(0, 5).forEach((alert) => {
+                        // ★ 改為使用 Alert 資料欄位
+                        const updateTime = alert.UpdateTime ? new Date(alert.UpdateTime).toLocaleString('zh-TW', {
                             month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
                         }) : '未知時間';
                         
-                        const title = news.Title || '無標題';
-                        const description = news.Description || '';
-                        const newsUrl = news.NewsURL || '#';
-                        const linkHtml = newsUrl !== '#' ? 
-                            `<a href="${newsUrl}" target="_blank" title="開啟連結"><i class="fas fa-external-link-alt"></i></a>` : '';
+                        const title = alert.AlertTitle || alert.Title || '營運通阻';
+                        const description = alert.Description || alert.AlertContent || '';
+                        const alertUrl = alert.AlertURL || alert.NewsURL || '#';
+                        const linkHtml = alertUrl !== '#' ? 
+                            `<a href="${alertUrl}" target="_blank" title="開啟連結"><i class="fas fa-external-link-alt"></i></a>` : '';
+                        
+                        // ★ 根據優先級設定顏色
+                        const alarmLevel = alert.AlarmLevel || 'normal';
+                        let alarmIcon = '⚠️';
+                        let alarmColor = '#ff9800';
+                        
+                        if (alarmLevel === 'critical') {
+                            alarmIcon = '🚨';
+                            alarmColor = '#d32f2f';
+                        } else if (alarmLevel === 'warning') {
+                            alarmIcon = '⚠️';
+                            alarmColor = '#ff9800';
+                        } else if (alarmLevel === 'info') {
+                            alarmIcon = 'ℹ️';
+                            alarmColor = '#2196f3';
+                        }
                         
                         html += `
-                            <div class="news-item">
+                            <div class="news-item" style="border-left: 3px solid ${alarmColor}; padding-left: 12px;">
                                 <div style="display: flex; align-items: flex-start; gap: 8px;">
-                                    <i class="fas fa-caret-right" style="color: #999; margin-top: 3px;"></i>
+                                    <span style="color: ${alarmColor}; font-size: 1.2rem; margin-top: 2px;">${alarmIcon}</span>
                                     <div style="flex: 1;">
-                                        <h5>${title}</h5>
+                                        <h5 style="color: ${alarmColor};">${title}</h5>
                                         <p>${description.substring(0, 80)}${description.length > 80 ? '...' : ''}</p>
                                         <div class="news-meta">
                                             <span><i class="far fa-clock"></i> ${updateTime}</span>
@@ -1399,13 +1535,13 @@
                     });
                     
                     container.innerHTML = html;
-                    console.log(`✅ 成功載入 ${newsData.length} 筆 ${systemCode} 公告`);
+                    console.log(`✅ 成功載入 ${alertData.length} 筆 ${systemCode} 營運通阻`);
                     
                 } catch (e) {
-                    console.warn(`載入 ${systemCode} 公告失敗 (可能是 429，已略過)`);
+                    console.warn(`載入 ${systemCode} 營運通阻失敗 (可能是 429，已略過)`);
                     const container = document.getElementById(`newsContainer-${systemCode}`);
                     if(container && container.innerHTML.includes('載入中')) {
-                        container.innerHTML = '<p style="color: #999; text-align: center; padding: 10px;">暫無公告或載入失敗</p>';
+                        container.innerHTML = '<p style="color: #999; text-align: center; padding: 10px;">暫無營運通阻或載入失敗</p>';
                     }
                 }
             }
