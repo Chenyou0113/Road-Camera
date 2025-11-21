@@ -197,6 +197,8 @@
         .train-type.limited { background: #ffd93d; color: #333; }
         .train-type.chu-kuang { background: #ff8c42; color: white; }
         .train-type.tze-chiang { background: #e74c3c; color: white; }
+        .train-type.tze-chiang-normal { background: #e74c3c; color: white; font-weight: bold; }
+        .train-type.tze-chiang-3000 { background: #FF0000; color: white; font-weight: bold; box-shadow: 0 0 8px rgba(255, 0, 0, 0.5); }
         
         .status-badge {
             display: inline-block;
@@ -680,10 +682,6 @@
                 <div class="stat-label">列車總數</div>
             </div>
             <div class="stat-card">
-                <div class="stat-number" id="arrivalTrains">0</div>
-                <div class="stat-label">即將到站</div>
-            </div>
-            <div class="stat-card">
                 <div class="stat-number" id="departureTrains">0</div>
                 <div class="stat-label">即將離站</div>
             </div>
@@ -747,7 +745,7 @@
                 <!-- 篩選和排序控件 -->
                 <div style="background: #f8f9fa; padding: 15px 20px; border-bottom: 1px solid #e0e0e0; display: flex; gap: 15px; flex-wrap: wrap; align-items: center;">
                     <div style="display: flex; gap: 10px;">
-                        <button class="filter-btn" data-filter="all" onclick="setFilter('all')" title="顯示全部列車">
+                        <button class="filter-btn" data-filter="all" onclick="setFilter('all')" title="顯示全部停靠列車">
                             <i class="fas fa-list"></i> 全部
                         </button>
                         <button class="filter-btn" data-filter="arrival" onclick="setFilter('arrival')" title="只顯示即將到站">
@@ -758,6 +756,9 @@
                         </button>
                         <button class="filter-btn" data-filter="delayed" onclick="setFilter('delayed')" title="只顯示延誤列車">
                             <i class="fas fa-exclamation-triangle"></i> 延誤
+                        </button>
+                        <button class="filter-btn" data-filter="pass-through" onclick="setFilter('pass-through')" title="顯示通過不停的列車">
+                            <i class="fas fa-forward"></i> 通過不停
                         </button>
                     </div>
                     
@@ -780,8 +781,7 @@
                             <th>車種</th>
                             <th>方向</th>
                             <th>終點站</th>
-                            <th>預計到站</th>
-                            <th>預計離站</th>
+                            <th>時間</th>
                             <th>狀態</th>
                         </tr>
                     </thead>
@@ -822,6 +822,7 @@
         let currentStationId = '';
         let currentStationName = '';
         let allTrains = []; // 保存所有原始列車資料 - 初始為空
+        let allApiTrains = []; // 保存 API 回應的全部列車（用於識別通過不停的列車）
         let currentFilterMode = 'arrival'; // 預設篩選模式
         let currentSortMode = 'time';
         let autoRefreshInterval = null;
@@ -855,7 +856,9 @@
          * 應用篩選和排序
          */
         function applyFiltersAndSort() {
-            let filtered = trainLiveboardManager.filterTrains(allTrains, currentFilterMode);
+            // 【新增】如果是「通過不停」模式，使用 allApiTrains；否則使用 allTrains
+            let sourceTrains = currentFilterMode === 'pass-through' ? allApiTrains : allTrains;
+            let filtered = trainLiveboardManager.filterTrains(sourceTrains, currentFilterMode);
             let sorted = trainLiveboardManager.sortTrains(filtered, currentSortMode);
             displayTrains(sorted);
         }
@@ -1037,8 +1040,19 @@
 
                 console.log(`✅ 篩選結果：${filteredTrains.length} 班列車真實停靠在 ${currentStationName} (${currentStationId})`);
 
-                // 保存過濾後的列車資料
+                // 【新增】計算通過不停的列車
+                const passThroughTrains = trains.filter(train => {
+                    // 通過不停 = API 返回但不停靠在該站的列車
+                    const stationIdMatch = train.StationID === currentStationId;
+                    const stationNameMatch = train.StationName?.Zh_tw === currentStationName || 
+                                           train.StationName?.En === currentStationName;
+                    return !(stationIdMatch && stationNameMatch); // 反轉邏輯：不符合停靠條件
+                });
+                console.log(`📊 通過不停的列車：${passThroughTrains.length} 班`);
+
+                // 保存過濾後的列車資料和全部 API 列車
                 allTrains = filteredTrains;
+                allApiTrains = passThroughTrains; // 保存通過不停的列車
                 
                 // 標記已載入過資料（防止顯示示例數據）
                 isDataLoaded = true;
@@ -1124,7 +1138,7 @@
                 const directionIcon = direction === 0 ? 'arrow-down' : 'arrow-up';
                 const directionText = direction === 0 ? '南下' : '北上';
                 
-                const arrivalTime = trainLiveboardManager.formatTime(train.ScheduledArrivalTime);
+                // 【改進】只使用離站時間
                 const departureTime = trainLiveboardManager.formatTime(train.ScheduledDepartureTime);
                 
                 const status = trainLiveboardManager.getTrainStatus(train);
@@ -1150,7 +1164,6 @@
                             </span>
                         </td>
                         <td>${train.EndingStationName?.Zh_tw || '未知'}</td>
-                        <td>${arrivalTime}</td>
                         <td>${departureTime}</td>
                         <td>
                             <span class="status-badge ${status.class}">
@@ -1167,12 +1180,10 @@
         // 更新統計資料
         function updateStats(trains) {
             const total = trains.length;
-            const arrivals = trains.filter(t => t.ScheduledArrivalTime).length;
             const departures = trains.filter(t => t.ScheduledDepartureTime).length;
             const delayed = trains.filter(t => (t.DelayTime || 0) > 5).length;
 
             document.getElementById('totalTrains').textContent = total;
-            document.getElementById('arrivalTrains').textContent = arrivals;
             document.getElementById('departureTrains').textContent = departures;
             document.getElementById('delayedTrains').textContent = delayed;
         }

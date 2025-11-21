@@ -63,6 +63,11 @@ class TrainLiveboardManager {
                     // 只顯示延誤列車
                     return (train.DelayTime || 0) > 5;
                 
+                case 'pass-through':
+                    // 【新增】顯示所有通過不停的列車
+                    // 因為 allApiTrains 已經只包含通過不停的列車，所以這裡直接返回 true
+                    return true;
+                
                 case 'all':
                 default:
                     // 顯示全部（除了已經離站的）
@@ -160,13 +165,15 @@ class TrainLiveboardManager {
         const typeCode = train.TrainTypeCode || '';
         
         const typeMap = {
-            '110G': { name: '自強(3000)', class: 'tze-chiang', icon: 'fas fa-bolt' },
-            '1109': { name: '自強', class: 'tze-chiang', icon: 'fas fa-bolt' },
-            '1108': { name: '自強', class: 'tze-chiang', icon: 'fas fa-bolt' },
-            '1107': { name: '普悠瑪', class: 'express', icon: 'fas fa-rocket' },
-            '1111': { name: '莒光', class: 'chu-kuang', icon: 'fas fa-train' },
-            '1131': { name: '區間', class: 'local', icon: 'fas fa-circle' },
-            '1132': { name: '區間快', class: 'express', icon: 'fas fa-circle-notch' }
+            // 自強系列 - 分開標示
+            '110G': { name: '自強3000', class: 'tze-chiang-3000', icon: 'fas fa-lightning-bolt', badge: '3K' },
+            '1109': { name: '普通自強', class: 'tze-chiang-normal', icon: 'fas fa-bolt', badge: '自' },
+            '1108': { name: '普通自強', class: 'tze-chiang-normal', icon: 'fas fa-bolt', badge: '自' },
+            // 其他車種
+            '1107': { name: '普悠瑪', class: 'express', icon: 'fas fa-rocket', badge: '悠' },
+            '1111': { name: '莒光', class: 'chu-kuang', icon: 'fas fa-train', badge: '莒' },
+            '1131': { name: '區間', class: 'local', icon: 'fas fa-circle', badge: '區' },
+            '1132': { name: '區間快', class: 'express', icon: 'fas fa-circle-notch', badge: '快' }
         };
         
         if (typeMap[typeCode]) {
@@ -174,13 +181,14 @@ class TrainLiveboardManager {
         }
         
         // 備用：根據名稱判斷
-        for (const [key, value] of Object.entries(typeMap)) {
-            if (typeName.includes(value.name)) {
-                return value;
-            }
+        if (typeName.includes('自強3000') || typeName.includes('3000')) {
+            return { name: '自強3000', class: 'tze-chiang-3000', icon: 'fas fa-lightning-bolt', badge: '3K' };
+        }
+        if (typeName.includes('自強')) {
+            return { name: '普通自強', class: 'tze-chiang-normal', icon: 'fas fa-bolt', badge: '自' };
         }
         
-        return { name: typeName || '一般車', class: 'local', icon: 'fas fa-train' };
+        return { name: typeName || '一般車', class: 'local', icon: 'fas fa-train', badge: '車' };
     }
 
     /**
