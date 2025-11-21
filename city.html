@@ -140,6 +140,13 @@
         body.dark-mode .modal-info h3 { color: #4FC3F7; }
         body.dark-mode .modal-info p { color: rgba(255,255,255,0.8); }
         
+        /* 地圖容器和控制樣式 */
+        #mapContainer { display: none; width: 100%; height: 600px; border-radius: 10px; margin: 20px 0; box-shadow: 0 5px 15px rgba(0,0,0,0.2); overflow: hidden; z-index: 10; }
+        #mapContainer.active { display: block; }
+        .map-toggle-btn { padding: 10px 20px; background: #0891b2; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem; transition: all 0.3s; }
+        .map-toggle-btn:hover { background: #06b6d4; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(6,182,212,0.3); }
+        .map-toggle-btn.active { background: #FF9800; }
+        
         /* 縣市選擇按鈕樣式 */
         .cities-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 15px; margin: 40px 0; }
         .city-btn { padding: 20px 15px; background: linear-gradient(135deg, #1e40af, #0891b2); color: white; border: 2px solid transparent; border-radius: 10px; cursor: pointer; font-size: 1rem; font-weight: bold; transition: all 0.3s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; min-height: 120px; }
@@ -240,6 +247,9 @@
             <button id="returnToCitiesBtn" style="padding: 10px 20px; background: #FF9800; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem; display: none;" onclick="showCitiesSelection()">
                 <i class="fas fa-arrow-left"></i> 返回縣市列表
             </button>
+            <button id="mapToggleBtn" class="map-toggle-btn" onclick="toggleMapView()" style="display: none;" title="切換地圖檢視">
+                <i class="fas fa-map"></i> 地圖檢視
+            </button>
             <select style="padding: 10px; border-radius: 5px; border: 2px solid #1e40af; font-size: 1rem; min-width: 150px;" id="citySelect" onchange="onCityChange()">
                 <option value="">所有縣市</option>
             </select>
@@ -254,6 +264,9 @@
                 <i class="fas fa-redo"></i> 重置篩選
             </button>
         </div>
+        
+        <!-- 地圖容器 -->
+        <div id="mapContainer"></div>
         
         <div style="background: #1a1a1a; padding: 15px; border-radius: 10px; margin: 20px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.3);">
             <div style="display: flex; justify-content: space-around; text-align: center;">
@@ -556,6 +569,107 @@
             
             return cameras;
         }
+        
+        // ★ 全局地圖管理變數
+        let currentMap = null;
+        let cameraMarkers = [];
+        let mapViewActive = false;
+        
+        // ★ 地圖輔助函數 - 初始化地圖
+        function initializeMap() {
+            if (currentMap) return; // 已初始化
+            
+            const mapContainer = document.getElementById('mapContainer');
+            currentMap = L.map('mapContainer').setView([23.97, 120.96], 8);
+            
+            // 添加地圖圖層
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors',
+                maxZoom: 19
+            }).addTo(currentMap);
+            
+            console.log('✅ 地圖已初始化');
+        }
+        
+        // ★ 地圖輔助函數 - 更新地圖標記
+        function updateMapMarkersGlobal(camerasToDisplay) {
+            if (!currentMap) return;
+            
+            // 清除舊標記
+            cameraMarkers.forEach(marker => currentMap.removeLayer(marker));
+            cameraMarkers = [];
+            
+            // 添加新標記
+            camerasToDisplay.forEach(camera => {
+                if (camera.PositionLat && camera.PositionLon) {
+                    const marker = L.circleMarker([camera.PositionLat, camera.PositionLon], {
+                        radius: 6,
+                        fillColor: camera.source === 'tdx' ? '#1e40af' : '#FF9800',
+                        color: '#fff',
+                        weight: 2,
+                        opacity: 1,
+                        fillOpacity: 0.7
+                    });
+                    
+                    const popupContent = `
+                        <div style="max-width: 250px;">
+                            <h4 style="margin: 0 0 8px 0; color: #1e40af;">${camera.RoadName || '監視器'}</h4>
+                            <p style="margin: 4px 0; font-size: 0.9rem; color: #333;">
+                                <i class="fas fa-map-marker-alt"></i> ${camera.LocationDescription || camera.SurveillanceDescription || '位置資訊暫缺'}
+                            </p>
+                            ${camera.city ? `<p style="margin: 4px 0; font-size: 0.9rem; color: #666;"><i class="fas fa-building"></i> ${camera.city}${camera.district ? ' ' + camera.district : ''}</p>` : ''}
+                            ${camera.PositionLat && camera.PositionLon ? `<p style="margin: 4px 0; font-size: 0.85rem; color: #999;"><i class="fas fa-crosshairs"></i> ${camera.PositionLat.toFixed(4)}, ${camera.PositionLon.toFixed(4)}</p>` : ''}
+                        </div>
+                    `;
+                    
+                    marker.bindPopup(popupContent);
+                    marker.addTo(currentMap);
+                    cameraMarkers.push(marker);
+                }
+            });
+            
+            // 自動調整地圖視野以顯示所有標記
+            if (cameraMarkers.length > 0) {
+                const group = new L.featureGroup(cameraMarkers);
+                currentMap.fitBounds(group.getBounds().pad(0.1));
+            }
+            
+            console.log(`✅ 已在地圖上標記 ${cameraMarkers.length} 個監視器`);
+        }
+
+        // ★ 全局切換地圖檢視函數
+        window.toggleMapView = function() {
+            const mapContainer = document.getElementById('mapContainer');
+            const camerasContainer = document.getElementById('cameras-container');
+            const toggleBtn = document.getElementById('mapToggleBtn');
+            
+            mapViewActive = !mapViewActive;
+            
+            if (mapViewActive) {
+                // 顯示地圖
+                mapContainer.classList.add('active');
+                camerasContainer.style.display = 'none';
+                document.getElementById('pagination').style.display = 'none';
+                toggleBtn.classList.add('active');
+                
+                // 初始化地圖
+                if (!currentMap) {
+                    initializeMap();
+                }
+                
+                // 更新標記
+                updateMapMarkersGlobal(filteredCameras.length > 0 ? filteredCameras : allCameras);
+                
+                // 觸發地圖重繪
+                setTimeout(() => currentMap.invalidateSize(), 100);
+            } else {
+                // 顯示列表
+                mapContainer.classList.remove('active');
+                camerasContainer.style.display = 'block';
+                document.getElementById('pagination').style.display = 'block';
+                toggleBtn.classList.remove('active');
+            }
+        };
 
         // 顯示縣市選擇介面
         function showCitiesSelection() {
@@ -800,6 +914,12 @@
                 updateStats();
                 console.log(`📊 allCameras 長度: ${allCameras.length}, filteredCameras 長度: ${filteredCameras.length}`);
                 displayCameras(allCameras);
+                
+                // ★ 顯示地圖切換按鈕
+                const mapToggleBtn = document.getElementById('mapToggleBtn');
+                if (mapToggleBtn && allCameras.length > 0) {
+                    mapToggleBtn.style.display = 'inline-block';
+                }
                 
                 // 完成進度條
                 if (typeof window.finishLoading === 'function') {
@@ -1695,6 +1815,12 @@
 
         function displayCameras(cameras) {
             const container = document.getElementById('cameras-container');
+            
+            // 如果地圖檢視已開啟，更新地圖而不是列表
+            if (mapViewActive) {
+                updateMapMarkersGlobal(cameras);
+                return;
+            }
             
             if (cameras.length === 0) {
                 container.innerHTML = '<div class="loading">無符合篩選條件的監視器</div>';

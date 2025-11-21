@@ -612,18 +612,8 @@
         }
     </style>
     
-    <!-- 載入進度條 -->
-    <script src="assets/loading-progress.js"></script>
     <script>
-        window.AUTO_START_LOADING = false;
-        
-        window.addEventListener('DOMContentLoaded', () => {
-            window.startLoading({
-                labelText: '初始化台鐵即時看板...',
-                color: '#1e40af',
-                showLabel: true
-            });
-        });
+        // 移除載入進度條，直接初始化
     </script>
 </head>
 <body>
@@ -845,17 +835,8 @@
                         <button class="filter-btn" data-filter="all" onclick="setFilter('all')" title="顯示全部停靠列車">
                             <i class="fas fa-list"></i> 全部
                         </button>
-                        <button class="filter-btn" data-filter="arrival" onclick="setFilter('arrival')" title="只顯示即將到站">
-                            <i class="fas fa-arrow-down"></i> 到站
-                        </button>
-                        <button class="filter-btn" data-filter="departure" onclick="setFilter('departure')" title="只顯示即將離站">
-                            <i class="fas fa-arrow-up"></i> 離站
-                        </button>
                         <button class="filter-btn" data-filter="delayed" onclick="setFilter('delayed')" title="只顯示延誤列車">
                             <i class="fas fa-exclamation-triangle"></i> 延誤
-                        </button>
-                        <button class="filter-btn" data-filter="pass-through" onclick="setFilter('pass-through')" title="顯示通過不停的列車">
-                            <i class="fas fa-forward"></i> 通過不停
                         </button>
                     </div>
                     
@@ -920,10 +901,47 @@
         let currentStationName = '';
         let allTrains = []; // 保存所有原始列車資料 - 初始為空
         let allApiTrains = []; // 保存 API 回應的全部列車（用於識別通過不停的列車）
-        let currentFilterMode = 'arrival'; // 預設篩選模式
+        let currentFilterMode = 'all'; // 預設篩選模式
         let currentSortMode = 'time';
         let autoRefreshInterval = null;
         let isDataLoaded = false; // 用於追蹤是否已查詢過車站
+        
+        // ★ 新增：用來儲存 StationID -> {lat, lon} 的對照表
+        let stationInfoMap = {};
+
+        /**
+         * 取得方向資訊 (修正版：依據經緯度判斷真實南北)
+         * 根據當前站與終點站的緯度判斷列車方向，避免台鐵順逆行定義在不同路線的混亂
+         */
+        function getDirectionInfo(direction, currentStationId, endingStationId) {
+            // 1. 嘗試取得當前站與終點站的座標
+            const currentPos = stationInfoMap[currentStationId];
+            const endPos = stationInfoMap[endingStationId];
+
+            // 2. 如果有座標資料，進行緯度比較
+            if (currentPos && endPos) {
+                const latDiff = endPos.lat - currentPos.lat;
+                const lonDiff = endPos.lon - currentPos.lon;
+                
+                console.log(`🧭 方向判斷: ${currentPos.name || currentStationId} → ${endPos.name || endingStationId}, 緯度差: ${latDiff.toFixed(4)}, 經度差: ${lonDiff.toFixed(4)}`);
+                
+                // 緯度差異判斷 (±0.02 約 2 公里)
+                if (latDiff > 0.02) {
+                    return { text: '北上', icon: 'fa-arrow-up', class: 'north' };
+                } else if (latDiff < -0.02) {
+                    return { text: '南下', icon: 'fa-arrow-down', class: 'south' };
+                }
+                // 如果緯度相近，可能是東西向移動，回退到 API 定義
+            }
+
+            // 3. 【備案】如果找不到座標或無法判斷，使用 API 的 Direction 定義
+            // 台鐵：0 = 順行 (通常北上/往台北), 1 = 逆行 (通常南下/往高雄)
+            if (parseInt(direction) === 0) {
+                return { text: '順行', icon: 'fa-arrow-up', class: 'north' };
+            } else {
+                return { text: '逆行', icon: 'fa-arrow-down', class: 'south' };
+            }
+        }
 
         /**
          * 設置篩選模式
@@ -1010,6 +1028,61 @@
             }
         }
 
+        // ★ 新增函式：載入車站座標資訊（用於方向判斷）
+        async function loadStationCoordinates() {
+            try {
+                // 查詢台鐵所有車站資訊
+                const endpoint = '/v2/Rail/TRA/Station?$format=JSON&$top=500';
+                const stationData = await tdxApi.fetch(endpoint);
+                
+                if (Array.isArray(stationData)) {
+                    // 建立 StationID -> 座標 的對照表
+                    stationData.forEach(station => {
+                        if (station.StationID && station.StationPosition) {
+                            stationInfoMap[station.StationID] = {
+                                lat: station.StationPosition.PositionLat,
+                                lon: station.StationPosition.PositionLon,
+                                name: station.StationName?.Zh_tw
+                            };
+                        }
+                    });
+                    
+                    console.log(`✅ 載入了 ${Object.keys(stationInfoMap).length} 個車站座標資訊`);
+                }
+            } catch (error) {
+                console.warn('⚠️ 無法載入車站座標資訊，將使用方向代碼判斷:', error.message);
+            }
+        }
+
+        // 載入車站代碼資料（使用新的路線分類系統）
+        function loadStationData() {
+            console.log('載入路線分類資料');
+            
+            // 使用新的路線分類系統
+            if (typeof trainLineClassification !== 'undefined') {
+                // 將路線分類轉換為頁面使用的格式
+                // 注意：使用 StationID 而不是 StationCode
+                stationsByLine = {};
+                for (const [lineKey, lineData] of Object.entries(trainLineClassification)) {
+                    stationsByLine[lineKey] = lineData.stations.map(s => {
+                        const stationId = getStationIdFromCode(s.code);
+                        return {
+                            id: stationId,        // 使用 StationID（用於 API 查詢）
+                            code: s.code,         // 保留 StationCode（票務系統用）
+                            name: s.name
+                        };
+                    });
+                }
+                
+                initAllStations();
+                console.log('✅ 車站資料載入完成，總共', allStations.length, '個車站');
+                console.log('📍 路線數量:', Object.keys(stationsByLine).length);
+                console.log('📋 提示：系統使用 StationID 查詢 API，可透過 StationCode 進行票務系統轉換');
+            } else {
+                console.error('trainLineClassification 未載入');
+            }
+        }
+
         // 初始化所有車站列表
         function initAllStations() {
             const stationSet = new Map(); // 使用 Map 來去重
@@ -1064,6 +1137,9 @@
 
             currentStationId = selectedStationId;
             currentStationName = stationSelect.options[stationSelect.selectedIndex].text;
+            
+            // ★ 強制重置篩選為 'all'
+            setFilter('all');
 
             await loadLiveboard();
             
@@ -1093,6 +1169,11 @@
             `;
 
             try {
+                // ★ 一次性載入車站座標資訊（第一次呼叫時）
+                if (Object.keys(stationInfoMap).length === 0) {
+                    await loadStationCoordinates();
+                }
+                
                 // 使用正確的 LiveBoard API 端點
                 const endpoint = `/v2/Rail/TRA/LiveBoard?StationID=${currentStationId}&$format=JSON`;
                 const response = await tdxApi.fetch(endpoint);
@@ -1154,12 +1235,12 @@
                 // 標記已載入過資料（防止顯示示例數據）
                 isDataLoaded = true;
                 
-                // 預設篩選為 'arrival'（即將到站）
-                currentFilterMode = 'arrival';
+                // 預設篩選為 'all'（顯示全部）
+                currentFilterMode = 'all';
                 document.querySelectorAll('.filter-btn').forEach(btn => {
                     btn.classList.remove('active');
                 });
-                document.querySelector('[data-filter="arrival"]').classList.add('active');
+                document.querySelector('[data-filter="all"]').classList.add('active');
 
                 updateUpdateTime();
                 applyFiltersAndSort(); // 使用篩選和排序顯示
@@ -1232,8 +1313,15 @@
             const rows = trains.map(train => {
                 const trainType = trainLiveboardManager.getTrainTypeInfo(train);
                 const direction = train.Direction || 0;
-                const directionIcon = direction === 0 ? 'arrow-down' : 'arrow-up';
-                const directionText = direction === 0 ? '南下' : '北上';
+                
+                // ★ 使用新的方向判斷邏輯：基於緯度比較
+                const directionInfo = getDirectionInfo(
+                    direction,
+                    currentStationId,
+                    train.EndingStationID
+                );
+                const directionIcon = directionInfo.icon.replace('fa-', '');
+                const directionText = directionInfo.text;
                 
                 // 【改進】只使用離站時間
                 const departureTime = trainLiveboardManager.formatTime(train.ScheduledDepartureTime);
