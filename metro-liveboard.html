@@ -903,6 +903,7 @@
         }
 
         // 載入系統資料 (修正版：強制補全路線名稱，解決選單篩選不到的問題)
+        // 載入系統資料 (強固版：確保路線名稱一定會被補上)
         async function loadSystemData(systemCode) {
             const lineSelect = document.getElementById('lineSelect');
             const stationSelect = document.getElementById('stationSelect');
@@ -912,87 +913,92 @@
             stationSelect.innerHTML = '<option value="">請先選擇路線</option>';
             document.getElementById('stationCount').textContent = '-';
             
-            // 檢查快取 (但要驗證快取的資料有效性)
+            let rawData = [];
+
+            // 1. 嘗試從快取讀取
             if (stationDataCache[systemCode] && stationDataCache[systemCode].length > 0) {
-                console.log(`📦 使用快取資料: ${systemCode}`);
-                allStationData = stationDataCache[systemCode];
-                renderLineSelect(allStationData, systemCode);
-                return;
+                rawData = stationDataCache[systemCode];
+            } else {
+                // 2. 如果快取沒有，才從 API 抓
+                try {
+                    // 限制請求頻率
+                    const now = Date.now();
+                    if (now - lastApiRequest < 1000) {
+                        await new Promise(r => setTimeout(r, 1000));
+                    }
+                    lastApiRequest = Date.now();
+
+                    const stationEndpoint = `/v2/Rail/Metro/Station/${systemCode}?$format=JSON&$top=1000`;
+                    console.log(`📡 下載車站資料: ${systemCode}`);
+                    const apiResponse = await tdxApi.fetch(stationEndpoint);
+                    
+                    if (Array.isArray(apiResponse) && apiResponse.length > 0) {
+                        rawData = apiResponse;
+                    } else {
+                        throw new Error("API 回傳空資料");
+                    }
+                } catch (error) {
+                    console.error(`載入${systemCode}失敗:`, error);
+                    lineSelect.innerHTML = '<option value="">載入失敗 (請重試)</option>';
+                    delete stationDataCache[systemCode]; // 清除壞快取
+                    return;
+                }
             }
 
-            try {
-                // 限制請求頻率
-                const now = Date.now();
-                if (now - lastApiRequest < 1000) {
-                    await new Promise(r => setTimeout(r, 1000));
-                }
-                lastApiRequest = Date.now();
+            // ★ 3. 資料修補 (Patching) - 每次都檢查，確保 LineName 存在
+            // 這段邏輯確保即使是舊快取，也會被這裡修好
+            const patchedData = rawData.map(item => {
+                let lineName = item.LineName?.Zh_tw;
+                const sID = item.StationID || '';
+                const lID = item.LineID || '';
 
-                const stationEndpoint = `/v2/Rail/Metro/Station/${systemCode}?$format=JSON&$top=1000`;
-                console.log(`📡 下載車站資料: ${systemCode}`);
-                const stationData = await tdxApi.fetch(stationEndpoint);
-                
-                // ✅ 驗證 API 回應
-                if (!Array.isArray(stationData) || stationData.length === 0) {
-                    throw new Error(`無法取得 ${systemCode} 的車站資料`);
-                }
-                
-                // ★ 資料預處理：強制補全 LineName (關鍵步驟)
-                const patchedData = stationData.map(item => {
-                    let lineName = item.LineName?.Zh_tw;
-                    const sID = item.StationID || '';
-                    const lID = item.LineID || '';
-
-                    // 如果原本沒有名稱，或是未知，嘗試推斷
-                    if (!lineName || lineName === '未知') {
-                        // 1. 台北捷運 & 桃園捷運 & 環狀線 (看 LineID)
-                        const lineCodeMap = {
-                            'BL': '板南線', 'BR': '文湖線', 'R': '淡水信義線',
-                            'G': '松山新店線', 'O': '中和新蘆線', 'Y': '環狀線',
-                            'A': '機場線'
-                        };
-                        // 嘗試從 LineID 或 StationID 前綴匹配
+                // 只有當名稱不存在或未知時才修補
+                if (!lineName || lineName === '未知') {
+                    // 1. 台北捷運 & 桃園捷運 (比對代碼)
+                    const lineCodeMap = {
+                        'BL': '板南線', 'BR': '文湖線', 'R': '淡水信義線',
+                        'G': '松山新店線', 'O': '中和新蘆線', 'Y': '環狀線',
+                        'A': '機場線'
+                    };
+                    
+                    // 先看 LineID
+                    for (const code in lineCodeMap) {
+                        if (lID === code) { lineName = lineCodeMap[code]; break; }
+                    }
+                    // 再看 StationID 前綴 (例如 BL01)
+                    if (!lineName) {
                         for (const code in lineCodeMap) {
-                            if (lID === code || lID.startsWith(code)) {
-                                lineName = lineCodeMap[code];
-                                break;
-                            }
+                            if (sID.startsWith(code)) { lineName = lineCodeMap[code]; break; }
                         }
                     }
+                }
 
-                    // 2. 高雄捷運 (KRTC) 特別處理 (看 StationID 前綴)
-                    if ((!lineName || lineName === '未知') && systemCode === 'KRTC') {
-                        if (sID.startsWith('R')) lineName = '紅線';
-                        if (sID.startsWith('O')) lineName = '橘線';
-                    }
-                    
-                    // 3. 高雄輕軌 (KLRT)
-                    if (systemCode === 'KLRT') {
-                        lineName = '高雄輕軌';
-                    }
-
-                    // 將補全的名稱寫回物件，方便後續篩選
-                    if (lineName) {
-                        if (!item.LineName) item.LineName = {};
-                        item.LineName.Zh_tw = lineName;
-                    }
-                    
-                    return item;
-                });
-
-                // ✅ 只有當成功取得有效資料時才寫入快取
-                allStationData = patchedData;
-                stationDataCache[systemCode] = patchedData;
-                console.log(`✅ ${systemCode} 已快取，共 ${patchedData.length} 筆車站資料`);
-
-                renderLineSelect(allStationData, systemCode);
+                // 2. 高雄捷運 (強制修補)
+                if (systemCode === 'KRTC') {
+                    if (sID.startsWith('R')) lineName = '紅線';
+                    if (sID.startsWith('O')) lineName = '橘線';
+                }
                 
-            } catch (error) {
-                console.error(`載入${systemCode}資料失敗:`, error);
-                // ✅ 清除壞掉的快取
-                delete stationDataCache[systemCode];
-                lineSelect.innerHTML = '<option value="">載入失敗</option>';
-            }
+                // 3. 高雄輕軌
+                if (systemCode === 'KLRT') {
+                    lineName = '高雄輕軌';
+                }
+
+                // 寫回物件
+                if (lineName) {
+                    if (!item.LineName) item.LineName = {};
+                    item.LineName.Zh_tw = lineName;
+                }
+                
+                return item;
+            });
+
+            // 4. 更新全域變數與快取
+            allStationData = patchedData;
+            stationDataCache[systemCode] = patchedData; // 更新為修好的資料
+
+            // 5. 渲染 (這時候一定會有路線了)
+            renderLineSelect(allStationData, systemCode);
         }
 
         // 渲染路線選單 (簡化版)
@@ -1327,80 +1333,81 @@
             }
         }
 
+        // 載入捷運系統公告 (穩定版：改為依序載入，避免瞬間 429)
         async function loadMetroNews() {
-            try {
-                const systems = ['TRTC', 'KRTC', 'TYMC', 'KLRT'];
-                
-                if (typeof tdxApi === 'undefined') {
-                    systems.forEach(sys => {
-                        const el = document.getElementById(`newsContainer-${sys}`);
-                        if(el) el.innerHTML = '<p>無法載入公告（API 未就緒）</p>';
-                    });
-                    return;
-                }
-                
-                const newsPromises = systems.map(async (systemCode) => {
-                    try {
-                        const endpoint = `/v2/Rail/Metro/News/${systemCode}?$format=JSON&$top=10&$orderby=PublishTime%20desc`;
-                        const apiResponse = await tdxApi.fetch(endpoint);
+            const systems = ['TRTC', 'KRTC', 'TYMC', 'KLRT'];
+            
+            if (typeof tdxApi === 'undefined') {
+                systems.forEach(sys => {
+                    const el = document.getElementById(`newsContainer-${sys}`);
+                    if(el) el.innerHTML = '<p class="no-data">無法載入公告（API 未就緒）</p>';
+                });
+                return;
+            }
+            
+            // ★ 修改重點：使用 for...of 迴圈 + await，讓請求「排隊」執行
+            for (const systemCode of systems) {
+                try {
+                    // 每次請求前稍微暫停 300ms，給 API 喘息空間
+                    await new Promise(r => setTimeout(r, 300));
+
+                    const endpoint = `/v2/Rail/Metro/News/${systemCode}?$format=JSON&$top=5&$orderby=PublishTime%20desc`;
+                    const apiResponse = await tdxApi.fetch(endpoint);
+                    
+                    let newsData = [];
+                    if (apiResponse && apiResponse.Newses && Array.isArray(apiResponse.Newses)) {
+                        newsData = apiResponse.Newses;
+                    } else if (Array.isArray(apiResponse)) {
+                        newsData = apiResponse;
+                    }
+                    
+                    const container = document.getElementById(`newsContainer-${systemCode}`);
+                    if (!container) continue;
+                    
+                    if (!newsData || newsData.length === 0) {
+                        container.innerHTML = '<p style="color: #999; text-align: center; padding: 15px; font-size: 0.9rem;">目前沒有新公告</p>';
+                        continue;
+                    }
+                    
+                    let html = '';
+                    newsData.slice(0, 5).forEach((news) => {
+                        const updateTime = news.UpdateTime ? new Date(news.UpdateTime).toLocaleString('zh-TW', {
+                            month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+                        }) : '未知時間';
                         
-                        let newsData = [];
-                        if (apiResponse && apiResponse.Newses && Array.isArray(apiResponse.Newses)) {
-                            newsData = apiResponse.Newses;
-                        } else if (Array.isArray(apiResponse)) {
-                            newsData = apiResponse;
-                        }
+                        const title = news.Title || '無標題';
+                        const description = news.Description || '';
+                        const newsUrl = news.NewsURL || '#';
+                        const linkHtml = newsUrl !== '#' ? 
+                            `<a href="${newsUrl}" target="_blank" title="開啟連結"><i class="fas fa-external-link-alt"></i></a>` : '';
                         
-                        const container = document.getElementById(`newsContainer-${systemCode}`);
-                        if (!container) return;
-                        
-                        if (!newsData || newsData.length === 0) {
-                            container.innerHTML = '<p style="text-align: center; padding: 15px; color: #999; font-size: 0.9rem;">目前沒有新公告</p>';
-                            return;
-                        }
-                        
-                        let html = '';
-                        newsData.slice(0, 5).forEach((news) => {
-                            const updateTime = news.UpdateTime ? new Date(news.UpdateTime).toLocaleString('zh-TW', {
-                                month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
-                            }) : '未知時間';
-                            
-                            const title = news.Title || '無標題';
-                            const description = news.Description || '';
-                            const newsUrl = news.NewsURL || '#';
-                            const linkHtml = newsUrl !== '#' ? 
-                                `<a href="${newsUrl}" target="_blank" title="開啟連結"><i class="fas fa-external-link-alt"></i></a>` : '';
-                            
-                            html += `
-                                <div class="news-item">
-                                    <div style="display: flex; align-items: flex-start; gap: 8px;">
-                                        <i class="fas fa-caret-right" style="color: #999; margin-top: 3px;"></i>
-                                        <div style="flex: 1;">
-                                            <h5>${title}</h5>
-                                            <p>${description.substring(0, 80)}${description.length > 80 ? '...' : ''}</p>
-                                            <div class="news-meta">
-                                                <span><i class="far fa-clock"></i> ${updateTime}</span>
-                                                ${linkHtml}
-                                            </div>
+                        html += `
+                            <div class="news-item">
+                                <div style="display: flex; align-items: flex-start; gap: 8px;">
+                                    <i class="fas fa-caret-right" style="color: #999; margin-top: 3px;"></i>
+                                    <div style="flex: 1;">
+                                        <h5>${title}</h5>
+                                        <p>${description.substring(0, 80)}${description.length > 80 ? '...' : ''}</p>
+                                        <div class="news-meta">
+                                            <span><i class="far fa-clock"></i> ${updateTime}</span>
+                                            ${linkHtml}
                                         </div>
                                     </div>
                                 </div>
-                            `;
-                        });
-                        
-                        container.innerHTML = html;
-                        
-                    } catch (e) {
-                        console.error(`載入 ${systemCode} 公告失敗`, e);
-                        const container = document.getElementById(`newsContainer-${systemCode}`);
-                        if(container) container.innerHTML = '<p style="color: #f44336; text-align: center; padding: 10px;">載入失敗</p>';
+                            </div>
+                        `;
+                    });
+                    
+                    container.innerHTML = html;
+                    console.log(`✅ 成功載入 ${newsData.length} 筆 ${systemCode} 公告`);
+                    
+                } catch (e) {
+                    console.warn(`載入 ${systemCode} 公告失敗 (可能是 429，已略過)`);
+                    const container = document.getElementById(`newsContainer-${systemCode}`);
+                    if(container && container.innerHTML.includes('載入中')) {
+                        container.innerHTML = '<p style="color: #999; text-align: center; padding: 10px;">暫無公告或載入失敗</p>';
                     }
-                });
-                
-                await Promise.all(newsPromises);
-                
-            } catch (e) {
-                console.error('載入捷運系統公告失敗', e);
+                }
             }
         }
 
