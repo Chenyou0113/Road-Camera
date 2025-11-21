@@ -6,6 +6,7 @@
     <title>捷運即時到離站看板 - TDX</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="assets/dark-mode.css">
+    <link rel="stylesheet" href="assets/mobile-responsive.css">
     <script>window.CURRENT_PAGE = 'metro-liveboard';</script>
     <script src="assets/config.js"></script>
     <script src="assets/tdx-api.js"></script>
@@ -215,6 +216,74 @@
             color: white;
         }
         
+        /* 轉乘資訊 */
+        .transfer-info {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .transfer-group {
+            border-bottom: 1px solid #eee;
+            padding-bottom: 12px;
+        }
+        .transfer-group:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+        .transfer-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+        .transfer-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            color: white;
+            font-weight: 700;
+            font-size: 0.9rem;
+            flex-shrink: 0;
+        }
+        .transfer-line-name {
+            font-weight: 600;
+            color: #333;
+            flex-grow: 1;
+        }
+        .transfer-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 0;
+            font-size: 0.85rem;
+        }
+        .transfer-destination {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            color: #333;
+            flex-grow: 1;
+        }
+        .transfer-destination::before {
+            content: '→';
+            color: #999;
+        }
+        .transfer-time {
+            color: #666;
+            min-width: 60px;
+            text-align: right;
+            font-weight: 500;
+        }
+        .transfer-none {
+            padding: 8px;
+            color: #999;
+            text-align: center;
+            font-size: 0.85rem;
+        }
+        
         .no-data {
             text-align: center;
             padding: 40px;
@@ -386,6 +455,26 @@
         }
         body.dark-mode .train-table tbody tr:hover {
             background: rgba(79, 195, 247, 0.1);
+        }
+        
+        /* 深色模式 - 轉乘資訊 */
+        body.dark-mode .transfer-group {
+            border-bottom-color: rgba(255,255,255,0.1);
+        }
+        body.dark-mode .transfer-line-name {
+            color: #81d4fa;
+        }
+        body.dark-mode .transfer-destination {
+            color: rgba(255,255,255,0.8);
+        }
+        body.dark-mode .transfer-destination::before {
+            color: rgba(255,255,255,0.4);
+        }
+        body.dark-mode .transfer-time {
+            color: rgba(255,255,255,0.7);
+        }
+        body.dark-mode .transfer-none {
+            color: rgba(255,255,255,0.5);
         }
         body.dark-mode .train-number {
             color: #4fc3f7;
@@ -601,11 +690,12 @@
                             <th>終點站</th>
                             <th>到站時間</th>
                             <th>狀態</th>
+                            <th>轉乘資訊</th>
                         </tr>
                     </thead>
                     <tbody id="trainTableBody">
                         <tr>
-                            <td colspan="6" class="no-data">
+                            <td colspan="7" class="no-data">
                                 <i class="fas fa-subway"></i>
                                 <p>請選擇捷運系統和車站</p>
                             </td>
@@ -931,6 +1021,37 @@
                     
                     const estTime = item.EstimateTime !== undefined ? item.EstimateTime : 0;
                     
+                    // 查找該車站是否有其他轉乘路線
+                    // 先找出同一車站的所有不同路線
+                    const allLinesAtStation = [...new Set(
+                        currentLiveboardData
+                            .filter(train => train.StationID === currentStationId)
+                            .map(train => train.LineID)
+                    )];
+                    
+                    const transfers = allLinesAtStation
+                        .filter(lineID => lineID && lineID !== item.LineID)
+                        .map(lineID => {
+                            // 查找該轉乘路線的最近列車
+                            const transferTrains = currentLiveboardData.filter(train => 
+                                train.StationID === currentStationId && 
+                                train.LineID === lineID
+                            );
+                            const nearestTrain = transferTrains.sort((a, b) => 
+                                (a.EstimateTime || 0) - (b.EstimateTime || 0)
+                            )[0];
+                            
+                            // 獲取路線名稱
+                            const transferLineData = currentLiveboardData.find(t => t.LineID === lineID);
+                            const lineName = transferLineData?.LineName?.Zh_tw || transferLineData?.LineName || lineID;
+                            
+                            return {
+                                lineName: lineName,
+                                lineID: lineID,
+                                estimateTime: nearestTrain ? (nearestTrain.EstimateTime || 0) : '--'
+                            };
+                        });
+                    
                     // 只顯示有到達時間的列車，或顯示所有項目
                     trainRows.push({
                         stationName: item.StationName?.Zh_tw || item.StationName || currentStationName,
@@ -941,7 +1062,8 @@
                         direction: item.TripHeadSign || destName,
                         estimateTime: estTime,
                         trainNo: item.TrainNo || '--',
-                        serviceStatus: item.ServiceStatus // 0=正常, 3=不行駛
+                        serviceStatus: item.ServiceStatus, // 0=正常, 3=不行駛
+                        transfers: transfers
                     });
                     
                     console.log('✅ KLRT 格式列車:', { direction: item.TripHeadSign, dest: destName, time: estTime });
@@ -955,7 +1077,7 @@
             if (trainRows.length === 0) {
                 tableBody.innerHTML = `
                     <tr>
-                        <td colspan="6" class="no-data">
+                        <td colspan="7" class="no-data">
                             <i class="fas fa-info-circle"></i>
                             <p>此車站目前無即將到站的列車</p>
                             <p style="font-size: 0.85rem; margin-top: 10px; color: #999;">
@@ -971,25 +1093,9 @@
 
             // 依系統決定排序方式
             if (currentSystem === 'TYMC') {
-                // 桃園捷運：分方向顯示最近的兩班
-                const byDirection = {};
-                trainRows.forEach(train => {
-                    const dir = train.tripHeadSign || '未知方向';
-                    if (!byDirection[dir]) {
-                        byDirection[dir] = [];
-                    }
-                    byDirection[dir].push(train);
-                });
-                
-                // 各方向取最近的一班
-                trainRows = [];
-                Object.values(byDirection).forEach(trains => {
-                    trains.sort((a, b) => a.estimateTime - b.estimateTime);
-                    if (trains.length > 0) {
-                        trainRows.push(trains[0]);
-                    }
-                });
+                // 桃園捷運：顯示最近的四班
                 trainRows.sort((a, b) => a.estimateTime - b.estimateTime);
+                trainRows = trainRows.slice(0, 4);
             } else {
                 // 其他系統：依預估時間排序
                 trainRows.sort((a, b) => a.estimateTime - b.estimateTime);
@@ -1010,6 +1116,32 @@
                     status = getTrainStatus(estimateMin);
                 }
                 
+                // 建立轉乘資訊 HTML
+                let transfersHTML = '';
+                if (train.transfers && train.transfers.length > 0) {
+                    transfersHTML = train.transfers.map(t => {
+                        const transferTime = t.estimateTime !== '--' ? `${t.estimateTime}分 ${new Date().getHours().toString().padStart(2, '0')}:${(new Date().getMinutes() + parseInt(t.estimateTime)).toString().padStart(2, '0')}` : '無';
+                        // 根據 LineID 決定徽章顏色
+                        const badgeColor = lineColors[t.lineID] || '#666';
+                        const lineDisplay = t.lineID ? t.lineID.toUpperCase() : '轉';
+                        
+                        return `
+                            <div class="transfer-group">
+                                <div class="transfer-header">
+                                    <span class="transfer-badge" style="background: ${badgeColor};">${lineDisplay}</span>
+                                    <span class="transfer-line-name">${t.lineName}</span>
+                                </div>
+                                <div class="transfer-item">
+                                    <span class="transfer-destination">${t.lineName}</span>
+                                    <span class="transfer-time">${transferTime}</span>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                } else {
+                    transfersHTML = '<div class="transfer-none">無轉乘</div>';
+                }
+                
                 return `
                     <tr>
                         <td>${train.stationName}</td>
@@ -1027,6 +1159,7 @@
                         <td>${train.destinationName || '未知終點'}</td>
                         <td>${timeDisplay}</td>
                         <td><span class="status-badge ${status.class}">${status.text}</span></td>
+                        <td><div class="transfer-info">${transfersHTML}</div></td>
                     </tr>
                 `;
             }).join('');
