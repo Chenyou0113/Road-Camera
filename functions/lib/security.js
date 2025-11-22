@@ -21,7 +21,8 @@ export function checkOrigin(request, allowedOrigins = null) {
   // 用戶可以透過部署時設定環境變數來自訂
   if (!allowedOrigins) {
     allowedOrigins = [
-      'https://road-camera.pages.dev',      // 正式環境
+      'https://road-camera.pages.dev',      // 原始正式環境
+      'https://camera-2wq.pages.dev',       // 目前的正式環境 ⭐
       'https://www.road-camera.pages.dev',  // 帶 www 的版本
       'http://127.0.0.1:8788',              // 本機開發 (Wrangler)
       'http://localhost:8788',              // 本機開發 (localhost)
