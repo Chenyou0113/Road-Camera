@@ -189,9 +189,9 @@ class RadarTransformer {
                     const jsonData = JSON.parse(text);
                     console.log(`🔍 JSON 結構:`, Object.keys(jsonData));
                     
-                    // 處理氣象局新 API 格式（cwaopendata）
+                    // 處理中央氣象署新 API 格式（cwaopendata）
                     if (jsonData.cwaopendata) {
-                        console.log(`📡 偵測到氣象局 cwaopendata 格式`);
+                        console.log(`📡 偵測到中央氣象署 cwaopendata 格式`);
                         const cwaData = jsonData.cwaopendata;
                         
                         // 檢查是否有 dataset 或 location
