@@ -1,211 +1,82 @@
-/**
- * 🌬️ 空氣品質 API (環境部資料)
- *
- * 資料來源：行政院環保署 (MOENV) 空氣品質即時資訊
- * API URL: 需要 API Key 從環境部申請
- * 快取：10 分鐘 (空品變化較慢)
- *
- * 安全特性：
- * ✅ Origin 白名單檢查 (防止跨域盜連)
- * ✅ API Key 隱藏在 Cloudflare 環境變數
- * ✅ D1 快取 10 分鐘
- * ✅ 自動數據清洗和座標驗證
- */
-
-import { checkRequestSecurity, createCORSHeaders } from '../lib/security.js';
-
-const CACHE_KEY = 'moenv_air_quality_v2'; // ⚡️ 版本更新，強制避開舊快取
-const CACHE_TTL = 10 * 60 * 1000; // 10 分鐘
-
 export async function onRequest(context) {
-  const { request, env } = context;
+  const { env } = context;
 
-  // 🛡️ 第一道防線：Origin 白名單檢查
-  const securityCheck = checkRequestSecurity(request);
-  if (!securityCheck.allowed) {
-    return securityCheck.response;
-  }
+  // ⚡️ 升級快取版本至 v4，確保部署後立即抓取新資料
+  const CACHE_KEY = 'moenv_air_quality_v4'; 
+  const CACHE_TTL = 600 * 1000; // 10 分鐘更新一次
 
+  // ------------------------------------------------------
+  // A. D1 讀取層
+  // ------------------------------------------------------
+  let cachedRecord = null;
   try {
-    // 檢查環境變數
-    if (!env.DB) {
-      console.warn('⚠️ D1 資料庫未配置，使用無快取模式');
-    }
-
-    if (!env.MOENV_API_KEY) {
-      console.error('❌ 環境變數 MOENV_API_KEY 未設定');
-      return new Response(
-        JSON.stringify({ error: 'API Key 未配置', success: false }),
-        {
-          status: 500,
-          headers: { 'Content-Type': 'application/json', ...createCORSHeaders(securityCheck.origin) }
-        }
-      );
-    }
-
-    // 步驟 1：嘗試從 D1 讀取快取
-    let cachedData = null;
-    if (env.DB) {
-      try {
-        const cached = await env.DB
-          .prepare('SELECT data, updated_at FROM api_cache WHERE key = ?')
-          .bind(CACHE_KEY)
-          .first();
-
-        if (cached) {
-          const updatedAt = new Date(cached.updated_at);
-          const now = new Date();
-          const age = now - updatedAt;
-
-          if (age < CACHE_TTL) {
-            console.log(`⚡ D1 快取命中 (年齡: ${Math.round(age / 1000)}秒)`);
-            cachedData = JSON.parse(cached.data);
-          }
-        }
-      } catch (dbError) {
-        console.warn('⚠️ D1 讀取失敗，繼續從上游 API 抓取:', dbError.message);
-      }
-    }
-
-    // 如果有有效的快取，直接返回
-    if (cachedData) {
-      return new Response(JSON.stringify(cachedData), {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'public, max-age=60, s-maxage=300, stale-while-revalidate=600',
-          'X-Cache': 'HIT',
-          ...createCORSHeaders(securityCheck.origin)
-        }
-      });
-    }
-
-    // 步驟 2：從環境部 API 抓取新資料
-    console.log('🌐 從環境部抓取空品資料...');
-    const apiUrl = `https://data.moenv.gov.tw/api/v2/aqx_p_432?api_key=${env.MOENV_API_KEY}&limit=1000&format=JSON`;
-
-    const response = await fetch(apiUrl, { method: 'GET', timeout: 15000 });
-
-    if (!response.ok) {
-      console.error(`❌ 環境部 API 返回狀態 ${response.status}`);
-      throw new Error(`MOENV API 錯誤: ${response.statusText}`);
-    }
-
-    const rawData = await response.json();
-
-    if (!rawData.records || rawData.records.length === 0) {
-      console.warn('⚠️ 環境部返回空資料');
-      return new Response(JSON.stringify({ success: false, error: '無可用資料', data: [] }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json', ...createCORSHeaders(securityCheck.origin) }
-      });
-    }
-
-    // 步驟 3：清洗資料
-    const cleanedData = rawData.records
-      .map(item => {
-        try {
-          // 支援大小寫字段名稱 (環境部 API 用大寫)
-          const lat = parseFloat(item.Latitude || item.latitude);
-          const lon = parseFloat(item.Longitude || item.longitude);
-
-          // 過濾無效的經緯度
-          if (isNaN(lat) || isNaN(lon)) return null;
-
-          // 台灣座標合理範圍
-          if (lat < 20 || lat > 26 || lon < 118 || lon > 122) return null;
-
-          // 過濾無效的 AQI (至少要有數值)
-          const aqi = item.AQI ? parseInt(item.AQI) : (item.aqi ? parseInt(item.aqi) : null);
-          if (aqi === null || isNaN(aqi)) return null;
-
-          return {
-            id: item.SiteId || item.siteid || item.site_id || '未知',
-            name: item.SiteName || item.sitename || item.site_name || '未知',
-            county: item.County || item.county || '未知',
-            aqi: aqi,
-            status: item.Status || item.status || 'Unknown',
-            pm25: item['PM2.5'] || item.pm2_5 ? parseFloat(item['PM2.5'] || item.pm2_5) : null,
-            lat: lat,
-            lon: lon,
-            time: item.DateTime || item.datetime || new Date().toISOString()
-          };
-        } catch (e) {
-          console.warn('⚠️ 清洗資料失敗:', e.message);
-          return null;
-        }
-      })
-      .filter(item => item !== null);
-
-    console.log(`✅ 成功清洗 ${cleanedData.length} 個測站`);
-
-    const responseData = {
-      success: true,
-      count: cleanedData.length,
-      timestamp: new Date().toISOString(),
-      data: cleanedData
-    };
-
-    // 步驟 4：寫入 D1 快取
-    if (env.DB) {
-      try {
-        await env.DB
-          .prepare(`
-            INSERT INTO api_cache (key, data, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(key) DO UPDATE SET
-              data = excluded.data,
-              updated_at = CURRENT_TIMESTAMP
-          `)
-          .bind(CACHE_KEY, JSON.stringify(responseData))
-          .run();
-
-        console.log('✅ 資料已寫入 D1 快取');
-      } catch (dbError) {
-        console.warn('⚠️ D1 寫入失敗:', dbError.message);
-      }
-    }
-
-    return new Response(JSON.stringify(responseData), {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'public, max-age=60, s-maxage=300, stale-while-revalidate=600',
-        'X-Cache': 'MISS',
-        ...createCORSHeaders(securityCheck.origin)
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ 空品 API 錯誤:', error.message);
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: '無法獲取空品資料',
-        details: error.message,
-        timestamp: new Date().toISOString()
-      }),
-      {
-        status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          ...createCORSHeaders(securityCheck.origin)
-        }
-      }
-    );
-  }
-}
-
-export async function onRequestOptions(context) {
-  const { request } = context;
-  const securityCheck = checkRequestSecurity(request);
-
-  if (!securityCheck.allowed) {
-    return securityCheck.response;
+    cachedRecord = await env.DB.prepare('SELECT data, updated_at FROM api_cache WHERE key = ?').bind(CACHE_KEY).first();
+  } catch (e) {
+    // D1 連線或查詢失敗時忽略，繼續往下走
   }
 
-  return new Response(null, {
-    status: 204,
-    headers: createCORSHeaders(securityCheck.origin)
+  const now = Date.now();
+  const hasData = cachedRecord && cachedRecord.data;
+  const isStale = !cachedRecord || (now - cachedRecord.updated_at > CACHE_TTL);
+
+  // ------------------------------------------------------
+  // B. 資料更新層 (背景執行)
+  // ------------------------------------------------------
+  const updateData = async () => {
+    try {
+      console.log(`🔄 [${CACHE_KEY}] 使用專屬 Key 更新資料...`);
+      
+      // ✅ 使用專屬連結 (含 limit=1000)
+      const TARGET_URL = "https://data.moenv.gov.tw/api/v2/aqx_p_432?api_key=94650864-6a80-4c58-83ce-fd13e7ef0504&limit=1000&sort=ImportDate%20desc&format=JSON";
+      
+      const res = await fetch(TARGET_URL);
+      if (!res.ok) throw new Error(`環境部 API 錯誤: ${res.status}`);
+      
+      const data = await res.json();
+
+      // 資料清洗
+      const stations = data.records.map(item => ({
+        name: item.SiteName,       // 站名
+        county: item.County,       // 縣市
+        aqi: parseInt(item.AQI),   // AQI 數值
+        status: item.Status,       // 狀態
+        pm25: item["PM2.5"],       // PM2.5
+        lat: parseFloat(item.Latitude),
+        lon: parseFloat(item.Longitude),
+        time: item.PublishTime
+      })).filter(s => !isNaN(s.aqi)); // 過濾無效數值
+
+      // 寫入 D1
+      await env.DB.prepare(`
+        INSERT INTO api_cache (key, data, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+      `).bind(CACHE_KEY, JSON.stringify(stations), now).run();
+      
+      console.log(`✅ [${CACHE_KEY}] 更新成功，共取得 ${stations.length} 筆資料`);
+    } catch (e) {
+      console.error(`❌ [${CACHE_KEY}] 更新失敗`, e);
+    }
+  };
+
+  // ------------------------------------------------------
+  // C. 決策與回應層
+  // ------------------------------------------------------
+  
+  // 冷啟動 (完全沒資料) -> 等待更新
+  if (!hasData) {
+    await updateData();
+    cachedRecord = await env.DB.prepare('SELECT data FROM api_cache WHERE key = ?').bind(CACHE_KEY).first();
+  } 
+  // 資料舊了 -> 先給舊的，背景更新
+  else if (isStale) {
+    context.waitUntil(updateData());
+  }
+
+  return new Response(cachedRecord?.data || "[]", {
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "public, max-age=60"
+    }
   });
 }
