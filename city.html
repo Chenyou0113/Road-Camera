@@ -1329,17 +1329,34 @@
                 console.log('⏳ 等待所有縣市並行載入完成...');
                 const cityResults = await Promise.allSettled(cityPromises);
                 
-                // 收集所有成功載入的資料
+                // 收集所有成功載入的資料，並診斷 API 狀態
+                const apiDiagnostics = {
+                    success: [],
+                    noData: [],
+                    failed: []
+                };
+                
                 cityResults.forEach((result, index) => {
                     if (result.status === 'fulfilled' && result.value.length > 0) {
                         allCamerasFromSources.push(...result.value);
+                        apiDiagnostics.success.push({ city: cities[index].name, cameras: result.value.length });
                         console.log(`✅ ${cities[index].name}: ${result.value.length} 筆資料已加入`);
                     } else if (result.status === 'rejected') {
+                        apiDiagnostics.failed.push({ city: cities[index].name, error: result.reason?.message || '未知錯誤' });
                         console.error(`❌ ${cities[index].name} 載入失敗:`, result.reason);
                     } else if (result.status === 'fulfilled' && result.value.length === 0) {
+                        apiDiagnostics.noData.push(cities[index].name);
                         console.log(`⚠️ ${cities[index].name}: 無監視器資料`);
                     }
                 });
+                
+                // 顯示 API 診斷摘要
+                console.group('📊 API 診斷摘要');
+                console.log(`✅ 成功載入: ${apiDiagnostics.success.length}/${cities.length} 個城市`);
+                console.log(`⚠️ 無監視器資料: ${apiDiagnostics.noData.length} 個城市:`, apiDiagnostics.noData);
+                console.log(`❌ API 失敗: ${apiDiagnostics.failed.length} 個城市:`, apiDiagnostics.failed);
+                console.log(`📹 總監視器數: ${allCamerasFromSources.length}`);
+                console.groupEnd();
                 
                 console.log(`🎉 城市端點載入完成！總計載入 ${allCamerasFromSources.length} 個監視器`);
                 

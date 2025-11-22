@@ -31,19 +31,7 @@
         .camera-card:hover { transform: translateY(-5px); }
         .camera-card h3 { color: #1e40af; margin-bottom: 10px; font-size: 1.1rem; }
         .camera-card p { color: #666; margin: 5px 0; font-size: 0.9rem; }
-        .station-image { 
-            width: 100%; 
-            height: 200px; 
-            background: #f0f0f0; 
-            border-radius: 8px; 
-            overflow: hidden; 
-            margin: 10px 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .station-image img { width: 100%; height: 100%; object-fit: cover; }
-        .no-image { color: #999; text-align: center; padding: 60px 20px; }
+
         .status-badge { 
             position: absolute; 
             top: 10px; 
@@ -227,17 +215,8 @@
         }
         
         .large-image-container {
-            width: 100%;
-            height: 400px;
-            background: #f0f0f0;
-            border-radius: 8px;
-            overflow: hidden;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 10px 0;
+            display: none;
         }
-        .large-image-container img { width: 100%; height: 100%; object-fit: cover; }
         
         .stats-grid {
             background: white;
@@ -460,29 +439,27 @@
             try {
                 console.log('🔄 嘗試連接環境部空品 API...');
                 const aqResponse = await fetch('https://data.moenv.gov.tw/api/v2/aqx_p_432?api_key=b7df779e-71a6-4148-8379-5afbd441d803&limit=1000&sort=ImportDate%20desc&format=JSON');
-                const imageResponse = await fetch('https://data.moenv.gov.tw/api/v2/aqx_p_548?api_key=846e44e1-8cc5-4893-ad87-c79d2d383706&limit=1000&sort=ImportDate%20desc&format=JSON');
                 
-                if (!aqResponse.ok || !imageResponse.ok) {
+                if (!aqResponse.ok) {
                     throw new Error('API 回應錯誤');
                 }
                 
                 const aqData = await aqResponse.json();
-                const imageData = await imageResponse.json();
                 
-                if (aqData?.records && imageData?.records) {
+                if (aqData?.records) {
                     isUsingRealData = true;
                     document.getElementById('dataSourceInfo').innerHTML = '✅ 顯示即時空品資料（環境部 API 連線成功）';
                     document.getElementById('dataSourceInfo').style.color = '#4CAF50';
                     
-                    const imageMap = {};
-                    imageData.records.forEach(img => {
-                        if (img.sitename) imageMap[img.sitename] = img.photourl || img.PhotoUrl || '';
-                    });
-                    
                     allStations = aqData.records.map(station => ({
-                        ...station,
-                        imageUrl: imageMap[station.sitename] || ''
+                        ...station
                     }));
+                    
+                    // 診斷：統計有多少站點沒有攝像頭
+                    const stationsWithImages = allStations.filter(s => s.imageUrl && s.imageUrl.trim()).length;
+                    const stationsWithoutImages = allStations.length - stationsWithImages;
+                    const imagePercentage = allStations.length > 0 ? Math.round((stationsWithoutImages / allStations.length) * 100) : 0;
+                    console.log(`📊 空氣品質攝像頭統計: ${allStations.length} 站點 → ${stationsWithImages} 有影像, ${stationsWithoutImages} 無影像 (${imagePercentage}% 無影像)`);
                     
                     currentStations = [...allStations];
                     populateCountyOptions();
@@ -559,9 +536,7 @@
                     else { aqiColor = '#F44336'; aqiStatus = '不健康'; }
                 }
                 
-                const imageHtml = station.imageUrl ? 
-                    `<div class="station-image"><img src="${station.imageUrl}" alt="${name}測站影像" onerror="this.parentElement.innerHTML='<div class=\\'no-image\\'><i class=\\'fas fa-camera-slash\\'></i><br>影像載入失敗</div>'"></div>` :
-                    `<div class="station-image"><div class="no-image"><i class="fas fa-camera-slash"></i><br>無影像資料</div></div>`;
+                const imageHtml = '';
                 
                 const pollutantItems = [];
                 if (station.pm2_5) pollutantItems.push(`<div class="pollutant-item"><div class="label">PM2.5</div><div class="value">${station.pm2_5}</div></div>`);
@@ -679,25 +654,6 @@
             }
             
             document.getElementById('modalTitle').textContent = station.sitename || '未命名測站';
-            
-            const imageSection = document.getElementById('stationImageSection');
-            if (station.imageUrl) {
-                imageSection.innerHTML = `
-                    <div class="large-image-container">
-                        <img src="${station.imageUrl}" alt="${station.sitename}測站影像" 
-                             onerror="this.parentElement.innerHTML='<div style=\\'color: #999; text-align: center; padding: 40px;\\'>影像載入失敗</div>'">
-                    </div>
-                `;
-            } else {
-                imageSection.innerHTML = `
-                    <div class="large-image-container">
-                        <div style="color: #999; text-align: center;">
-                            <i class="fas fa-camera-slash" style="font-size: 3rem; margin-bottom: 10px;"></i><br>
-                            無影像資料
-                        </div>
-                    </div>
-                `;
-            }
             
             document.getElementById('detailCounty').textContent = station.county || '-';
             document.getElementById('detailSiteId').textContent = station.siteid || '-';

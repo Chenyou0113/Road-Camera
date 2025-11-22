@@ -1,17 +1,116 @@
 // TDX API 共用處理函式（參考官方 GitHub 範例）
+// 
+// 【安全特性】
+// - 支援 Cloudflare Pages Functions 後端 Token 申請
+// - 本機開發時支援直接密鑰認證
+// - 自動快取 Token，避免頻繁申請
+
 class TDXApi {
     constructor() {
         this.accessToken = null;
         this.tokenExpiry = null;
+        this.useCloudflareFunction = TDX_CONFIG.USE_CLOUDFLARE_FUNCTIONS;
     }
 
+    /**
+     * 獲取 Access Token
+     * 
+     * 如果部署在 Cloudflare Pages：
+     *   - 調用 /api/token 端點（伺服器端處理，密鑰不暴露）
+     * 
+     * 如果在本機開發：
+     *   - 直接使用 TDX_CONFIG 中的密鑰（僅用於開發）
+     */
     async getAccessToken() {
-        if (this.accessToken && this.tokenExpiry && Date.now() < this.tokenExpiry) {
+        // 1. 檢查快取的 Token 是否仍有效
+        if (this.accessToken && this.tokenExpiry && Date.now() < this.tokenExpiry - 60000) {
+            console.log('💾 使用快取的 Token');
             return this.accessToken;
         }
 
+        console.log(`🔄 需要新的 Token (使用模式: ${this.useCloudflareFunction ? '☁️ Cloudflare' : '💻 本機'})`);
+
+        try {
+            let tokenData;
+
+            if (this.useCloudflareFunction) {
+                // 【生產環境】使用 Cloudflare Pages Functions
+                console.log('☁️ 向 Cloudflare Functions (/api/token) 申請 Token...');
+                tokenData = await this._getTokenFromCloudflare();
+            } else {
+                // 【開發環境】直接使用本機密鑰
+                if (!TDX_CONFIG.CLIENT_ID || !TDX_CONFIG.CLIENT_SECRET) {
+                    throw new Error(
+                        '❌ 開發環境: 缺少 CLIENT_ID 或 CLIENT_SECRET\\n' +
+                        '請在 assets/config.js 中填入臨時密鑰進行開發\n' +
+                        '提交 GitHub 前務必刪除這些值'
+                    );
+                }
+                console.log('💻 直接使用本機密鑰申請 Token（開發模式）');
+                tokenData = await this._getTokenDirect();
+            }
+
+            if (!tokenData || !tokenData.access_token) {
+                throw new Error('無法從 Token 響應中提取 access_token');
+            }
+
+            // 2. 儲存 Token 和過期時間
+            this.accessToken = tokenData.access_token;
+            // 提前 60 秒重新申請（考慮網路延遲和時間誤差）
+            const expiresIn = tokenData.expires_in || 3600;
+            this.tokenExpiry = Date.now() + (expiresIn * 1000) - 60000;
+
+            console.log(`✅ Token 已取得，有效期: ${expiresIn} 秒`);
+            return this.accessToken;
+
+        } catch (error) {
+            console.error('❌ Token 申請失敗:', error.message);
+            throw error;
+        }
+    }
+
+    /**
+     * 從 Cloudflare Pages Functions 端點獲取 Token（安全方式）
+     */
+    async _getTokenFromCloudflare() {
+        try {
+            const response = await fetch(TDX_CONFIG.TOKEN_API_ENDPOINT, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                // 不使用快取，每次都取最新的 Token
+                cache: 'no-store'
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(
+                    `Cloudflare Functions 錯誤 (${response.status}): ${errorData.message || response.statusText}`
+                );
+            }
+
+            return await response.json();
+
+        } catch (error) {
+            console.error('☁️ Cloudflare Functions 請求失敗:', error.message);
+            
+            // 降級處理：如果 Cloudflare Function 失敗且有本機密鑰，嘗試本機方式
+            if (TDX_CONFIG.CLIENT_ID && TDX_CONFIG.CLIENT_SECRET) {
+                console.warn('⚠️ 降級到本機密鑰模式...');
+                return await this._getTokenDirect();
+            }
+            
+            throw error;
+        }
+    }
+
+    /**
+     * 直接使用本機密鑰申請 Token（開發/降級用）
+     */
+    async _getTokenDirect() {
         const parameter = {
-            grant_type: "client_credentials",
+            grant_type: 'client_credentials',
             client_id: TDX_CONFIG.CLIENT_ID,
             client_secret: TDX_CONFIG.CLIENT_SECRET
         };
@@ -26,15 +125,13 @@ class TDXApi {
             });
 
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                throw new Error(`TDX 認証失敗 (${response.status}): ${response.statusText}`);
             }
 
-            const data = await response.json();
-            this.accessToken = data.access_token;
-            this.tokenExpiry = Date.now() + (data.expires_in * 1000) - 60000;
-            return this.accessToken;
+            return await response.json();
+
         } catch (error) {
-            console.error('取得 Token 失敗:', error);
+            console.error('💻 本機密鑰申請失敗:', error.message);
             throw error;
         }
     }
