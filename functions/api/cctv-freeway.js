@@ -5,15 +5,23 @@
  * API URL: https://tisvcloud.freeway.gov.tw/history/motc20/CCTV.xml
  * 限制：> 40 秒一次
  * 
- * 我們的策略：
- * 1. 快取設 60 秒 (安全邊界，大於官方要求的 40 秒)
- * 2. XML 轉 JSON，並合併路名 + 里程數 + 方向為好讀的名稱
- * 3. 只提取必要欄位 (ID, URL, 經緯度, 路段信息)
+ * 安全特性：
+ * ✅ Origin 白名單檢查 (防止跨域盜連)
+ * ✅ D1 快取 60 秒 (符合官方要求)
+ * ✅ 自動數據清洗和座標驗證
  */
+
+import { checkRequestSecurity, createCORSHeaders } from '../lib/security.js';
 
 export async function onRequest(context) {
   const { request } = context;
   const cache = caches.default;
+
+  // 🛡️ 第一道防線：Origin 白名單檢查
+  const securityCheck = checkRequestSecurity(request);
+  if (!securityCheck.allowed) {
+    return securityCheck.response;
+  }
   
   // 固定的快取 Key，確保所有訪客共享同一份快取
   const cacheKey = new Request("https://internal-cache/freeway-cctv", { method: 'GET' });
@@ -130,9 +138,7 @@ export async function onRequest(context) {
         'Content-Type': 'application/json; charset=utf-8',
         // 🛡️ 快取 60 秒（大於官方要求的 40 秒，安全邊界）
         'Cache-Control': 'public, max-age=60, s-maxage=60, stale-while-revalidate=300',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type'
+        ...createCORSHeaders(securityCheck.origin) // 使用安全的 CORS 頭
       }
     });
 
@@ -161,12 +167,15 @@ export async function onRequest(context) {
 
 // OPTIONS 方法用於 CORS preflight
 export async function onRequestOptions(context) {
+  const { request } = context;
+  const securityCheck = checkRequestSecurity(request);
+
+  if (!securityCheck.allowed) {
+    return securityCheck.response;
+  }
+
   return new Response(null, {
     status: 204,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type'
-    }
+    headers: createCORSHeaders(securityCheck.origin)
   });
 }

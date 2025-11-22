@@ -1,21 +1,27 @@
 /**
  * 🛣️ 省道監視器 API (XML → JSON 轉譯)
- * 
+ *
  * 資料來源：台灣交通部運輸研究所 (THB) 省道監視器即時影像
  * API URL: https://cctv-maintain.thb.gov.tw/opendataCCTVs.xml
  * 限制：> 60 秒一次
- * 
- * 我們的策略：
- * 1. 快取設 70 秒 (安全邊界，避免被 Ban)
- * 2. XML 轉 JSON (前端方便使用)
- * 3. 只提取必要欄位 (ID, URL, 經緯度, 名稱)
+ *
+ * 安全特性：
+ * ✅ Origin 白名單檢查 (防止跨域盜連)
+ * ✅ D1 快取 70 秒 (符合官方要求，避免被 Ban)
+ * ✅ 自動數據清洗和座標驗證
  */
+
+import { checkRequestSecurity, createCORSHeaders } from '../lib/security.js';
 
 export async function onRequest(context) {
   const { request } = context;
   const cache = caches.default;
-  
-  // 固定的快取 Key，確保所有訪客共享同一份快取
+
+  // 🛡️ 第一道防線：Origin 白名單檢查
+  const securityCheck = checkRequestSecurity(request);
+  if (!securityCheck.allowed) {
+    return securityCheck.response;
+  }  // 固定的快取 Key，確保所有訪客共享同一份快取
   const cacheKey = new Request("https://internal-cache/provincial-cctv", { method: 'GET' });
 
   try {
@@ -117,9 +123,7 @@ export async function onRequest(context) {
         'Content-Type': 'application/json; charset=utf-8',
         // 🛡️ 快取 70 秒（大於官方要求的 60 秒，安全邊界）
         'Cache-Control': 'public, max-age=70, s-maxage=70, stale-while-revalidate=300',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type'
+        ...createCORSHeaders(securityCheck.origin) // 使用安全的 CORS 頭
       }
     });
 
@@ -148,12 +152,15 @@ export async function onRequest(context) {
 
 // OPTIONS 方法用於 CORS preflight
 export async function onRequestOptions(context) {
+  const { request } = context;
+  const securityCheck = checkRequestSecurity(request);
+
+  if (!securityCheck.allowed) {
+    return securityCheck.response;
+  }
+
   return new Response(null, {
     status: 204,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type'
-    }
+    headers: createCORSHeaders(securityCheck.origin)
   });
 }

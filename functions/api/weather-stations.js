@@ -1,18 +1,33 @@
 /**
  * 氣象署天氣資料 API 端點
+ * 
  * 功能：從 CWA 抓取天氣資料 -> 清洗簡化 -> 快取 5 分鐘
  * 
+ * 安全特性：
+ * ✅ Origin 白名單檢查 (防止跨域盜連)
+ * ✅ D1 快取 5 分鐘
+ * ✅ 自動數據清洗和座標驗證
+ * 
  * 流程：
- * 1. 檢查 Cloudflare 快取
- * 2. 如無快取，呼叫 CWA API
- * 3. 資料清洗 (把複雜的巢狀結構攤平)
- * 4. 過濾掉無效資料 (經緯度為空、故障代碼 -99/-98)
- * 5. 設定 5 分鐘快取並返回
+ * 1. 安全性檢查 (Origin 白名單)
+ * 2. 檢查 Cloudflare 快取
+ * 3. 如無快取，呼叫 CWA API
+ * 4. 資料清洗 (把複雜的巢狀結構攤平)
+ * 5. 過濾掉無效資料 (經緯度為空、故障代碼 -99/-98)
+ * 6. 設定 5 分鐘快取並返回
  */
 
+import { checkRequestSecurity, createCORSHeaders } from '../lib/security.js';
+
 export async function onRequest(context) {
-  const { env } = context;
+  const { request, env } = context;
   const cache = caches.default;
+
+  // 🛡️ 第一道防線：Origin 白名單檢查
+  const securityCheck = checkRequestSecurity(request);
+  if (!securityCheck.allowed) {
+    return securityCheck.response;
+  }
   
   // 固定的快取鍵 (所有請求都用同一個鍵，確保全局共享)
   const cacheKey = new Request("https://internal-cache/weather-stations");
@@ -24,9 +39,14 @@ export async function onRequest(context) {
     
     if (response) {
       console.log('✅ 快取命中，直接返回');
-      // 添加快取指示標頭
+      // 添加快取指示標頭和安全的 CORS 頭
       const newResponse = new Response(response.body, response);
       newResponse.headers.set('X-Cache', 'HIT');
+      // 更新 CORS 頭為安全版本
+      const corsHeaders = createCORSHeaders(securityCheck.origin);
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        newResponse.headers.set(key, value);
+      });
       return newResponse;
     }
     
@@ -138,8 +158,7 @@ export async function onRequest(context) {
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
         'Cache-Control': 'public, max-age=300, s-maxage=300, stale-while-revalidate=600',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        ...createCORSHeaders(securityCheck.origin), // 使用安全的 CORS 頭
         'X-Cache': 'MISS'
       }
     });
@@ -173,11 +192,15 @@ export async function onRequest(context) {
 
 // 處理 OPTIONS 請求 (CORS 預檢)
 export async function onRequestOptions(context) {
+  const { request } = context;
+  const securityCheck = checkRequestSecurity(request);
+
+  if (!securityCheck.allowed) {
+    return securityCheck.response;
+  }
+
   return new Response(null, {
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type'
-    }
+    status: 204,
+    headers: createCORSHeaders(securityCheck.origin)
   });
 }
