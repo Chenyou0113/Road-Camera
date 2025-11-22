@@ -14,7 +14,7 @@
 
 import { checkRequestSecurity, createCORSHeaders } from '../lib/security.js';
 
-const CACHE_KEY = 'moenv_air_quality';
+const CACHE_KEY = 'moenv_air_quality_v2'; // ⚡️ 版本更新，強制避開舊快取
 const CACHE_TTL = 10 * 60 * 1000; // 10 分鐘
 
 export async function onRequest(context) {
@@ -105,8 +105,9 @@ export async function onRequest(context) {
     const cleanedData = rawData.records
       .map(item => {
         try {
-          const lat = parseFloat(item.latitude);
-          const lon = parseFloat(item.longitude);
+          // 支援大小寫字段名稱 (環境部 API 用大寫)
+          const lat = parseFloat(item.Latitude || item.latitude);
+          const lon = parseFloat(item.Longitude || item.longitude);
 
           // 過濾無效的經緯度
           if (isNaN(lat) || isNaN(lon)) return null;
@@ -114,16 +115,20 @@ export async function onRequest(context) {
           // 台灣座標合理範圍
           if (lat < 20 || lat > 26 || lon < 118 || lon > 122) return null;
 
+          // 過濾無效的 AQI (至少要有數值)
+          const aqi = item.AQI ? parseInt(item.AQI) : (item.aqi ? parseInt(item.aqi) : null);
+          if (aqi === null || isNaN(aqi)) return null;
+
           return {
-            id: item.siteid || item.site_id || '未知',
-            name: item.sitename || item.site_name || '未知',
-            county: item.county || '未知',
-            aqi: item.aqi ? parseInt(item.aqi) : null,
-            status: item.status || 'Unknown',
-            pm25: item.pm2_5 ? parseFloat(item.pm2_5) : null,
+            id: item.SiteId || item.siteid || item.site_id || '未知',
+            name: item.SiteName || item.sitename || item.site_name || '未知',
+            county: item.County || item.county || '未知',
+            aqi: aqi,
+            status: item.Status || item.status || 'Unknown',
+            pm25: item['PM2.5'] || item.pm2_5 ? parseFloat(item['PM2.5'] || item.pm2_5) : null,
             lat: lat,
             lon: lon,
-            time: item.datetime || new Date().toISOString()
+            time: item.DateTime || item.datetime || new Date().toISOString()
           };
         } catch (e) {
           console.warn('⚠️ 清洗資料失敗:', e.message);
