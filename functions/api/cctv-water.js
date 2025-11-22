@@ -126,6 +126,12 @@ export async function onRequest(context) {
 
     console.log(`✅ 成功清洗 ${cleanedData.length} 個監控點`);
 
+    // 🛡️ 防呆鎖：如果資料為空，不要存入 D1！
+    if (cleanedData.length === 0) {
+      console.error(`❌ [${CACHE_KEY}] 清洗後無有效資料，放棄寫入資料庫`);
+      throw new Error("抓取到的水利署資料為空，放棄寫入資料庫");
+    }
+
     const responseData = {
       success: true,
       count: cleanedData.length,
