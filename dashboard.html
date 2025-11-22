@@ -688,6 +688,41 @@
                 </div>
             </div>
         </div>
+
+        <!-- 🔥 熱門監視器排行榜 (動態數據) -->
+        <div class="chart-section" style="margin-top: 40px;">
+            <h3><i class="fas fa-fire"></i> 🔥 熱門監視器排行榜</h3>
+            <div style="background: rgba(255, 152, 0, 0.05); border-left: 4px solid #ff9800; padding: 12px; border-radius: 4px; margin-bottom: 15px;">
+                <p style="color: #ff6f00; font-size: 0.9rem; margin: 0;">
+                    💡 即時統計：此排行榜基於使用者實際點擊次數，每次打開監視器窗口時自動更新。
+                </p>
+            </div>
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+                    <thead style="background: linear-gradient(135deg, #1e40af, #0891b2); color: white;">
+                        <tr>
+                            <th style="padding: 14px; text-align: center; width: 60px; font-weight: 600;">排名</th>
+                            <th style="padding: 14px; text-align: left; flex: 1; font-weight: 600;">監視器位置</th>
+                            <th style="padding: 14px; text-align: center; width: 120px; font-weight: 600;">
+                                <i class="fas fa-eye"></i> 瀏覽次數
+                            </th>
+                            <th style="padding: 14px; text-align: right; width: 160px; font-weight: 600;">最後更新</th>
+                        </tr>
+                    </thead>
+                    <tbody id="topCamerasTable">
+                        <tr>
+                            <td colspan="4" style="padding: 40px 20px; text-align: center; color: #999;">
+                                <i class="fas fa-spinner fa-spin"></i> 載入排行榜數據中...
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div style="margin-top: 15px; padding: 12px; background: #f5f5f5; border-radius: 4px; font-size: 0.85rem; color: #666;">
+                <i class="fas fa-info-circle"></i> 
+                本排行榜每 30 秒自動刷新一次，顯示過去 24 小時內的點擊統計。
+            </div>
+        </div>
     </div>
 
     <script src="assets/navbar.js"></script>
@@ -733,6 +768,70 @@
             }
             
             requestAnimationFrame(update);
+        }
+
+        // 🏆 載入熱門監視器排行榜
+        async function loadTopCameras() {
+            try {
+                const response = await fetch('/api/get-top-cameras?limit=10');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const topCameras = await response.json();
+                
+                if (!Array.isArray(topCameras) || topCameras.length === 0) {
+                    document.getElementById('topCamerasTable').innerHTML = `
+                        <tr>
+                            <td colspan="4" style="padding: 40px 20px; text-align: center; color: #999;">
+                                <i class="fas fa-inbox"></i> 暫無數據，請點擊監視器以開始統計
+                            </td>
+                        </tr>
+                    `;
+                    console.log('ℹ️ 排行榜暫無數據');
+                    return;
+                }
+                
+                // 生成表格行
+                const rows = topCameras.map((cam, idx) => {
+                    const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
+                    const lastUpdate = new Date(cam.last_updated);
+                    const timeStr = lastUpdate.toLocaleTimeString('zh-TW');
+                    
+                    return `
+                        <tr style="border-bottom: 1px solid #e0e0e0; transition: all 0.2s;">
+                            <td style="padding: 14px; text-align: center; font-weight: bold; font-size: 1.1rem; color: #1e40af;">
+                                ${medal}
+                            </td>
+                            <td style="padding: 14px; text-align: left; color: #333; font-weight: 500;">
+                                ${cam.camera_id}
+                            </td>
+                            <td style="padding: 14px; text-align: center;">
+                                <span style="background: linear-gradient(135deg, #1e40af, #0891b2); color: white; padding: 6px 12px; border-radius: 20px; font-weight: bold; display: inline-block;">
+                                    ${cam.views}
+                                </span>
+                            </td>
+                            <td style="padding: 14px; text-align: right; color: #666; font-size: 0.9rem;">
+                                ${timeStr}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+                
+                document.getElementById('topCamerasTable').innerHTML = rows;
+                console.log(`✅ 已載入 ${topCameras.length} 個熱門監視器`);
+                
+            } catch (error) {
+                console.error('❌ 載入排行榜失敗:', error);
+                document.getElementById('topCamerasTable').innerHTML = `
+                    <tr>
+                        <td colspan="4" style="padding: 40px 20px; text-align: center; color: #f44336;">
+                            <i class="fas fa-exclamation-circle"></i> 載入失敗：${error.message}
+                        </td>
+                    </tr>
+                `;
+            }
         }
 
         // 更新時間顯示
@@ -1690,6 +1789,11 @@
                     element.textContent = '準備中...';
                 }
             });
+
+            // 🏆 載入熱門監視器排行榜
+            loadTopCameras();
+            // 每 30 秒自動刷新一次
+            setInterval(loadTopCameras, 30000);
         });
 
         // 🎥 攝影機代理 URL 生成函數 (解決高公局 HTTP/2 協議問題)
