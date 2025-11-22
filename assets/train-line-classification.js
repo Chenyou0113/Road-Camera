@@ -118,18 +118,34 @@ const trainLineClassification = {
             { "code": "7390", "name": "暖暖" }
         ]
     },
-    "branch_lines": {
-        "name": "支線 (平溪/深澳/內灣/集集/沙崙/六家)",
+    "pingxi": {
+        "name": "平溪/深澳線",
         "stations": [
             { "code": "7332", "name": "大華" }, { "code": "7333", "name": "十分" }, { "code": "7334", "name": "望古" },
-            { "code": "7335", "name": "嶺腳" }, { "code": "7336", "name": "平溪" }, { "code": "7361", "name": "海科館" },
-            { "code": "7362", "name": "八斗子" }, { "code": "1201", "name": "千甲" }, { "code": "1202", "name": "新莊" },
-            { "code": "1203", "name": "竹中" }, { "code": "1204", "name": "六家" }, { "code": "1205", "name": "上員" },
-            { "code": "1206", "name": "榮華" }, { "code": "1207", "name": "竹東" }, { "code": "1208", "name": "橫山" },
-            { "code": "1209", "name": "九讚頭" }, { "code": "1211", "name": "合興" }, { "code": "1212", "name": "富貴" },
-            { "code": "1213", "name": "內灣" }, { "code": "3431", "name": "源泉" }, { "code": "3432", "name": "濁水" },
-            { "code": "3433", "name": "龍泉" }, { "code": "3434", "name": "集集" }, { "code": "3435", "name": "水里" },
-            { "code": "3436", "name": "車埕" }, { "code": "4271", "name": "長榮大學" }, { "code": "4272", "name": "沙崙" }
+            { "code": "7335", "name": "嶺腳" }, { "code": "7336", "name": "平溪" }, { "code": "7331", "name": "菁桐" },
+            { "code": "7361", "name": "海科館" }, { "code": "7362", "name": "八斗子" }
+        ]
+    },
+    "neiwan": {
+        "name": "內灣/六家線",
+        "stations": [
+            { "code": "1201", "name": "千甲" }, { "code": "1202", "name": "新莊" }, { "code": "1203", "name": "竹中" },
+            { "code": "1204", "name": "六家" }, { "code": "1205", "name": "上員" }, { "code": "1206", "name": "榮華" },
+            { "code": "1207", "name": "竹東" }, { "code": "1208", "name": "橫山" }, { "code": "1209", "name": "九讚頭" },
+            { "code": "1211", "name": "合興" }, { "code": "1212", "name": "富貴" }, { "code": "1213", "name": "內灣" }
+        ]
+    },
+    "jiji": {
+        "name": "集集線",
+        "stations": [
+            { "code": "3431", "name": "源泉" }, { "code": "3432", "name": "濁水" }, { "code": "3433", "name": "龍泉" },
+            { "code": "3434", "name": "集集" }, { "code": "3435", "name": "水里" }, { "code": "3436", "name": "車埕" }
+        ]
+    },
+    "shalun": {
+        "name": "沙崙線",
+        "stations": [
+            { "code": "4271", "name": "長榮大學" }, { "code": "4272", "name": "沙崙" }
         ]
     }
 };
