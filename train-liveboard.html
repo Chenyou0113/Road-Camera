@@ -10,6 +10,7 @@
     <script>window.CURRENT_PAGE = 'train-liveboard';</script>
     <script src="assets/config.js"></script>
     <script src="assets/tdx-api.js"></script>
+    <script src="assets/train-line-classification.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -72,7 +73,7 @@
         
         .selector-row { 
             display: grid;
-            grid-template-columns: 1fr 1fr auto;
+            grid-template-columns: 1fr 1fr 1fr auto;
             gap: 15px; 
             align-items: end;
         }
@@ -357,9 +358,25 @@
             </h3>
             <div class="selector-row">
                 <div class="selector-group">
+                    <label for="lineSelect">選擇路線</label>
+                    <select id="lineSelect" onchange="updateStationList()">
+                        <option value="">請選擇路線...</option>
+                        <option value="western_north">縱貫線北段 (基隆-竹南)</option>
+                        <option value="mountain">臺中線 (山線)</option>
+                        <option value="coast">海岸線 (海線)</option>
+                        <option value="western_south">縱貫線南段 (彰化-高雄)</option>
+                        <option value="pingtung">屏東線 (高雄-枋寮)</option>
+                        <option value="south_link">南迴線</option>
+                        <option value="taitung">臺東線 (花蓮-臺東)</option>
+                        <option value="north_link">北迴線 (蘇澳新-花蓮)</option>
+                        <option value="yilan">宜蘭線 (八堵-蘇澳)</option>
+                        <option value="branch_lines">支線 (平溪/深澳/內灣/集集/沙崙/六家)</option>
+                    </select>
+                </div>
+                <div class="selector-group">
                     <label for="stationSelect">選擇車站</label>
                     <select id="stationSelect">
-                        <option value="">正在載入車站...</option>
+                        <option value="">請先選擇路線</option>
                     </select>
                 </div>
                 <div class="selector-group">
@@ -405,46 +422,36 @@
         // ============ 全局變數 ============
         let currentStationID = '';
         let currentStationName = '';
-        let allStations = [];
 
         // ============ 初始化 ============
         document.addEventListener('DOMContentLoaded', () => {
-            console.log('🚂 台鐵即時看板頁面已加載');
-            loadAllStations();
+            console.log('🚂 台鐵即時看板頁面已加載 - 使用路線分類系統');
         });
 
-        // ============ 1. 載入全台車站列表 ============
-        async function loadAllStations() {
-            try {
-                console.log('🔄 正在載入台鐵車站列表...');
-                const stationSelect = document.getElementById('stationSelect');
-                
-                const endpoint = '/v3/Rail/TRA/Station?$format=JSON&$top=5000';
-                const stations = await tdxApi.fetch(endpoint);
+        // ============ 1. 路線選擇變更時更新車站列表 ============
+        function updateStationList() {
+            const lineSelect = document.getElementById('lineSelect');
+            const stationSelect = document.getElementById('stationSelect');
+            const lineKey = lineSelect.value;
 
-                if (!stations || stations.length === 0) {
-                    throw new Error('無法取得車站列表');
-                }
-
-                allStations = stations;
-                console.log(`✅ 成功載入 ${stations.length} 個台鐵車站`);
-
-                // 排序並填入選單
-                allStations.sort((a, b) => a.StationID.localeCompare(b.StationID));
-
-                stationSelect.innerHTML = '<option value="">請選擇車站...</option>';
-                allStations.forEach(st => {
-                    const option = document.createElement('option');
-                    option.value = st.StationID;
-                    const stationName = st.StationName?.Zh_tw || st.StationName || st.StationID;
-                    option.textContent = `${st.StationID} - ${stationName}`;
-                    stationSelect.appendChild(option);
-                });
-
-            } catch (error) {
-                console.error('❌ 載入車站列表失敗:', error);
-                document.getElementById('stationSelect').innerHTML = '<option value="">載入失敗，請重新整理</option>';
+            if (!lineKey || !trainLineClassification[lineKey]) {
+                stationSelect.innerHTML = '<option value="">請先選擇路線</option>';
+                return;
             }
+
+            const lineData = trainLineClassification[lineKey];
+            const stations = lineData.stations;
+
+            console.log(`✅ 已選擇路線: ${lineData.name} - 共 ${stations.length} 個車站`);
+
+            // 清空並重新填入車站選項
+            stationSelect.innerHTML = '<option value="">請選擇車站...</option>';
+            stations.forEach(station => {
+                const option = document.createElement('option');
+                option.value = station.code;
+                option.textContent = `${station.code} - ${station.name}`;
+                stationSelect.appendChild(option);
+            });
         }
 
         // ============ 2. 查詢即時看板 ============
@@ -454,7 +461,7 @@
             currentStationID = stationSelect.value;
 
             if (!currentStationID) {
-                alert('請選擇車站');
+                alert('請先選擇路線和車站');
                 return;
             }
 
