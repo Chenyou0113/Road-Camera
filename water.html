@@ -386,7 +386,7 @@
                              src="${cam.url}" 
                              alt="${cam.name}" 
                              onload="this.previousElementSibling.style.display='none'"
-                             onerror="this.style.display='none'; this.previousElementSibling.innerHTML='<i class=\"fas fa-exclamation-circle\" style=\"font-size:2rem; margin-bottom:10px;\"></i><div>❌ 訊號中斷</div>'">
+                             onerror="handleImgLoadError(this)">
                     </div>
                     <div class="cam-info">
                         <i class="fas fa-sync-alt"></i> 每分鐘自動刷新 | ID: ${cam.id}
@@ -454,16 +454,33 @@
 
                 images.forEach(img => {
                     // 只有當圖片是顯示狀態時才刷新 (節省頻寬)
-                    if (img.style.display !== 'none') {
-                        // 透過加上時間戳記參數，強迫瀏覽器重新下載圖片
-                        let originalUrl = img.src.split('?')[0];
-                        img.src = `${originalUrl}?t=${timestamp}`;
+                    if (img.style.display !== 'none' && img.src) {
+                        try {
+                            // 【關鍵修復】清洗 URL：移除前後空格、換行符號
+                            let originalUrl = img.src.split('?')[0];
+                            originalUrl = originalUrl.trim().replace(/[\r\n]+/g, '');
+                            
+                            // 檢查 URL 是否有效
+                            if (originalUrl.startsWith('http') || originalUrl.startsWith('data:')) {
+                                img.src = `${originalUrl}?t=${timestamp}`;
+                            }
+                        } catch (error) {
+                            console.error('刷新圖片時發生錯誤:', error, img.src);
+                        }
                     }
                 });
 
                 setTimeout(() => showSyncIndicator(false), 500);
 
             }, 60000); // 60000 ms = 1 分鐘
+        }
+
+        // 【新增】圖片載入錯誤處理函數 (避免 onerror 語法錯誤)
+        function handleImgLoadError(img) {
+            img.style.display = 'none';
+            if (img.previousElementSibling) {
+                img.previousElementSibling.innerHTML = '<i class="fas fa-exclamation-circle" style="font-size:2rem; margin-bottom:10px;"></i><div>❌ 訊號中斷</div>';
+            }
         }
 
         // 輔助函數：顯示同步指示器
