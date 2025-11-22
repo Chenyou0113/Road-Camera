@@ -303,6 +303,26 @@
             font-size: 0.85rem;
         }
         
+        /* 轉乘位置標籤 */
+        .transfer-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            margin-left: 4px;
+        }
+        
+        .transfer-badge.onsite {
+            background-color: #4CAF50;
+            color: white;
+        }
+        
+        .transfer-badge.offsite {
+            background-color: #FF9800;
+            color: white;
+        }
+        
         .no-data {
             text-align: center;
             padding: 40px;
@@ -842,6 +862,8 @@
                         </tr>
                     </tbody>
                 </table>
+                <!-- 🔄 轉乘資訊區域 -->
+                <div id="transferInfoArea" style="display: none; margin-top: 20px;"></div>
             </div>
         </div>
     </div>
@@ -877,6 +899,10 @@
         // ★ 新增：首末班車時刻表快取 (避免頻繁 API 呼叫)
         const firstLastTimetableCache = {};
         const FIRST_LAST_TIMETABLE_TTL = 6 * 3600 * 1000; // 6小時快取
+
+        // ★ 新增：車站轉乘資訊快取 (避免頻繁 API 呼叫)
+        const stationTransferCache = {};
+        const STATION_TRANSFER_TTL = 7 * 24 * 3600 * 1000; // 7天快取 (轉乘資訊相對靜態)
 
         const trtcStationMap = {
             'BR01': '動物園', 'BR02': '木柵', 'BR03': '萬芳社區', 'BR04': '萬芳醫院', 'BR05': '辛亥',
@@ -1424,6 +1450,11 @@
                 tableBody.innerHTML = rows.join('');
                 updateUpdateTime();
                 updateTrainStats(trainRows);
+                
+                // 🔄 顯示轉乘資訊 (如果該車站有轉乘資訊)
+                if (!allStationsMode && currentStationId) {
+                    displayTransferInfo(currentStationId, currentSystem);
+                }
             })();
         }
 
@@ -1445,6 +1476,119 @@
             const now = new Date();
             const timeStr = now.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
             document.getElementById('updateTime').textContent = timeStr + ' (每90秒自動更新)';
+        }
+
+        /**
+         * 獲取車站轉乘資訊
+         * 使用 TDX API: /v2/Rail/Metro/StationTransfer/{OperatorID}/{StationID}
+         */
+        async function getTransferInfo(stationID, systemCode) {
+            // 快取鑰匙
+            const cacheKey = `${systemCode}_${stationID}`;
+            
+            // 檢查快取是否仍有效
+            if (stationTransferCache[cacheKey]) {
+                const cached = stationTransferCache[cacheKey];
+                if (Date.now() - cached.timestamp < STATION_TRANSFER_TTL) {
+                    console.log(`📦 使用快取的轉乘資訊: ${cacheKey}`);
+                    return cached.data;
+                }
+            }
+            
+            try {
+                console.log(`🔍 正在獲取轉乘資訊: ${systemCode}/${stationID}`);
+                const endpoint = `/v2/Rail/Metro/StationTransfer/${systemCode}/${stationID}?$format=JSON`;
+                const data = await tdxApi.fetch(endpoint);
+                
+                // 儲存到快取
+                stationTransferCache[cacheKey] = {
+                    data: data,
+                    timestamp: Date.now()
+                };
+                
+                return data;
+            } catch (error) {
+                console.warn(`⚠️ 無法獲取轉乘資訊 ${cacheKey}:`, error.message);
+                return [];
+            }
+        }
+
+        /**
+         * 顯示轉乘資訊
+         */
+        async function displayTransferInfo(stationID, systemCode) {
+            try {
+                const transferData = await getTransferInfo(stationID, systemCode);
+                
+                if (!transferData || transferData.length === 0) {
+                    console.log(`ℹ️ ${stationID} 無轉乘資訊`);
+                    return; // 沒有轉乘資訊，不顯示
+                }
+                
+                console.log(`✅ 找到 ${transferData.length} 項轉乘資訊`);
+                
+                // 分組顯示：依轉乘路線分組
+                const groupedByLine = {};
+                transferData.forEach(t => {
+                    const toLineKey = t.ToLineID || t.ToLineName?.Zh_tw || '未知';
+                    if (!groupedByLine[toLineKey]) {
+                        groupedByLine[toLineKey] = [];
+                    }
+                    groupedByLine[toLineKey].push(t);
+                });
+                
+                let html = '<div class="transfer-info">';
+                html += '<div class="transfer-header"><i class="fas fa-exchange-alt"></i> 轉乘資訊</div>';
+                
+                Object.entries(groupedByLine).forEach(([lineKey, transfers]) => {
+                    html += '<div class="transfer-group">';
+                    
+                    // 路線名稱
+                    const firstTransfer = transfers[0];
+                    const lineName = firstTransfer.ToLineName?.Zh_tw || lineKey;
+                    const toLineID = firstTransfer.ToLineID || '';
+                    const lineColor = lineColors[toLineID] || '#999';
+                    
+                    html += `<div class="transfer-line-name">
+                        <span class="line-badge" style="background: ${lineColor};">${lineName}</span>
+                    </div>`;
+                    
+                    // 轉乘詳細資訊
+                    transfers.forEach((t, idx) => {
+                        const isInside = t.IsOnSiteTransfer ? '站內' : '站外';
+                        const time = t.TransferTime || '?';
+                        const toStationName = t.ToStationName?.Zh_tw || t.ToStationName || '未知';
+                        
+                        html += `
+                            <div class="transfer-item">
+                                <div class="transfer-destination">
+                                    往 <strong>${toStationName}</strong>
+                                    <span class="transfer-badge ${isInside === '站內' ? 'onsite' : 'offsite'}">
+                                        ${isInside}
+                                    </span>
+                                </div>
+                                <div class="transfer-time">步行約 <strong>${time}</strong> 分</div>
+                            </div>
+                        `;
+                    });
+                    
+                    html += '</div>';
+                });
+                
+                html += '</div>';
+                
+                // 將轉乘資訊插入頁面 (如果有轉乘區域)
+                const transferArea = document.getElementById('transferInfoArea');
+                if (transferArea) {
+                    transferArea.innerHTML = html;
+                    transferArea.style.display = 'block';
+                } else {
+                    console.warn('⚠️ 頁面上沒有 #transferInfoArea 容器');
+                }
+                
+            } catch (error) {
+                console.error('❌ 顯示轉乘資訊時出錯:', error);
+            }
         }
 
         function togglePanel(contentId, iconId) {
