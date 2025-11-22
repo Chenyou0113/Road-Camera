@@ -437,7 +437,7 @@ class RadarTransformer {
                 <span class="stat-divider">|</span>
                 <span class="stat-compact">🌐 <strong>${integratedRadars}</strong> 整合雷達</span>
                 <span class="stat-divider">|</span>
-                <span class="stat-compact">📍 <strong>${counties.size}</strong> 涵蓋縣市</span>
+                <span class="stat-compact">📍 <strong>${individualRadars}</strong> 處觀測站</span>
                 <span class="stat-divider">|</span>
                 <span class="stat-compact">🔄 自動更新 <strong>每 10 分鐘</strong></span>
             </div>
