@@ -73,7 +73,7 @@
         
         .selector-row { 
             display: grid;
-            grid-template-columns: 1fr 1fr 1fr auto;
+            grid-template-columns: 1fr 1fr 1fr 1fr auto;
             gap: 15px; 
             align-items: end;
         }
@@ -98,6 +98,26 @@
             color: #333;
             font-size: 1rem;
             font-weight: 500;
+        }
+        
+        .selector-group input { 
+            padding: 12px 15px; 
+            border-radius: 10px; 
+            border: 2px solid rgba(255,255,255,0.3); 
+            background: white;
+            color: #333;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+        
+        .selector-group input:focus { 
+            outline: none;
+            border-color: rgba(255,255,255,0.8);
+            background: rgba(255,255,255,0.95);
+        }
+        
+        .selector-group input::placeholder {
+            color: #999;
         }
         
         .query-btn {
@@ -289,17 +309,21 @@
         
         /* 響應式設計 */
         @media (max-width: 1024px) {
+            .selector-row {
+                grid-template-columns: 1fr 1fr;
+            }
+            
             .train-card {
                 grid-template-columns: 1fr 1fr;
                 gap: 10px;
             }
-            
+        }
+
+        @media (max-width: 768px) {
             .selector-row {
                 grid-template-columns: 1fr;
             }
-        }
-        
-        @media (max-width: 600px) {
+            
             .train-card {
                 grid-template-columns: 1fr;
             }
@@ -313,9 +337,7 @@
                 flex-direction: column;
                 gap: 10px;
             }
-        }
-        
-        /* 加載動畫 */
+        }        /* 加載動畫 */
         .loading {
             text-align: center;
             padding: 40px 20px;
@@ -358,33 +380,27 @@
             </h3>
             <div class="selector-row">
                 <div class="selector-group">
-                    <label for="lineSelect">選擇路線</label>
-                    <select id="lineSelect" onchange="updateStationList()">
-                        <option value="">請選擇路線...</option>
-                        <option value="western_north">縱貫線北段 (基隆-竹南)</option>
-                        <option value="mountain">臺中線 (山線)</option>
-                        <option value="coast">海岸線 (海線)</option>
-                        <option value="western_south">縱貫線南段 (彰化-高雄)</option>
-                        <option value="pingtung">屏東線 (高雄-枋寮)</option>
-                        <option value="south_link">南迴線</option>
-                        <option value="taitung">臺東線 (花蓮-臺東)</option>
-                        <option value="north_link">北迴線 (蘇澳新-花蓮)</option>
-                        <option value="yilan">宜蘭線 (八堵-蘇澳)</option>
-                        <option value="branch_lines">支線 (平溪/深澳/內灣/集集/沙崙/六家)</option>
+                    <label for="lineSelect">路線分類</label>
+                    <select id="lineSelect" onchange="filterStations()">
+                        <option value="all">全部路線</option>
                     </select>
+                </div>
+                <div class="selector-group">
+                    <label for="stationSearch">搜尋車站</label>
+                    <input type="text" id="stationSearch" placeholder="輸入站名或代碼 (如: 台北, 1000)" oninput="filterStations()">
                 </div>
                 <div class="selector-group">
                     <label for="stationSelect">選擇車站</label>
                     <select id="stationSelect">
-                        <option value="">請先選擇路線</option>
+                        <option value="">請選擇車站...</option>
                     </select>
                 </div>
                 <div class="selector-group">
-                    <label for="directionFilter">篩選方向</label>
+                    <label for="directionFilter">方向</label>
                     <select id="directionFilter">
-                        <option value="">所有方向</option>
-                        <option value="0">順行 (南下/西行/東行)</option>
-                        <option value="1">逆行 (北上/東上/西上)</option>
+                        <option value="">全部</option>
+                        <option value="0">順行</option>
+                        <option value="1">逆行</option>
                     </select>
                 </div>
                 <button class="query-btn" id="queryBtn" onclick="fetchTrainLiveBoard()">
@@ -422,46 +438,116 @@
         // ============ 全局變數 ============
         let currentStationID = '';
         let currentStationName = '';
+        let allStationsFlat = []; // 扁平化的所有車站列表
 
         // ============ 初始化 ============
         document.addEventListener('DOMContentLoaded', () => {
-            console.log('🚂 台鐵即時看板頁面已加載 - 使用路線分類系統');
+            console.log('🚂 台鐵即時看板頁面已加載 - 整合搜尋與分類系統');
+            initStationControls();
         });
 
-        // ============ 1. 路線選擇變更時更新車站列表 ============
-        function updateStationList() {
+        // ============ 1. 初始化：載入路線選單 & 建立扁平列表 ============
+        function initStationControls() {
             const lineSelect = document.getElementById('lineSelect');
-            const stationSelect = document.getElementById('stationSelect');
-            const lineKey = lineSelect.value;
+            
+            // 填入路線選項（除了已有的「全部路線」）
+            for (const [key, data] of Object.entries(trainLineClassification)) {
+                const option = document.createElement('option');
+                option.value = key;
+                option.textContent = data.name;
+                lineSelect.appendChild(option);
 
-            if (!lineKey || !trainLineClassification[lineKey]) {
-                stationSelect.innerHTML = '<option value="">請先選擇路線</option>';
+                // 將所有車站加入扁平列表 (方便搜尋)
+                data.stations.forEach(station => {
+                    // 避免重複加入 (有些車站可能在多條線)
+                    if (!allStationsFlat.find(s => s.code === station.code)) {
+                        allStationsFlat.push({
+                            code: station.code,
+                            name: station.name,
+                            lineKey: key // 記錄它是哪條線的
+                        });
+                    }
+                });
+            }
+            
+            console.log(`✅ 初始化完成：共 ${allStationsFlat.length} 個車站`);
+            
+            // 初始顯示所有車站
+            filterStations();
+        }
+
+        // ============ 2. 核心篩選邏輯 (同時處理「路線」與「關鍵字」) ============
+        function filterStations() {
+            const selectedLine = document.getElementById('lineSelect').value;
+            const keyword = document.getElementById('stationSearch').value.toLowerCase().trim();
+            
+            let filtered = [];
+
+            // 第一層：路線過濾
+            if (selectedLine === 'all') {
+                // 顯示所有車站
+                filtered = allStationsFlat;
+            } else if (trainLineClassification[selectedLine]) {
+                // 只顯示該路線的車站
+                filtered = trainLineClassification[selectedLine].stations.map(s => ({
+                    code: s.code,
+                    name: s.name,
+                    lineKey: selectedLine
+                }));
+            }
+
+            // 第二層：關鍵字搜尋 (支援站名或代碼)
+            if (keyword) {
+                filtered = filtered.filter(s => 
+                    s.name.includes(keyword) || 
+                    s.code.includes(keyword)
+                );
+            }
+
+            // 渲染結果
+            renderStationOptions(filtered);
+        }
+
+        // ============ 3. 渲染車站選單 ============
+        function renderStationOptions(stations) {
+            const select = document.getElementById('stationSelect');
+            select.innerHTML = ''; // 清空
+
+            if (stations.length === 0) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.text = "查無符合車站";
+                select.add(option);
                 return;
             }
 
-            const lineData = trainLineClassification[lineKey];
-            const stations = lineData.stations;
+            // 預設提示選項
+            const defaultOpt = document.createElement('option');
+            defaultOpt.value = "";
+            defaultOpt.text = `請選擇車站 (${stations.length} 個結果)`;
+            select.add(defaultOpt);
 
-            console.log(`✅ 已選擇路線: ${lineData.name} - 共 ${stations.length} 個車站`);
-
-            // 清空並重新填入車站選項
-            stationSelect.innerHTML = '<option value="">請選擇車站...</option>';
-            stations.forEach(station => {
+            stations.forEach(s => {
                 const option = document.createElement('option');
-                option.value = station.code;
-                option.textContent = `${station.code} - ${station.name}`;
-                stationSelect.appendChild(option);
+                option.value = s.code;
+                option.text = `${s.code} - ${s.name}`;
+                select.add(option);
             });
+            
+            // 如果只有一個結果，自動選取
+            if (stations.length === 1) {
+                select.selectedIndex = 1; // 跳過預設選項
+            }
         }
 
-        // ============ 2. 查詢即時看板 ============
+        // ============ 4. 查詢即時看板 ============
         async function fetchTrainLiveBoard() {
             const stationSelect = document.getElementById('stationSelect');
             const queryBtn = document.getElementById('queryBtn');
             currentStationID = stationSelect.value;
 
             if (!currentStationID) {
-                alert('請先選擇路線和車站');
+                alert('請先選擇車站');
                 return;
             }
 
@@ -495,7 +581,7 @@
             }
         }
 
-        // ============ 3. 渲染看板 ============
+        // ============ 5. 渲染看板 ============
         function renderBoard(trains) {
             const container = document.getElementById('trainContainer');
             const trainsBoard = document.getElementById('trainsBoard');
@@ -581,7 +667,7 @@
             container.style.display = 'block';
         }
 
-        // ============ 4. 輔助函數 ============
+        // ============ 6. 輔助函數 ============
 
         function formatTime(timeStr) {
             if (!timeStr || timeStr.length < 5) return '--:--';
@@ -642,6 +728,21 @@
             `;
             document.getElementById('trainContainer').style.display = 'block';
         }
+
+        function showError(message) {
+            const trainsBoard = document.getElementById('trainsBoard');
+            trainsBoard.innerHTML = `
+                <div class="no-data">
+                    <i class="fas fa-exclamation-triangle" style="color: #f44336;"></i>
+                    <p style="color: #f44336;">${message}</p>
+                </div>
+            `;
+            document.getElementById('trainContainer').style.display = 'block';
+        }
+
+        // 自動更新時間
+        setInterval(updateTime, 1000);
+    </script>
 
         function showError(message) {
             const trainsBoard = document.getElementById('trainsBoard');
