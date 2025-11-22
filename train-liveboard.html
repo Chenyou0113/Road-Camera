@@ -564,14 +564,45 @@
                 
                 // 注意：TDX v3 API 使用 OData 查詢參數，不是路徑參數
                 const endpoint = `/v3/Rail/TRA/StationLiveBoard?StationID=${currentStationID}&$format=JSON`;
-                const data = await tdxApi.fetch(endpoint);
+                const response = await tdxApi.fetch(endpoint);
 
-                console.log(`✅ 成功取得看板資料，共 ${data.length} 班列車`);
+                console.log('📦 API 原始回應結構:', response);
 
-                if (data && data.length > 0) {
-                    renderBoard(data);
+                // 處理多種 API 回應格式
+                let trains = [];
+                if (response && response.StationLiveBoards) {
+                    // 格式 1: { StationLiveBoards: [...] }
+                    trains = response.StationLiveBoards;
+                } else if (Array.isArray(response) && response.length > 0) {
+                    // 格式 2: [{ StationLiveBoards: [...] }] 或 [train, train, ...]
+                    if (response[0].StationLiveBoards) {
+                        trains = response[0].StationLiveBoards;
+                    } else {
+                        trains = response;
+                    }
+                } else if (Array.isArray(response)) {
+                    // 格式 3: 直接是陣列
+                    trains = response;
+                }
+
+                console.log(`✅ 成功取得看板資料，共 ${trains.length} 班列車`);
+
+                // 篩選 30 分鐘內的車次
+                const now = new Date();
+                const thirtyMinutesLater = new Date(now.getTime() + 30 * 60000);
+                
+                const filteredTrains = trains.filter(train => {
+                    if (!train.ScheduleDepartureTime) return false;
+                    const trainTime = new Date(train.ScheduleDepartureTime);
+                    return trainTime > now && trainTime <= thirtyMinutesLater;
+                });
+
+                console.log(`🎯 篩選後：30 分鐘內有 ${filteredTrains.length} 班列車`);
+
+                if (filteredTrains && filteredTrains.length > 0) {
+                    renderBoard(filteredTrains);
                 } else {
-                    showNoData('目前無列車資訊 (可能已收班或該時段無列車)');
+                    showNoData('30 分鐘內無列車資訊 (可能已收班或該時段無列車)');
                 }
 
             } catch (error) {
