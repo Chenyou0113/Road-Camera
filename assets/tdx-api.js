@@ -234,6 +234,42 @@ class TDXApi {
         }
     }
 
+    /**
+     * 透過後端代理 API 獲取監視器資料（推薦方式）
+     * 
+     * 優點：
+     * - API 密鑰不暴露到前端
+     * - Cloudflare CDN 自動快取 60 秒，減少 TDX API 呼叫次數
+     * - 自動解決 CORS 問題
+     * - 節省流量和 API 額度
+     * 
+     * @param {string} type - 監視器類型: 'Freeway' (國道) | 'Provincial' (省道) | 'County' (縣市)
+     * @param {number} top - 最多取多少筆資料 (預設 1000)
+     * @returns {Promise<Array>} 監視器資料陣列
+     */
+    async fetchCCTVData(type = 'Freeway', top = 1000) {
+        try {
+            console.log(`📡 正在從後端代理取得 ${type} 監視器資料...`);
+            
+            const response = await fetch(`/api/get-cameras?type=${type}&top=${top}`);
+            
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(
+                    `後端代理錯誤 (${response.status}): ${errorData.message || errorData.error || response.statusText}`
+                );
+            }
+            
+            const data = await response.json();
+            console.log(`✅ 成功取得 ${data.length || 0} 筆 ${type} 監視器資料`);
+            return data;
+            
+        } catch (error) {
+            console.error('❌ 後端代理請求失敗:', error.message);
+            throw error;
+        }
+    }
+
     // 延遲函數
     delay(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
