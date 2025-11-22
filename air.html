@@ -439,6 +439,129 @@
         .leaflet-control-attribution {
             font-size: 0.75em;
         }
+
+        /* --- 篩選選單樣式 --- */
+        select#city-filter {
+            padding: 10px 15px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            font-size: 1rem;
+            background-color: white;
+            cursor: pointer;
+            outline: none;
+            min-width: 150px;
+            transition: all 0.3s ease;
+        }
+
+        select#city-filter:hover {
+            border-color: #1a73e8;
+            box-shadow: 0 2px 8px rgba(26, 115, 232, 0.2);
+        }
+
+        /* --- 燈箱 (Modal) 樣式 --- */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            backdrop-filter: blur(5px);
+            animation: fadeIn 0.2s ease-out;
+        }
+
+        .modal-content {
+            background: white;
+            width: 90%;
+            max-width: 500px;
+            border-radius: 16px;
+            padding: 25px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            position: relative;
+            animation: slideUp 0.3s ease-out;
+        }
+
+        .close-btn {
+            position: absolute;
+            top: 15px; right: 15px;
+            background: none; border: none;
+            font-size: 1.8rem; cursor: pointer;
+            color: #666;
+            transition: color 0.2s;
+        }
+
+        .close-btn:hover {
+            color: #000;
+        }
+
+        /* Modal 內部排版 */
+        .modal-header { margin-bottom: 20px; text-align: center; }
+        .modal-header h2 { margin: 0; font-size: 1.8rem; color: #333; }
+        .badge { background: #eee; padding: 4px 10px; border-radius: 6px; font-size: 0.9rem; color: #666; margin-left: 10px; }
+
+        .modal-body {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+            margin-bottom: 20px;
+        }
+
+        /* AQI 大圓圈 */
+        .aqi-circle-box { flex: 0 0 120px; text-align: center; }
+        .aqi-circle {
+            width: 110px; height: 110px;
+            border-radius: 50%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-weight: bold;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            margin: 0 auto;
+        }
+        #m-aqi { font-size: 2.8rem; line-height: 1; }
+        #m-status { font-size: 0.85rem; opacity: 0.9; margin-top: 5px; }
+
+        /* 數據列表 */
+        .data-grid { flex: 1; display: flex; flex-direction: column; gap: 15px; }
+        .data-item { border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .data-item label { display: block; font-size: 0.85rem; color: #888; font-weight: 600; margin-bottom: 5px; }
+        .data-item span { font-size: 1.3rem; font-weight: bold; color: #333; }
+        .data-item small { color: #999; }
+
+        /* 按鈕 */
+        .modal-footer { text-align: center; }
+        .action-btn {
+            width: 100%;
+            padding: 12px 20px;
+            background: linear-gradient(135deg, #1a73e8, #0d47a1);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        .action-btn:hover { 
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(26, 115, 232, 0.4);
+        }
+
+        /* 動畫 */
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+        /* 手機版調整 */
+        @media (max-width: 600px) {
+            .modal-body { flex-direction: column; text-align: center; }
+            .data-grid { width: 100%; }
+            .aqi-circle-box { flex: 0 0 auto; }
+            .data-item { display: flex; justify-content: space-between; align-items: center; border-bottom: none; border-top: 1px solid #eee; padding-top: 10px; padding-bottom: 10px; }
+            .data-item label { margin: 0; }
+        }
     </style>
 </head>
 <body>
@@ -479,6 +602,12 @@
                 id="search-input" 
                 placeholder="🔍 搜尋測站名稱 (例如: 板橋、台中、高雄)..."
             >
+            <!-- ✨ 新增：縣市篩選選單 -->
+            <select id="city-filter">
+                <option value="">📍 所有縣市</option>
+                <!-- 選項會由 JS 自動產生 -->
+            </select>
+            
             <div class="legend">
                 <div class="legend-item">
                     <div class="legend-dot good"></div>
@@ -569,11 +698,14 @@
                 // 排序：空氣最差排最前
                 allStations.sort((a, b) => b.aqi - a.aqi);
 
+                // 產生縣市篩選選單
+                populateCityFilter(allStations);
+
                 // 渲染 UI
                 renderUI(allStations);
                 updateStats(allStations);
 
-                // 綁定搜尋
+                // 綁定搜尋和篩選
                 bindSearchEvent();
 
                 // 隱藏地圖加載狀態
@@ -697,40 +829,29 @@
                         <span class="detail-label">PM2.5:</span>
                         <span class="detail-value">${pm25Text}</span>
                     </div>
+                    <div style="margin-top: 8px; font-size: 0.8rem; color: #aaa; text-align: right;">
+                        點擊查看詳情 ➜
+                    </div>
                 `;
 
-                // 點擊卡片，地圖飛到該位置
-                card.onclick = () => {
-                    if (map) {
-                        map.flyTo([st.lat, st.lon], 13, { duration: 0.8 });
-                    }
-                };
+                // 點擊卡片 -> 打開 Modal
+                card.onclick = () => openModal(st);
 
                 grid.appendChild(card);
 
                 // 建立地圖標記
                 if (st.lat && st.lon && map) {
                     const marker = L.circleMarker([st.lat, st.lon], {
-                        radius: 8,
+                        radius: 6,
                         fillColor: color.code,
                         color: '#fff',
-                        weight: 2,
+                        weight: 1,
                         opacity: 1,
-                        fillOpacity: 0.85
-                    }).bindPopup(`
-                        <div style="width: 150px;">
-                            <strong>${st.name}</strong><br>
-                            <span style="color: #999; font-size: 0.9em;">${st.county}</span>
-                            <hr style="margin: 8px 0; border: none; border-top: 1px solid #e0e0e0;">
-                            <div style="font-size: 0.9em; line-height: 1.6;">
-                                <div><strong>AQI: <span style="color: ${color.code}; font-size: 1.2em;">${st.aqi}</span></strong> (${statusName})</div>
-                                <div>PM2.5: <strong>${pm25Text}</strong></div>
-                                ${st.pm10 ? `<div>PM10: <strong>${Number(st.pm10).toFixed(1)}</strong></div>` : ''}
-                            </div>
-                        </div>
-                    `);
-
-                    marker.addTo(map);
+                        fillOpacity: 0.8
+                    }).addTo(map);
+                    
+                    // 標記點擊也可以打開 Modal
+                    marker.on('click', () => openModal(st));
                     markers.push(marker);
                 }
             });
@@ -766,20 +887,104 @@
             document.getElementById('worst-station').style.color = worstColor.code;
         }
 
-        // === 綁定搜尋事件 ===
+        // === 綁定搜尋和篩選事件 ===
         function bindSearchEvent() {
             const searchInput = document.getElementById('search-input');
-            searchInput.addEventListener('input', (e) => {
-                const term = e.target.value.toLowerCase();
-                const filtered = allStations.filter(s => 
-                    s.name.toLowerCase().includes(term) || 
-                    s.county.toLowerCase().includes(term)
-                );
+            const cityFilter = document.getElementById('city-filter');
+
+            // 統一的篩選函式
+            const handleFilter = () => {
+                const term = searchInput.value.toLowerCase();
+                const city = cityFilter.value;
+
+                const filtered = allStations.filter(s => {
+                    const matchName = s.name.toLowerCase().includes(term) || s.county.toLowerCase().includes(term);
+                    const matchCity = city === "" || s.county === city;
+                    return matchName && matchCity;
+                });
+                
                 renderUI(filtered);
                 updateStats(filtered);
+            };
+
+            searchInput.addEventListener('input', handleFilter);
+            cityFilter.addEventListener('change', handleFilter);
+        }
+
+        // ✨ 自動產生縣市選項
+        function populateCityFilter(stations) {
+            // 取出所有縣市並去重 (Unique)
+            const counties = [...new Set(stations.map(s => s.county))];
+            
+            // 按筆畫排序
+            counties.sort((a, b) => a.localeCompare(b, 'zh-Hant')); 
+
+            const select = document.getElementById('city-filter');
+            counties.forEach(c => {
+                const option = document.createElement('option');
+                option.value = c;
+                option.textContent = c;
+                select.appendChild(option);
             });
         }
 
+        // ✨ 全域變數：紀錄目前打開詳細資料的測站
+        let currentStation = null;
+
+        // ✨ 打開詳細資料燈箱
+        function openModal(st) {
+            currentStation = st;
+            
+            const colorInfo = getAQIColor(st.aqi);
+            
+            // 填入資料
+            document.getElementById('m-name').textContent = st.name;
+            document.getElementById('m-county').textContent = st.county;
+            
+            document.getElementById('m-aqi').textContent = st.aqi;
+            document.getElementById('m-status').textContent = getAQIShortName(st.aqi);
+            
+            // 設定大圓圈顏色
+            const circle = document.getElementById('m-aqi-bg');
+            circle.style.background = colorInfo.code;
+            // 如果背景是黃色，文字改深色
+            circle.style.color = (st.aqi > 50 && st.aqi <= 100) ? '#333' : '#fff';
+
+            // 使用 Number 防止 toFixed 報錯
+            document.getElementById('m-pm25').textContent = Number(st.pm25).toFixed(1);
+            document.getElementById('m-time').textContent = st.time || '未知';
+            document.getElementById('m-coord').textContent = `${st.lat.toFixed(4)}, ${st.lon.toFixed(4)}`;
+
+            // 顯示 Modal
+            document.getElementById('detail-modal').style.display = 'flex';
+        }
+
+        // ✨ 關閉燈箱
+        function closeModal() {
+            document.getElementById('detail-modal').style.display = 'none';
+        }
+
+        // ✨ 在地圖上定位 (Modal 裡面的按鈕功能)
+        function locateOnMap() {
+            if (currentStation && map) {
+                closeModal();
+                map.flyTo([currentStation.lat, currentStation.lon], 14, {
+                    animate: true,
+                    duration: 1.5
+                });
+                document.getElementById('air-map').scrollIntoView({ behavior: 'smooth' });
+            }
+        }
+
+        // 點擊背景也可以關閉 Modal
+        document.addEventListener('DOMContentLoaded', () => {
+            const modal = document.getElementById('detail-modal');
+            if (modal) {
+                modal.addEventListener('click', (e) => {
+                    if (e.target.id === 'detail-modal') closeModal();
+                });
+            }
+        });
         // === 顯示錯誤 ===
         function showError(message) {
             const container = document.getElementById('error-container');
@@ -806,5 +1011,46 @@
             console.error('未處理的 Promise 拒絕:', e.reason);
         });
     </script>
+
+    <!-- ✨ 新增：詳細資料燈箱 (Modal) -->
+    <div id="detail-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <button class="close-btn" onclick="closeModal()">×</button>
+            <div id="modal-header" class="modal-header">
+                <h2 id="m-name">測站名稱</h2>
+                <span id="m-county" class="badge">縣市</span>
+            </div>
+            
+            <div class="modal-body">
+                <!-- 左側大圓圈：AQI -->
+                <div class="aqi-circle-box">
+                    <div class="aqi-circle" id="m-aqi-bg">
+                        <span id="m-aqi">--</span>
+                        <small id="m-status">狀態</small>
+                    </div>
+                </div>
+                
+                <!-- 右側數據列表 -->
+                <div class="data-grid">
+                    <div class="data-item">
+                        <label>PM 2.5 (細懸浮微粒)</label>
+                        <span id="m-pm25">--</span> <small>μg/m³</small>
+                    </div>
+                    <div class="data-item">
+                        <label>經緯度</label>
+                        <span id="m-coord" style="font-size: 0.9rem;">--</span>
+                    </div>
+                    <div class="data-item">
+                        <label>資料更新時間</label>
+                        <span id="m-time">--</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="modal-footer">
+                <button class="action-btn" onclick="locateOnMap()">🗺️ 在地圖上顯示</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
