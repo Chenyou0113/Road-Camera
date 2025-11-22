@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台灣即時空品戰情室</title>
+    
+    <!-- Leaflet Map -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', 'Microsoft JhengHei', Arial, sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* === 頁面標題 === */
+        .page-header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .page-header h1 {
+            font-size: 2.5em;
+            color: #1a73e8;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+        }
+
+        .page-header .subtitle {
+            color: #666;
+            font-size: 1.1em;
+        }
+
+        /* === 統計列 === */
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-item {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.3s ease;
+            border-top: 4px solid #1a73e8;
+        }
+
+        .stat-item:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+        }
+
+        .stat-item .label {
+            font-size: 0.9em;
+            color: #888;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-item .value {
+            font-size: 2.5em;
+            font-weight: 800;
+            color: #1a73e8;
+        }
+
+        .stat-item.worst .value {
+            color: #d32f2f;
+        }
+
+        .stat-item.avg .value {
+            color: #f57c00;
+        }
+
+        /* === 控制列 === */
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .controls input {
+            flex: 1;
+            min-width: 250px;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+
+        .controls input:focus {
+            outline: none;
+            border-color: #1a73e8;
+            box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
+        }
+
+        /* 圖例 */
+        .legend {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.95em;
+        }
+
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 2px solid white;
+            box-shadow: 0 0 3px rgba(0,0,0,0.3);
+        }
+
+        .legend-dot.good { background: #009966; }
+        .legend-dot.moderate { background: #ffde33; }
+        .legend-dot.unhealthy-sensitive { background: #ff9933; }
+        .legend-dot.unhealthy { background: #cc0033; }
+        .legend-dot.very-unhealthy { background: #660099; }
+        .legend-dot.hazardous { background: #7e0023; }
+
+        /* === 內容區 === */
+        #air-dashboard {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr;
+            gap: 20px;
+            height: 75vh;
+            margin-bottom: 20px;
+        }
+
+        #air-map {
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            background: white;
+            overflow: hidden;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* 地圖加載狀態 */
+        .map-loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 10;
+        }
+
+        .map-loading .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f0f0f0;
+            border-top: 4px solid #1a73e8;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* === 卡片列表 === */
+        .air-list-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            padding: 15px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .air-list-container .list-header {
+            font-size: 0.95em;
+            font-weight: 700;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #e0e0e0;
+            margin-bottom: 12px;
+        }
+
+        #air-grid {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        /* 卡片樣式 */
+        .air-card {
+            background: #f9f9f9;
+            border-radius: 8px;
+            padding: 12px;
+            border-left: 5px solid #ccc;
+            position: relative;
+            transition: all 0.2s ease;
+            cursor: pointer;
+            border: 1px solid #e0e0e0;
+            border-left-width: 5px;
+        }
+
+        .air-card:hover {
+            transform: translateX(5px);
+            box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+            background: #fff;
+        }
+
+        .air-card .card-name {
+            font-weight: 700;
+            font-size: 1em;
+            margin-bottom: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .air-card .county {
+            font-size: 0.75em;
+            color: #999;
+            font-weight: normal;
+        }
+
+        .air-card .aqi-display {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+
+        .air-card .aqi-val {
+            font-size: 2em;
+            font-weight: 800;
+        }
+
+        .air-card .status-badge {
+            font-size: 0.75em;
+            padding: 3px 8px;
+            border-radius: 4px;
+            background: #f0f0f0;
+            color: #666;
+            font-weight: 600;
+        }
+
+        .air-card .detail-item {
+            font-size: 0.85em;
+            color: #777;
+            margin-top: 5px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .air-card .detail-label {
+            color: #999;
+        }
+
+        .air-card .detail-value {
+            font-weight: 600;
+            color: #333;
+        }
+
+        /* === 空狀態 === */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+            text-align: center;
+            color: #999;
+        }
+
+        .empty-state .icon {
+            font-size: 3em;
+            margin-bottom: 15px;
+            color: #ccc;
+        }
+
+        .empty-state p {
+            margin: 5px 0;
+        }
+
+        /* === 錯誤訊息 === */
+        .error-message {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #c62828;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .error-message .icon {
+            font-size: 1.5em;
+        }
+
+        /* === 響應式設計 === */
+        @media (max-width: 1024px) {
+            #air-dashboard {
+                grid-template-columns: 1fr;
+                height: auto;
+                gap: 20px;
+            }
+
+            #air-map {
+                height: 400px;
+            }
+
+            .air-list-container {
+                max-height: 400px;
+            }
+
+            .controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .controls input {
+                min-width: 100%;
+            }
+
+            .legend {
+                justify-content: center;
+            }
+
+            .page-header h1 {
+                font-size: 2em;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+            }
+
+            .stats-bar {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 10px;
+            }
+
+            .page-header h1 {
+                font-size: 1.5em;
+                gap: 8px;
+            }
+
+            .stat-item {
+                padding: 15px;
+            }
+
+            .stat-item .value {
+                font-size: 2em;
+            }
+
+            #air-map {
+                height: 300px;
+            }
+
+            .air-list-container {
+                max-height: 300px;
+            }
+
+            .air-card .aqi-val {
+                font-size: 1.5em;
+            }
+        }
+
+        /* === 捲軸美化 === */
+        #air-grid::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #air-grid::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+
+        #air-grid::-webkit-scrollbar-thumb {
+            background: #1a73e8;
+            border-radius: 10px;
+        }
+
+        #air-grid::-webkit-scrollbar-thumb:hover {
+            background: #1557b0;
+        }
+
+        /* Leaflet 自訂樣式 */
+        .leaflet-control-attribution {
+            font-size: 0.75em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 頁面標題 -->
+        <div class="page-header">
+            <h1>
+                <i class="fas fa-wind"></i>
+                台灣即時空品戰情室
+            </h1>
+            <p class="subtitle">一覽全台400+測站的實時空氣品質指數</p>
+        </div>
+
+        <!-- 統計列 -->
+        <div class="stats-bar">
+            <div class="stat-item">
+                <span class="label">📊 全台測站</span>
+                <span class="value" id="total-stations">-</span>
+            </div>
+            <div class="stat-item avg">
+                <span class="label">🌡️ 平均 AQI</span>
+                <span class="value" id="avg-aqi">-</span>
+            </div>
+            <div class="stat-item worst">
+                <span class="label">💨 空氣最差</span>
+                <span class="value" id="worst-station">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="label">✅ 良好測站</span>
+                <span class="value" id="good-count">-</span>
+            </div>
+        </div>
+
+        <!-- 控制列 -->
+        <div class="controls">
+            <input 
+                type="text" 
+                id="search-input" 
+                placeholder="🔍 搜尋測站名稱 (例如: 板橋、台中、高雄)..."
+            >
+            <div class="legend">
+                <div class="legend-item">
+                    <div class="legend-dot good"></div>
+                    <span>良好</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot moderate"></div>
+                    <span>普通</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot unhealthy-sensitive"></div>
+                    <span>敏感族群</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot unhealthy"></div>
+                    <span>不健康</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-dot very-unhealthy"></div>
+                    <span>非常不健康</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 錯誤訊息區 -->
+        <div id="error-container" style="display: none;">
+            <div class="error-message">
+                <span class="icon"><i class="fas fa-exclamation-circle"></i></span>
+                <span id="error-text">無法載入空品資料，請重新整理頁面</span>
+            </div>
+        </div>
+
+        <!-- 內容區 -->
+        <div id="air-dashboard">
+            <!-- 地圖 -->
+            <div id="air-map">
+                <div class="map-loading">
+                    <div class="spinner"></div>
+                    <p>正在載入地圖...</p>
+                </div>
+            </div>
+
+            <!-- 卡片列表 -->
+            <div class="air-list-container">
+                <div class="list-header">空品測站列表</div>
+                <div id="air-grid"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Google Analytics (可選) -->
+    <script>
+        // === AQI 工具函數 ===
+        function getAQIColor(aqi) {
+            if (aqi <= 50) return { code: '#009966', name: '良好' };
+            if (aqi <= 100) return { code: '#ffde33', name: '普通' };
+            if (aqi <= 150) return { code: '#ff9933', name: '對敏感族群不健康' };
+            if (aqi <= 200) return { code: '#cc0033', name: '對所有族群不健康' };
+            if (aqi <= 300) return { code: '#660099', name: '非常不健康' };
+            return { code: '#7e0023', name: '危害' };
+        }
+
+        function getAQIShortName(aqi) {
+            if (aqi <= 50) return '良好';
+            if (aqi <= 100) return '普通';
+            if (aqi <= 150) return '敏感族群';
+            if (aqi <= 200) return '不健康';
+            if (aqi <= 300) return '非常不健康';
+            return '危害';
+        }
+
+        // === 全局變數 ===
+        let allStations = [];
+        let map = null;
+        let markers = [];
+        let mapInitialized = false;
+
+        // === 初始化 ===
+        async function initAirPage() {
+            try {
+                // 初始化地圖
+                initMap();
+
+                // 抓取資料
+                const stations = await fetchAirQualityData();
+                allStations = stations;
+
+                // 排序：空氣最差排最前
+                allStations.sort((a, b) => b.aqi - a.aqi);
+
+                // 渲染 UI
+                renderUI(allStations);
+                updateStats(allStations);
+
+                // 綁定搜尋
+                bindSearchEvent();
+
+                // 隱藏地圖加載狀態
+                document.querySelector('.map-loading').style.display = 'none';
+
+            } catch (error) {
+                console.error('初始化失敗:', error);
+                showError(`無法載入空品資料: ${error.message}`);
+            }
+        }
+
+        // === 初始化地圖 ===
+        function initMap() {
+            if (mapInitialized) return;
+
+            map = L.map('air-map').setView([23.6, 121.0], 7);
+
+            // 添加地圖瓦片
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                attribution: '© OpenStreetMap, © CartoDB',
+                maxZoom: 19
+            }).addTo(map);
+
+            mapInitialized = true;
+        }
+
+        // === 抓取空品資料 ===
+        async function fetchAirQualityData() {
+            // ✨ 改進：不再直接呼叫環保署 API (會被 CORS 擋)
+            // 改成呼叫自己的後端 API (Cloudflare Functions)
+            // 這樣的好處：
+            // 1. 解決 CORS 問題
+            // 2. API Key 不會洩漏 (藏在後端環境變數)
+            // 3. 自動快取 10 分鐘，節省 API 額度
+            // 4. 資料已經過清洗，只有需要的欄位
+
+            try {
+                // ✅ 改成呼叫自己的後端 API
+                const response = await fetch('/api/air-quality');
+                
+                if (!response.ok) {
+                    throw new Error(`API Error: HTTP ${response.status}`);
+                }
+
+                // 後端已經清洗過資料，直接回傳陣列
+                const stations = await response.json();
+
+                if (!Array.isArray(stations)) {
+                    throw new Error('資料格式異常');
+                }
+
+                // 資料已經清洗過了，直接回傳
+                return stations.filter(s => s.lat && s.lon); // 過濾有效座標
+
+            } catch (error) {
+                console.error('🌤️ 空品 API 載入失敗:', error);
+                console.warn('提示：請確保 Cloudflare 後台已設定 MOENV_API_KEY 環境變數');
+                
+                // 如果失敗，返回示範資料
+                return getDefaultData();
+            }
+        }
+
+        // === 示範資料 ===
+        function getDefaultData() {
+            return [
+                { id: '1', name: '板橋', county: '新北市', lat: 25.0092, lon: 121.4605, aqi: 78, pm25: 25, pm10: 45 },
+                { id: '2', name: '台北', county: '台北市', lat: 25.0330, lon: 121.5654, aqi: 65, pm25: 18, pm10: 35 },
+                { id: '3', name: '新莊', county: '新北市', lat: 25.0586, lon: 121.4308, aqi: 82, pm25: 28, pm10: 52 },
+                { id: '4', name: '台中', county: '台中市', lat: 24.1477, lon: 120.6736, aqi: 95, pm25: 35, pm10: 68 },
+                { id: '5', name: '高雄', county: '高雄市', lat: 22.6428, lon: 120.3014, aqi: 88, pm25: 31, pm10: 58 },
+            ];
+        }
+
+        // === 渲染 UI ===
+        function renderUI(stations) {
+            const grid = document.getElementById('air-grid');
+            grid.innerHTML = '';
+
+            // 清除舊標記
+            markers.forEach(m => {
+                if (map && map.hasLayer(m)) {
+                    map.removeLayer(m);
+                }
+            });
+            markers = [];
+
+            if (stations.length === 0) {
+                grid.innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">🔍</div>
+                        <p>找不到符合的測站</p>
+                        <p style="font-size: 0.85em; color: #ccc;">試試其他搜尋詞彙</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // 渲染卡片
+            stations.forEach((st, index) => {
+                const color = getAQIColor(st.aqi);
+                const statusName = getAQIShortName(st.aqi);
+
+                // 建立卡片
+                const card = document.createElement('div');
+                card.className = 'air-card';
+                card.style.borderLeftColor = color.code;
+
+                const pm25Text = st.pm25 ? `${st.pm25.toFixed(1)} μg/m³` : '-';
+
+                card.innerHTML = `
+                    <div class="card-name">
+                        <span>${st.name}</span>
+                        <span class="county">${st.county}</span>
+                    </div>
+                    <div class="aqi-display">
+                        <span class="aqi-val" style="color: ${color.code};">${st.aqi}</span>
+                        <span class="status-badge">${statusName}</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">PM2.5:</span>
+                        <span class="detail-value">${pm25Text}</span>
+                    </div>
+                `;
+
+                // 點擊卡片，地圖飛到該位置
+                card.onclick = () => {
+                    if (map) {
+                        map.flyTo([st.lat, st.lon], 13, { duration: 0.8 });
+                    }
+                };
+
+                grid.appendChild(card);
+
+                // 建立地圖標記
+                if (st.lat && st.lon && map) {
+                    const marker = L.circleMarker([st.lat, st.lon], {
+                        radius: 8,
+                        fillColor: color.code,
+                        color: '#fff',
+                        weight: 2,
+                        opacity: 1,
+                        fillOpacity: 0.85
+                    }).bindPopup(`
+                        <div style="width: 150px;">
+                            <strong>${st.name}</strong><br>
+                            <span style="color: #999; font-size: 0.9em;">${st.county}</span>
+                            <hr style="margin: 8px 0; border: none; border-top: 1px solid #e0e0e0;">
+                            <div style="font-size: 0.9em; line-height: 1.6;">
+                                <div><strong>AQI: <span style="color: ${color.code}; font-size: 1.2em;">${st.aqi}</span></strong> (${statusName})</div>
+                                <div>PM2.5: <strong>${pm25Text}</strong></div>
+                                ${st.pm10 ? `<div>PM10: <strong>${st.pm10.toFixed(1)}</strong></div>` : ''}
+                            </div>
+                        </div>
+                    `);
+
+                    marker.addTo(map);
+                    markers.push(marker);
+                }
+            });
+        }
+
+        // === 更新統計 ===
+        function updateStats(stations) {
+            if (stations.length === 0) {
+                document.getElementById('total-stations').textContent = '-';
+                document.getElementById('avg-aqi').textContent = '-';
+                document.getElementById('worst-station').textContent = '-';
+                document.getElementById('good-count').textContent = '-';
+                return;
+            }
+
+            // 計算統計
+            const totalAQI = stations.reduce((sum, s) => sum + s.aqi, 0);
+            const avgAQI = Math.round(totalAQI / stations.length);
+            const worstStation = stations[0];
+            const goodCount = stations.filter(s => s.aqi <= 50).length;
+
+            document.getElementById('total-stations').textContent = stations.length;
+            document.getElementById('avg-aqi').textContent = avgAQI;
+            document.getElementById('worst-station').textContent = `${worstStation.name} (${worstStation.aqi})`;
+            document.getElementById('good-count').textContent = goodCount;
+
+            // 根據平均值著色
+            const avgColor = getAQIColor(avgAQI);
+            document.getElementById('avg-aqi').style.color = avgColor.code;
+
+            // 根據最差值著色
+            const worstColor = getAQIColor(worstStation.aqi);
+            document.getElementById('worst-station').style.color = worstColor.code;
+        }
+
+        // === 綁定搜尋事件 ===
+        function bindSearchEvent() {
+            const searchInput = document.getElementById('search-input');
+            searchInput.addEventListener('input', (e) => {
+                const term = e.target.value.toLowerCase();
+                const filtered = allStations.filter(s => 
+                    s.name.toLowerCase().includes(term) || 
+                    s.county.toLowerCase().includes(term)
+                );
+                renderUI(filtered);
+                updateStats(filtered);
+            });
+        }
+
+        // === 顯示錯誤 ===
+        function showError(message) {
+            const container = document.getElementById('error-container');
+            const textEl = document.getElementById('error-text');
+            textEl.textContent = message;
+            container.style.display = 'block';
+        }
+
+        // === 啟動 ===
+        document.addEventListener('DOMContentLoaded', initAirPage);
+
+        // 自動每 10 分鐘刷新一次資料
+        setInterval(() => {
+            console.log('自動刷新空品資料...');
+            initAirPage();
+        }, 600000);
+
+        // 全局錯誤處理
+        window.addEventListener('error', (e) => {
+            console.error('全局錯誤:', e.error);
+        });
+
+        window.addEventListener('unhandledrejection', (e) => {
+            console.error('未處理的 Promise 拒絕:', e.reason);
+        });
+    </script>
+</body>
+</html>

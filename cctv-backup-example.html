@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CCTV 監視器備用來源整合示例</title>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+  <link href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet" />
+  <link href="https://unpkg.com/leaflet.markercluster@1.5.0/dist/MarkerCluster.css" rel="stylesheet" />
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+    }
+
+    .container {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      height: 100vh;
+      gap: 0;
+    }
+
+    .sidebar {
+      background: white;
+      padding: 20px;
+      overflow-y: auto;
+      box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+      border-right: 3px solid #667eea;
+    }
+
+    .sidebar h1 {
+      color: #667eea;
+      font-size: 18px;
+      margin-bottom: 20px;
+      border-bottom: 2px solid #667eea;
+      padding-bottom: 10px;
+    }
+
+    .sidebar h2 {
+      color: #333;
+      font-size: 14px;
+      margin-top: 20px;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .control-group {
+      margin-bottom: 15px;
+    }
+
+    .control-group label {
+      display: block;
+      margin-bottom: 5px;
+      color: #555;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .control-group input,
+    .control-group select {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    .control-group input:focus,
+    .control-group select:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 4px rgba(102, 126, 234, 0.3);
+    }
+
+    .button-group {
+      display: flex;
+      gap: 8px;
+      margin-top: 15px;
+    }
+
+    button {
+      flex: 1;
+      padding: 10px;
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.3s;
+    }
+
+    button:hover {
+      background: #764ba2;
+    }
+
+    button:active {
+      transform: scale(0.98);
+    }
+
+    .stats {
+      background: #f5f5f5;
+      padding: 12px;
+      border-radius: 4px;
+      font-size: 13px;
+      margin-top: 15px;
+      border-left: 4px solid #667eea;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #ddd;
+    }
+
+    .stat-row:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .stat-label {
+      color: #666;
+      font-weight: 500;
+    }
+
+    .stat-value {
+      color: #667eea;
+      font-weight: bold;
+    }
+
+    .map-container {
+      position: relative;
+      background: #f0f0f0;
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+
+    .status {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: white;
+      padding: 12px 16px;
+      border-radius: 4px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      z-index: 100;
+    }
+
+    .status.loading {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    .status.success {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .status.error {
+      background: #f8d7da;
+      color: #721c24;
+    }
+
+    .status::before {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: pulse 2s infinite;
+    }
+
+    .status.success::before {
+      animation: none;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .search-results {
+      margin-top: 15px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    .result-item {
+      background: #f9f9f9;
+      padding: 8px;
+      margin-bottom: 6px;
+      border-radius: 3px;
+      border-left: 3px solid #667eea;
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .result-item:hover {
+      background: #f0f0f0;
+    }
+
+    .result-name {
+      font-weight: 500;
+      color: #333;
+    }
+
+    .result-type {
+      font-size: 11px;
+      color: #999;
+      margin-top: 2px;
+    }
+
+    .loading-spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid #667eea;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .info-banner {
+      background: #e7f3ff;
+      border-left: 4px solid #2196F3;
+      padding: 12px;
+      margin-bottom: 15px;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #1565c0;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="sidebar">
+      <h1>📡 CCTV 監視器查詢</h1>
+
+      <div class="info-banner">
+        ℹ️ 備用資料來源已啟用：國道 (FREEWAY) + 省道 (THB)
+      </div>
+
+      <div class="control-group">
+        <label for="search">🔍 搜尋監視器</label>
+        <input type="text" id="search" placeholder="輸入道路名稱、監視器ID...">
+      </div>
+
+      <div class="button-group">
+        <button id="btnSearch">搜尋</button>
+        <button id="btnClear">清除</button>
+      </div>
+
+      <div class="control-group">
+        <label for="typeFilter">📌 道路類型</label>
+        <select id="typeFilter">
+          <option value="">全部</option>
+          <option value="國道">國道</option>
+          <option value="省道">省道</option>
+        </select>
+      </div>
+
+      <div class="button-group">
+        <button id="btnReload">🔄 重新載入</button>
+        <button id="btnStats">📊 統計</button>
+      </div>
+
+      <div id="stats" class="stats" style="display: none;">
+        <div class="stat-row">
+          <span class="stat-label">總監視器數</span>
+          <span class="stat-value" id="statTotal">-</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">國道</span>
+          <span class="stat-value" id="statFreeway">-</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">省道</span>
+          <span class="stat-value" id="statProvincial">-</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">上次更新</span>
+          <span class="stat-value" id="statTime">-</span>
+        </div>
+      </div>
+
+      <div id="searchResults" class="search-results"></div>
+    </div>
+
+    <div class="map-container">
+      <div id="map"></div>
+      <div id="status" class="status success" style="display: none;">
+        <span id="statusText">載入中...</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.0/dist/leaflet.markercluster.js"></script>
+  <script src="cctv-aggregator.js"></script>
+
+  <script>
+    // ============ 設定 ============
+    const MAPBOX_TOKEN = 'YOUR_MAPBOX_TOKEN'; // 替換為您的 token
+    const USE_MAPBOX = false; // 設為 true 使用 Mapbox，false 使用 Leaflet
+
+    // ============ 初始化 ============
+    let map;
+    let aggregator;
+    let mapHelper;
+    let currentSearchResults = [];
+
+    function initMap() {
+      if (USE_MAPBOX) {
+        mapboxgl.accessToken = MAPBOX_TOKEN;
+        map = new mapboxgl.Map({
+          container: 'map',
+          style: 'mapbox://styles/mapbox/streets-v12',
+          center: [120.8, 24],
+          zoom: 7
+        });
+      } else {
+        // Leaflet
+        map = L.map('map').setView([24, 120.8], 7);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap contributors',
+          maxZoom: 19
+        }).addTo(map);
+      }
+
+      aggregator = new CCTVAggregator({
+        cacheExpire: 60000,
+        logLevel: 'info'
+      });
+
+      mapHelper = new CCTVMapHelper(map, aggregator);
+
+      // 準備好後載入
+      if (USE_MAPBOX) {
+        map.on('load', loadCameras);
+      } else {
+        loadCameras();
+      }
+    }
+
+    function loadCameras() {
+      showStatus('loading', '載入監視器中...');
+      aggregator.loadAll().then(() => {
+        mapHelper.renderCameras();
+        updateStats();
+        showStatus('success', `✅ 已載入 ${aggregator.cameras.length} 個監視器`);
+      }).catch(err => {
+        showStatus('error', `❌ 載入失敗: ${err.message}`);
+      });
+    }
+
+    function updateStats() {
+      const stats = aggregator.getStats();
+      document.getElementById('statTotal').textContent = stats.total;
+      document.getElementById('statFreeway').textContent = stats.byType.freeway || 0;
+      document.getElementById('statProvincial').textContent = stats.byType.provincial || 0;
+      document.getElementById('statTime').textContent = new Date(stats.lastUpdate).toLocaleTimeString('zh-TW');
+    }
+
+    function showStatus(type, message) {
+      const el = document.getElementById('status');
+      el.className = `status ${type}`;
+      el.innerHTML = `<span id="statusText">${message}</span>`;
+      el.style.display = 'flex';
+    }
+
+    // ============ 事件監聽 ============
+    document.getElementById('search').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        document.getElementById('btnSearch').click();
+      }
+    });
+
+    document.getElementById('btnSearch').addEventListener('click', () => {
+      const keyword = document.getElementById('search').value.trim();
+      const typeFilter = document.getElementById('typeFilter').value;
+
+      if (!keyword) {
+        alert('請輸入搜尋關鍵字');
+        return;
+      }
+
+      showStatus('loading', '搜尋中...');
+
+      setTimeout(() => {
+        currentSearchResults = aggregator.search(keyword);
+
+        // 應用類型過濾
+        if (typeFilter) {
+          currentSearchResults = currentSearchResults.filter(c => c.type === typeFilter);
+        }
+
+        displaySearchResults(currentSearchResults);
+        showStatus('success', `🔍 找到 ${currentSearchResults.length} 個結果`);
+      }, 100);
+    });
+
+    document.getElementById('btnClear').addEventListener('click', () => {
+      document.getElementById('search').value = '';
+      document.getElementById('searchResults').innerHTML = '';
+      currentSearchResults = [];
+      loadCameras();
+    });
+
+    document.getElementById('btnReload').addEventListener('click', () => {
+      aggregator.clearCache();
+      loadCameras();
+    });
+
+    document.getElementById('btnStats').addEventListener('click', () => {
+      const statsEl = document.getElementById('stats');
+      if (statsEl.style.display === 'none') {
+        updateStats();
+        statsEl.style.display = 'block';
+      } else {
+        statsEl.style.display = 'none';
+      }
+    });
+
+    document.getElementById('typeFilter').addEventListener('change', () => {
+      if (currentSearchResults.length > 0) {
+        document.getElementById('btnSearch').click();
+      }
+    });
+
+    // ============ 顯示搜尋結果 ============
+    function displaySearchResults(results) {
+      const container = document.getElementById('searchResults');
+      container.innerHTML = '';
+
+      if (results.length === 0) {
+        container.innerHTML = '<div style="padding: 10px; color: #999;">無結果</div>';
+        return;
+      }
+
+      results.slice(0, 20).forEach(camera => {
+        const item = document.createElement('div');
+        item.className = 'result-item';
+        item.innerHTML = `
+          <div class="result-name">${camera.name || camera.id}</div>
+          <div class="result-type">${camera.type} • ${camera.road || 'N/A'}</div>
+        `;
+        item.addEventListener('click', () => {
+          // 飛到該監視器位置
+          if (USE_MAPBOX) {
+            map.flyTo({
+              center: [camera.lon, camera.lat],
+              zoom: 14,
+              duration: 1000
+            });
+          } else {
+            map.setView([camera.lat, camera.lon], 14);
+          }
+        });
+        container.appendChild(item);
+      });
+
+      if (results.length > 20) {
+        const more = document.createElement('div');
+        more.style.cssText = 'padding: 8px; color: #667eea; text-align: center; font-weight: 500;';
+        more.textContent = `... 還有 ${results.length - 20} 個結果`;
+        container.appendChild(more);
+      }
+    }
+
+    // ============ 初始化 ============
+    window.addEventListener('DOMContentLoaded', initMap);
+  </script>
+</body>
+</html>

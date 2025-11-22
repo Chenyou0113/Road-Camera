@@ -423,6 +423,22 @@
     </div>
 
     <script>
+        // ============ 全局錯誤處理 ============
+        window.addEventListener('error', (e) => {
+            console.error('❌ 全局捕獲錯誤:', {
+                message: e.message,
+                filename: e.filename,
+                lineno: e.lineno,
+                colno: e.colno,
+                error: e.error
+            });
+        });
+
+        window.addEventListener('unhandledrejection', (e) => {
+            console.error('❌ 未處理的 Promise 拒絕:', e.reason);
+        });
+
+        // ============ 初始化變數 ============
         let isUsingRealData = false;
         let allStations = [];
         let currentStations = [];
@@ -434,6 +450,12 @@
         
         async function loadAirQualityData() {
             const container = document.getElementById('cameras-container');
+            
+            if (!container) {
+                console.error('❌ 找不到容器元素 "cameras-container"');
+                return;
+            }
+            
             container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>';
             
             try {
@@ -448,8 +470,11 @@
                 
                 if (aqData?.records) {
                     isUsingRealData = true;
-                    document.getElementById('dataSourceInfo').innerHTML = '✅ 顯示即時空品資料（環境部 API 連線成功）';
-                    document.getElementById('dataSourceInfo').style.color = '#4CAF50';
+                    const dataSourceEl = document.getElementById('dataSourceInfo');
+                    if (dataSourceEl) {
+                        dataSourceEl.innerHTML = '✅ 顯示即時空品資料（環境部 API 連線成功）';
+                        dataSourceEl.style.color = '#4CAF50';
+                    }
                     
                     allStations = aqData.records.map(station => ({
                         ...station
@@ -469,17 +494,37 @@
                 }
                 throw new Error('無法獲取資料');
             } catch (error) {
-                console.error('❌ 載入真實資料失敗:', error);
+                console.error('❌ 載入真實資料失敗:', error?.message || error);
+                
+                // 顯示錯誤訊息到頁面
+                const container = document.getElementById('cameras-container');
+                if (container) {
+                    container.innerHTML = `
+                        <div style="padding: 20px; background: #fff3cd; border-radius: 8px; margin: 20px 0;">
+                            <strong style="color: #856404;">⚠️ API 連線失敗</strong><br>
+                            <small style="color: #856404;">正在嘗試載入模擬資料...</small>
+                        </div>
+                    `;
+                }
+                
                 loadMockData();
             }
         }
         
         function loadMockData() {
             const container = document.getElementById('cameras-container');
+            if (!container) {
+                console.error('❌ 找不到容器元素 "cameras-container"');
+                return;
+            }
+            
             isUsingRealData = false;
             
-            document.getElementById('dataSourceInfo').innerHTML = '⚠️ 顯示模擬空品資料（API 連線失敗，使用備用資料）';
-            document.getElementById('dataSourceInfo').style.color = '#FF9800';
+            const dataSourceEl = document.getElementById('dataSourceInfo');
+            if (dataSourceEl) {
+                dataSourceEl.innerHTML = '⚠️ 顯示模擬空品資料（API 連線失敗，使用備用資料）';
+                dataSourceEl.style.color = '#FF9800';
+            }
             
             const mockStations = [
                 {
@@ -625,11 +670,21 @@
                 else if (aqi <= 100) moderateCount++;
             });
             
-            document.getElementById('totalStations').textContent = total;
-            document.getElementById('filteredStations').textContent = filtered;
-            document.getElementById('countyCount').textContent = counties;
-            document.getElementById('goodAqiCount').textContent = goodCount;
-            document.getElementById('moderateAqiCount').textContent = moderateCount;
+            // ✅ 安全地設定所有統計元素
+            const updateStat = (id, value) => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.textContent = value;
+                } else {
+                    console.warn(`⚠️ 找不到統計元素: ${id}`);
+                }
+            };
+            
+            updateStat('totalStations', total);
+            updateStat('filteredStations', filtered);
+            updateStat('countyCount', counties);
+            updateStat('goodAqiCount', goodCount);
+            updateStat('moderateAqiCount', moderateCount);
         }
         
         async function refreshData() {
@@ -653,39 +708,65 @@
                 else { aqiColor = '#8B0000'; aqiStatus = '危害'; }
             }
             
-            document.getElementById('modalTitle').textContent = station.sitename || '未命名測站';
+            // 安全地設定所有元素 - 先檢查元素是否存在
+            const setElementText = (id, text) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = text;
+                else console.warn(`⚠️ 找不到元素: ${id}`);
+            };
             
-            document.getElementById('detailCounty').textContent = station.county || '-';
-            document.getElementById('detailSiteId').textContent = station.siteid || '-';
-            document.getElementById('detailPublishtime').textContent = station.publishtime ? 
-                new Date(station.publishtime).toLocaleString('zh-TW') : '-';
+            const setElementStyle = (id, text, bg, color) => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.textContent = text;
+                    el.style.background = bg;
+                    el.style.color = color;
+                } else {
+                    console.warn(`⚠️ 找不到元素: ${id}`);
+                }
+            };
             
-            document.getElementById('detailAQI').textContent = aqi;
-            document.getElementById('detailAQI').style.background = aqiColor;
-            document.getElementById('detailAQI').style.color = aqiColor === '#FFEB3B' ? '#333' : 'white';
-            document.getElementById('detailAQIStatus').textContent = aqiStatus;
-            document.getElementById('detailPollutant').textContent = station.pollutant || station.pollutants || '-';
+            setElementText('modalTitle', station.sitename || '未命名測站');
             
-            document.getElementById('detailPM25').textContent = station.pm2_5 || station['PM2.5'] || '-';
-            document.getElementById('detailPM10').textContent = station.pm10 || station['PM10'] || '-';
-            document.getElementById('detailO3').textContent = station.o3 || station['O3'] || '-';
-            document.getElementById('detailCO').textContent = station.co || station['CO'] || '-';
-            document.getElementById('detailSO2').textContent = station.so2 || station['SO2'] || '-';
-            document.getElementById('detailNO2').textContent = station.no2 || station['NO2'] || '-';
-            document.getElementById('detailNOx').textContent = station.nox || station['NOx'] || '-';
-            document.getElementById('detailNO').textContent = station.no || station['NO'] || '-';
+            setElementText('detailCounty', station.county || '-');
+            setElementText('detailSiteId', station.siteid || '-');
+            setElementText('detailPublishtime', station.publishtime ? 
+                new Date(station.publishtime).toLocaleString('zh-TW') : '-');
             
-            document.getElementById('detailWindSpeed').textContent = station.wind_speed || station.windspeed || '-';
-            document.getElementById('detailWindDirec').textContent = station.wind_direc || station.winddirection || '-';
+            setElementStyle('detailAQI', aqi, aqiColor, aqiColor === '#FFEB3B' ? '#333' : 'white');
+            setElementText('detailAQIStatus', aqiStatus);
+            setElementText('detailPollutant', station.pollutant || station.pollutants || '-');
             
-            document.getElementById('detailLongitude').textContent = station.longitude || station.lon || '-';
-            document.getElementById('detailLatitude').textContent = station.latitude || station.lat || '-';
+            setElementText('detailPM25', station.pm2_5 || station['PM2.5'] || '-');
+            setElementText('detailPM10', station.pm10 || station['PM10'] || '-');
+            setElementText('detailO3', station.o3 || station['O3'] || '-');
+            setElementText('detailCO', station.co || station['CO'] || '-');
+            setElementText('detailSO2', station.so2 || station['SO2'] || '-');
+            setElementText('detailNO2', station.no2 || station['NO2'] || '-');
+            setElementText('detailNOx', station.nox || station['NOx'] || '-');
+            setElementText('detailNO', station.no || station['NO'] || '-');
             
-            document.getElementById('detailsModal').classList.add('show');
+            setElementText('detailWindSpeed', station.wind_speed || station.windspeed || '-');
+            setElementText('detailWindDirec', station.wind_direc || station.winddirection || '-');
+            
+            setElementText('detailLongitude', station.longitude || station.lon || '-');
+            setElementText('detailLatitude', station.latitude || station.lat || '-');
+            
+            const modal = document.getElementById('detailsModal');
+            if (modal) {
+                modal.classList.add('show');
+            } else {
+                console.error('❌ 找不到模態窗口元素 "detailsModal"');
+            }
         }
         
         function closeDetailsModal() {
-            document.getElementById('detailsModal').classList.remove('show');
+            const modal = document.getElementById('detailsModal');
+            if (modal) {
+                modal.classList.remove('show');
+            } else {
+                console.warn('⚠️ 找不到模態窗口元素 "detailsModal"');
+            }
         }
     </script>
 </body>

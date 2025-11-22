@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全台水情監測 - 天氣即時快訊</title>
+    
+    <!-- Leaflet 地圖 CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- FontAwesome 圖示 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        :root {
+            --primary-color: #0077b6;
+            --bg-color: #f0f2f5;
+            --card-bg: #ffffff;
+        }
+
+        body { font-family: 'Segoe UI', sans-serif; margin: 0; padding: 0; background: var(--bg-color); }
+        
+        /* 頂部導航 */
+        .header { background: var(--primary-color); color: white; padding: 15px 20px; display: flex; align-items: center; gap: 15px; }
+        .back-btn { text-decoration: none; color: white; font-size: 1.2rem; }
+
+        /* 佈局容器 */
+        .dashboard-container {
+            display: grid;
+            grid-template-columns: 350px 1fr; /* 左列表，右地圖 */
+            height: calc(100vh - 60px);
+            gap: 10px;
+            padding: 10px;
+        }
+
+        /* 左側列表區 */
+        .sidebar {
+            background: var(--card-bg);
+            border-radius: 10px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+
+        .tabs { display: flex; border-bottom: 1px solid #eee; }
+        .tab { flex: 1; padding: 15px; text-align: center; cursor: pointer; background: #f8f9fa; border: none; }
+        .tab.active { background: white; font-weight: bold; border-top: 3px solid var(--primary-color); }
+
+        /* 監視器卡片 */
+        .cam-grid { padding: 10px; display: flex; flex-direction: column; gap: 15px; }
+        
+        .cam-card {
+            border: 1px solid #eee;
+            border-radius: 8px;
+            overflow: hidden;
+            background: white;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .cam-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .cam-header {
+            padding: 8px 12px;
+            background: #f8f9fa;
+            font-size: 0.9rem;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        /* 影像容器 - 保持 16:9 */
+        .cam-view {
+            position: relative;
+            width: 100%;
+            padding-top: 56.25%; /* 16:9 Aspect Ratio */
+            background: #000;
+        }
+
+        .cam-view img {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+        }
+
+        /* 載入中/錯誤狀態 */
+        .cam-placeholder {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #aaa;
+            flex-direction: column;
+            background: #1a1a1a;
+        }
+
+        .cam-info {
+            padding: 5px 10px;
+            font-size: 0.8rem;
+            color: #888;
+            text-align: right;
+            background: #f9f9f9;
+        }
+
+        /* 地圖區 */
+        #map { border-radius: 10px; height: 100%; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+
+        /* 手機版 RWD */
+        @media (max-width: 768px) {
+            .dashboard-container { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+            .header { flex-wrap: wrap; }
+            .header h2 { margin: 0; font-size: 1.1rem; }
+        }
+
+        /* 統計資訊 */
+        .stats-info {
+            padding: 10px;
+            background: #e7f3ff;
+            border-bottom: 1px solid #eee;
+            font-size: 0.9rem;
+            color: #0077b6;
+        }
+
+        /* 過濾器 */
+        .filter-section {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            gap: 5px;
+        }
+
+        .filter-btn {
+            flex: 1;
+            padding: 6px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+
+        .filter-btn.active {
+            background: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <a href="/" class="back-btn"><i class="fas fa-arrow-left"></i></a>
+        <h2>💧 水情監測戰情室</h2>
+    </div>
+
+    <div class="dashboard-container">
+        <!-- 左側：監視器列表 -->
+        <div class="sidebar">
+            <div class="tabs">
+                <button class="tab active" onclick="filterType('cctv')">📸 水利監視器</button>
+                <button class="tab" onclick="showComingSoon()">🌊 水庫水情</button>
+            </div>
+            
+            <div class="stats-info">
+                <i class="fas fa-info-circle"></i> 
+                監控點數: <strong id="stats-count">0</strong> | 
+                <i class="fas fa-sync-alt fa-spin" id="sync-indicator" style="display:none;"></i>
+            </div>
+
+            <div class="filter-section" id="filter-section" style="display:none;">
+                <button class="filter-btn active" onclick="filterByCity(null)">全部地區</button>
+            </div>
+            
+            <div id="cam-list" class="cam-grid">
+                <div style="padding:20px; text-align:center; color:#666;">
+                    <i class="fas fa-circle-notch fa-spin"></i> 載入影像資料中...
+                </div>
+            </div>
+        </div>
+
+        <!-- 右側：地圖 -->
+        <div id="map"></div>
+    </div>
+
+    <!-- 載入 Leaflet -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        // 🌍 全域變數
+        let map;
+        let allCameras = [];
+        let filteredCameras = [];
+        let markers = [];
+        let refreshInterval = null;
+        let currentFilter = null;
+
+        // 🚀 初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            initMap();
+            loadWaterCCTV();
+        });
+
+        // 1️⃣ 初始化地圖
+        function initMap() {
+            map = L.map('map').setView([23.7, 121.0], 7);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+        }
+
+        // 2️⃣ 載入水利署 CCTV (呼叫 Cloudflare Functions API)
+        async function loadWaterCCTV() {
+            try {
+                showSyncIndicator(true);
+                const res = await fetch('/api/cctv-water');
+                
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}`);
+                }
+
+                allCameras = await res.json();
+                filteredCameras = allCameras;
+
+                // 更新統計
+                document.getElementById('stats-count').textContent = allCameras.length;
+
+                // 建立地區過濾器
+                setupCityFilters();
+
+                // 渲染
+                renderList(filteredCameras);
+                renderMapMarkers(filteredCameras);
+                startAutoRefresh();
+
+                console.log(`✅ 成功載入 ${allCameras.length} 個監視器`);
+
+            } catch (error) {
+                console.error("❌ 載入失敗", error);
+                document.getElementById('cam-list').innerHTML = `
+                    <div style="color:red; padding:20px; text-align:center;">
+                        ❌ 無法載入監視器資料<br>
+                        <small>${error.message}</small><br>
+                        <button onclick="location.reload()" style="margin-top:10px; padding:8px 16px; cursor:pointer;">
+                            重新載入
+                        </button>
+                    </div>`;
+            } finally {
+                showSyncIndicator(false);
+            }
+        }
+
+        // 建立地區過濾器
+        function setupCityFilters() {
+            const cities = [...new Set(allCameras.map(c => c.city))].sort();
+            const filterSection = document.getElementById('filter-section');
+            
+            if (cities.length > 1) {
+                filterSection.style.display = 'flex';
+                
+                // 清除舊按鈕 (保留「全部地區」)
+                const buttons = filterSection.querySelectorAll('.filter-btn:not(:first-child)');
+                buttons.forEach(btn => btn.remove());
+
+                // 新增地區按鈕
+                cities.forEach(city => {
+                    const btn = document.createElement('button');
+                    btn.className = 'filter-btn';
+                    btn.textContent = city;
+                    btn.onclick = () => filterByCity(city);
+                    filterSection.appendChild(btn);
+                });
+            }
+        }
+
+        // 3️⃣ 地區過濾
+        function filterByCity(city) {
+            currentFilter = city;
+            
+            // 更新按鈕狀態
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // 過濾資料
+            if (city) {
+                filteredCameras = allCameras.filter(c => c.city === city);
+            } else {
+                filteredCameras = allCameras;
+            }
+
+            // 重新渲染
+            map.eachLayer(layer => {
+                if (layer instanceof L.CircleMarker) {
+                    map.removeLayer(layer);
+                }
+            });
+            
+            renderList(filteredCameras);
+            renderMapMarkers(filteredCameras);
+        }
+
+        // 4️⃣ 渲染左側列表
+        function renderList(cams) {
+            const container = document.getElementById('cam-list');
+            container.innerHTML = '';
+
+            if (cams.length === 0) {
+                container.innerHTML = '<div style="padding:20px;">無可用影像</div>';
+                return;
+            }
+
+            cams.forEach(cam => {
+                const div = document.createElement('div');
+                div.className = 'cam-card';
+                const imgId = `img-${cam.id}`;
+                
+                div.innerHTML = `
+                    <div class="cam-header">
+                        <span>${cam.name}</span>
+                        <small>${cam.river || cam.city}</small>
+                    </div>
+                    <div class="cam-view">
+                        <div class="cam-placeholder">
+                            <i class="fas fa-image" style="font-size:2rem; margin-bottom:10px;"></i>
+                            影像載入中...
+                        </div>
+                        <img id="${imgId}" 
+                             src="${cam.url}" 
+                             alt="${cam.name}" 
+                             onload="this.previousElementSibling.style.display='none'"
+                             onerror="this.style.display='none'; this.previousElementSibling.innerHTML='<i class=\"fas fa-exclamation-circle\" style=\"font-size:2rem; margin-bottom:10px;\"></i><div>❌ 訊號中斷</div>'">
+                    </div>
+                    <div class="cam-info">
+                        <i class="fas fa-sync-alt"></i> 每分鐘自動刷新 | ID: ${cam.id}
+                    </div>
+                `;
+                
+                // 點擊卡片，地圖飛過去
+                div.onclick = () => {
+                    map.flyTo([cam.lat, cam.lon], 14, { duration: 1.5 });
+                };
+
+                container.appendChild(div);
+            });
+        }
+
+        // 5️⃣ 渲染地圖標記
+        function renderMapMarkers(cams) {
+            cams.forEach(cam => {
+                const marker = L.circleMarker([cam.lat, cam.lon], {
+                    radius: 7,
+                    fillColor: '#0077b6',
+                    color: '#fff',
+                    weight: 2,
+                    opacity: 1,
+                    fillOpacity: 0.85
+                }).addTo(map);
+
+                // 點擊標記顯示彈出視窗
+                const popupContent = `
+                    <div style="max-width: 250px;">
+                        <h4 style="margin: 0 0 8px 0;">${cam.name}</h4>
+                        <p style="margin: 0 0 8px 0; font-size: 0.9rem; color: #666;">
+                            <i class="fas fa-map-pin"></i> ${cam.city} ${cam.river}
+                        </p>
+                        <img src="${cam.url}" style="width:100%; border-radius:5px; margin-bottom:8px;">
+                        <small style="color: #999;">
+                            <i class="fas fa-clock"></i> ${new Date(cam.time).toLocaleTimeString('zh-TW')}
+                        </small>
+                    </div>
+                `;
+                marker.bindPopup(popupContent, { maxWidth: 250 });
+                markers.push(marker);
+            });
+        }
+
+        // 6️⃣ 智慧圖片刷新 (Smart Refresh)
+        function startAutoRefresh() {
+            // 清除舊的計時器
+            if (refreshInterval) clearInterval(refreshInterval);
+
+            // 設定每 60 秒執行一次
+            refreshInterval = setInterval(() => {
+                console.log("🔄 正在刷新所有水利署影像...");
+                showSyncIndicator(true);
+                
+                // 抓取頁面上所有的 CCTV 圖片
+                const images = document.querySelectorAll('.cam-view img');
+                const timestamp = new Date().getTime();
+
+                images.forEach(img => {
+                    // 只有當圖片是顯示狀態時才刷新 (節省頻寬)
+                    if (img.style.display !== 'none') {
+                        // 透過加上時間戳記參數，強迫瀏覽器重新下載圖片
+                        let originalUrl = img.src.split('?')[0];
+                        img.src = `${originalUrl}?t=${timestamp}`;
+                    }
+                });
+
+                setTimeout(() => showSyncIndicator(false), 500);
+
+            }, 60000); // 60000 ms = 1 分鐘
+        }
+
+        // 輔助函數：顯示同步指示器
+        function showSyncIndicator(show) {
+            const indicator = document.getElementById('sync-indicator');
+            if (show) {
+                indicator.style.display = 'inline-block';
+            } else {
+                indicator.style.display = 'none';
+            }
+        }
+
+        // 類型過濾 (預留給未來的水庫水情功能)
+        function filterType(type) {
+            if (type === 'cctv') {
+                console.log('📸 顯示水利監視器');
+                document.getElementById('filter-section').style.display = 'flex';
+            } else {
+                console.log('🌊 水庫水情功能尚未實裝');
+            }
+        }
+
+        // 預告功能
+        function showComingSoon() {
+            alert('🌊 水庫水情功能\n\n即將推出：\n✅ 即時蓄水量統計\n✅ 容量警戒指標\n✅ 歷史用水趨勢\n\n敬請期待！');
+        }
+
+        // 頁面卸載時清除計時器
+        window.addEventListener('beforeunload', () => {
+            if (refreshInterval) clearInterval(refreshInterval);
+        });
+    </script>
+</body>
+</html>
