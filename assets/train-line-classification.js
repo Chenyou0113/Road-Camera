@@ -1,7 +1,10 @@
 // 台鐵路線與車站分類表（兩層式選單）
+// 分組方式：西部幹線(含山線)、東部幹線、其他支線
 const trainLineClassification = {
+    // ========== 西部幹線（含山線） ==========
     "western_north": {
-        "name": "縱貫線北段 (基隆-竹南)",
+        "name": "西部幹線 - 北段 (基隆-竹南)",
+        "category": "西部幹線（有山線）",
         "stations": [
             { "code": "0900", "name": "基隆" }, { "code": "0910", "name": "三坑" }, { "code": "0920", "name": "八堵" },
             { "code": "0930", "name": "七堵" }, { "code": "0940", "name": "百福" }, { "code": "0950", "name": "五堵" },
@@ -18,7 +21,8 @@ const trainLineClassification = {
         ]
     },
     "mountain": {
-        "name": "臺中線 (山線)",
+        "name": "西部幹線 - 山線 (竹南-成功)",
+        "category": "西部幹線（有山線）",
         "stations": [
             { "code": "3140", "name": "造橋" }, { "code": "3150", "name": "豐富" }, { "code": "3160", "name": "苗栗" },
             { "code": "3170", "name": "南勢" }, { "code": "3180", "name": "銅鑼" }, { "code": "3190", "name": "三義" },
@@ -30,7 +34,8 @@ const trainLineClassification = {
         ]
     },
     "coast": {
-        "name": "海岸線 (海線)",
+        "name": "西部幹線 - 海線 (竹南-成功)",
+        "category": "西部幹線（有山線）",
         "stations": [
             { "code": "2110", "name": "談文" }, { "code": "2120", "name": "大山" }, { "code": "2130", "name": "後龍" },
             { "code": "2140", "name": "龍港" }, { "code": "2150", "name": "白沙屯" }, { "code": "2160", "name": "新埔" },
@@ -41,7 +46,8 @@ const trainLineClassification = {
         ]
     },
     "western_south": {
-        "name": "縱貫線南段 (彰化-高雄)",
+        "name": "西部幹線 - 南段 (彰化-高雄)",
+        "category": "西部幹線（有山線）",
         "stations": [
             { "code": "3360", "name": "彰化" }, { "code": "3370", "name": "花壇" }, { "code": "3380", "name": "大村" },
             { "code": "3390", "name": "員林" }, { "code": "3400", "name": "永靖" }, { "code": "3410", "name": "社頭" },
@@ -61,28 +67,11 @@ const trainLineClassification = {
             { "code": "4400", "name": "高雄" }
         ]
     },
-    "pingtung": {
-        "name": "屏東線 (高雄-枋寮)",
-        "stations": [
-            { "code": "4410", "name": "民族" }, { "code": "4420", "name": "科工館" }, { "code": "4430", "name": "正義" },
-            { "code": "4440", "name": "鳳山" }, { "code": "4450", "name": "後庄" }, { "code": "4460", "name": "九曲堂" },
-            { "code": "4470", "name": "六塊厝" }, { "code": "5000", "name": "屏東" }, { "code": "5010", "name": "歸來" },
-            { "code": "5020", "name": "麟洛" }, { "code": "5030", "name": "西勢" }, { "code": "5040", "name": "竹田" },
-            { "code": "5050", "name": "潮州" }, { "code": "5060", "name": "崁頂" }, { "code": "5070", "name": "南州" },
-            { "code": "5080", "name": "鎮安" }, { "code": "5090", "name": "林邊" }, { "code": "5100", "name": "佳冬" },
-            { "code": "5110", "name": "東海" }, { "code": "5120", "name": "枋寮" }
-        ]
-    },
-    "south_link": {
-        "name": "南迴線",
-        "stations": [
-            { "code": "5130", "name": "加祿" }, { "code": "5140", "name": "內獅" }, { "code": "5160", "name": "枋山" },
-            { "code": "5190", "name": "大武" }, { "code": "5200", "name": "瀧溪" }, { "code": "5210", "name": "金崙" },
-            { "code": "5220", "name": "太麻里" }, { "code": "5230", "name": "知本" }, { "code": "5240", "name": "康樂" }
-        ]
-    },
+
+    // ========== 東部幹線 ==========
     "taitung": {
-        "name": "臺東線 (花蓮-臺東)",
+        "name": "東部幹線 - 臺東線 (花蓮-臺東)",
+        "category": "東部幹線",
         "stations": [
             { "code": "6000", "name": "臺東" }, { "code": "6010", "name": "山里" }, { "code": "6020", "name": "鹿野" },
             { "code": "6030", "name": "瑞源" }, { "code": "6040", "name": "瑞和" }, { "code": "6050", "name": "關山" },
@@ -96,7 +85,8 @@ const trainLineClassification = {
         ]
     },
     "north_link": {
-        "name": "北迴線 (蘇澳新-花蓮)",
+        "name": "東部幹線 - 北迴線 (蘇澳新-花蓮)",
+        "category": "東部幹線",
         "stations": [
             { "code": "7010", "name": "北埔" }, { "code": "7020", "name": "景美" }, { "code": "7030", "name": "新城(太魯閣)" },
             { "code": "7040", "name": "崇德" }, { "code": "7050", "name": "和仁" }, { "code": "7060", "name": "和平" },
@@ -105,7 +95,8 @@ const trainLineClassification = {
         ]
     },
     "yilan": {
-        "name": "宜蘭線 (八堵-蘇澳)",
+        "name": "東部幹線 - 宜蘭線 (八堵-蘇澳)",
+        "category": "東部幹線",
         "stations": [
             { "code": "7120", "name": "蘇澳" }, { "code": "7140", "name": "新馬" }, { "code": "7150", "name": "冬山" },
             { "code": "7160", "name": "羅東" }, { "code": "7170", "name": "中里" }, { "code": "7180", "name": "二結" },
@@ -118,8 +109,33 @@ const trainLineClassification = {
             { "code": "7390", "name": "暖暖" }
         ]
     },
+
+    // ========== 其他支線 ==========
+    "pingtung": {
+        "name": "支線 - 屏東線 (高雄-枋寮)",
+        "category": "其他支線",
+        "stations": [
+            { "code": "4410", "name": "民族" }, { "code": "4420", "name": "科工館" }, { "code": "4430", "name": "正義" },
+            { "code": "4440", "name": "鳳山" }, { "code": "4450", "name": "後庄" }, { "code": "4460", "name": "九曲堂" },
+            { "code": "4470", "name": "六塊厝" }, { "code": "5000", "name": "屏東" }, { "code": "5010", "name": "歸來" },
+            { "code": "5020", "name": "麟洛" }, { "code": "5030", "name": "西勢" }, { "code": "5040", "name": "竹田" },
+            { "code": "5050", "name": "潮州" }, { "code": "5060", "name": "崁頂" }, { "code": "5070", "name": "南州" },
+            { "code": "5080", "name": "鎮安" }, { "code": "5090", "name": "林邊" }, { "code": "5100", "name": "佳冬" },
+            { "code": "5110", "name": "東海" }, { "code": "5120", "name": "枋寮" }
+        ]
+    },
+    "south_link": {
+        "name": "支線 - 南迴線 (枋寮-康樂)",
+        "category": "其他支線",
+        "stations": [
+            { "code": "5130", "name": "加祿" }, { "code": "5140", "name": "內獅" }, { "code": "5160", "name": "枋山" },
+            { "code": "5190", "name": "大武" }, { "code": "5200", "name": "瀧溪" }, { "code": "5210", "name": "金崙" },
+            { "code": "5220", "name": "太麻里" }, { "code": "5230", "name": "知本" }, { "code": "5240", "name": "康樂" }
+        ]
+    },
     "pingxi": {
-        "name": "平溪/深澳線",
+        "name": "支線 - 平溪/深澳線",
+        "category": "其他支線",
         "stations": [
             { "code": "7332", "name": "大華" }, { "code": "7333", "name": "十分" }, { "code": "7334", "name": "望古" },
             { "code": "7335", "name": "嶺腳" }, { "code": "7336", "name": "平溪" }, { "code": "7331", "name": "菁桐" },
@@ -127,7 +143,8 @@ const trainLineClassification = {
         ]
     },
     "neiwan": {
-        "name": "內灣/六家線",
+        "name": "支線 - 內灣/六家線",
+        "category": "其他支線",
         "stations": [
             { "code": "1201", "name": "千甲" }, { "code": "1202", "name": "新莊" }, { "code": "1203", "name": "竹中" },
             { "code": "1204", "name": "六家" }, { "code": "1205", "name": "上員" }, { "code": "1206", "name": "榮華" },
@@ -136,14 +153,16 @@ const trainLineClassification = {
         ]
     },
     "jiji": {
-        "name": "集集線",
+        "name": "支線 - 集集線",
+        "category": "其他支線",
         "stations": [
             { "code": "3431", "name": "源泉" }, { "code": "3432", "name": "濁水" }, { "code": "3433", "name": "龍泉" },
             { "code": "3434", "name": "集集" }, { "code": "3435", "name": "水里" }, { "code": "3436", "name": "車埕" }
         ]
     },
     "shalun": {
-        "name": "沙崙線",
+        "name": "支線 - 沙崙線",
+        "category": "其他支線",
         "stations": [
             { "code": "4271", "name": "長榮大學" }, { "code": "4272", "name": "沙崙" }
         ]
