@@ -141,8 +141,8 @@
         body.dark-mode .modal-info p { color: rgba(255,255,255,0.8); }
         
         /* 地圖容器和控制樣式 */
-        #mapContainer { display: none; width: 100%; height: 600px; border-radius: 10px; margin: 20px 0; box-shadow: 0 5px 15px rgba(0,0,0,0.2); overflow: hidden; z-index: 10; }
-        #mapContainer.active { display: block; }
+        #map-container { display: none; width: 100%; height: 600px; border-radius: 10px; margin: 20px 0; box-shadow: 0 5px 15px rgba(0,0,0,0.2); overflow: hidden; z-index: 10; }
+        #map-container.active { display: block; }
         .map-toggle-btn { padding: 10px 20px; background: #0891b2; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem; transition: all 0.3s; }
         .map-toggle-btn:hover { background: #06b6d4; transform: translateY(-2px); box-shadow: 0 4px 8px rgba(6,182,212,0.3); }
         .map-toggle-btn.active { background: #FF9800; }
@@ -164,13 +164,17 @@
         #map-container {
             display: none; /* 預設隱藏，選縣市後才顯示 */
             width: 100%;
-            height: 400px;
+            height: 600px;
             margin-bottom: 20px;
             border-radius: 10px;
             overflow: hidden;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             border: 1px solid #ddd;
-            z-index: 1; /* 確保在最底層，不會蓋住下拉選單 */
+            z-index: 10; /* 確保地圖可見 */
+        }
+        
+        #map-container.active {
+            display: block;
         }
         
         #map {
@@ -932,11 +936,31 @@
                 // ★ 初始化地圖並顯示監視器
                 const mapContainer = document.getElementById('map-container');
                 if (mapContainer && allCameras.length > 0) {
+                    console.log(`🗺️ 地圖容器初始寬度: ${mapContainer.offsetWidth}px, 高度: ${mapContainer.offsetHeight}px`);
                     mapContainer.style.display = 'block';
-                    initMap();
-                    updateMapMarkers(allCameras);
-                    // 強制地圖重新計算大小 (解決 display:none 切換造成的破圖問題)
-                    setTimeout(() => { if (map) map.invalidateSize(); }, 100);
+                    
+                    // 等待 DOM 重新渲染後再初始化
+                    requestAnimationFrame(() => {
+                        console.log(`🗺️ 地圖容器顯示後寬度: ${mapContainer.offsetWidth}px, 高度: ${mapContainer.offsetHeight}px`);
+                        initMap();
+                        updateMapMarkers(allCameras);
+                        
+                        // 多次強制重新計算大小，確保完全正確
+                        if (map) {
+                            console.log(`🔄 執行 map.invalidateSize()...`);
+                            map.invalidateSize();
+                            console.log(`✅ invalidateSize() 完成`);
+                        }
+                        
+                        // 第二次重新計算（保險起見）
+                        setTimeout(() => {
+                            if (map) {
+                                console.log(`🔄 執行第二次 map.invalidateSize()...`);
+                                map.invalidateSize();
+                                console.log(`✅ 第二次 invalidateSize() 完成`);
+                            }
+                        }, 200);
+                    });
                 }
                 
                 // 完成進度條
@@ -1797,6 +1821,35 @@
             const available = allCameras.filter(c => c.VideoStreamURL || c.VideoImageURL || c.VideoImageUrl || c.PictureURL || c.VideoStream || c.StreamURL).length;
             document.getElementById('availableCameras').textContent = available;
             document.getElementById('filteredCameras').textContent = filteredCameras.length;
+        }
+
+        // 切換地圖檢視
+        function toggleMapView() {
+            const mapContainer = document.getElementById('map-container');
+            const mapToggleBtn = document.getElementById('mapToggleBtn');
+            const camerasContainer = document.getElementById('cameras-container');
+            
+            if (mapContainer.style.display === 'none') {
+                console.log('🗺️ 顯示地圖檢視');
+                mapContainer.style.display = 'block';
+                camerasContainer.style.display = 'none';
+                mapToggleBtn.classList.add('active');
+                mapToggleBtn.innerHTML = '<i class="fas fa-list"></i> 列表檢視';
+                
+                // 重新計算地圖大小
+                if (map) {
+                    setTimeout(() => {
+                        map.invalidateSize();
+                        console.log('✅ 地圖大小已重新計算');
+                    }, 100);
+                }
+            } else {
+                console.log('📋 顯示列表檢視');
+                mapContainer.style.display = 'none';
+                camerasContainer.style.display = 'block';
+                mapToggleBtn.classList.remove('active');
+                mapToggleBtn.innerHTML = '<i class="fas fa-map"></i> 地圖檢視';
+            }
         }
 
         function applyFilters() {
