@@ -442,7 +442,7 @@
 
         // ============ 初始化 ============
         document.addEventListener('DOMContentLoaded', () => {
-            console.log('🚂 台鐵即時看板頁面已加載 - 整合搜尋與分類系統');
+            console.log('🚂 台鐵即時看板頁面已加載 (V2 API) - 整合搜尋與分類系統');
             initStationControls();
         });
 
@@ -462,7 +462,6 @@
 
             // 填入路線選項（按分類分組）
             for (const [category, routes] of Object.entries(categories)) {
-                // 如果有多個分類，使用 optgroup
                 if (Object.keys(categories).length > 1) {
                     const optgroup = document.createElement('optgroup');
                     optgroup.label = category;
@@ -487,19 +486,16 @@
                 // 將所有車站加入扁平列表 (方便搜尋)
                 routes.forEach(route => {
                     route.stations.forEach(station => {
-                        // 避免重複加入 (有些車站可能在多條線)
                         if (!allStationsFlat.find(s => s.code === station.code)) {
                             allStationsFlat.push({
                                 code: station.code,
                                 name: station.name,
-                                lineKey: route.key // 記錄它是哪條線的
+                                lineKey: route.key
                             });
                         }
                     });
                 });
             }
-            
-            console.log(`✅ 初始化完成：共 ${allStationsFlat.length} 個車站，${Object.keys(categories).length} 個分類`);
             
             // 初始顯示所有車站
             filterStations();
@@ -569,7 +565,7 @@
             }
         }
 
-        // ============ 4. 查詢即時看板 ============
+        // ============ 4. 查詢即時看板 (使用 V2 API) ============
         async function fetchTrainLiveBoard() {
             const stationSelect = document.getElementById('stationSelect');
             const queryBtn = document.getElementById('queryBtn');
@@ -580,64 +576,30 @@
                 return;
             }
 
-            // 取得車站名稱
             const selectedOption = stationSelect.options[stationSelect.selectedIndex];
             currentStationName = selectedOption.text.split(' - ')[1];
 
-            // 顯示加載中，禁用按鈕
             showLoading();
             queryBtn.disabled = true;
 
             try {
-                console.log(`🔍 正在查詢 ${currentStationName} (${currentStationID}) 的即時看板...`);
+                console.log(`🔍 正在查詢 ${currentStationName} (${currentStationID}) 的即時看板 (V2)...`);
                 
-                // 注意：TDX v3 API 使用 OData 查詢參數，不是路徑參數
-                const endpoint = `/v3/Rail/TRA/StationLiveBoard?StationID=${currentStationID}&$format=JSON`;
+                // ✨ 修改重點：使用 V2 LiveBoard API 並加上 StationID 篩選
+                const endpoint = `/v2/Rail/TRA/LiveBoard?$filter=StationID eq '${currentStationID}'&$format=JSON`;
                 const response = await tdxApi.fetch(endpoint);
 
-                console.log('📦 API 原始回應結構:', response);
+                console.log('📦 API 回應:', response);
 
-                // 處理多種 API 回應格式
-                let trains = [];
-                if (response && response.StationLiveBoards) {
-                    // 格式 1: { StationLiveBoards: [...] }
-                    trains = response.StationLiveBoards;
-                } else if (Array.isArray(response) && response.length > 0) {
-                    // 格式 2: [{ StationLiveBoards: [...] }] 或 [train, train, ...]
-                    if (response[0].StationLiveBoards) {
-                        trains = response[0].StationLiveBoards;
-                    } else {
-                        trains = response;
-                    }
-                } else if (Array.isArray(response)) {
-                    // 格式 3: 直接是陣列
-                    trains = response;
-                }
+                // V2 回傳的是直接的陣列，不需要像 V3 一樣處理 StationLiveBoards
+                let trains = Array.isArray(response) ? response : [];
 
                 console.log(`✅ 成功取得看板資料，共 ${trains.length} 班列車`);
 
-                // 篩選 1 小時內會停靠本站的車次
-                const now = new Date();
-                const oneHourLater = new Date(now.getTime() + 60 * 60000);
-                
-                const filteredTrains = trains.filter(train => {
-                    // 檢查時間：1 小時內
-                    if (!train.ScheduleDepartureTime) return false;
-                    const trainTime = new Date(train.ScheduleDepartureTime);
-                    if (!(trainTime > now && trainTime <= oneHourLater)) return false;
-                    
-                    // 檢查是否停靠本站
-                    // TDX API: StoppingStatus = 1 表示停靠，0 表示不停
-                    const stopsAtThisStation = train.StoppingStatus === 1 || train.StoppingStatus === '1';
-                    return stopsAtThisStation;
-                });
-
-                console.log(`🎯 篩選後：1 小時內停靠本站有 ${filteredTrains.length} 班列車`);
-
-                if (filteredTrains && filteredTrains.length > 0) {
-                    renderBoard(filteredTrains);
+                if (trains.length > 0) {
+                    renderBoard(trains);
                 } else {
-                    showNoData('1 小時內無停靠本站的列車資訊');
+                    showNoData('目前無列車進出站資訊');
                 }
 
             } catch (error) {
@@ -672,16 +634,16 @@
             };
 
             filteredTrains.forEach(train => {
-                const dir = String(train.Direction || '0');
+                const dir = String(train.Direction); // V2 回傳的是數字 0 或 1
                 if (grouped[dir]) {
                     grouped[dir].trains.push(train);
                 }
             });
 
-            // 排序：依表定離站時間
+            // 排序：依表定離站時間 (V2 欄位是 ScheduledDepartureTime)
             Object.values(grouped).forEach(g => {
                 g.trains.sort((a, b) => 
-                    (a.ScheduleDepartureTime || '').localeCompare(b.ScheduleDepartureTime || '')
+                    (a.ScheduledDepartureTime || '').localeCompare(b.ScheduledDepartureTime || '')
                 );
             });
 
@@ -696,10 +658,17 @@
                     </div>`;
 
                 data.trains.forEach(train => {
-                    const timeText = formatTime(train.ScheduleDepartureTime);
+                    // ✨ 修改重點：V2 欄位名稱調整
+                    // 時間：ScheduledDepartureTime (V2 有 'd')
+                    const timeText = formatTime(train.ScheduledDepartureTime);
                     const delayStatus = getDelayStatus(train);
-                    const typeClass = formatTypeClass(train.TrainTypeName?.Zh_tw || train.TrainTypeName || '');
-                    const typeName = train.TrainTypeName?.Zh_tw || train.TrainTypeName || '列車';
+                    
+                    // 車種名稱：TrainTypeName.Zh_tw
+                    const typeNameRaw = train.TrainTypeName?.Zh_tw || train.TrainTypeName || '';
+                    const typeClass = formatTypeClass(typeNameRaw);
+                    const typeName = typeNameRaw || '列車';
+                    
+                    // 終點站：EndingStationName.Zh_tw
                     const endStation = train.EndingStationName?.Zh_tw || train.EndingStationName || '未知';
 
                     html += `
@@ -742,12 +711,12 @@
         }
 
         function getDelayStatus(train) {
+            // V2 欄位：DelayTime (分鐘)
             const delayTime = train.DelayTime || 0;
-            const status = train.RunningStatus || 0;
-
-            if (status === 2) {
-                return '<span class="delay-badge delay-cancel"><i class="fas fa-times"></i> 已取消</span>';
-            } else if (delayTime === 0) {
+            
+            // V2 通常不直接回傳 Cancelled 狀態碼，如果誤點非常久或 API 有特殊標記才顯示取消
+            // 這裡主要處理誤點
+            if (delayTime === 0) {
                 return '<span class="delay-badge delay-ok"><i class="fas fa-check"></i> 準點</span>';
             } else {
                 return `<span class="delay-badge delay-warn"><i class="fas fa-clock"></i> 晚 ${delayTime} 分</span>`;
@@ -755,6 +724,7 @@
         }
 
         function formatTypeClass(typeName) {
+            if (!typeName) return '列車';
             if (typeName.includes('自強')) return '自強';
             if (typeName.includes('普悠瑪')) return '普悠瑪';
             if (typeName.includes('太魯閣')) return '太魯閣';
@@ -771,7 +741,8 @@
                 minute: '2-digit', 
                 second: '2-digit' 
             });
-            document.getElementById('updateTime').textContent = timeStr;
+            const updateTimeEl = document.getElementById('updateTime');
+            if (updateTimeEl) updateTimeEl.textContent = timeStr;
         }
 
         function showLoading() {
@@ -795,21 +766,6 @@
             `;
             document.getElementById('trainContainer').style.display = 'block';
         }
-
-        function showError(message) {
-            const trainsBoard = document.getElementById('trainsBoard');
-            trainsBoard.innerHTML = `
-                <div class="no-data">
-                    <i class="fas fa-exclamation-triangle" style="color: #f44336;"></i>
-                    <p style="color: #f44336;">${message}</p>
-                </div>
-            `;
-            document.getElementById('trainContainer').style.display = 'block';
-        }
-
-        // 自動更新時間
-        setInterval(updateTime, 1000);
-    </script>
 
         function showError(message) {
             const trainsBoard = document.getElementById('trainsBoard');
