@@ -560,22 +560,27 @@
         body.dark-mode .news-desc { color: #d7ccc8; }
         body.dark-mode .news-time { color: #a1887f; }
 
-        /* === 台鐵跑馬燈樣式 === */
+        /* === 台鐵跑馬燈樣式 (更新版) === */
         .tra-marquee {
-            background: rgba(0, 0, 0, 0.85); /* 深黑底 */
+            background: #212121; /* 深灰底 (比純黑柔和一點) */
             color: #ffeb3b; /* 亮黃字 */
             display: flex;
             align-items: center;
-            padding: 8px 15px;
-            font-size: 1rem;
-            font-family: 'Consolas', 'Monaco', 'Microsoft JhengHei', monospace; /* 等寬字體更有電子感 */
-            border-bottom: 2px solid #ff9800;
+            padding: 12px 20px; /* 增加內距 */
+            font-size: 1.2rem; /* ✨ 字體加大 */
+            font-weight: 600; /* 加粗 */
+            font-family: 'Microsoft JhengHei', sans-serif;
+            border-radius: 8px; /* 圓角 */
+            margin-bottom: 15px; /* 與下方注意事項的間距 */
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
             overflow: hidden;
+            border: 1px solid #424242;
         }
 
         .marquee-icon {
             margin-right: 15px;
             color: #ff9800;
+            font-size: 1.4rem; /* 圖示也加大 */
             animation: flash 2s infinite; /* 讓鈴鐺閃爍 */
             flex-shrink: 0;
         }
@@ -613,8 +618,11 @@
 
         /* 深色模式微調 */
         body.dark-mode .tra-marquee {
-            background: rgba(15, 15, 15, 0.95);
-            border-bottom-color: #ffb74d;
+            background: #1a1a1a;
+            border-color: #333;
+        }
+        body.dark-mode .marquee-icon {
+            color: #ffb74d;
         }
     </style>
 </head>
@@ -677,7 +685,18 @@
             </div>
         </div>
 
-        <!-- ✨ 新增：台鐵資料說明與免責聲明 -->
+        <!-- ✨ 1. 台鐵風格跑馬燈 (即時公告) -->
+        <div class="tra-marquee">
+            <div class="marquee-icon"><i class="fas fa-bell"></i></div>
+            <div class="marquee-wrapper">
+                <div class="marquee-content" id="marqueeText">
+                    <!-- 預設內容，JS 載入後會覆蓋 -->
+                    <span>歡迎搭乘台鐵。本看板資料由 TDX 提供，僅供參考，實際運行請以車站現場為主。</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ✨ 2. 台鐵資料說明與免責聲明 -->
         <div class="data-disclaimer">
             <i class="fas fa-exclamation-triangle"></i>
             <div>
@@ -702,17 +721,6 @@
                             <i class="fas fa-clock"></i> 
                             <span id="updateTime">--:--:--</span>
                         </span>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- ✨ 新增：台鐵風格跑馬燈 -->
-            <div class="tra-marquee">
-                <div class="marquee-icon"><i class="fas fa-bell"></i></div>
-                <div class="marquee-wrapper">
-                    <div class="marquee-content" id="marqueeText">
-                        <!-- 預設內容，JS 載入後會覆蓋 -->
-                        <span>歡迎搭乘台鐵。本看板資料由 TDX 提供，僅供參考，實際運行請以車站現場為主。</span>
                     </div>
                 </div>
             </div>
@@ -772,95 +780,103 @@
         });
 
         // ============ ✨ 新增：載入台鐵營運通阻 ============
+        // ✨ 更新：載入台鐵營運通阻 (適配 V3 Alert API)
         async function loadTraAlerts() {
             try {
-                // 使用 Alert API 抓取最新 5 筆公告
+                // V3 Alert API 查詢參數 (只抓最近 5 筆，按發布時間排序)
                 const endpoint = '/v3/Rail/TRA/Alert?$format=JSON&$top=5&$orderby=PublishTime%20desc';
-                const response = await fetch(
-                    `${CONFIG.TDX_BASE_URL}${endpoint}`,
-                    {
-                        headers: {
-                            'Authorization': `Bearer ${CONFIG.TDX_ACCESS_TOKEN}`,
-                            'Accept': 'application/json'
-                        }
-                    }
-                );
-
-                if (!response.ok) {
-                    console.warn('⚠️ Alert API 響應失敗:', response.status);
-                    return;
-                }
-
-                const alerts = await response.json();
+                const response = await tdxApi.fetch(endpoint); 
 
                 const panel = document.getElementById('traAlertPanel');
                 const content = document.getElementById('traAlertContent');
+                const marqueeEl = document.getElementById('marqueeText');
 
-                // 如果沒有資料，或是資料結構不是陣列
-                if (!alerts || (Array.isArray(alerts) && alerts.length === 0) || (alerts.Alerts && alerts.Alerts.length === 0)) {
-                    // 沒有公告時隱藏面板，保持版面乾淨
-                    panel.style.display = 'none';
+                // 解析資料結構 (V3 回傳的是 { Alerts: [...] })
+                let alertList = [];
+                if (response && response.Alerts && Array.isArray(response.Alerts)) {
+                    alertList = response.Alerts;
+                } else if (Array.isArray(response)) {
+                    alertList = response;
+                }
+
+                // 如果沒有公告，隱藏面板並結束
+                if (alertList.length === 0) {
+                    if (panel) panel.style.display = 'none';
+                    // 跑馬燈預設文字不變
                     return;
                 }
 
-                // 處理資料結構 (V3 API 有時會包在 Alerts 屬性裡)
-                const alertList = Array.isArray(alerts) ? alerts : (alerts.Alerts || []);
-
-                let html = '';
-                alertList.forEach(alert => {
-                    // 判斷嚴重程度圖示
-                    let icon = 'ℹ️';
-                    if (alert.Status === '1' || alert.Status === 1) icon = '🚨'; // 1通常代表異常/嚴重
-
-                    // 格式化時間
-                    const timeStr = new Date(alert.PublishTime).toLocaleString('zh-TW', {
-                        month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
-                    });
-
-                    html += `
-                        <div class="news-item">
-                            <div class="news-title">
-                                <span>${icon}</span>
-                                <span>${alert.Title || '營運通阻公告'}</span>
-                            </div>
-                            <div class="news-desc">${alert.Description || '無詳細內容'}</div>
-                            <div class="news-time">
-                                <i class="far fa-clock"></i> 發布時間：${timeStr}
-                                ${alert.Scope ? ` | 影響範圍：${alert.Scope}` : ''}
-                            </div>
-                        </div>
-                    `;
-                });
-
-                content.innerHTML = html;
-                panel.style.display = 'block'; // 有資料才顯示
-                
-                // ✨ 新增：同時更新跑馬燈
-                const marqueeEl = document.getElementById('marqueeText');
-                if (marqueeEl && alertList.length > 0) {
-                    // 清空預設文字
-                    marqueeEl.innerHTML = '';
+                // --- 1. 更新跑馬燈內容 ---
+                if (marqueeEl) {
+                    marqueeEl.innerHTML = ''; // 清空預設
                     
-                    // 依序加入公告
                     alertList.forEach(alert => {
                         const span = document.createElement('span');
-                        // 格式：【營運通阻】標題：內容 (截取前50字)
-                        const desc = alert.Description ? alert.Description.substring(0, 50) : '無詳細內容';
-                        span.innerText = `【營運通阻】${alert.Title}：${desc}...`;
+                        // 格式：【營運通阻】標題：內容 (受影響區間)
+                        const scopeText = alert.Scope?.LineSections?.[0]?.Description 
+                                        ? ` (${alert.Scope.LineSections[0].Description})` 
+                                        : '';
+                        
+                        span.innerText = `【${alert.Title}】${alert.Description.replace(/\n/g, '')}${scopeText}`;
                         marqueeEl.appendChild(span);
                     });
                     
-                    // 補上最後一條固定提示
+                    // 最後補上免責聲明
                     const footerSpan = document.createElement('span');
                     footerSpan.innerText = "⚠️ 實際運行狀況請以車站現場公告為主。";
                     marqueeEl.appendChild(footerSpan);
+                }
+
+                // --- 2. 更新公告面板內容 (如果有這個元素) ---
+                if (panel && content) {
+                    let html = '';
+                    alertList.forEach(alert => {
+                        // 狀態判斷 (Status: 0正常, 2異常)
+                        let icon = 'ℹ️';
+                        let titleColor = '#e65100';
+                        if (alert.Status === 2 || alert.Level > 1) {
+                            icon = '🚨'; 
+                            titleColor = '#d32f2f'; // 紅色
+                        }
+
+                        // 時間格式化
+                        const timeStr = new Date(alert.PublishTime).toLocaleString('zh-TW', {
+                            month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+                        });
+                        
+                        // 受影響區間
+                        let scopeInfo = '';
+                        if (alert.Scope && alert.Scope.LineSections && alert.Scope.LineSections.length > 0) {
+                            const section = alert.Scope.LineSections[0];
+                            scopeInfo = `<br><span style="color:#d84315; font-size:0.9rem;">🛑 受影響區間：${section.StartingStationName} ↔ ${section.EndingStationName}</span>`;
+                        }
+
+                        html += `
+                            <div class="news-item">
+                                <div class="news-title" style="color: ${titleColor}">
+                                    <span>${icon}</span>
+                                    <span>${alert.Title}</span>
+                                </div>
+                                <div class="news-desc">
+                                    ${alert.Description.replace(/\n/g, '<br>')}
+                                    ${scopeInfo}
+                                </div>
+                                <div class="news-time">
+                                    <i class="far fa-clock"></i> 發布時間：${timeStr}
+                                    ${alert.AlertURL ? ` | <a href="${alert.AlertURL}" target="_blank" style="color:#1e88e5;">詳情連結</a>` : ''}
+                                </div>
+                            </div>
+                        `;
+                    });
+
+                    content.innerHTML = html;
+                    panel.style.display = 'block';
                 }
                 
                 console.log('✅ 台鐵通阻公告載入成功:', alertList.length, '筆');
 
             } catch (error) {
                 console.warn('⚠️ 無法載入台鐵通阻公告:', error);
-                // 失敗時保持隱藏，不影響主功能
             }
         }
 
