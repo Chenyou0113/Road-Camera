@@ -504,6 +504,61 @@
         body.dark-mode .data-disclaimer i {
             color: #ffc107; /* 亮黃色圖示 */
         }
+
+        /* === 台鐵公告樣式 === */
+        .info-panel {
+            background: #fff3e0; /* 淺橘色背景 */
+            border-left: 5px solid #ff9800; /* 橘色邊框 */
+            padding: 15px 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .info-panel h3 {
+            color: #e65100;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: baseline;
+        }
+
+        .news-item {
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(0,0,0,0.1);
+        }
+        .news-item:last-child { border-bottom: none; }
+
+        .news-title {
+            font-weight: bold;
+            color: #bf360c;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .news-desc {
+            color: #5d4037;
+            font-size: 0.95rem;
+            line-height: 1.5;
+        }
+        
+        .news-time {
+            font-size: 0.85rem;
+            color: #8d6e63;
+            margin-top: 5px;
+        }
+
+        /* 深色模式適配 */
+        body.dark-mode .info-panel {
+            background: #3e2723; /* 深咖啡色 */
+            border-left-color: #ffb74d;
+        }
+        body.dark-mode .info-panel h3 { color: #ffcc80; }
+        body.dark-mode .news-item { border-bottom-color: rgba(255,255,255,0.1); }
+        body.dark-mode .news-title { color: #ffab91; }
+        body.dark-mode .news-desc { color: #d7ccc8; }
+        body.dark-mode .news-time { color: #a1887f; }
     </style>
 </head>
 <body>
@@ -518,6 +573,17 @@
     </div>
 
     <div class="container">
+        <!-- ✨ 新增：台鐵營運通阻公告 -->
+        <div class="info-panel rail-news" id="traAlertPanel" style="display: none;">
+            <h3>
+                <span><i class="fas fa-bullhorn"></i> 台鐵營運通阻</span>
+                <small style="font-size: 0.8rem; margin-left: 10px; font-weight: normal;">(近 5 筆)</small>
+            </h3>
+            <div id="traAlertContent" class="news-content">
+                <!-- 公告內容將由 JS 動態插入 -->
+            </div>
+        </div>
+
         <!-- 控制面板 -->
         <div class="control-panel">
             <h3>
@@ -631,7 +697,81 @@
         document.addEventListener('DOMContentLoaded', () => {
             console.log('🚂 台鐵即時看板頁面已加載 (V2 API) - 整合搜尋與分類系統');
             initStationControls();
+            
+            // ✨ 呼叫載入公告
+            loadTraAlerts();
         });
+
+        // ============ ✨ 新增：載入台鐵營運通阻 ============
+        async function loadTraAlerts() {
+            try {
+                // 使用 Alert API 抓取最新 5 筆公告
+                const endpoint = '/v3/Rail/TRA/Alert?$format=JSON&$top=5&$orderby=PublishTime%20desc';
+                const response = await fetch(
+                    `${CONFIG.TDX_BASE_URL}${endpoint}`,
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${CONFIG.TDX_ACCESS_TOKEN}`,
+                            'Accept': 'application/json'
+                        }
+                    }
+                );
+
+                if (!response.ok) {
+                    console.warn('⚠️ Alert API 響應失敗:', response.status);
+                    return;
+                }
+
+                const alerts = await response.json();
+
+                const panel = document.getElementById('traAlertPanel');
+                const content = document.getElementById('traAlertContent');
+
+                // 如果沒有資料，或是資料結構不是陣列
+                if (!alerts || (Array.isArray(alerts) && alerts.length === 0) || (alerts.Alerts && alerts.Alerts.length === 0)) {
+                    // 沒有公告時隱藏面板，保持版面乾淨
+                    panel.style.display = 'none';
+                    return;
+                }
+
+                // 處理資料結構 (V3 API 有時會包在 Alerts 屬性裡)
+                const alertList = Array.isArray(alerts) ? alerts : (alerts.Alerts || []);
+
+                let html = '';
+                alertList.forEach(alert => {
+                    // 判斷嚴重程度圖示
+                    let icon = 'ℹ️';
+                    if (alert.Status === '1' || alert.Status === 1) icon = '🚨'; // 1通常代表異常/嚴重
+
+                    // 格式化時間
+                    const timeStr = new Date(alert.PublishTime).toLocaleString('zh-TW', {
+                        month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+                    });
+
+                    html += `
+                        <div class="news-item">
+                            <div class="news-title">
+                                <span>${icon}</span>
+                                <span>${alert.Title || '營運通阻公告'}</span>
+                            </div>
+                            <div class="news-desc">${alert.Description || '無詳細內容'}</div>
+                            <div class="news-time">
+                                <i class="far fa-clock"></i> 發布時間：${timeStr}
+                                ${alert.Scope ? ` | 影響範圍：${alert.Scope}` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+
+                content.innerHTML = html;
+                panel.style.display = 'block'; // 有資料才顯示
+                console.log('✅ 台鐵通阻公告載入成功:', alertList.length, '筆');
+
+            } catch (error) {
+                console.warn('⚠️ 無法載入台鐵通阻公告:', error);
+                // 失敗時保持隱藏，不影響主功能
+            }
+        }
 
         // ============ 1. 初始化：載入路線選單 & 建立扁平列表 ============
         function initStationControls() {
