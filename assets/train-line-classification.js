@@ -137,9 +137,15 @@ const trainLineClassification = {
         "name": "支線 - 平溪/深澳線",
         "category": "其他支線",
         "stations": [
-            { "code": "7332", "name": "大華" }, { "code": "7333", "name": "十分" }, { "code": "7334", "name": "望古" },
-            { "code": "7335", "name": "嶺腳" }, { "code": "7336", "name": "平溪" }, { "code": "7331", "name": "菁桐" },
-            { "code": "7361", "name": "海科館" }, { "code": "7362", "name": "八斗子" }
+            { "code": "7331", "name": "菁桐" },
+            { "code": "7332", "name": "大華" },
+            { "code": "7333", "name": "十分" },
+            { "code": "7334", "name": "望古" },
+            { "code": "7335", "name": "嶺腳" },
+            { "code": "7336", "name": "平溪" },
+            { "code": "7360", "name": "瑞芳" },
+            { "code": "7361", "name": "海科館" },
+            { "code": "7362", "name": "八斗子" }
         ]
     },
     "neiwan": {
@@ -164,7 +170,9 @@ const trainLineClassification = {
         "name": "支線 - 沙崙線",
         "category": "其他支線",
         "stations": [
-            { "code": "4271", "name": "長榮大學" }, { "code": "4272", "name": "沙崙" }
+            { "code": "4270", "name": "中洲" },
+            { "code": "4271", "name": "長榮大學" },
+            { "code": "4272", "name": "沙崙" }
         ]
     }
 };
