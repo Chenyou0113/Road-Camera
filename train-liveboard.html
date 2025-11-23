@@ -624,6 +624,100 @@
         body.dark-mode .marquee-icon {
             color: #ffb74d;
         }
+
+        /* === 列車停靠站跑馬燈樣式 (仿台鐵 LED) === */
+        .marquee-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 60px;
+            background-color: #000000;
+            color: #ff3d00; /* 台鐵經典紅橘色 */
+            display: flex;
+            align-items: center;
+            z-index: 9999;
+            box-shadow: 0 -4px 10px rgba(0,0,0,0.3);
+            border-top: 2px solid #333;
+            font-family: 'Microsoft JhengHei', sans-serif;
+        }
+
+        /* 左側固定資訊 (車次) */
+        .marquee-info {
+            background: #1a1a1a;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 0 15px;
+            min-width: 100px;
+            border-right: 1px solid #333;
+            z-index: 2;
+            flex-shrink: 0;
+        }
+
+        .marquee-train-no {
+            font-size: 1.1rem;
+            font-weight: bold;
+            color: #ffeb3b; /* 黃色車次 */
+        }
+
+        .marquee-dest {
+            font-size: 0.85rem;
+            color: #fff;
+        }
+
+        /* 跑馬燈捲動區 */
+        .marquee-content-wrapper {
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+            height: 100%;
+            display: flex;
+            align-items: center;
+        }
+
+        .marquee-content {
+            position: absolute;
+            white-space: nowrap;
+            font-size: 1.5rem;
+            font-weight: bold;
+            letter-spacing: 2px;
+            animation: marquee-scroll 45s linear infinite;
+            will-change: transform;
+            padding-right: 50px;
+        }
+
+        /* 停靠站文字顏色 */
+        .station-stop { color: #ff3d00; }
+        .station-arrow { color: #00e676; margin: 0 5px; font-size: 1rem; } /* 綠色箭頭 */
+
+        /* 關閉按鈕 */
+        .marquee-close {
+            background: #333;
+            border: none;
+            color: white;
+            width: 40px;
+            height: 100%;
+            font-size: 1.5rem;
+            cursor: pointer;
+            z-index: 2;
+        }
+        .marquee-close:hover { background: #555; }
+
+        /* 跑馬燈捲動動畫 */
+        @keyframes marquee-scroll {
+            0% { transform: translateX(100vw); }
+            100% { transform: translateX(-100%); }
+        }
+
+        /* 手機版調整 */
+        @media (max-width: 768px) {
+            .marquee-bar { height: 50px; }
+            .marquee-content { font-size: 1.1rem; }
+            .marquee-info { padding: 0 10px; min-width: 80px; }
+            body { padding-bottom: 70px; }
+        }
     </style>
 </head>
 <body>
@@ -732,6 +826,20 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- ✨ 新增：底部列車停靠站跑馬燈 -->
+    <div id="trainMarqueeBar" class="marquee-bar" style="display: none;">
+        <div class="marquee-info">
+            <span class="marquee-train-no" id="mqTrainNo"></span>
+            <span class="marquee-dest" id="mqDest"></span>
+        </div>
+        <div class="marquee-content-wrapper">
+            <div class="marquee-content" id="mqContent">
+                <!-- 這裡會動態填入停靠站 -->
+            </div>
+        </div>
+        <button class="marquee-close" onclick="closeMarquee()">×</button>
     </div>
 
     <script src="assets/navbar.js"></script>
@@ -1105,7 +1213,10 @@
                     const trainInfo = getTrainDisplayInfo(train);
 
                     html += `
-                        <div class="train-card">
+                        <div class="train-card" 
+                             style="cursor: pointer;" 
+                             onclick="showTrainStops('${train.TrainNo}', '${currentStationID}', '${endStation}')"
+                             title="點擊查看沿途停靠站">
                             <div class="train-info">
                                 <span class="train-type-badge type-${trainInfo.class}">${trainInfo.name}</span>
                                 <div class="train-destination">
@@ -1236,6 +1347,83 @@
 
         // 自動更新時間
         setInterval(updateTime, 1000);
+
+        // ============ ✨ 新增：跑馬燈功能邏輯 ============
+
+        // 顯示列車停靠站跑馬燈
+        async function showTrainStops(trainNo, currentStationID, destName) {
+            const bar = document.getElementById('trainMarqueeBar');
+            const content = document.getElementById('mqContent');
+            const mqTrainNo = document.getElementById('mqTrainNo');
+            const mqDest = document.getElementById('mqDest');
+
+            // 顯示載入中
+            bar.style.display = 'flex';
+            mqTrainNo.textContent = `${trainNo} 次`;
+            mqDest.textContent = `往 ${destName}`;
+            content.innerHTML = '<span style="color:#aaa; font-size:1rem;">載入停靠站資訊中...</span>';
+            
+            // 重置動畫 (避免切換時文字跳動)
+            content.style.animation = 'none';
+            void content.offsetHeight; /* trigger reflow */
+            content.style.animation = 'marquee-scroll 45s linear infinite';
+
+            try {
+                // 呼叫 API 取得該車次詳細時刻表
+                const endpoint = `/v2/Rail/TRA/DailyTrainInfo/TrainNo/${trainNo}?$format=JSON`;
+                const data = await tdxApi.fetch(endpoint);
+
+                if (!data || data.length === 0) {
+                    content.innerHTML = '<span style="color:#ff9800;">無停靠站資訊</span>';
+                    return;
+                }
+
+                const stopTimes = data[0].StopTimes;
+                
+                // 找到當前車站在時刻表中的順序
+                const currentIndex = stopTimes.findIndex(s => s.StationID === currentStationID);
+                
+                let stopsToShow = [];
+                
+                if (currentIndex !== -1) {
+                    // 只顯示「當前車站之後」的停靠站
+                    stopsToShow = stopTimes.slice(currentIndex + 1);
+                } else {
+                    // 如果找不到當前站（極少見），顯示全部
+                    stopsToShow = stopTimes;
+                }
+
+                if (stopsToShow.length === 0) {
+                    content.innerHTML = '<span style="color:#ff9800;">本列車即將抵達終點</span>';
+                } else {
+                    // 產生跑馬燈 HTML
+                    const prefixText = '本列車沿途停靠：';
+                    const html = stopsToShow.map(s => {
+                        return `<span class="station-stop">${s.StationName.Zh_tw}</span>`;
+                    }).join('<span class="station-arrow">▶</span>');
+
+                    const fullText = `<span style="color:#00e676; margin-right:10px;">${prefixText}</span>${html}`;
+                    content.innerHTML = fullText;
+                    
+                    // 計算總字數並動態調整動畫速度
+                    const totalChars = prefixText.length + stopsToShow.reduce((acc, s) => acc + s.StationName.Zh_tw.length, 0);
+                    // 每個字 1.2 秒，最少 25 秒
+                    const duration = Math.max(25, totalChars * 1.2);
+                    content.style.animationDuration = `${duration}s`;
+                    
+                    console.log(`🚂 跑馬燈：${trainNo} 次，停靠 ${stopsToShow.length} 站，動畫時間 ${duration.toFixed(1)} 秒`);
+                }
+
+            } catch (error) {
+                console.error('❌ 取得停靠站失敗:', error);
+                content.innerHTML = '<span style="color:#ff5252;">無法取得停靠資訊</span>';
+            }
+        }
+
+        // 關閉跑馬燈
+        function closeMarquee() {
+            document.getElementById('trainMarqueeBar').style.display = 'none';
+        }
     </script>
 </body>
 </html>
