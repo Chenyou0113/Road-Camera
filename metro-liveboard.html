@@ -696,6 +696,69 @@
         body.dark-mode .data-disclaimer i {
             color: #ffc107;
         }
+
+        /* === 捷運智慧跑馬燈樣式 === */
+        .metro-marquee-container {
+            background: #0277bd; /* 深藍色底 */
+            color: #fff;
+            display: flex;
+            align-items: center;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            overflow: hidden;
+            border-left: 5px solid #4fc3f7; /* 亮藍色邊條 */
+            position: relative;
+            min-height: 50px;
+        }
+
+        .marquee-icon {
+            font-size: 1.2rem;
+            margin-right: 15px;
+            color: #4fc3f7;
+            animation: pulse-icon 2s infinite;
+            flex-shrink: 0;
+        }
+
+        .marquee-wrapper {
+            flex: 1;
+            overflow: hidden;
+            white-space: nowrap;
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .marquee-content {
+            display: inline-block;
+            font-size: 1.1rem;
+            font-weight: 600;
+            letter-spacing: 1px;
+            padding-left: 100%;
+            animation: metro-scroll 20s linear infinite;
+            will-change: transform;
+        }
+
+        /* 列車進站提示色 (黃色) */
+        .train-alert { color: #ffeb3b; }
+
+        @keyframes metro-scroll {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-100%); }
+        }
+
+        @keyframes pulse-icon {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        /* 深色模式適配 */
+        body.dark-mode .metro-marquee-container {
+            background: #1a237e;
+            border-left-color: #536dfe;
+        }
     </style>
 </head>
 <body>
@@ -856,6 +919,16 @@
             </div>
         </div>
 
+        <!-- ✨ 新增：捷運智慧跑馬燈 -->
+        <div class="metro-marquee-container">
+            <div class="marquee-icon"><i class="fas fa-bullhorn"></i></div>
+            <div class="marquee-wrapper">
+                <div class="marquee-content" id="metroMarqueeText">
+                    系統營運正常
+                </div>
+            </div>
+        </div>
+
         <!-- 看板容器 -->
         <div id="liveboardContainer" style="display: none;">
             <div class="liveboard-container">
@@ -970,6 +1043,9 @@
             document.querySelector(`[data-system="${systemCode}"]`).classList.add('selected');
             document.getElementById('stationSelector').style.display = 'block';
             loadSystemData(systemCode);
+            
+            // ✨ 切換系統時更新跑馬燈
+            updateMarquee();
         }
 
         // ★ 新增：獲取首末班車時刻表資料
@@ -1522,6 +1598,9 @@
             const arriving = trainRows.filter(t => t.estimateTime <= 180).length;
             document.getElementById('totalTrains').textContent = total;
             document.getElementById('arrivingTrains').textContent = arriving;
+            
+            // ✨ 查詢列車時更新跑馬燈到站資訊
+            updateMarquee();
         }
 
         function updateUpdateTime() {
@@ -1783,10 +1862,109 @@
             }
         }
 
+        // ============ ✨ 新增：智慧跑馬燈控制邏輯 ============
+
+        // 1. 載入營運通阻 (Alert)
+        async function loadMetroAlerts() {
+            try {
+                // 預設訊息
+                let alerts = ["系統營運正常"];
+                
+                // 如果有選定系統，嘗試抓取真實公告
+                if (currentSystem) {
+                    const endpoint = `/v2/Rail/Metro/Alert/${currentSystem}?$format=JSON`;
+                    const data = await tdxApi.fetch(endpoint);
+                    
+                    // 解析資料結構
+                    let alertData = [];
+                    if (data && data.Alerts) alertData = data.Alerts;
+                    else if (Array.isArray(data)) alertData = data;
+
+                    if (alertData.length > 0) {
+                        alerts = alertData.map(a => `【${a.Title}】${a.Description}`);
+                    }
+                }
+                
+                return alerts;
+            } catch (e) {
+                console.warn("無法載入營運公告", e);
+                return ["系統營運正常"];
+            }
+        }
+
+        // 2. 產生列車到站訊息 (從現有的 currentLiveboardData 提取)
+        function getTrainArrivalMessages() {
+            if (!currentStationId || !currentLiveboardData || currentLiveboardData.length === 0) {
+                return [];
+            }
+
+            // 篩選出當前車站的列車
+            const stationTrains = allStationsMode ? 
+                currentLiveboardData : 
+                currentLiveboardData.filter(item => item.StationID === currentStationId);
+
+            let messages = [];
+            
+            stationTrains.forEach(item => {
+                const estimates = item.Estimates || item.estimates || [];
+                estimates.forEach(est => {
+                    const dest = est.DestinationStationName?.Zh_tw || est.DestinationStationName || '未知';
+                    const time = est.EstimateTime; // 秒數
+                    
+                    // 只顯示 3 分鐘內的列車
+                    if (time !== undefined && time <= 180) {
+                        let timeText = "";
+                        if (time <= 30) timeText = "進站中";
+                        else if (time <= 60) timeText = "即將進站";
+                        else timeText = `約 ${Math.ceil(time/60)} 分鐘`;
+                        
+                        // 加入訊息陣列 (加上 HTML span 讓顏色不同)
+                        messages.push(`<span class="train-alert">往 ${dest} 列車 ${timeText}</span>`);
+                    }
+                });
+            });
+
+            return messages;
+        }
+
+        // 3. 更新跑馬燈內容 (核心函數)
+        async function updateMarquee() {
+            const marqueeEl = document.getElementById('metroMarqueeText');
+            if (!marqueeEl) return;
+
+            // 1. 獲取公告
+            const alerts = await loadMetroAlerts();
+            
+            // 2. 獲取列車資訊 (如果有選車站)
+            const trains = getTrainArrivalMessages();
+            
+            // 3. 合併訊息 (列車資訊優先)
+            let finalContent = "";
+            
+            if (trains.length > 0) {
+                finalContent += trains.join(" &nbsp;&nbsp;&nbsp; ") + " &nbsp;&nbsp;&nbsp; | &nbsp;&nbsp;&nbsp; ";
+            }
+            
+            finalContent += alerts.join(" &nbsp;&nbsp;&nbsp; ");
+            
+            // 4. 更新 DOM
+            marqueeEl.innerHTML = finalContent;
+            
+            // 根據內容長度動態調整速度
+            const duration = Math.max(15, finalContent.length * 0.5); // 字越多越慢
+            marqueeEl.style.animationDuration = `${duration}s`;
+        }
+
+        // 4. 定期更新 (每 30 秒更新一次內容)
+        setInterval(updateMarquee, 30000);
+
         window.onload = function() {
             // ★ 自動預設載入台北捷運 (TRTC)
             selectSystem('TRTC');
             loadMetroNews();
+            
+            // ✨ 初始化跑馬燈
+            updateMarquee();
         };
     </script>
 
