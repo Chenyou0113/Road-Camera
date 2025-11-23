@@ -1446,47 +1446,46 @@
             // 排序
             trainRows.sort((a, b) => a.estimateTime - b.estimateTime);
 
-            // 生成 HTML (非同步，需要檢查末班車時刻)
+            // 生成 HTML (只顯示剩餘分鐘版)
             (async () => {
                 const rows = await Promise.all(trainRows.map(async (train) => {
                     const lineColor = lineColors[train.lineID] || '#666';
                     let timeDisplay;
-                    
-                    // ✅ 確認：EstimateTime 單位為分鐘，無需轉換
                     const minutes = train.estimateTime;
                     
-                    if (minutes <= 1) {
-                        // 0 或 1 分鐘，顯示為進站中 + 剩餘分鐘數 (含閃爍效果)
-                        timeDisplay = `<span style="color: #d32f2f; font-weight: bold; animation: blink 1s infinite alternate;">進站中 ${minutes}分</span>`;
+                    // ★ 核心修改：只顯示分鐘數
+                    if (minutes === undefined || minutes === null) {
+                        timeDisplay = `<span style="color: #999; font-size: 1.1rem;">-</span>`;
+                    } else if (minutes <= 1) {
+                        // 0 或 1 分鐘 -> 進站中 (紅色閃爍)
+                        timeDisplay = `<span style="color: #d32f2f; font-weight: bold; font-size: 1rem; animation: blink 1s infinite alternate;">● 進站中</span>`;
                     } else {
-                        // 大於 1 分鐘，顯示分鐘數
-                        timeDisplay = `<strong>${minutes}</strong> 分`;
-                    }
-                    
-                    // ★ 新增：檢查是否已過營運時間
-                    let statusClass, statusText;
-                    if (train.isPassedLastTrain) {
-                        statusClass = 'closed';
-                        statusText = '已過營運時間';
-                    } else if (train.estimateTime <= 60) {
-                        statusClass = 'arriving';
-                        statusText = '即將到站';
-                    } else {
-                        statusClass = 'waiting';
-                        statusText = '行駛中';
+                        // 大於 1 分鐘 -> 數字 + 分
+                        timeDisplay = `<span style="font-size: 1.2rem; font-weight: bold; color: var(--text-primary, #333);">${minutes}</span> <span style="font-size: 0.9rem; color: #666;">分</span>`;
                     }
 
-                    // ★ 檢查是否已超過末班車時間
-                    let timeInfo = timeDisplay;
-                    try {
-                        const isPassedLastTrain = await checkIfPassedLastTrain(train.lineID, currentSystem);
-                        if (isPassedLastTrain) {
-                            timeInfo = `<span style="color: #999; font-style: italic;">末班車已離開<br/>已過營運時間</span>`;
-                            train.isPassedLastTrain = true; // ★ 更新狀態欄位
-                        }
-                    } catch (error) {
-                        // 如果檢查失敗，保持原時間顯示
+                    // 檢查末班車 (如果已過營運時間，覆蓋上面的顯示)
+                    let statusClass = 'waiting';
+                    let statusText = '行駛中';
+                    
+                    if (train.isPassedLastTrain) {
+                        statusClass = 'closed';
+                        statusText = '已收班';
+                        timeDisplay = `<span style="color: #999; font-size: 0.9rem;">已過末班</span>`;
+                    } else if (minutes <= 1) {
+                        statusClass = 'arriving';
+                        statusText = '即將到站';
                     }
+
+                    // 非同步檢查末班車 (避免阻塞渲染)
+                    try {
+                        const isPassed = await checkIfPassedLastTrain(train.lineID, currentSystem);
+                        if (isPassed) {
+                            timeDisplay = `<span style="color: #999; font-size: 0.9rem;">已過末班</span>`;
+                            statusClass = 'closed';
+                            statusText = '已收班';
+                        }
+                    } catch (e) {}
 
                     return `
                         <tr>
@@ -1494,7 +1493,7 @@
                             <td><span class="line-badge" style="background: ${lineColor};">${train.lineName}</span></td>
                             <td><span class="direction-badge"><i class="fas fa-arrow-right"></i> ${train.tripHeadSign}</span></td>
                             <td>${train.destinationName}</td>
-                            <td>${timeInfo}</td>
+                            <td>${timeDisplay}</td>
                             <td><span class="status-badge ${statusClass}">${statusText}</span></td>
                             <td>-</td>
                         </tr>
@@ -1505,7 +1504,6 @@
                 updateUpdateTime();
                 updateTrainStats(trainRows);
                 
-                // 🔄 顯示轉乘資訊 (如果該車站有轉乘資訊)
                 if (!allStationsMode && currentStationId) {
                     displayTransferInfo(currentStationId, currentSystem);
                 }
