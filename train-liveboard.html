@@ -781,17 +781,20 @@
 
         // ============ ✨ 新增：載入台鐵營運通阻 ============
         // ✨ 更新：載入台鐵營運通阻 (適配 V3 Alert API)
+        // ✨ 修正版：載入台鐵營運通阻 (移除 CONFIG 依賴，增強容錯)
         async function loadTraAlerts() {
             try {
-                // V3 Alert API 查詢參數 (只抓最近 5 筆，按發布時間排序)
+                // 直接定義 API 路徑
                 const endpoint = '/v3/Rail/TRA/Alert?$format=JSON&$top=5&$orderby=PublishTime%20desc';
-                const response = await tdxApi.fetch(endpoint); 
+                
+                // 使用 tdxApi.fetch (它會自動處理 Token 和 Base URL)
+                const response = await tdxApi.fetch(endpoint);
 
                 const panel = document.getElementById('traAlertPanel');
                 const content = document.getElementById('traAlertContent');
                 const marqueeEl = document.getElementById('marqueeText');
 
-                // 解析資料結構 (V3 回傳的是 { Alerts: [...] })
+                // 解析資料結構 (V3 API 回傳的是 { Alerts: [...] })
                 let alertList = [];
                 if (response && response.Alerts && Array.isArray(response.Alerts)) {
                     alertList = response.Alerts;
@@ -799,25 +802,26 @@
                     alertList = response;
                 }
 
-                // 如果沒有公告，隱藏面板並結束
+                // 如果沒有公告
                 if (alertList.length === 0) {
                     if (panel) panel.style.display = 'none';
-                    // 跑馬燈預設文字不變
+                    console.log('ℹ️ 台鐵目前無重大營運通阻');
                     return;
                 }
 
-                // --- 1. 更新跑馬燈內容 ---
+                // === 1. 更新跑馬燈內容 ===
                 if (marqueeEl) {
                     marqueeEl.innerHTML = ''; // 清空預設
                     
                     alertList.forEach(alert => {
                         const span = document.createElement('span');
-                        // 格式：【營運通阻】標題：內容 (受影響區間)
+                        // 移除換行符號，避免跑馬燈斷行
+                        const cleanDesc = (alert.Description || '').replace(/[\r\n]+/g, ' ');
                         const scopeText = alert.Scope?.LineSections?.[0]?.Description 
                                         ? ` (${alert.Scope.LineSections[0].Description})` 
                                         : '';
                         
-                        span.innerText = `【${alert.Title}】${alert.Description.replace(/\n/g, '')}${scopeText}`;
+                        span.innerText = `【${alert.Title}】${cleanDesc}${scopeText}`;
                         marqueeEl.appendChild(span);
                     });
                     
@@ -827,11 +831,11 @@
                     marqueeEl.appendChild(footerSpan);
                 }
 
-                // --- 2. 更新公告面板內容 (如果有這個元素) ---
+                // === 2. 更新公告面板內容 (如果有) ===
                 if (panel && content) {
                     let html = '';
                     alertList.forEach(alert => {
-                        // 狀態判斷 (Status: 0正常, 2異常)
+                        // 狀態判斷 (Status: 0正常, 1一般, 2異常/嚴重)
                         let icon = 'ℹ️';
                         let titleColor = '#e65100';
                         if (alert.Status === 2 || alert.Level > 1) {
@@ -858,7 +862,7 @@
                                     <span>${alert.Title}</span>
                                 </div>
                                 <div class="news-desc">
-                                    ${alert.Description.replace(/\n/g, '<br>')}
+                                    ${(alert.Description || '').replace(/\n/g, '<br>')}
                                     ${scopeInfo}
                                 </div>
                                 <div class="news-time">
@@ -877,6 +881,7 @@
 
             } catch (error) {
                 console.warn('⚠️ 無法載入台鐵通阻公告:', error);
+                // 失敗時保持隱藏，不影響主功能
             }
         }
 
