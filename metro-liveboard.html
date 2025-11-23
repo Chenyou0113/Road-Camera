@@ -1204,18 +1204,39 @@
                     const sName = station.LineName?.Zh_tw;
                     return sName === selectedLine;
                 })
-                .map(station => ({
-                    id: station.StationID || station.ID,
-                    name: station.StationName?.Zh_tw || station.StationName || '未知車站',
-                    // 排序權重：取出數字部分
-                    sequence: extractStationNumber(station.StationID)
-                }));
+                .map(station => {
+                    // ✅ 確保使用原始的 StationID (保留英文前綴如 O9, R9)
+                    let stationId = station.StationID || station.ID || '';
+                    // 高雄捷運特殊處理：如果 ID 是純數字，嘗試補回路線前綴
+                    if (currentSystem === 'KRTC' && /^\d+$/.test(stationId)) {
+                        // 根據 LineID 補回前綴
+                        const lineId = station.LineID || '';
+                        if (lineId === 'O' || selectedLine.includes('橘')) {
+                            stationId = 'O' + stationId;
+                        } else if (lineId === 'R' || selectedLine.includes('紅')) {
+                            stationId = 'R' + stationId;
+                        }
+                        console.log(`🔧 KRTC ID 修正: ${station.StationID} → ${stationId}`);
+                    }
+                    
+                    return {
+                        id: stationId,
+                        name: station.StationName?.Zh_tw || station.StationName || '未知車站',
+                        // 排序權重：取出數字部分
+                        sequence: extractStationNumber(station.StationID)
+                    };
+                });
             
             // 排序 (按數字大小)
             lineStations.sort((a, b) => a.sequence - b.sequence);
             
             // 去重 (避免同一站出現兩次)
             const uniqueStations = Array.from(new Map(lineStations.map(s => [s.id, s])).values());
+            
+            // 🔍 偵錯：印出高雄捷運的 ID 確保修正成功
+            if (currentSystem === 'KRTC' && uniqueStations.length > 0) {
+                console.log(`✅ KRTC ${selectedLine} 車站 ID:`, uniqueStations.slice(0, 3).map(s => `${s.name}=${s.id}`));
+            }
             
             console.log(`🚉 找到 ${uniqueStations.length} 個車站`);
 
@@ -1512,7 +1533,7 @@
         }
 
         /**
-         * 獲取車站轉乘資訊
+         * 獲取車站轉乘資訊 (修正版)
          * 使用 TDX API: /v2/Rail/Metro/StationTransfer/{OperatorID}/{StationID}
          */
         async function getTransferInfo(stationID, systemCode) {
@@ -1541,20 +1562,43 @@
                 
                 return data;
             } catch (error) {
-                console.warn(`⚠️ 無法獲取轉乘資訊 ${cacheKey}:`, error.message);
+                // ✅ 改善錯誤處理：404 代表無轉乘資訊，不用警告
+                if (error.message && error.message.includes('404')) {
+                    console.log(`ℹ️ 該車站無轉乘資訊或不支援查詢 (${cacheKey})`);
+                    // 快取空結果，避免重複請求
+                    stationTransferCache[cacheKey] = {
+                        data: [],
+                        timestamp: Date.now()
+                    };
+                } else {
+                    console.warn(`⚠️ 無法獲取轉乘資訊 ${cacheKey}:`, error.message);
+                }
                 return [];
             }
         }
 
         /**
-         * 顯示轉乘資訊
+         * 顯示轉乘資訊 (修正版)
          */
         async function displayTransferInfo(stationID, systemCode) {
             try {
-                const transferData = await getTransferInfo(stationID, systemCode);
+                // ✅ 高雄捷運 ID 修正：如果是純數字，嘗試補回前綴
+                let queryStationID = stationID;
+                if (systemCode === 'KRTC' && /^\d+$/.test(stationID)) {
+                    // 從現在選中的車站名稱推斷路線
+                    const selectedLine = document.getElementById('lineSelect').value;
+                    if (selectedLine.includes('橘')) {
+                        queryStationID = 'O' + stationID;
+                    } else if (selectedLine.includes('紅')) {
+                        queryStationID = 'R' + stationID;
+                    }
+                    console.log(`🔧 轉乘查詢 ID 修正: ${stationID} → ${queryStationID}`);
+                }
+                
+                const transferData = await getTransferInfo(queryStationID, systemCode);
                 
                 if (!transferData || transferData.length === 0) {
-                    console.log(`ℹ️ ${stationID} 無轉乘資訊`);
+                    console.log(`ℹ️ ${queryStationID} 無轉乘資訊`);
                     return; // 沒有轉乘資訊，不顯示
                 }
                 
@@ -1620,7 +1664,15 @@
                 }
                 
             } catch (error) {
-                console.error('❌ 顯示轉乘資訊時出錯:', error);
+                // ✅ 改善錯誤處理：忽略 404 錯誤，優雅地隱藏轉乘區域
+                if (error.message && error.message.includes('404')) {
+                    console.log(`ℹ️ 該車站無轉乘資訊`);
+                } else {
+                    console.warn('⚠️ 顯示轉乘資訊時發生錯誤:', error.message);
+                }
+                // 隱藏轉乘區塊
+                const transferArea = document.getElementById('transferInfoArea');
+                if (transferArea) transferArea.style.display = 'none';
             }
         }
 
