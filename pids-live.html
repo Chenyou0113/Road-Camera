@@ -12,84 +12,19 @@
             background-color: #111;
             color: white;
             font-family: "Microsoft JhengHei", "Heiti TC", sans-serif;
-            height: 100vh;
+            min-height: 100vh;
+            height: auto;
             overflow: hidden;
             display: flex;
             justify-content: center;
             align-items: center;
             gap: 20px;
-                async function fetchScheduleWithFallback(trainNo) {
-                    try {
-                        const myApiUrl = `https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev/api/schedule?trainNo=${trainNo}`;
-                        const response = await fetch(myApiUrl);
-                        if (response.ok) {
-                            const data = await response.json();
-                            if (data && data.length > 0 && data[0].StopTimes) return data[0].StopTimes;
-                        }
-                    } catch (e) {
-                        console.warn(`D1 查詢失敗`, e);
-                    }
-
-                    try {
-                        const v2Data = await tdxApi.fetch(`/v2/Rail/TRA/DailyTrainInfo/TrainNo/${trainNo}?$format=JSON`);
-                        if (v2Data && v2Data.length > 0) return v2Data[0].StopTimes;
-                    } catch (e) {}
-
-                    return [];
-                }
-
-                async function updateLiveMarquee(elementId, train) {
-                    const el = document.getElementById(elementId);
-                    const trainNo = train.TrainNo;
-                    const currentStationID = train.StationID;
-                    el.textContent = `載入 ${trainNo} 次列車資訊中...`;
-
-                    try {
-                        const [liveDataArray, stopTimes] = await Promise.all([
-                            tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`).catch(() => null),
-                            fetchScheduleWithFallback(trainNo)
-                        ]);
-
-                        let locationText = "(訊號微弱，依時刻表行駛)";
-                        const liveData = (liveDataArray && liveDataArray.length > 0) ? liveDataArray[0] : null;
-
-                        if (liveData && liveData.StationName) {
-                            const status = liveData.TrainStationStatus === 0 ? "進站中" : "已離開";
-                            locationText = `${status} ${liveData.StationName.Zh_tw}`;
-                        }
-
-                        let nextStopsText = "";
-                        if (stopTimes && stopTimes.length > 0) {
-                            const currentIndex = stopTimes.findIndex(s => s.StationID === currentStationID);
-                            if (currentIndex !== -1 && currentIndex < stopTimes.length - 1) {
-                                const nextStops = stopTimes.slice(currentIndex + 1);
-                                const displayStops = nextStops.slice(0, 10).map(s => s.StationName.Zh_tw).join('▶');
-                                nextStopsText = ` | 後續停靠：${displayStops}`;
-                                if (nextStops.length > 10) nextStopsText += "...";
-                            } else {
-                                nextStopsText = " | 本列車即將抵達終點";
-                            }
-                        }
-
-                        const delay = train.Delay == 0 ? "準點" : `晚 ${train.Delay} 分`;
-                        const typeName = train.TrainTypeName?.Zh_tw || '列車';
-                        const destination = train.EndingStationName?.Zh_tw || train.EndingStationName || '';
-                        const departureTime = train.ScheduledDepartureTime?
-                            train.ScheduledDepartureTime.slice(0,5) : formatTime(train.DepartureTime);
-
-                        const text = `本班列車：${trainNo} 次 ${typeName} 往 ${destination} (${delay}) | 目前位置：${locationText} | 本站預計 ${departureTime} 開車${nextStopsText}`;
-                        el.textContent = text;
-
-                        const duration = Math.max(10, text.length * 0.25);
-                        el.style.animationDuration = `${duration}s`;
-                    } catch (e) {
-                        console.warn("Marquee Error", e);
-                        el.textContent = `${trainNo} 次 往 ${train.EndingStationName} (資料讀取中...)`;
-                    }
-                }
+            padding-bottom: 20px;
+        }
         .pids-screen {
             flex: 1;
-            height: 100%;
+            min-height: 600px;
+            height: auto;
             background-color: #000;
             display: flex;
             flex-direction: column;
@@ -250,28 +185,33 @@
         }
 
         /* === 4. 底部動態跑馬燈 === */
+        /* === 4. 底部動態跑馬燈 (修復版) === */
         .marquee-footer {
             background-color: #212121;
             color: #ffeb3b;
-            height: 60px;
+            height: 70px;
             display: flex;
             align-items: center;
             padding: 0 15px;
-            font-size: 1.5rem;
+            font-size: 1.8rem;
             font-weight: bold;
             border-top: 4px solid #ff9800;
-            white-space: nowrap;
             overflow: hidden;
+            position: relative;
+            width: 100%;
         }
 
         .marquee-text {
             display: inline-block;
-            padding-left: 100%;
             white-space: nowrap;
+            position: absolute;
+            left: 0;
+            will-change: transform;
             animation-name: scroll-left;
+            animation-duration: 15s;
             animation-timing-function: linear;
             animation-iteration-count: infinite;
-            animation-duration: 15s;
+            padding-left: 100%;
         }
 
         @keyframes scroll-left { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
@@ -571,10 +511,12 @@
         }
 
         async function updateLiveMarquee(elementId, train) {
-            const el = document.getElementById(elementId);
+            const oldEl = document.getElementById(elementId);
+            if (!oldEl) return;
+            const container = oldEl.parentElement;
             const trainNo = train.TrainNo;
             const currentStationID = train.StationID;
-            el.textContent = `載入 ${trainNo} 次列車資訊中...`;
+            let text = `${trainNo} 次 (載入中...)`;
 
             try {
                 const [liveDataArray, stopTimes] = await Promise.all([
@@ -582,9 +524,8 @@
                     fetchScheduleWithFallback(trainNo)
                 ]);
 
-                let locationText = "(訊號微弱，依時刻表行駛)";
+                let locationText = "(訊號微弱)";
                 const liveData = (liveDataArray && liveDataArray.length > 0) ? liveDataArray[0] : null;
-
                 if (liveData && liveData.StationName) {
                     const status = liveData.TrainStationStatus === 0 ? "進站中" : "已離開";
                     locationText = `${status} ${liveData.StationName.Zh_tw}`;
@@ -594,30 +535,33 @@
                 if (stopTimes && stopTimes.length > 0) {
                     const currentIndex = stopTimes.findIndex(s => s.StationID === currentStationID);
                     if (currentIndex !== -1 && currentIndex < stopTimes.length - 1) {
-                        const nextStops = stopTimes.slice(currentIndex + 1);
-                        const displayStops = nextStops.slice(0, 10).map(s => s.StationName.Zh_tw).join('▶');
+                        const upcoming = stopTimes.slice(currentIndex + 1, currentIndex + 10);
+                        const displayStops = upcoming.map(s => s.StationName.Zh_tw).join('▶');
                         nextStopsText = ` | 後續停靠：${displayStops}`;
-                        if (nextStops.length > 10) nextStopsText += "...";
+                        if (stopTimes.length - currentIndex > 10) nextStopsText += "...";
                     } else {
                         nextStopsText = " | 本列車即將抵達終點";
                     }
                 }
 
-                const delay = train.Delay == 0 ? "準點" : `晚 ${train.Delay} 分`;
-                const typeName = train.TrainTypeName?.Zh_tw || '列車';
+                const delayValue = train.DelayTime ?? train.Delay ?? 0;
+                const delay = delayValue === 0 ? "準點" : `晚 ${delayValue} 分`;
+                const typeName = getTrainTypeName(train);
                 const destination = train.EndingStationName?.Zh_tw || train.EndingStationName || '';
-                const departureTime = train.ScheduledDepartureTime?
-                    train.ScheduledDepartureTime.slice(0,5) : formatTime(train.DepartureTime);
-
-                const text = `本班列車：${trainNo} 次 ${typeName} 往 ${destination} (${delay}) | 目前位置：${locationText} | 本站預計 ${departureTime} 開車${nextStopsText}`;
-                el.textContent = text;
-                el.style.animation = 'none';
-                el.offsetHeight;
-                const duration = Math.max(15, text.length * 0.2);
-                el.style.animation = `scroll-left ${duration}s linear infinite`;
+                const departureTime = formatTime(train.ScheduledDepartureTime || train.DepartureTime);
+                text = `本班列車：${trainNo} 次 ${typeName} 往 ${destination} (${delay}) | 目前位置：${locationText} | 本站預計 ${departureTime} 開車${nextStopsText}`;
             } catch (e) {
                 console.warn("Marquee Error", e);
-                el.textContent = `${trainNo} 次 往 ${train.EndingStationName} (資料讀取中...)`;
+                const destination = train.EndingStationName?.Zh_tw || train.EndingStationName || '';
+                text = `${trainNo} 次 往 ${destination} (連線中...)`;
+            }
+
+            const newEl = oldEl.cloneNode(true);
+            newEl.textContent = text;
+            const duration = Math.max(10, text.length * 0.15);
+            newEl.style.animation = `scroll-left ${duration}s linear infinite`;
+            if (container) {
+                container.replaceChild(newEl, oldEl);
             }
         }
     </script>
