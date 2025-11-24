@@ -889,6 +889,7 @@
         let currentStationID = '';
         let currentStationName = '';
         let allStationsFlat = []; // 扁平化的所有車站列表
+        const trainDataCache = {}; // 🚀 預先載入快取：存放已下載的 Promise
 
         // ============ ✨ 新增：列車車種詳細對照表 (來源：完整資料) ============
         const TRAIN_TYPE_DB = [
@@ -1263,6 +1264,7 @@
                         <div class="train-card" 
                              style="cursor: pointer;" 
                              onclick="showTrainStops('${train.TrainNo}', '${currentStationID}', '${endStation}')"
+                             onmouseenter="prefetchTrainData('${train.TrainNo}')"
                              title="點擊查看沿途停靠站">
                             <div class="train-info">
                                 <span class="train-type-badge type-${trainInfo.class}">${trainInfo.name}</span>
@@ -1397,8 +1399,21 @@
 
         // ============ ✨ 新增：跑馬燈功能邏輯 ============
 
+        // 🚀 預先載入列車資料 (滑鼠移入時偷跑)
+        function prefetchTrainData(trainNo) {
+            if (trainDataCache[trainNo]) return; // 已經有了就不再抓
+
+            console.log(`🚀 預載 ${trainNo} 次資料...`);
+            
+            // 發送請求但不等待結果 (Fire-and-Forget)
+            const p1 = fetchScheduleWithFallback(trainNo);
+            const p2 = tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`).catch(() => null);
+
+            // 將 Promise 存入快取
+            trainDataCache[trainNo] = Promise.all([p1, p2]);
+        }
+
         // 顯示列車停靠站跑馬燈
-        // ============ 輔助函式：取得時刻表 (D1 優先版) ============
         // ============ 輔助函式：取得時刻表 (優先查 D1) ============
         async function fetchScheduleWithFallback(trainNo) {
             // 1. 優先嘗試：您自己的 Cloudflare D1 Worker
@@ -1445,27 +1460,41 @@
             return `${newHours}:${newMinutes}`;
         }
 
-        // ============ 核心函式：顯示跑馬燈 (整合 V2/V3 雙時刻表來源) ============
+        // ============ 核心函式：顯示跑馬燈 (含智慧狀態判斷 + 快取優化) ============
         async function showTrainStops(trainNo, currentStationID, destName) {
             const bar = document.getElementById('trainMarqueeBar');
             const content = document.getElementById('mqContent');
             const mqTrainNo = document.getElementById('mqTrainNo');
             const mqDest = document.getElementById('mqDest');
 
-            // 1. 初始化介面
+            // 1. 介面秒開
             bar.style.display = 'flex';
             mqTrainNo.textContent = `${trainNo} 次`;
             mqDest.textContent = `往 ${destName}`;
             
-            content.innerHTML = '<span style="color:#aaa; font-size:1rem;"><i class="fas fa-satellite-dish fa-pulse"></i> 正在搜尋列車訊號...</span>';
+            // 如果有快取，就不顯示 Loading，直接顯示內容 (提升感知速度)
+            if (!trainDataCache[trainNo]) {
+                content.innerHTML = '<span style="color:#aaa; font-size:1rem;"><i class="fas fa-satellite-dish fa-pulse"></i> 載入中...</span>';
+            }
+            
             content.style.animation = 'none'; 
             
             try {
-                // 2. 平行請求：(時刻表備援機制) + (V3即時位置)
-                const [stopTimes, liveData] = await Promise.all([
-                    fetchScheduleWithFallback(trainNo),
-                    tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`).catch(() => null)
-                ]);
+                let stopTimes, liveData;
+
+                // 🔥 檢查快取：如果有預載的 Promise，直接用；沒有就現場抓
+                if (trainDataCache[trainNo]) {
+                    console.log(`⚡ 使用預載資料 (${trainNo})`);
+                    [stopTimes, liveData] = await trainDataCache[trainNo];
+                } else {
+                    // 沒預載到，只好現場抓
+                    [stopTimes, liveData] = await Promise.all([
+                        fetchScheduleWithFallback(trainNo),
+                        tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`).catch(() => null)
+                    ]);
+                    // 順便存起來下次用
+                    trainDataCache[trainNo] = Promise.resolve([stopTimes, liveData]);
+                }
 
                 // 3. 準備變數
                 let marqueeHTML = '';
@@ -1510,7 +1539,35 @@
                         `;
                     }
                 } else {
-                    marqueeHTML += `<span style="color:#999;">(無即時訊號)</span>`;
+                    // --- ❌ 沒抓到即時訊號，開始智慧判斷 ---
+                    let statusMsg = "(暫無即時訊號)"; // 預設
+                    let statusColor = "#999";
+
+                    if (stopTimes.length > 0) {
+                        const now = new Date();
+                        const currentTimeStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
+                        
+                        const firstStation = stopTimes[0];
+                        const lastStation = stopTimes[stopTimes.length - 1];
+                        
+                        // 判斷 1: 是否尚未發車
+                        if (currentTimeStr < firstStation.DepartureTime) {
+                            statusMsg = `尚未發車 (表定 ${firstStation.DepartureTime} 從${firstStation.StationName.Zh_tw}發車)`;
+                            statusColor = "#4fc3f7"; // 藍色提示
+                        } 
+                        // 判斷 2: 是否已抵達終點
+                        else if (currentTimeStr > lastStation.ArrivalTime) {
+                            statusMsg = "已抵達終點";
+                            statusColor = "#00e676"; // 綠色
+                        }
+                        // 判斷 3: 運行時間內但沒訊號
+                        else {
+                            statusMsg = "(訊號微弱，依時刻表行駛)";
+                            statusColor = "#ff9800"; // 橘色警告
+                        }
+                    }
+                    
+                    marqueeHTML += `<span style="color:${statusColor}; font-weight:bold;">${statusMsg}</span>`;
                 }
                 
                 marqueeHTML += `<span style="margin: 0 25px; border-left: 2px solid #555;"></span>`;
