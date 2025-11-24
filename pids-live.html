@@ -18,9 +18,75 @@
             justify-content: center;
             align-items: center;
             gap: 20px;
-            padding: 20px;
-        }
+                async function fetchScheduleWithFallback(trainNo) {
+                    try {
+                        const myApiUrl = `https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev/api/schedule?trainNo=${trainNo}`;
+                        const response = await fetch(myApiUrl);
+                        if (response.ok) {
+                            const data = await response.json();
+                            if (data && data.length > 0 && data[0].StopTimes) return data[0].StopTimes;
+                        }
+                    } catch (e) {
+                        console.warn(`D1 查詢失敗`, e);
+                    }
 
+                    try {
+                        const v2Data = await tdxApi.fetch(`/v2/Rail/TRA/DailyTrainInfo/TrainNo/${trainNo}?$format=JSON`);
+                        if (v2Data && v2Data.length > 0) return v2Data[0].StopTimes;
+                    } catch (e) {}
+
+                    return [];
+                }
+
+                async function updateLiveMarquee(elementId, train) {
+                    const el = document.getElementById(elementId);
+                    const trainNo = train.TrainNo;
+                    const currentStationID = train.StationID;
+                    el.textContent = `載入 ${trainNo} 次列車資訊中...`;
+
+                    try {
+                        const [liveDataArray, stopTimes] = await Promise.all([
+                            tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`).catch(() => null),
+                            fetchScheduleWithFallback(trainNo)
+                        ]);
+
+                        let locationText = "(訊號微弱，依時刻表行駛)";
+                        const liveData = (liveDataArray && liveDataArray.length > 0) ? liveDataArray[0] : null;
+
+                        if (liveData && liveData.StationName) {
+                            const status = liveData.TrainStationStatus === 0 ? "進站中" : "已離開";
+                            locationText = `${status} ${liveData.StationName.Zh_tw}`;
+                        }
+
+                        let nextStopsText = "";
+                        if (stopTimes && stopTimes.length > 0) {
+                            const currentIndex = stopTimes.findIndex(s => s.StationID === currentStationID);
+                            if (currentIndex !== -1 && currentIndex < stopTimes.length - 1) {
+                                const nextStops = stopTimes.slice(currentIndex + 1);
+                                const displayStops = nextStops.slice(0, 10).map(s => s.StationName.Zh_tw).join('▶');
+                                nextStopsText = ` | 後續停靠：${displayStops}`;
+                                if (nextStops.length > 10) nextStopsText += "...";
+                            } else {
+                                nextStopsText = " | 本列車即將抵達終點";
+                            }
+                        }
+
+                        const delay = train.Delay == 0 ? "準點" : `晚 ${train.Delay} 分`;
+                        const typeName = train.TrainTypeName?.Zh_tw || '列車';
+                        const destination = train.EndingStationName?.Zh_tw || train.EndingStationName || '';
+                        const departureTime = train.ScheduledDepartureTime?
+                            train.ScheduledDepartureTime.slice(0,5) : formatTime(train.DepartureTime);
+
+                        const text = `本班列車：${trainNo} 次 ${typeName} 往 ${destination} (${delay}) | 目前位置：${locationText} | 本站預計 ${departureTime} 開車${nextStopsText}`;
+                        el.textContent = text;
+
+                        const duration = Math.max(10, text.length * 0.25);
+                        el.style.animationDuration = `${duration}s`;
+                    } catch (e) {
+                        console.warn("Marquee Error", e);
+                        el.textContent = `${trainNo} 次 往 ${train.EndingStationName} (資料讀取中...)`;
+                    }
+                }
         .pids-screen {
             flex: 1;
             height: 100%;
@@ -51,6 +117,13 @@
             gap: 15px;
         }
 
+        .station-title-block {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            margin-left: 15px;
+        }
+
         /* 圓形圖片 Logo 樣式 */
         .tra-logo-img {
             height: 55px;
@@ -61,12 +134,22 @@
         }
 
         .station-name {
-            font-size: 2.5rem; /* 放大字體 */
+            font-size: 2rem;
             font-weight: 900;
             letter-spacing: 2px;
             color: #fff;
             text-shadow: 0 0 5px rgba(255,255,255,0.5);
+            line-height: 1;
         }
+
+        .station-subtitle {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+
+        .station-subtitle.north { color: #4fc3f7; }
+        .station-subtitle.south { color: #ffcc80; }
 
         .datetime-info {
             text-align: right;
@@ -170,7 +253,7 @@
 
         .marquee-text {
             display: inline-block;
-            animation: scroll-left 25s linear infinite;
+            animation: scroll-left 15s linear infinite;
             padding-left: 100%;
         }
         @keyframes scroll-left { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
@@ -194,7 +277,10 @@
         <div class="pids-top-bar">
             <div class="station-info">
                 <img src="https://www.railway.gov.tw/tra-tip-web/static/images/TRA_logo.jpg" class="tra-logo-img" alt="台鐵">
-                <div class="station-name" id="stationNameN">臺鐵車站</div>
+                <div class="station-title-block">
+                    <div class="station-name" id="stationNameN">臺鐵車站</div>
+                    <div class="station-subtitle north">北上 時刻表</div>
+                </div>
             </div>
             <div class="datetime-info">
                 <div class="date-text" id="dateN">--/--</div>
@@ -241,7 +327,10 @@
         <div class="pids-top-bar">
             <div class="station-info">
                 <img src="https://www.railway.gov.tw/tra-tip-web/static/images/TRA_logo.jpg" class="tra-logo-img" alt="台鐵">
-                <div class="station-name" id="stationNameS">臺鐵車站</div>
+                <div class="station-title-block">
+                    <div class="station-name" id="stationNameS">臺鐵車站</div>
+                    <div class="station-subtitle south">南下 時刻表</div>
+                </div>
             </div>
             <div class="datetime-info">
                 <div class="date-text" id="dateS">--/--</div>
@@ -304,12 +393,21 @@
         updateClock();
 
         // 2. 工具函式
-        function getTrainTypeName(trainType) {
+        function getTrainTypeName(train) {
+            if (train.TrainTypeName && train.TrainTypeName.Zh_tw) {
+                return train.TrainTypeName.Zh_tw.replace(/\(.*\)/, '');
+            }
+
+            const trainType = train.TrainTypeID || train.TrainType;
             const typeMap = {
-                '1100': '普悠瑪', '1200': '太魯閣', '2100': '自強', 
-                '2200': '莒光', '2300': '復興', '3100': '區間'
+                '1100': '自強', '1101': '太魯閣', '1102': '太魯閣',
+                '1107': '普悠瑪', '1108': '自強', '1109': '自強', '110A': '自強',
+                '110B': '自強(3000)', '110C': '自強(3000)',
+                '1110': '莒光', '1111': '莒光', '1114': '莒光', '1115': '莒光',
+                '1120': '復興', '1131': '區間', '1132': '區間快', '1140': '普快'
             };
-            return typeMap[trainType] || '未知';
+
+            return typeMap[trainType] || '一般';
         }
 
         function formatTime(timeStr) {
@@ -329,8 +427,8 @@
             const stationName = params.get('name') || '臺鐵車站';
 
             // 設定站名
-            document.getElementById('stationNameN').textContent = stationName + " 時刻表";
-            document.getElementById('stationNameS').textContent = stationName + " 時刻表";
+            document.getElementById('stationNameN').textContent = stationName;
+            document.getElementById('stationNameS').textContent = stationName;
 
             if (stationID) {
                 updatePidsData(stationID);
@@ -358,10 +456,14 @@
                     TrainNo: t.TrainNo,
                     TrainType: t.TrainTypeID,
                     TrainTypeName: t.TrainTypeName,
-                    EndingStationName: t.EndingStationName?.Zh_tw || t.EndingStationName,
+                    EndingStationName: t.EndingStationName,
+                    EndingStationDisplay: t.EndingStationName?.Zh_tw || t.EndingStationName,
                     DepartureTime: t.ScheduledDepartureTime,
+                    ScheduledDepartureTime: t.ScheduledDepartureTime,
                     Delay: t.DelayTime || 0,
-                    Direction: t.Direction
+                    DelayTime: t.DelayTime || 0,
+                    Direction: t.Direction,
+                    StationID: t.StationID
                 }));
 
                 const northTrains = standardizedData
@@ -404,14 +506,14 @@
                     statusClass = 'status-delay';
                 }
 
-                const typeName = getTrainTypeName(train.TrainType);
+                const typeName = getTrainTypeName(train);
                 const typeClass = (typeName.includes('自強') || typeName.includes('普悠瑪') || typeName.includes('太魯閣')) ? 'type-tze' : 'type-local';
 
                 const row = document.createElement('tr');
                 row.innerHTML = `
                     <td style="color:#fff;">${train.TrainNo}</td>
                     <td class="${typeClass}">${typeName}</td>
-                    <td style="color:#fff;">${train.EndingStationName}</td>
+                    <td style="color:#fff;">${train.EndingStationDisplay || ''}</td>
                     <td style="color:#ffb74d;">${formatTime(train.DepartureTime)}</td>
                     <td class="${statusClass}">${delayText}</td>
                 `;
@@ -425,39 +527,73 @@
             }
         }
 
-        // 6. 跑馬燈邏輯 - 即時位置顯示
+        async function fetchScheduleWithFallback(trainNo) {
+            try {
+                const myApiUrl = `https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev/api/schedule?trainNo=${trainNo}`;
+                const response = await fetch(myApiUrl);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data && data.length > 0 && data[0].StopTimes) return data[0].StopTimes;
+                }
+            } catch (e) {
+                console.warn(`D1 查詢失敗`, e);
+            }
+
+            try {
+                const v2Data = await tdxApi.fetch(`/v2/Rail/TRA/DailyTrainInfo/TrainNo/${trainNo}?$format=JSON`);
+                if (v2Data && v2Data.length > 0) return v2Data[0].StopTimes;
+            } catch (e) {}
+
+            return [];
+        }
+
         async function updateLiveMarquee(elementId, train) {
             const el = document.getElementById(elementId);
             const trainNo = train.TrainNo;
-            
+            const currentStationID = train.StationID;
+            el.textContent = `載入 ${trainNo} 次列車資訊中...`;
+
             try {
-                let locationText = "(定位中...)";
-                
-                if (typeof tdxApi !== 'undefined') {
-                    try {
-                        const liveData = await tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`);
-                        if (liveData && liveData.length > 0) {
-                            const live = liveData[0];
-                            const stationName = live.StationName?.Zh_tw || '未知';
-                            const status = live.TrainStationStatus === 0 ? '進站中' : '已離開';
-                            locationText = `${status} ${stationName}`;
-                        }
-                    } catch (e) {
-                        console.warn('V3 API 失敗', e);
+                const [liveDataArray, stopTimes] = await Promise.all([
+                    tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`).catch(() => null),
+                    fetchScheduleWithFallback(trainNo)
+                ]);
+
+                let locationText = "(訊號微弱，依時刻表行駛)";
+                const liveData = (liveDataArray && liveDataArray.length > 0) ? liveDataArray[0] : null;
+
+                if (liveData && liveData.StationName) {
+                    const status = liveData.TrainStationStatus === 0 ? "進站中" : "已離開";
+                    locationText = `${status} ${liveData.StationName.Zh_tw}`;
+                }
+
+                let nextStopsText = "";
+                if (stopTimes && stopTimes.length > 0) {
+                    const currentIndex = stopTimes.findIndex(s => s.StationID === currentStationID);
+                    if (currentIndex !== -1 && currentIndex < stopTimes.length - 1) {
+                        const nextStops = stopTimes.slice(currentIndex + 1);
+                        const displayStops = nextStops.slice(0, 10).map(s => s.StationName.Zh_tw).join('▶');
+                        nextStopsText = ` | 後續停靠：${displayStops}`;
+                        if (nextStops.length > 10) nextStopsText += "...";
+                    } else {
+                        nextStopsText = " | 本列車即將抵達終點";
                     }
                 }
 
-                const delay = train.Delay === 0 ? "準點" : `晚 ${train.Delay} 分`;
-                const text = `本班列車：${trainNo} 次 往 ${train.EndingStationName} (${delay}) | 目前位置：${locationText} | 本站預計 ${formatTime(train.DepartureTime)} 開車`;
-                
-                el.textContent = text;
-                const duration = Math.max(15, text.length * 0.6);
-                el.style.animationDuration = `${duration}s`;
+                const delay = train.Delay == 0 ? "準點" : `晚 ${train.Delay} 分`;
+                const typeName = train.TrainTypeName?.Zh_tw || '列車';
+                const destination = train.EndingStationName?.Zh_tw || train.EndingStationName || '';
+                const departureTime = train.ScheduledDepartureTime?
+                    train.ScheduledDepartureTime.slice(0,5) : formatTime(train.DepartureTime);
 
+                const text = `本班列車：${trainNo} 次 ${typeName} 往 ${destination} (${delay}) | 目前位置：${locationText} | 本站預計 ${departureTime} 開車${nextStopsText}`;
+                el.textContent = text;
+
+                const duration = Math.max(10, text.length * 0.25);
+                el.style.animationDuration = `${duration}s`;
             } catch (e) {
                 console.warn("Marquee Error", e);
-                const delay = train.Delay === 0 ? "準點" : `晚 ${train.Delay} 分`;
-                el.textContent = `${trainNo} 次 往 ${train.EndingStationName} (${delay}) | 連線中...`;
+                el.textContent = `${trainNo} 次 往 ${train.EndingStationName} (資料讀取中...)`;
             }
         }
     </script>
