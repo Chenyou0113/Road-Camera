@@ -5,8 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>台鐵 PIDS 全螢幕時刻表</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script src="assets/config.js"></script>
-    <script src="assets/tdx-api.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         
@@ -39,7 +37,7 @@
         .pids-top-bar {
             background-color: #000;
             color: #fff;
-            height: 70px;
+            height: 80px; /* 增高以容納圖片 Logo */
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -53,22 +51,17 @@
             gap: 15px;
         }
 
-        .tra-logo {
-            width: 45px;
-            height: 45px;
-            background: #0d47a1;
-            color: white;
+        /* 圓形圖片 Logo 樣式 */
+        .tra-logo-img {
+            height: 55px;
+            width: auto;
             border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.5rem;
             border: 2px solid #fff;
-            box-shadow: 0 0 10px rgba(13, 71, 161, 0.8);
+            box-shadow: 0 0 10px rgba(255,255,255,0.2);
         }
 
         .station-name {
-            font-size: 2.2rem;
+            font-size: 2.5rem; /* 放大字體 */
             font-weight: 900;
             letter-spacing: 2px;
             color: #fff;
@@ -77,11 +70,11 @@
 
         .datetime-info {
             text-align: right;
-            line-height: 1.1;
+            line-height: 1.2;
         }
 
-        .date-text { font-size: 1rem; color: #ccc; }
-        .time-text { font-size: 2rem; font-weight: bold; font-family: Consolas, monospace; color: #ffeb3b; }
+        .date-text { font-size: 1.1rem; color: #ccc; }
+        .time-text { font-size: 2.2rem; font-weight: bold; font-family: Consolas, monospace; color: #ffeb3b; }
 
         /* === 2. 公告跑馬燈 === */
         .marquee-header {
@@ -200,12 +193,12 @@
         <!-- 1. 頂部站名時間列 -->
         <div class="pids-top-bar">
             <div class="station-info">
-                <div class="tra-logo"><i class="fas fa-train"></i></div>
+                <img src="https://www.railway.gov.tw/tra-tip-web/static/images/TRA_logo.jpg" class="tra-logo-img" alt="台鐵">
                 <div class="station-name" id="stationNameN">臺鐵車站</div>
             </div>
             <div class="datetime-info">
-                <div class="date-text" id="dateN">2025/11/24</div>
-                <div class="time-text" id="timeN">12:08</div>
+                <div class="date-text" id="dateN">--/--</div>
+                <div class="time-text" id="timeN">--:--</div>
             </div>
         </div>
 
@@ -247,12 +240,12 @@
         <!-- 1. 頂部站名時間列 -->
         <div class="pids-top-bar">
             <div class="station-info">
-                <div class="tra-logo"><i class="fas fa-train"></i></div>
+                <img src="https://www.railway.gov.tw/tra-tip-web/static/images/TRA_logo.jpg" class="tra-logo-img" alt="台鐵">
                 <div class="station-name" id="stationNameS">臺鐵車站</div>
             </div>
             <div class="datetime-info">
-                <div class="date-text" id="dateS">2025/11/24</div>
-                <div class="time-text" id="timeS">12:08</div>
+                <div class="date-text" id="dateS">--/--</div>
+                <div class="time-text" id="timeS">--:--</div>
             </div>
         </div>
 
@@ -348,25 +341,35 @@
             }
         });
 
-        // 4. 資料更新 (使用 D1 Worker API)
+        // 4. 資料更新 (直接呼叫 TDX V2 API)
         async function updatePidsData(stationID) {
             try {
-                const response = await fetch(`https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev/api/schedule?stationId=${stationID}`);
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await tdxApi.fetch(`/v2/Rail/TRA/LiveBoard?$filter=StationID eq '${stationID}'&$format=JSON`);
                 
-                const data = await response.json();
-                if (!data.Infos || !Array.isArray(data.Infos)) {
+                if (!data || data.length === 0) {
                     document.getElementById('marqueeN').textContent = "目前無列車資訊";
                     document.getElementById('marqueeS').textContent = "目前無列車資訊";
+                    renderScreen('north', []);
+                    renderScreen('south', []);
                     return;
                 }
 
-                const northTrains = data.Infos
-                    .filter(t => t.Direction === 1)
+                const standardizedData = data.map(t => ({
+                    TrainNo: t.TrainNo,
+                    TrainType: t.TrainTypeID,
+                    TrainTypeName: t.TrainTypeName,
+                    EndingStationName: t.EndingStationName?.Zh_tw || t.EndingStationName,
+                    DepartureTime: t.ScheduledDepartureTime,
+                    Delay: t.DelayTime || 0,
+                    Direction: t.Direction
+                }));
+
+                const northTrains = standardizedData
+                    .filter(t => t.Direction == 1)
                     .sort((a, b) => a.DepartureTime.localeCompare(b.DepartureTime));
                 
-                const southTrains = data.Infos
-                    .filter(t => t.Direction === 0)
+                const southTrains = standardizedData
+                    .filter(t => t.Direction == 0)
                     .sort((a, b) => a.DepartureTime.localeCompare(b.DepartureTime));
 
                 renderScreen('north', northTrains);
