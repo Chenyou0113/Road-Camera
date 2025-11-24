@@ -333,7 +333,7 @@
     <script src="assets/config.js"></script>
     <script src="assets/tdx-api.js"></script>
     <script>
-        // ============ 1. 全局配置與資料庫 (移植自 Liveboard) ============
+        // ============ 1. 全局配置與資料庫 ============
         const TRAIN_TYPE_DB = [
           { "id": "1100", "name": "自強", "code": "3" },
           { "id": "1101", "name": "太魯閣", "code": "1" },
@@ -360,6 +360,9 @@
         TRAIN_TYPE_DB.forEach(item => trainTypeMap.set(item.id, item.name));
 
         const stopsCache = {};
+        
+        // 輔助：延遲函式
+        const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
         // ============ 2. 核心邏輯函式 ============
         
@@ -395,8 +398,11 @@
             return { name: name, class: cssClass };
         }
 
+        // 穩定版 API 抓取函式 (含防抖動與備援)
         async function fetchTrainStops(trainNo) {
             if (stopsCache[trainNo]) return stopsCache[trainNo];
+
+            await delay(50 + Math.random() * 150);
 
             const urlGeneral = `/v3/Rail/TRA/GeneralTimetable/TrainNo/${trainNo}?$format=JSON`;
             const urlDaily = `/v3/Rail/TRA/DailyTimetable/Today/TrainNo/${trainNo}?$format=JSON`;
@@ -414,8 +420,8 @@
             };
 
             let stopTimes = await tryFetch(urlGeneral);
-
             if (!stopTimes) {
+                await delay(200);
                 stopTimes = await tryFetch(urlDaily);
             }
 
@@ -423,9 +429,24 @@
                 stopsCache[trainNo] = stopTimes;
                 return stopTimes;
             } else {
-                console.warn(`車次 ${trainNo} 無法取得停靠站`);
+                stopsCache[trainNo] = []; 
                 return [];
             }
+        }
+
+        // 時間加法計算 (用於預測到站時間)
+        function addMinutesToTime(timeStr, minutesToAdd) {
+            if (!timeStr) return '--:--';
+            if (minutesToAdd === 0) return timeStr;
+
+            const [hours, minutes] = timeStr.split(':').map(Number);
+            const date = new Date();
+            date.setHours(hours);
+            date.setMinutes(minutes + minutesToAdd);
+
+            const newHours = String(date.getHours()).padStart(2, '0');
+            const newMinutes = String(date.getMinutes()).padStart(2, '0');
+            return `${newHours}:${newMinutes}`;
         }
 
         function updateClock() {
@@ -483,7 +504,7 @@
             el.style.setProperty('--end-pos', `-${textWidth}px`);
 
             const totalDistance = containerWidth + textWidth;
-            const speed = 100;
+            const speed = 100; 
             const duration = totalDistance / speed;
 
             el.style.animation = `dynamic-marquee ${duration}s linear infinite`;
@@ -542,7 +563,7 @@
         function generateDirectionTitle(trains, defaultTitle) {
             if (!trains || trains.length === 0) return `往 ${defaultTitle} 方向`;
             const destinations = [...new Set(trains.map(t => t.EndingStationName))];
-            const displayDest = destinations.slice(0, 2).join('、');
+            const displayDest = destinations.slice(0, 2).join('、'); 
             return `往 ${displayDest} ${destinations.length > 2 ? '...' : ''} 方向`;
         }
 
@@ -586,7 +607,7 @@
             }
         }
 
-        // ============ 4. 跑馬燈邏輯 (含強制轉型修正) ============
+        // ============ 4. 跑馬燈邏輯 (移植自 train-liveboard 的強大邏輯) ============
         async function updateBottomMarquee(elementId, trains, customMsg, currentStationID) {
             const el = document.getElementById(elementId);
             const container = el.parentElement;
@@ -601,28 +622,102 @@
                 const train = trains[0];
                 const trainNo = train.TrainNo;
                 const trainInfo = getTrainDisplayInfo(train);
+                const delayTime = train.Delay || 0;
                 
-                const stopTimes = await fetchTrainStops(trainNo);
-                let stopsText = "詳見車站公告";
+                // 1. 同時抓取：時刻表 (stops) + 即時位置 (liveData)
+                let stopTimes = [];
+                let liveData = null;
 
-                if (stopTimes.length > 0) {
-                    const currentIdStr = String(currentStationID);
-                    const currentIndex = stopTimes.findIndex(s => String(s.StationID) === currentIdStr);
-
-                    if (currentIndex !== -1 && currentIndex < stopTimes.length - 1) {
-                        const futureStops = stopTimes.slice(currentIndex + 1);
-                        stopsText = futureStops.map(s => s.StationName.Zh_tw).join('、');
-                    } else if (currentIndex === stopTimes.length - 1) {
-                        stopsText = "本站為終點站";
-                    }
+                try {
+                    [stopTimes, liveData] = await Promise.all([
+                        fetchTrainStops(trainNo),
+                        tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`).catch(() => null)
+                    ]);
+                } catch (e) {
+                    console.warn('Fetch error in marquee', e);
                 }
 
-                const timeStr = formatTime(train.DepartureTime).replace(':', '：');
+                // === 組合跑馬燈文字 (仿 Liveboard 邏輯) ===
                 
-                textHTML = `${timeStr} 分 開往 ${train.EndingStationName} 的 ${trainNo} 次 ${trainInfo.name}，本列車沿途停靠：${stopsText}。`;
+                // 1. 車次與基本資訊
+                textHTML += `<span style="color: #ffeb3b; font-weight:bold;">${trainNo} 次 ${trainInfo.name} 往 ${train.EndingStationName}</span> `;
+                textHTML += `<span style="margin: 0 15px; color: #555;">|</span> `;
 
+                // 2. 目前位置與狀態
+                let locationText = "";
+                if (liveData && liveData.StationName) {
+                    const lastStationName = liveData.StationName.Zh_tw;
+                    let nextStopName = "";
+                    
+                    if (stopTimes && stopTimes.length > 0) {
+                        const passedIndex = stopTimes.findIndex(s => s.StationName.Zh_tw === lastStationName);
+                        if (passedIndex !== -1 && passedIndex < stopTimes.length - 1) {
+                            nextStopName = stopTimes[passedIndex + 1].StationName.Zh_tw;
+                        }
+                    }
+
+                    if (nextStopName) {
+                        locationText = `目前位置：${lastStationName} ➡ ${nextStopName} 區間`;
+                    } else {
+                        locationText = `目前位置：${lastStationName}`;
+                    }
+                } else {
+                    // 智慧判斷
+                    if (stopTimes && stopTimes.length > 0) {
+                        const now = new Date();
+                        const currentTimeStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
+                        const firstStation = stopTimes[0];
+                        const lastStation = stopTimes[stopTimes.length - 1];
+
+                        if (currentTimeStr < firstStation.DepartureTime) {
+                            locationText = `尚未發車 (表定 ${firstStation.DepartureTime} 從${firstStation.StationName.Zh_tw}發車)`;
+                        } else if (currentTimeStr > lastStation.ArrivalTime) {
+                            locationText = "已抵達終點";
+                        } else {
+                            locationText = "訊號微弱，依時刻表行駛";
+                        }
+                    } else {
+                         locationText = "無即時位置訊號";
+                    }
+                }
+                textHTML += `<span style="color: #4fc3f7;">${locationText}</span>`;
+                textHTML += `<span style="margin: 0 15px; color: #555;">|</span> `;
+
+                // 3. 本站預計抵達時間
+                if (stopTimes && stopTimes.length > 0) {
+                    // 強制轉字串比對
+                    const currentIdStr = String(currentStationID);
+                    const currentStationIndex = stopTimes.findIndex(s => String(s.StationID) === currentIdStr);
+
+                    if (currentStationIndex !== -1) {
+                        const myStation = stopTimes[currentStationIndex];
+                        const tableTime = (myStation.ArrivalTime && myStation.ArrivalTime !== "") ? myStation.ArrivalTime : myStation.DepartureTime;
+                        const predictedTime = addMinutesToTime(tableTime, delayTime);
+                        const timeColor = delayTime > 0 ? '#ff5252' : '#00e676';
+                        
+                        textHTML += `本站預計：<span style="color: ${timeColor}; font-weight:bold; font-size: 1.1em;">${predictedTime}</span> 抵達`;
+                        textHTML += `<span style="margin: 0 15px; color: #555;">|</span> `;
+                        
+                        // 4. 後續停靠站
+                        const futureStops = stopTimes.slice(currentStationIndex + 1);
+                        if (futureStops.length > 0) {
+                            const stopsStr = futureStops.map(s => s.StationName.Zh_tw).join('、');
+                            textHTML += `沿途停靠：${stopsStr}`;
+                        } else {
+                            textHTML += `<span style="color: #ff9800;">本站為終點站</span>`;
+                        }
+
+                    } else {
+                        // 找不到本站(可能為通過站)
+                        textHTML += `本列車不停靠本站 (通過)`;
+                    }
+                } else {
+                    textHTML += `詳見車站公告`;
+                }
+
+                // 5. 警示語
                 if (trainInfo.class === '自強3000' || trainInfo.class === '普悠瑪' || trainInfo.class === '太魯閣') {
-                    textHTML += ` <span style="color: #ff5252; font-size: 0.95em; margin-left: 10px;">非持有本班次車票或者持電子票證的旅客，請勿上車，以免被加收50％的票價。</span>`;
+                    textHTML += ` <span style="color: #ff5252; margin-left: 20px;">⚠ 本列次須持有車票始得搭乘</span>`;
                 }
             }
             
@@ -637,9 +732,8 @@
             el.style.setProperty('--start-pos', `${containerWidth}px`);
             el.style.setProperty('--end-pos', `-${textWidth}px`);
 
-            const totalDistance = containerWidth + textWidth;
-            const speed = 250;
-            const duration = Math.max(5, totalDistance / speed);
+            // 速度計算 (加速版)
+            const duration = Math.max(8, el.innerText.length * 0.4); 
 
             el.style.animation = `dynamic-marquee ${duration}s linear infinite`;
         }
