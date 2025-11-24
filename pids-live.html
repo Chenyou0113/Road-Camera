@@ -378,8 +378,9 @@
         const trainTypeMap = new Map();
         TRAIN_TYPE_DB.forEach(item => trainTypeMap.set(item.id, item.name));
 
+        const stopsCache = {};
+
         // ============ 2. 核心邏輯函式 ============
-        
         function getTrainDisplayInfo(train) {
             let name = train.TrainTypeName?.Zh_tw || '列車';
             let cssClass = '其他';
@@ -410,6 +411,21 @@
             else if (name.includes('普快')) cssClass = '普快';
 
             return { name: name, class: cssClass };
+        }
+
+        async function fetchTrainStops(trainNo) {
+            if (stopsCache[trainNo]) return stopsCache[trainNo];
+            try {
+                const url = `/v3/Rail/TRA/DailyTrainInfo/TrainNo/${trainNo}?$format=JSON`;
+                const data = await tdxApi.fetch(url);
+                if (data && data.length > 0 && data[0].StopTimes) {
+                    stopsCache[trainNo] = data[0].StopTimes;
+                    return data[0].StopTimes;
+                }
+            } catch (e) {
+                console.warn(`無法取得 ${trainNo} 的停靠站`, e);
+            }
+            return [];
         }
 
         function updateClock() {
@@ -455,8 +471,8 @@
                 
                 if (!data || data.length === 0) {
                     const noDataMsg = "目前無列車資訊";
-                    updateBottomMarquee('marquee1', null, noDataMsg);
-                    updateBottomMarquee('marquee0', null, noDataMsg);
+                    updateBottomMarquee('marquee1', null, noDataMsg, stationID);
+                    updateBottomMarquee('marquee0', null, noDataMsg, stationID);
                     renderScreen('1', [], '逆行');
                     renderScreen('0', [], '順行');
                     return;
@@ -494,8 +510,8 @@
             } catch (e) {
                 console.error("API Error", e);
                 const errorMsg = "⚠️ 連線異常，請稍候...";
-                updateBottomMarquee('marquee1', null, errorMsg);
-                updateBottomMarquee('marquee0', null, errorMsg);
+                updateBottomMarquee('marquee1', null, errorMsg, stationID);
+                updateBottomMarquee('marquee0', null, errorMsg, stationID);
             }
         }
 
@@ -546,10 +562,11 @@
             }
         }
 
-        function updateBottomMarquee(elementId, trains, customMsg) {
+        // ============ 4. 跑馬燈邏輯 (格式更新 + 停靠站 API 整合) ============
+        async function updateBottomMarquee(elementId, trains, customMsg, currentStationID) {
             const el = document.getElementById(elementId);
-            if (!el) return;
             const container = el.parentElement;
+            
             let textHTML = "";
 
             if (customMsg) {
@@ -562,27 +579,46 @@
                 const trainInfo = getTrainDisplayInfo(train);
                 const delayText = train.Delay > 0 ? `晚 ${train.Delay} 分` : `準點`;
                 
-                textHTML = `本班列車：${trainNo} 次 ${trainInfo.name} 往 ${train.EndingStationName} (${delayText}) | 表定 ${formatTime(train.DepartureTime)} 開車`;
+                // 1. 取得停靠站
+                const stopTimes = await fetchTrainStops(trainNo);
+                let stopsText = "詳見車站公告";
 
+                if (stopTimes.length > 0) {
+                    // 找出目前車站的順序，只顯示之後的停靠站
+                    const currentIndex = stopTimes.findIndex(s => s.StationID === currentStationID);
+                    if (currentIndex !== -1 && currentIndex < stopTimes.length - 1) {
+                        const futureStops = stopTimes.slice(currentIndex + 1);
+                        stopsText = futureStops.map(s => s.StationName.Zh_tw).join('、');
+                    } else if (currentIndex === stopTimes.length - 1) {
+                        stopsText = "終點站";
+                    }
+                }
+
+                // 2. 組合格式：HH：MM 分 開往 XX 的 XXX 次 XX，本列車沿途停靠：XXX。
+                const timeStr = formatTime(train.DepartureTime).replace(':', '：');
+                
+                textHTML = `${timeStr} 分 開往 ${train.EndingStationName} 的 ${trainNo} 次 ${trainInfo.name}，本列車沿途停靠：${stopsText}。`;
+
+                // 3. 警示語 (針對特定車種)
                 if (trainInfo.class === '自強3000' || trainInfo.class === '普悠瑪' || trainInfo.class === '太魯閣') {
-                    textHTML += ` <span style="color: #ff5252; font-size: 0.9em; margin-left: 10px;">⚠️ 本列車不得使用電子票證乘車</span>`;
+                    textHTML += ` <span style="color: #ff5252; font-size: 0.95em; margin-left: 10px;">非持有本班次車票或者持電子票證的旅客，請勿上車，以免被加收50％的票價。</span>`;
                 }
             }
-
+            
             el.innerHTML = textHTML;
 
             el.style.animation = 'none';
             void el.offsetWidth;
-
-            const containerWidth = container?.clientWidth || 0;
+            
+            const containerWidth = container.clientWidth;
             const textWidth = el.scrollWidth;
-
+            
             el.style.setProperty('--start-pos', `${containerWidth}px`);
             el.style.setProperty('--end-pos', `-${textWidth}px`);
 
             const totalDistance = containerWidth + textWidth;
-            const speed = 250;
-            const duration = totalDistance / speed;
+            const speed = 250; 
+            const duration = Math.max(5, totalDistance / speed);
 
             el.style.animation = `dynamic-marquee ${duration}s linear infinite`;
         }
