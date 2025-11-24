@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台鐵 PIDS 雙螢幕看板 (無月台版)</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body {
+            background-color: #111;
+            color: white;
+            font-family: "Microsoft JhengHei", "Heiti TC", sans-serif;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            padding: 20px;
+        }
+
+        /* 螢幕外框 */
+        .pids-screen {
+            flex: 1;
+            height: 100%;
+            background-color: #000;
+            display: flex;
+            flex-direction: column;
+            border: 10px solid #333;
+            border-radius: 10px;
+            box-shadow: 0 0 30px rgba(0,0,0,0.8);
+            overflow: hidden;
+        }
+
+        /* 跑馬燈 */
+        .marquee-header {
+            background-color: #e3f2fd;
+            color: #01579b;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            padding: 0 10px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border-bottom: 2px solid #000;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+        .marquee-text {
+            display: inline-block;
+            animation: scroll-left 20s linear infinite;
+            padding-left: 100%;
+        }
+        @keyframes scroll-left { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+
+        /* 內容區 */
+        .screen-body {
+            flex: 1;
+            display: flex;
+        }
+
+        /* 左側資訊欄 */
+        .sidebar {
+            width: 25%;
+            display: flex;
+            flex-direction: column;
+            border-right: 2px solid #333;
+        }
+
+        .info-box {
+            padding: 10px;
+            color: #000;
+            font-weight: bold;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .date-box { background-color: #fff; flex: 1; font-size: 1.1rem; border-bottom: 2px solid #000; }
+        .time-large { font-size: 2rem; font-weight: 900; margin-top: 5px; color: #000; font-family: Consolas, monospace; }
+        
+        .current-train { background-color: #ffe082; flex: 1.5; border-bottom: 2px solid #000; }
+        .next-train { background-color: #f5f5f5; flex: 1.5; }
+
+        .box-label { font-size: 1rem; color: #555; }
+        .box-dest { font-size: 2.2rem; color: #000; font-weight: 900; line-height: 1.2; }
+        .box-time { font-size: 1.8rem; color: #d32f2f; font-weight: bold; margin-top: 5px; }
+
+        /* 右側列表 */
+        .schedule-list {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 北上樣式 */
+        .north-header {
+            background: linear-gradient(to right, #000080, #0d47a1);
+            color: white;
+            padding: 10px;
+            font-size: 1.5rem;
+            font-weight: 900;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .north-table th { background-color: #000080; color: #fff; }
+        .north-table tr:nth-child(odd) { background-color: #000; color: #4fc3f7; }
+        .north-table tr:nth-child(even) { background-color: #006064; color: #fff; }
+
+        /* 南下樣式 */
+        .south-header {
+            background: linear-gradient(to right, #bf360c, #e65100);
+            color: white;
+            padding: 10px;
+            font-size: 1.5rem;
+            font-weight: 900;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .south-table th { background-color: #bf360c; color: #fff; }
+        .south-table tr:nth-child(odd) { background-color: #000; color: #ffcc80; }
+        .south-table tr:nth-child(even) { background-color: #e65100; color: #fff; }
+
+        /* 表格通用 */
+        .train-table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: center;
+            font-size: 1.5rem; /* 字體稍微放大 */
+            font-weight: bold;
+            flex: 1;
+        }
+        .train-table th { padding: 8px; font-size: 1.3rem; border-bottom: 2px solid #fff; }
+        .train-table td { padding: 12px 5px; }
+
+        /* 狀態色 */
+        .status-ontime { color: #00e676 !important; }
+        .status-delay { color: #ff1744 !important; }
+        .type-tze { color: #ffeb3b; } 
+        .type-local { color: #fff; }
+
+        /* RWD */
+        @media (max-width: 1024px) {
+            body { flex-direction: column; height: auto; overflow-y: auto; }
+            .pids-screen { width: 100%; height: 600px; margin-bottom: 20px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 左螢幕：北上 -->
+    <div class="pids-screen">
+        <div class="marquee-header">
+            <div class="marquee-text">
+                [北上通知] 238 次自強號準點。 天雨路滑請小心行走。
+            </div>
+        </div>
+        <div class="screen-body">
+            <div class="sidebar">
+                <div class="info-box date-box">
+                    <div id="dateN">11/24</div>
+                    <div class="time-large" id="timeN">15:47</div>
+                </div>
+                <div class="info-box current-train">
+                    <div class="box-label">本班開往</div>
+                    <div class="box-dest">七堵</div>
+                    <div class="box-time">16:09</div>
+                </div>
+                <div class="info-box next-train">
+                    <div class="box-label">下班開往</div>
+                    <div class="box-dest">基隆</div>
+                    <div class="box-time">16:17</div>
+                </div>
+            </div>
+            <div class="schedule-list">
+                <div class="north-header">
+                    <span><i class="fas fa-arrow-up"></i> 北上</span>
+                    <span style="font-size: 1rem;">North Bound</span>
+                </div>
+                <table class="train-table north-table">
+                    <thead>
+                        <tr>
+                            <th>車次</th>
+                            <th>車種</th>
+                            <th>開往</th>
+                            <th>時間</th>
+                            <!-- 月台欄位已移除 -->
+                            <th>備註</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>238</td>
+                            <td class="type-tze">自強</td>
+                            <td>七堵</td>
+                            <td>16:09</td>
+                            <td class="status-ontime">準點</td>
+                        </tr>
+                        <tr>
+                            <td>1244</td>
+                            <td class="type-local">區間</td>
+                            <td>基隆</td>
+                            <td>16:17</td>
+                            <td class="status-ontime">準點</td>
+                        </tr>
+                        <tr>
+                            <td>608</td>
+                            <td class="type-tze">普悠瑪</td>
+                            <td>花蓮</td>
+                            <td>16:22</td>
+                            <td class="status-ontime">準點</td>
+                        </tr>
+                        <tr>
+                            <td>1245</td>
+                            <td class="type-local">區間</td>
+                            <td>基隆</td>
+                            <td>16:25</td>
+                            <td class="status-delay">晚1分</td>
+                        </tr>
+                        <tr><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 右螢幕：南下 -->
+    <div class="pids-screen">
+        <div class="marquee-header">
+            <div class="marquee-text">
+                [南下通知] 521 次自強號即將進站。 請勿依靠月台門。
+            </div>
+        </div>
+        <div class="screen-body">
+            <div class="sidebar">
+                <div class="info-box date-box">
+                    <div id="dateS">11/24</div>
+                    <div class="time-large" id="timeS">15:47</div>
+                </div>
+                <div class="info-box current-train">
+                    <div class="box-label">本班開往</div>
+                    <div class="box-dest">高雄</div>
+                    <div class="box-time">16:15</div>
+                </div>
+                <div class="info-box next-train">
+                    <div class="box-label">下班開往</div>
+                    <div class="box-dest">新竹</div>
+                    <div class="box-time">16:25</div>
+                </div>
+            </div>
+            <div class="schedule-list">
+                <div class="south-header">
+                    <span><i class="fas fa-arrow-down"></i> 南下</span>
+                    <span style="font-size: 1rem;">South Bound</span>
+                </div>
+                <table class="train-table south-table">
+                    <thead>
+                        <tr>
+                            <th>車次</th>
+                            <th>車種</th>
+                            <th>開往</th>
+                            <th>時間</th>
+                            <!-- 月台欄位已移除 -->
+                            <th>備註</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>521</td>
+                            <td class="type-tze">自強</td>
+                            <td>高雄</td>
+                            <td>16:15</td>
+                            <td class="status-ontime">即將進站</td>
+                        </tr>
+                        <tr>
+                            <td>1217</td>
+                            <td class="type-local">區間</td>
+                            <td>新竹</td>
+                            <td>16:25</td>
+                            <td class="status-ontime">準點</td>
+                        </tr>
+                        <tr>
+                            <td>273</td>
+                            <td class="type-tze">自強</td>
+                            <td>樹林</td>
+                            <td>16:34</td>
+                            <td class="status-ontime">準點</td>
+                        </tr>
+                        <tr>
+                            <td>1234</td>
+                            <td class="type-local">區間</td>
+                            <td>新竹</td>
+                            <td>16:45</td>
+                            <td class="status-delay">晚2分</td>
+                        </tr>
+                        <tr><td>&nbsp;</td><td></td><td></td><td></td><td></td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 設定
+        const CONFIG = {
+            STATION_ID: '1000', // 預設台北站，可修改
+            REFRESH_INTERVAL: 30000, // 30秒更新一次
+            MAX_ROWS: 4, // 每個螢幕顯示的列車數
+            API_URL: 'https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev/api/schedule'
+        };
+
+        // 時鐘更新
+        function updateClock() {
+            const now = new Date();
+            const h = String(now.getHours()).padStart(2,'0');
+            const m = String(now.getMinutes()).padStart(2,'0');
+            const dateStr = (now.getMonth()+1) + '/' + now.getDate();
+            document.getElementById('timeN').textContent = `${h}:${m}`;
+            document.getElementById('timeS').textContent = `${h}:${m}`;
+            document.getElementById('dateN').textContent = dateStr;
+            document.getElementById('dateS').textContent = dateStr;
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // 格式化時間 (HH:MM)
+        function formatTime(timeStr) {
+            if (!timeStr) return '--:--';
+            const match = timeStr.match(/(\d{2}):(\d{2})/);
+            return match ? `${match[1]}:${match[2]}` : '--:--';
+        }
+
+        // 計算延誤狀態
+        function getDelayStatus(delayTime) {
+            if (!delayTime || delayTime === 0) return { text: '準點', color: 'status-ontime' };
+            if (delayTime < 0) return { text: `早${Math.abs(delayTime)}分`, color: 'status-ontime' };
+            if (delayTime === 1) return { text: '晚1分', color: 'status-delay' };
+            return { text: `晚${delayTime}分`, color: 'status-delay' };
+        }
+
+        // 取得車種中文名稱
+        function getTrainTypeName(trainType) {
+            const typeMap = {
+                '1100': '普悠瑪', '1200': '太魯閣', '2100': '自強', 
+                '2200': '莒光', '2300': '復興', '3100': '區間'
+            };
+            return typeMap[trainType] || '未知';
+        }
+
+        // 從 API 取得列車資料
+        async function fetchTrainData() {
+            try {
+                const response = await fetch(`${CONFIG.API_URL}?stationId=${CONFIG.STATION_ID}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                
+                const data = await response.json();
+                if (data.Infos && Array.isArray(data.Infos)) {
+                    return data.Infos;
+                }
+                return [];
+            } catch (error) {
+                console.warn('⚠️ API 取得失敗:', error);
+                return [];
+            }
+        }
+
+        // 篩選並排序列車
+        function filterAndSortTrains(trains, direction) {
+            // direction: 0 = 南下, 1 = 北上
+            const now = new Date();
+            const currentTime = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+
+            return trains
+                .filter(train => train.Direction === direction && train.DepartureTime >= currentTime)
+                .sort((a, b) => a.DepartureTime.localeCompare(b.DepartureTime))
+                .slice(0, CONFIG.MAX_ROWS);
+        }
+
+        // 更新列車表格
+        function updateTrainTable(trains, tableSelector) {
+            const tbody = document.querySelector(tableSelector);
+            if (!tbody) return;
+
+            tbody.innerHTML = ''; // 清空
+
+            if (trains.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5">暫無後續班次</td></tr>';
+                return;
+            }
+
+            trains.forEach((train, idx) => {
+                const delay = train.Delay || 0;
+                const delayStatus = getDelayStatus(delay);
+                const trainType = getTrainTypeName(train.TrainType);
+                
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${train.TrainNo}</td>
+                    <td class="type-tze">${trainType}</td>
+                    <td>${train.EndingStationName}</td>
+                    <td>${formatTime(train.DepartureTime)}</td>
+                    <td class="${delayStatus.color}">${delayStatus.text}</td>
+                `;
+                tbody.appendChild(row);
+            });
+
+            // 填充空白列保持高度
+            while (tbody.rows.length < CONFIG.MAX_ROWS) {
+                const emptyRow = tbody.insertRow();
+                emptyRow.innerHTML = '<td>&nbsp;</td><td></td><td></td><td></td><td></td>';
+            }
+        }
+
+        // 更新側邊欄資訊（本班/下班）
+        function updateSidebarInfo(trains, sidebarSelector) {
+            const currentTrain = trains[0];
+            const nextTrain = trains[1];
+
+            const sidebar = document.querySelector(sidebarSelector);
+            if (!sidebar) return;
+
+            // 本班列車
+            const currentBox = sidebar.querySelector('.current-train');
+            if (currentTrain && currentBox) {
+                currentBox.querySelector('.box-dest').textContent = currentTrain.EndingStationName || '未知';
+                currentBox.querySelector('.box-time').textContent = formatTime(currentTrain.DepartureTime);
+            }
+
+            // 下班列車
+            const nextBox = sidebar.querySelector('.next-train');
+            if (nextTrain && nextBox) {
+                nextBox.querySelector('.box-dest').textContent = nextTrain.EndingStationName || '未知';
+                nextBox.querySelector('.box-time').textContent = formatTime(nextTrain.DepartureTime);
+            }
+        }
+
+        // 主更新函數
+        async function refreshAllData() {
+            console.log('🔄 更新列車資料...');
+            const allTrains = await fetchTrainData();
+
+            if (allTrains.length === 0) {
+                console.warn('⚠️ 未取得列車資料');
+                return;
+            }
+
+            // 北上 (Direction = 1)
+            const northTrains = filterAndSortTrains(allTrains, 1);
+            updateTrainTable(northTrains, '.north-table tbody');
+            updateSidebarInfo(northTrains, '.pids-screen:nth-child(1) .sidebar');
+
+            // 南下 (Direction = 0)
+            const southTrains = filterAndSortTrains(allTrains, 0);
+            updateTrainTable(southTrains, '.south-table tbody');
+            updateSidebarInfo(southTrains, '.pids-screen:nth-child(2) .sidebar');
+
+            console.log(`✅ 更新完成 - 北上: ${northTrains.length} 班, 南下: ${southTrains.length} 班`);
+        }
+
+        // 初始化
+        window.addEventListener('DOMContentLoaded', () => {
+            refreshAllData();
+            setInterval(refreshAllData, CONFIG.REFRESH_INTERVAL);
+        });
+    </script>
+</body>
+</html>
