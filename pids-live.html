@@ -508,7 +508,11 @@
 
         async function updatePidsData(stationID) {
             try {
+                // 1. 抓取資料
                 const data = await tdxApi.fetch(`/v2/Rail/TRA/LiveBoard?$filter=StationID eq '${stationID}'&$format=JSON`);
+                
+                // 🛠️ 除錯用：在 F12 Console 印出原始資料，確認 API 是否真的有給所有列車
+                // console.log("原始列車資料:", data);
                 
                 if (!data || data.length === 0) {
                     const noDataMsg = "目前無列車資訊";
@@ -519,29 +523,47 @@
                     return;
                 }
 
+                // 2. 資料正規化
                 const standardizedData = data.map(t => ({
                     TrainNo: t.TrainNo,
                     TrainTypeID: t.TrainTypeID,
                     TrainTypeName: t.TrainTypeName,
                     EndingStationName: t.EndingStationName?.Zh_tw || t.EndingStationName,
                     DepartureTime: t.ScheduledDepartureTime,
+                    // V2 API 的 ScheduledDepartureTime 通常是 "HH:mm:ss"
                     DepartureHHMM: t.ScheduledDepartureTime ? t.ScheduledDepartureTime.slice(0,5) : '',
                     Delay: t.DelayTime || 0,
                     Direction: t.Direction,
                     StationID: t.StationID
                 }));
 
-                const now = new Date();
-                const currentTime = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+                // 3. 🕒 智慧跨日排序邏輯
+                // 目的：讓 "昨晚誤點到現在" 的車 (如 20:00) 排在 "今早" 的車 (如 00:30) 前面
+                const nowH = new Date().getHours();
+                
+                const midnightSort = (a, b) => {
+                    const getWeight = (timeStr) => {
+                        const [h, m] = timeStr.split(':').map(Number);
+                        // 如果現在是凌晨 (0~4點)，但車次時間是晚上 (18點後)，代表這是"昨天的車"
+                        // 給它一個很小的權重 (減去 24小時)，讓它排在最前面
+                        if (nowH < 4 && h > 18) {
+                            return (h * 60 + m) - (24 * 60); 
+                        }
+                        return h * 60 + m;
+                    };
+                    return getWeight(a.DepartureHHMM) - getWeight(b.DepartureHHMM);
+                };
 
+                // 4. 篩選與排序 (移除時間過濾，改用智慧排序)
                 const trains1 = standardizedData
-                    .filter(t => t.Direction == 1 && t.DepartureHHMM >= currentTime)
-                    .sort((a, b) => a.DepartureTime.localeCompare(b.DepartureTime));
+                    .filter(t => t.Direction == 1) // 逆行
+                    .sort(midnightSort);
                 
                 const trains0 = standardizedData
-                    .filter(t => t.Direction == 0 && t.DepartureHHMM >= currentTime)
-                    .sort((a, b) => a.DepartureTime.localeCompare(b.DepartureTime));
+                    .filter(t => t.Direction == 0) // 順行
+                    .sort(midnightSort);
 
+                // 5. 渲染畫面
                 renderScreen('1', trains1, '逆行');
                 renderScreen('0', trains0, '順行');
 
