@@ -1,6 +1,10 @@
 /**
- * 中央氣象署降雨雷達回波圖 - 資料轉換工具
- * Rainfall Radar Echo Map Data Transformer
+ * 中央氣象署降雨雷達回波圖 - 資料轉換工具 (安全版本)
+ * Rainfall Radar Echo Map Data Transformer - Secure Backend Pattern
+ * 
+ * 🔒 安全更新 (2025年)：
+ * - 所有雷達資料請求現透過後端 Cloudflare Function (/api/weather) 進行
+ * - API 金鑰從環境變數讀取，不再暴露於前端代碼
  * 
  * 支援的雷達站點：
  * 個站雷達：
@@ -14,9 +18,12 @@
  */
 
 class RadarTransformer {
-    // CWA 開放資料平台配置
+    // 後端代理 API 端點
+    static API_ENDPOINT = '/api/weather';
+    
+    // 保留原始值供參考（已不使用，密鑰現從環境變數讀取）
     static FILE_API_BASE = 'https://opendata.cwa.gov.tw/fileapi/v1/opendataapi';
-    static API_KEY = 'CWA-675CED45-09DF-4249-9599-B9B5A5AB761A';
+    static API_KEY = ''; // 已不使用 - 透過後端代理
 
     // 雷達站點配置
     static RADAR_STATIONS = {
@@ -143,7 +150,7 @@ class RadarTransformer {
     }
 
     /**
-     * 取得指定雷達的最新回波圖
+     * 取得指定雷達的最新回波圖（透過後端代理）
      * @param {string} stationCode 雷達站點代碼 ('001', '002', '003', '101', '102')
      * @returns {Promise<Object>} 回波圖資料 { imageUrl, timestamp, ...}
      */
@@ -154,13 +161,13 @@ class RadarTransformer {
                 throw new Error(`無效的雷達站點代碼: ${stationCode}`);
             }
 
-            // 構建 API URL
-            const url = `${this.FILE_API_BASE}/${station.dataId}?Authorization=${this.API_KEY}&downloadType=WEB&format=JSON`;
+            // 透過後端代理請求雷達資料
+            const proxyUrl = `${this.API_ENDPOINT}?dataId=${station.dataId}&type=file`;
             
-            console.log(`\n📡 [${stationCode}] 開始請求雷達資料...`);
-            console.log(`🔗 API URL: ${url.substring(0, 80)}...`);
+            console.log(`\n📡 [${stationCode}] 透過後端代理開始請求雷達資料...`);
+            console.log(`🔗 代理 URL: ${proxyUrl}`);
             
-            const response = await fetch(url);
+            const response = await fetch(proxyUrl);
             console.log(`📊 HTTP 狀態: ${response.status}`);
             
             if (!response.ok) {
@@ -474,15 +481,15 @@ class RadarTransformer {
     }
 
     /**
-     * 建立回波圖 URL
+     * 建立回波圖代理 URL（透過後端）
      * @param {string} code 雷達站點代碼
-     * @returns {string} 回波圖 URL
+     * @returns {string} 回波圖代理 URL
      */
     static getRadarImageUrl(code) {
         if (!this.isValidStationCode(code)) return null;
         
         const station = this.RADAR_STATIONS[code];
-        return `${this.FILE_API_BASE}/${station.dataId}?Authorization=${this.API_KEY}&downloadType=WEB&format=JSON`;
+        return `${this.API_ENDPOINT}?dataId=${station.dataId}&type=file`;
     }
 }
 
