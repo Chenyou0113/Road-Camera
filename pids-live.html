@@ -429,6 +429,8 @@
                 if (data && data.length > 0 && data[0].StopTimes) {
                     stopsCache[trainNo] = data[0].StopTimes;
                     return data[0].StopTimes;
+                } else {
+                    console.warn(`車次 ${trainNo} API 回傳無停靠站資料`);
                 }
             } catch (e) {
                 console.warn(`無法取得 ${trainNo} 的停靠站`, e);
@@ -601,7 +603,7 @@
             }
         }
 
-        // ============ 4. 跑馬燈邏輯 (格式更新 + 停靠站 API 整合) ============
+        // ============ 4. 跑馬燈邏輯 (格式更新 + 停靠站 API 整合 + 修正比對問題) ============
         async function updateBottomMarquee(elementId, trains, customMsg, currentStationID) {
             const el = document.getElementById(elementId);
             const container = el.parentElement;
@@ -616,20 +618,25 @@
                 const train = trains[0];
                 const trainNo = train.TrainNo;
                 const trainInfo = getTrainDisplayInfo(train);
-                const delayText = train.Delay > 0 ? `晚 ${train.Delay} 分` : `準點`;
                 
                 // 1. 取得停靠站
                 const stopTimes = await fetchTrainStops(trainNo);
                 let stopsText = "詳見車站公告";
 
                 if (stopTimes.length > 0) {
-                    // 找出目前車站的順序，只顯示之後的停靠站
-                    const currentIndex = stopTimes.findIndex(s => s.StationID === currentStationID);
+                    // 【關鍵修正】強制將 ID 轉為字串 (String) 後再比對，避免 1000 !== "1000" 的問題
+                    const currentIdStr = String(currentStationID);
+                    const currentIndex = stopTimes.findIndex(s => String(s.StationID) === currentIdStr);
+
                     if (currentIndex !== -1 && currentIndex < stopTimes.length - 1) {
+                        // 還有下一站，顯示之後的站
                         const futureStops = stopTimes.slice(currentIndex + 1);
                         stopsText = futureStops.map(s => s.StationName.Zh_tw).join('、');
                     } else if (currentIndex === stopTimes.length - 1) {
-                        stopsText = "終點站";
+                        stopsText = "本站為終點站";
+                    } else if (currentIndex === -1) {
+                        // 雖然有資料，但找不到目前車站
+                        console.warn(`車次 ${trainNo} 有資料，但找不到車站 ID: ${currentStationID}`);
                     }
                 }
 
@@ -646,6 +653,7 @@
             
             el.innerHTML = textHTML;
 
+            // 重啟動畫
             el.style.animation = 'none';
             void el.offsetWidth;
             
