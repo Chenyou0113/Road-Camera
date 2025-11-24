@@ -361,9 +361,6 @@
 
         const stopsCache = {};
         
-        // 輔助：延遲函式
-        const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
         // ============ 2. 核心邏輯函式 ============
         
         function getTrainDisplayInfo(train) {
@@ -398,11 +395,9 @@
             return { name: name, class: cssClass };
         }
 
-        // 穩定版 API 抓取函式 (含防抖動與備援)
+        // 🚀 強力版 API 抓取函式 (移除延遲，增強命中率)
         async function fetchTrainStops(trainNo) {
             if (stopsCache[trainNo]) return stopsCache[trainNo];
-
-            await delay(50 + Math.random() * 150);
 
             const urlGeneral = `/v3/Rail/TRA/GeneralTimetable/TrainNo/${trainNo}?$format=JSON`;
             const urlDaily = `/v3/Rail/TRA/DailyTimetable/Today/TrainNo/${trainNo}?$format=JSON`;
@@ -413,15 +408,16 @@
                     if (data && data.length > 0 && data[0].StopTimes) {
                         return data[0].StopTimes;
                     }
-                } catch (e) {
-                    return null;
-                }
+                } catch (e) { return null; }
                 return null;
             };
 
+            // 1. 優先查「定期時刻表」 (最快，最穩定)
             let stopTimes = await tryFetch(urlGeneral);
+
+            // 2. 如果沒有，查「當日時刻表」 (加班車用)
             if (!stopTimes) {
-                await delay(200);
+                // console.log(`車次 ${trainNo} 定期表無資料，嘗試當日表...`);
                 stopTimes = await tryFetch(urlDaily);
             }
 
@@ -429,12 +425,12 @@
                 stopsCache[trainNo] = stopTimes;
                 return stopTimes;
             } else {
+                console.warn(`車次 ${trainNo} 查無時刻表 (API 缺漏)`);
                 stopsCache[trainNo] = []; 
                 return [];
             }
         }
 
-        // 時間加法計算 (用於預測到站時間)
         function addMinutesToTime(timeStr, minutesToAdd) {
             if (!timeStr) return '--:--';
             if (minutesToAdd === 0) return timeStr;
@@ -607,7 +603,7 @@
             }
         }
 
-        // ============ 4. 跑馬燈邏輯 (移植自 train-liveboard 的強大邏輯) ============
+        // ============ 4. 跑馬燈邏輯 (加速 + 容錯優化版) ============
         async function updateBottomMarquee(elementId, trains, customMsg, currentStationID) {
             const el = document.getElementById(elementId);
             const container = el.parentElement;
@@ -624,68 +620,67 @@
                 const trainInfo = getTrainDisplayInfo(train);
                 const delayTime = train.Delay || 0;
                 
-                // 1. 同時抓取：時刻表 (stops) + 即時位置 (liveData)
+                // 1. 抓取時刻表與位置 (如果 API 失敗則為 null)
                 let stopTimes = [];
                 let liveData = null;
 
                 try {
+                    // 平行請求，加快速度
                     [stopTimes, liveData] = await Promise.all([
                         fetchTrainStops(trainNo),
                         tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`).catch(() => null)
                     ]);
                 } catch (e) {
-                    console.warn('Fetch error in marquee', e);
+                    console.warn('Marquee data fetch failed', e);
                 }
 
-                // === 組合跑馬燈文字 (仿 Liveboard 邏輯) ===
+                // === 組合跑馬燈文字 ===
                 
-                // 1. 車次與基本資訊
+                // A. 車次資訊
                 textHTML += `<span style="color: #ffeb3b; font-weight:bold;">${trainNo} 次 ${trainInfo.name} 往 ${train.EndingStationName}</span> `;
                 textHTML += `<span style="margin: 0 15px; color: #555;">|</span> `;
 
-                // 2. 目前位置與狀態
+                // B. 位置與狀態
                 let locationText = "";
+                
+                // 優先使用 V3 LiveBoard 數據
                 if (liveData && liveData.StationName) {
                     const lastStationName = liveData.StationName.Zh_tw;
                     let nextStopName = "";
-                    
                     if (stopTimes && stopTimes.length > 0) {
                         const passedIndex = stopTimes.findIndex(s => s.StationName.Zh_tw === lastStationName);
                         if (passedIndex !== -1 && passedIndex < stopTimes.length - 1) {
                             nextStopName = stopTimes[passedIndex + 1].StationName.Zh_tw;
                         }
                     }
+                    locationText = nextStopName 
+                        ? `目前位置：${lastStationName} ➡ ${nextStopName} 區間` 
+                        : `目前位置：${lastStationName}`;
+                } 
+                // 若無 V3 數據，嘗試用時刻表推算
+                else if (stopTimes && stopTimes.length > 0) {
+                    const now = new Date();
+                    const currentTimeStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
+                    const firstStation = stopTimes[0];
+                    const lastStation = stopTimes[stopTimes.length - 1];
 
-                    if (nextStopName) {
-                        locationText = `目前位置：${lastStationName} ➡ ${nextStopName} 區間`;
+                    if (currentTimeStr < firstStation.DepartureTime) {
+                        locationText = `尚未發車 (表定 ${firstStation.DepartureTime} 發車)`;
+                    } else if (currentTimeStr > lastStation.ArrivalTime) {
+                        locationText = "已抵達終點";
                     } else {
-                        locationText = `目前位置：${lastStationName}`;
+                        locationText = "列車行駛中"; // 通用顯示，避免顯示「無訊號」
                     }
-                } else {
-                    // 智慧判斷
-                    if (stopTimes && stopTimes.length > 0) {
-                        const now = new Date();
-                        const currentTimeStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
-                        const firstStation = stopTimes[0];
-                        const lastStation = stopTimes[stopTimes.length - 1];
-
-                        if (currentTimeStr < firstStation.DepartureTime) {
-                            locationText = `尚未發車 (表定 ${firstStation.DepartureTime} 從${firstStation.StationName.Zh_tw}發車)`;
-                        } else if (currentTimeStr > lastStation.ArrivalTime) {
-                            locationText = "已抵達終點";
-                        } else {
-                            locationText = "訊號微弱，依時刻表行駛";
-                        }
-                    } else {
-                         locationText = "無即時位置訊號";
-                    }
+                } 
+                // 若連時刻表都沒有 (你遇到的 1278 情況)
+                else {
+                    locationText = "列車行駛中"; // 最安全的預設值
                 }
                 textHTML += `<span style="color: #4fc3f7;">${locationText}</span>`;
                 textHTML += `<span style="margin: 0 15px; color: #555;">|</span> `;
 
-                // 3. 本站預計抵達時間
+                // C. 預計抵達與停靠站
                 if (stopTimes && stopTimes.length > 0) {
-                    // 強制轉字串比對
                     const currentIdStr = String(currentStationID);
                     const currentStationIndex = stopTimes.findIndex(s => String(s.StationID) === currentIdStr);
 
@@ -698,7 +693,6 @@
                         textHTML += `本站預計：<span style="color: ${timeColor}; font-weight:bold; font-size: 1.1em;">${predictedTime}</span> 抵達`;
                         textHTML += `<span style="margin: 0 15px; color: #555;">|</span> `;
                         
-                        // 4. 後續停靠站
                         const futureStops = stopTimes.slice(currentStationIndex + 1);
                         if (futureStops.length > 0) {
                             const stopsStr = futureStops.map(s => s.StationName.Zh_tw).join('、');
@@ -706,16 +700,15 @@
                         } else {
                             textHTML += `<span style="color: #ff9800;">本站為終點站</span>`;
                         }
-
                     } else {
-                        // 找不到本站(可能為通過站)
                         textHTML += `本列車不停靠本站 (通過)`;
                     }
                 } else {
-                    textHTML += `詳見車站公告`;
+                    // 當真的抓不到時刻表時，顯示這個比較友善的訊息
+                    textHTML += `停靠站請參考車站現場顯示`;
                 }
 
-                // 5. 警示語
+                // D. 警示語
                 if (trainInfo.class === '自強3000' || trainInfo.class === '普悠瑪' || trainInfo.class === '太魯閣') {
                     textHTML += ` <span style="color: #ff5252; margin-left: 20px;">⚠ 本列次須持有車票始得搭乘</span>`;
                 }
@@ -732,7 +725,7 @@
             el.style.setProperty('--start-pos', `${containerWidth}px`);
             el.style.setProperty('--end-pos', `-${textWidth}px`);
 
-            // 速度計算 (加速版)
+            // 加速：0.4 (數字越小越快)
             const duration = Math.max(8, el.innerText.length * 0.4); 
 
             el.style.animation = `dynamic-marquee ${duration}s linear infinite`;
