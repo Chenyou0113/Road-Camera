@@ -212,6 +212,12 @@ class TDXApi {
                 });
 
                 if (!response.ok) {
+                    // 🔥 優化：如果是 404，直接拋出，不要重試
+                    if (response.status === 404) {
+                        console.warn(`⚠️ API 查無資料 (404): ${endpoint}`);
+                        return null; // 回傳 null，讓上層程式處理
+                    }
+                    
                     if (response.status === 429) {
                         // 處理請求過於頻繁的錯誤
                         const retryAfter = response.headers.get('Retry-After') || (Math.pow(2, i) * 1000);
@@ -224,8 +230,13 @@ class TDXApi {
 
                 return await response.json();
             } catch (error) {
+                // 🔥 優化：忽略 404 錯誤，避免重試和紅色錯誤訊息
+                if (error.message && error.message.includes('404')) {
+                    return null;
+                }
+                
                 if (i === retries - 1) {
-                    console.error('API 呼叫失敗:', error);
+                    console.error('❌ API 呼叫失敗:', error);
                     throw error;
                 }
                 console.warn(`嘗試 ${i + 1} 失敗，重試中...`);
