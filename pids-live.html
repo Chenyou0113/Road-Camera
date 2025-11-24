@@ -214,21 +214,29 @@
             background-color: #212121;
             color: #ffeb3b;
             height: 60px;
-            display: block;
-            padding: 0 15px;
-            font-size: 1.5rem;
-            font-weight: bold;
-            border-top: 4px solid #ff9800;
-            overflow: hidden;
             position: relative;
+            overflow: hidden;
+            display: block;
+            border-top: 4px solid #ff9800;
+            padding: 0;
         }
 
         .marquee-text {
-            display: inline-block;
-            padding-left: 100%;
+            position: absolute;
             white-space: nowrap;
+            top: 0;
+            left: 0;
+            height: 60px;
             line-height: 60px;
-            vertical-align: middle;
+            font-size: 1.5rem;
+            font-weight: bold;
+            will-change: transform;
+            transform: translateX(100vw);
+        }
+
+        @keyframes dynamic-marquee {
+            from { transform: translateX(var(--start-pos)); }
+            to { transform: translateX(var(--end-pos)); }
         }
 
         .datetime-info {
@@ -447,8 +455,8 @@
                 
                 if (!data || data.length === 0) {
                     const noDataMsg = "目前無列車資訊";
-                    document.getElementById('marquee1').textContent = noDataMsg;
-                    document.getElementById('marquee0').textContent = noDataMsg;
+                    updateBottomMarquee('marquee1', null, noDataMsg);
+                    updateBottomMarquee('marquee0', null, noDataMsg);
                     renderScreen('1', [], '逆行');
                     renderScreen('0', [], '順行');
                     return;
@@ -486,8 +494,8 @@
             } catch (e) {
                 console.error("API Error", e);
                 const errorMsg = "⚠️ 連線異常，請稍候...";
-                document.getElementById('marquee1').textContent = errorMsg;
-                document.getElementById('marquee0').textContent = errorMsg;
+                updateBottomMarquee('marquee1', null, errorMsg);
+                updateBottomMarquee('marquee0', null, errorMsg);
             }
         }
 
@@ -538,45 +546,46 @@
             }
         }
 
-        async function updateBottomMarquee(elementId, trains) {
+        function updateBottomMarquee(elementId, trains, customMsg) {
             const el = document.getElementById(elementId);
-            if (!trains || trains.length === 0) {
-                el.textContent = "目前無列車資訊";
-                return;
+            if (!el) return;
+            const container = el.parentElement;
+            let textHTML = "";
+
+            if (customMsg) {
+                textHTML = customMsg;
+            } else if (!trains || trains.length === 0) {
+                textHTML = "目前無列車資訊";
+            } else {
+                const train = trains[0];
+                const trainNo = train.TrainNo;
+                const trainInfo = getTrainDisplayInfo(train);
+                const delayText = train.Delay > 0 ? `晚 ${train.Delay} 分` : `準點`;
+                
+                textHTML = `本班列車：${trainNo} 次 ${trainInfo.name} 往 ${train.EndingStationName} (${delayText}) | 表定 ${formatTime(train.DepartureTime)} 開車`;
+
+                if (trainInfo.class === '自強3000' || trainInfo.class === '普悠瑪' || trainInfo.class === '太魯閣') {
+                    textHTML += ` <span style="color: #ff5252; font-size: 0.9em; margin-left: 10px;">⚠️ 本列車不得使用電子票證乘車</span>`;
+                }
             }
 
-            const train = trains[0];
-            const trainNo = train.TrainNo;
-            const trainInfo = getTrainDisplayInfo(train);
-            
-            const delayText = train.Delay > 0 ? `晚 ${train.Delay} 分` : `準點`;
-            
-            let textHTML = `本班列車：${trainNo} 次 ${trainInfo.name} 往 ${train.EndingStationName} (${delayText}) | 表定 ${formatTime(train.DepartureTime)} 開車`;
-
-            if (trainInfo.class === '自強3000' || trainInfo.class === '普悠瑪' || trainInfo.class === '太魯閣') {
-                textHTML += ` <span style="color: #ff5252; font-size: 0.9em; margin-left: 10px;">⚠️ 本列車不得使用電子票證乘車</span>`;
-            }
-            
             el.innerHTML = textHTML;
-            
-            el.style.animation = 'none';
-            el.offsetHeight;
-            
-            const plainTextLength = el.textContent.length;
-            // 加速：將係數從 0.25 改為 0.12 (約 2 倍快)
-            const duration = Math.max(5, plainTextLength * 0.12);
-            el.style.animation = `scroll-left ${duration}s linear infinite`;
-            el.style.animationName = 'scroll-left';
-        }
 
-        const styleSheet = document.createElement("style");
-        styleSheet.innerText = `
-            @keyframes scroll-left { 
-                0% { transform: translateX(0); } 
-                100% { transform: translateX(-100%); } 
-            }
-        `;
-        document.head.appendChild(styleSheet);
+            el.style.animation = 'none';
+            void el.offsetWidth;
+
+            const containerWidth = container?.clientWidth || 0;
+            const textWidth = el.scrollWidth;
+
+            el.style.setProperty('--start-pos', `${containerWidth}px`);
+            el.style.setProperty('--end-pos', `-${textWidth}px`);
+
+            const totalDistance = containerWidth + textWidth;
+            const speed = 250;
+            const duration = totalDistance / speed;
+
+            el.style.animation = `dynamic-marquee ${duration}s linear infinite`;
+        }
     </script>
 </body>
 </html>
