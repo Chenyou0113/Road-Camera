@@ -1398,6 +1398,38 @@
         // ============ ✨ 新增：跑馬燈功能邏輯 ============
 
         // 顯示列車停靠站跑馬燈
+        // ============ 輔助函式：取得時刻表 (D1 優先版) ============
+        // ============ 輔助函式：取得時刻表 (優先查 D1) ============
+        async function fetchScheduleWithFallback(trainNo) {
+            // 1. 優先嘗試：您自己的 Cloudflare D1 Worker
+            try {
+                // 🔥 這裡已經填入您剛剛部署成功的 Worker 網址
+                const myApiUrl = `https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev/api/schedule?trainNo=${trainNo}`;
+                
+                const response = await fetch(myApiUrl);
+                if (response.ok) {
+                    const data = await response.json();
+                    // 檢查格式是否正確 (Worker 回傳的是 TDX 格式陣列)
+                    if (data && data.length > 0 && data[0].StopTimes) {
+                        // console.log(`✅ 從 Cloudflare D1 取得 ${trainNo} 次時刻表`);
+                        return data[0].StopTimes;
+                    }
+                }
+            } catch (e) {
+                console.warn(`⚠️ D1 查詢失敗，將降級使用 TDX API...`, e);
+            }
+
+            // 2. 備援：如果 D1 沒反應，才去問 TDX V2
+            try {
+                const v2Data = await tdxApi.fetch(`/v2/Rail/TRA/DailyTrainInfo/TrainNo/${trainNo}?$format=JSON`);
+                if (v2Data && v2Data.length > 0) return v2Data[0].StopTimes;
+            } catch (e) {
+                // V2 也找不到，那就真的沒時刻表了 (只顯示即時位置)
+            }
+
+            return [];
+        }
+
         // ============ 輔助函式：時間加減計算 ============
         function addMinutesToTime(timeStr, minutesToAdd) {
             if (!timeStr) return '--:--';
@@ -1413,7 +1445,7 @@
             return `${newHours}:${newMinutes}`;
         }
 
-        // ============ 核心函式：顯示跑馬燈 (整合區間 + 預計時間) ============
+        // ============ 核心函式：顯示跑馬燈 (整合 V2/V3 雙時刻表來源) ============
         async function showTrainStops(trainNo, currentStationID, destName) {
             const bar = document.getElementById('trainMarqueeBar');
             const content = document.getElementById('mqContent');
@@ -1425,122 +1457,126 @@
             mqTrainNo.textContent = `${trainNo} 次`;
             mqDest.textContent = `往 ${destName}`;
             
-            content.innerHTML = '<span style="color:#aaa; font-size:1rem;"><i class="fas fa-satellite-dish fa-pulse"></i> 定位列車位置中...</span>';
+            content.innerHTML = '<span style="color:#aaa; font-size:1rem;"><i class="fas fa-satellite-dish fa-pulse"></i> 正在搜尋列車訊號...</span>';
             content.style.animation = 'none'; 
             
             try {
-                // 2. 同時發送 V2 (時刻表) 與 V3 (即時位置) 請求
-                const [scheduleData, liveData] = await Promise.all([
-                    tdxApi.fetch(`/v2/Rail/TRA/DailyTrainInfo/TrainNo/${trainNo}?$format=JSON`),
-                    tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`)
+                // 2. 平行請求：(時刻表備援機制) + (V3即時位置)
+                const [stopTimes, liveData] = await Promise.all([
+                    fetchScheduleWithFallback(trainNo),
+                    tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`).catch(() => null)
                 ]);
 
-                // 3. 驗證時刻表資料
-                if (!scheduleData || scheduleData.length === 0) {
-                    content.innerHTML = '<span style="color:#ff9800;">查無時刻表資訊</span>';
-                    return;
-                }
-                
-                const trainInfo = scheduleData[0];
-                const stopTimes = trainInfo.StopTimes;
-                
-                // 找出「使用者查詢的車站」在時刻表中的索引
-                const currentStationIndex = stopTimes.findIndex(s => s.StationID === currentStationID);
-                
+                // 3. 準備變數
                 let marqueeHTML = '';
+                const delayTime = (liveData && liveData.DelayTime) ? liveData.DelayTime : 0;
 
-                // 4. ✨ 計算「位於 XX 與 XX 區間」
+                // ==========================================
+                // ✨ 第一部分：列車目前位置區間 (優先使用 V3 LiveBoard)
+                // ==========================================
+                marqueeHTML += `<span style="color: #aaa; margin-right: 5px;"><i class="fas fa-map-marker-alt"></i> 目前位置：</span>`;
+                
                 if (liveData && liveData.StationName) {
-                    const lastPassedStationName = liveData.StationName.Zh_tw; // API回傳的車站 (剛離開/通過)
-                    const delayTime = liveData.DelayTime || 0; // 誤點分鐘
+                    const lastStationName = liveData.StationName.Zh_tw;
                     
-                    // 在時刻表中，找到 API 回傳的那個車站
-                    const passedIndex = stopTimes.findIndex(s => s.StationName.Zh_tw === lastPassedStationName);
-                    
-                    let nextStopName = "未知";
-                    
-                    if (passedIndex !== -1 && passedIndex < stopTimes.length - 1) {
-                        // 如果剛離開的站是停靠站，那下一站就是列表中的下一個
-                        nextStopName = stopTimes[passedIndex + 1].StationName.Zh_tw;
-                    } else {
-                        // 如果剛離開的站不在停靠列表，則只顯示已離開
-                        nextStopName = null;
+                    // 誤點狀態
+                    let delayText = delayTime <= 0 
+                        ? `<span style="color:#00e676;">(準點)</span>` 
+                        : `<span style="color:#ff5252;">(晚 ${delayTime} 分)</span>`;
+
+                    // 嘗試找下一站 (需要有 stopTimes)
+                    let nextStopName = "";
+                    if (stopTimes.length > 0) {
+                        const passedIndex = stopTimes.findIndex(s => s.StationName.Zh_tw === lastStationName);
+                        // 如果剛過的站在時刻表內，且不是最後一站
+                        if (passedIndex !== -1 && passedIndex < stopTimes.length - 1) {
+                            nextStopName = stopTimes[passedIndex + 1].StationName.Zh_tw;
+                        }
                     }
 
-                    // 誤點狀態文字
-                    let delayText = '';
-                    if (delayTime <= 0) delayText = `<span style="color:#00e676;">(準點)</span>`;
-                    else delayText = `<span style="color:#ff5252;">(晚 ${delayTime} 分)</span>`;
-
-                    // 組合「區間」HTML
-                    marqueeHTML += `<span style="color: #aaa; margin-right: 5px;"><i class="fas fa-map-marker-alt"></i> 目前位置：</span>`;
-                    
                     if (nextStopName) {
-                        // 顯示區間： 瑞芳 ⮕ 猴硐
+                        // 完美狀態：顯示區間
                         marqueeHTML += `
                             <span style="color: #ffeb3b; font-weight:bold; font-size: 1.1rem;">
-                                ${lastPassedStationName} <span style="color:#fff; font-size:0.9rem;">⮕</span> ${nextStopName} 區間
-                            </span>
+                                ${lastStationName} <span style="color:#fff; font-size:0.8rem; opacity:0.7;">➡</span> ${nextStopName} 區間
+                            </span> ${delayText}
                         `;
                     } else {
-                        // 只顯示已離開： 已離開 瑞芳
+                        // 只有位置：顯示目前站點
                         marqueeHTML += `
                             <span style="color: #ffeb3b; font-weight:bold; font-size: 1.1rem;">
-                                已離開/通過 ${lastPassedStationName}
-                            </span>
+                                位於/已離開 ${lastStationName}
+                            </span> ${delayText}
                         `;
                     }
+                } else {
+                    marqueeHTML += `<span style="color:#999;">(無即時訊號)</span>`;
+                }
+                
+                marqueeHTML += `<span style="margin: 0 25px; border-left: 2px solid #555;"></span>`;
+
+                // ==========================================
+                // ✨ 第二部分：預計抵達本站時間 (需要時刻表)
+                // ==========================================
+                if (stopTimes.length > 0) {
+                    const currentStationIndex = stopTimes.findIndex(s => s.StationID === currentStationID);
                     
-                    marqueeHTML += ` ${delayText}`;
-                    marqueeHTML += `<span style="margin: 0 25px; border-left: 2px solid #555;"></span>`;
-
+                    if (currentStationIndex !== -1) {
+                        const myStation = stopTimes[currentStationIndex];
+                        // 優先使用 ArrivalTime (到站)，若是起點則用 DepartureTime (離站)
+                        const tableTime = (myStation.ArrivalTime && myStation.ArrivalTime !== "") ? myStation.ArrivalTime : myStation.DepartureTime;
+                        
+                        // 計算預計時間
+                        const predictedTime = addMinutesToTime(tableTime, delayTime);
+                        const timeColor = delayTime > 0 ? '#ff5252' : '#4fc3f7';
+                        
+                        marqueeHTML += `
+                            <span style="color: #fff;">本站預計：</span>
+                            <span style="color: ${timeColor}; font-weight:bold; font-size: 1.2rem;">${predictedTime}</span>
+                            <span style="color: #aaa; font-size:0.9rem;"> 抵達</span>
+                            <span style="margin: 0 25px; border-left: 2px solid #555;"></span>
+                        `;
+                    }
                 } else {
-                    // 沒抓到 V3 資料的備案
-                    marqueeHTML += `<span style="color:#aaa;">(暫無即時位置訊號)</span><span style="margin: 0 25px; border-left: 2px solid #555;"></span>`;
+                    // 兩個 API 都沒救回來
+                    marqueeHTML += `<span style="color: #aaa; font-size: 0.9rem;">(查無時刻表，僅提供位置)</span><span style="margin: 0 25px; border-left: 2px solid #555;"></span>`;
                 }
 
-                // 5. 顯示「本站預計時間」(如果有找到本站)
-                if (currentStationIndex !== -1) {
-                    const stationInfo = stopTimes[currentStationIndex];
-                    const arrivalTime = stationInfo.ArrivalTime || stationInfo.DepartureTime; // 表定時間
+                // ==========================================
+                // ✨ 第三部分：後續停靠站
+                // ==========================================
+                if (stopTimes.length > 0) {
+                    let stopsToShow = [];
+                    const currentStationIndex = stopTimes.findIndex(s => s.StationID === currentStationID);
                     
-                    // 顯示： 本站預計 10:45 到
-                    marqueeHTML += `
-                        <span style="color: #4fc3f7;">本站預計 ${arrivalTime.slice(0, 5)} 到</span>
-                        <span style="margin: 0 25px; border-left: 2px solid #555;"></span>
-                    `;
+                    if (currentStationIndex !== -1) {
+                        stopsToShow = stopTimes.slice(currentStationIndex + 1);
+                    } else {
+                        // 如果找不到本站(可能您選的是通過站)，或者資料結構有異，就不顯示後續以免誤導
+                        stopsToShow = []; 
+                    }
+
+                    if (stopsToShow.length > 0) {
+                        const stopsHTML = stopsToShow.map(s => {
+                            return `<span class="station-stop">${s.StationName.Zh_tw}</span>`;
+                        }).join('<span class="station-arrow">▶</span>');
+                        marqueeHTML += `<span style="color:#aaa; margin-right:10px;">後續停靠：</span>${stopsHTML}`;
+                    } else if (currentStationIndex !== -1) {
+                         marqueeHTML += '<span style="color:#ff9800;">本列車即將抵達終點</span>';
+                    }
                 }
 
-                // 6. 顯示後續停靠站
-                let stopsToShow = [];
-                if (currentStationIndex !== -1) {
-                    stopsToShow = stopTimes.slice(currentStationIndex + 1);
-                } else {
-                    stopsToShow = stopTimes; // 如果找不到本站，顯示全部
-                }
-
-                if (stopsToShow.length === 0) {
-                    marqueeHTML += '<span style="color:#ff9800;">本列車即將抵達終點</span>';
-                } else {
-                    const prefixText = '後續停靠：';
-                    const stopsHTML = stopsToShow.map(s => {
-                        return `<span class="station-stop">${s.StationName.Zh_tw}</span>`;
-                    }).join('<span class="station-arrow">▶</span>');
-
-                    marqueeHTML += `<span style="color:#aaa; margin-right:10px;">${prefixText}</span>${stopsHTML}`;
-                }
-
-                // 7. 填入內容並啟動動畫
+                // 4. 寫入並啟動動畫
                 content.innerHTML = marqueeHTML;
-                void content.offsetHeight;
+                void content.offsetHeight; // 強制重繪
                 
                 const textLength = content.innerText.length;
-                const duration = Math.max(20, textLength * 1.0); 
+                const duration = Math.max(15, textLength * 0.9); 
                 content.style.animation = `marquee-scroll ${duration}s linear infinite`;
 
             } catch (error) {
-                console.error('❌ 取得動態失敗:', error);
-                content.innerHTML = '<span style="color:#ff5252;">連線不穩定，無法取得位置</span>';
+                console.error('❌ 嚴重錯誤:', error);
+                content.innerHTML = '<span style="color:#ff5252;">系統忙碌中，請稍後再試</span>';
             }
         }
 
