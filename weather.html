@@ -713,7 +713,7 @@
                 if (jsons[0].records && jsons[0].records.Station) rawStations.push(...jsons[0].records.Station);
                 if (jsons[1].records && jsons[1].records.Station) rawStations.push(...jsons[1].records.Station);
 
-                allStations = rawStations.map(transformStationData);
+                allStations = rawStations.map((s, index) => transformStationData(s, index));
 
             } catch (error) {
                 console.error("Fetch failed:", error);
@@ -734,16 +734,37 @@
             }
         }
 
-        function transformStationData(s) {
+        function transformStationData(s, index) {
+            // 【除錯工具】在瀏覽器 Console 印出第一筆資料的結構，方便檢查
+            if (index === 0) {
+                console.log("🔍 [除錯模式] 第一筆原始站點資料:", s);
+                if (s.WeatherElement) {
+                    console.log("🔍 [除錯模式] WeatherElement 結構範例:", s.WeatherElement[0]);
+                } else {
+                    console.warn("⚠️ [除錯模式] 找不到 WeatherElement 欄位！");
+                }
+            }
+
             const getVal = (name) => {
-                // 【關鍵修復】檢查 WeatherElement 是否存在且是陣列
+                // 檢查 WeatherElement 是否存在
                 if (!s.WeatherElement || !Array.isArray(s.WeatherElement)) return null;
+                
                 const item = s.WeatherElement.find(e => e.ElementName === name);
-                return item ? item.ElementValue : null;
+                if (!item) return null;
+
+                // 【關鍵修正】增加對不同資料格式的相容性
+                // 狀況 A: ElementValue 直接是數值/字串 (例如: "24.5")
+                // 狀況 B: ElementValue 是物件 (例如: { "Value": "24.5", "Unit": "C" })
+                if (typeof item.ElementValue === 'object' && item.ElementValue !== null) {
+                    return item.ElementValue.Value || item.ElementValue.value || String(item.ElementValue);
+                }
+                
+                return item.ElementValue;
             };
 
             let lat = null, lon = null;
             if (s.GeoInfo && s.GeoInfo.Coordinates) {
+                // 嘗試抓取 WGS84 座標，如果沒有則抓取陣列中的第二個作為備案
                 const coord = s.GeoInfo.Coordinates.find(c => c.CoordinateName === 'WGS84') || s.GeoInfo.Coordinates[1];
                 if (coord) {
                     lat = coord.StationLatitude;
@@ -752,11 +773,16 @@
             }
 
             const parseNum = (val) => {
+                // 強制轉型為字串再處理，避免傳入物件導致 NaN
+                if (typeof val === 'object') return null; 
+                
                 const num = parseFloat(val);
+                // 過濾掉無效數值 (NaN) 或 儀器故障代碼 (-99 等)
                 return (isNaN(num) || num < -90) ? null : num;
             };
             
             let humidity = parseNum(getVal('HUMD'));
+            // 修正濕度：如果是小數點格式 (0.75) 轉為百分比 (75)，如果是整數 (75) 則維持
             if (humidity !== null && humidity <= 1 && humidity > 0) humidity *= 100;
 
             return {
@@ -767,9 +793,9 @@
                 lat: lat,
                 lon: lon,
                 temperature: parseNum(getVal('TEMP')),
-                weather: getVal('Weather'),
+                weather: getVal('Weather'), // 自動站通常沒有這個欄位，會回傳 null
                 humidity: humidity,
-                precipitation: parseNum(getVal('H_24R')),
+                precipitation: parseNum(getVal('H_24R')), // 日累積雨量
                 windSpeed: parseNum(getVal('WDSD')),
                 obsTime: s.ObsTime.DateTime
             };
