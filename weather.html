@@ -735,69 +735,103 @@
         }
 
         function transformStationData(s, index) {
-            // 【除錯工具】在瀏覽器 Console 印出第一筆資料的結構，方便檢查
+            // 【除錯工具】印出物件的所有「屬性名稱(Keys)」，讓我們看看到底有哪些欄位
             if (index === 0) {
-                console.log("🔍 [除錯模式] 第一筆原始站點資料:", s);
-                if (s.WeatherElement) {
-                    console.log("🔍 [除錯模式] WeatherElement 結構範例:", s.WeatherElement[0]);
-                } else {
-                    console.warn("⚠️ [除錯模式] 找不到 WeatherElement 欄位！");
-                }
+                console.log("🔍 [除錯模式] 第一筆資料的欄位名稱:", Object.keys(s));
+                if (s.WeatherElement) console.log("🔍 [除錯模式] WeatherElement 內容:", s.WeatherElement);
             }
 
-            const getVal = (name) => {
-                // 檢查 WeatherElement 是否存在
-                if (!s.WeatherElement || !Array.isArray(s.WeatherElement)) return null;
-                
-                const item = s.WeatherElement.find(e => e.ElementName === name);
-                if (!item) return null;
-
-                // 【關鍵修正】增加對不同資料格式的相容性
-                // 狀況 A: ElementValue 直接是數值/字串 (例如: "24.5")
-                // 狀況 B: ElementValue 是物件 (例如: { "Value": "24.5", "Unit": "C" })
-                if (typeof item.ElementValue === 'object' && item.ElementValue !== null) {
-                    return item.ElementValue.Value || item.ElementValue.value || String(item.ElementValue);
-                }
-                
-                return item.ElementValue;
-            };
-
-            let lat = null, lon = null;
-            if (s.GeoInfo && s.GeoInfo.Coordinates) {
-                // 嘗試抓取 WGS84 座標，如果沒有則抓取陣列中的第二個作為備案
-                const coord = s.GeoInfo.Coordinates.find(c => c.CoordinateName === 'WGS84') || s.GeoInfo.Coordinates[1];
-                if (coord) {
-                    lat = coord.StationLatitude;
-                    lon = coord.StationLongitude;
-                }
-            }
-
+            // 輔助函式：安全地解析數值
             const parseNum = (val) => {
-                // 強制轉型為字串再處理，避免傳入物件導致 NaN
-                if (typeof val === 'object') return null; 
-                
+                if (val === undefined || val === null || val === '') return null;
+                // 如果是物件 (有些API會回傳 {Value: 25, Unit: "C"})
+                if (typeof val === 'object') {
+                    val = val.Value || val.value; // 嘗試抓取 Value
+                }
                 const num = parseFloat(val);
-                // 過濾掉無效數值 (NaN) 或 儀器故障代碼 (-99 等)
+                // 過濾無效值：NaN, 儀器故障(-99), 若小於 -90 通常是異常值
                 return (isNaN(num) || num < -90) ? null : num;
             };
+
+            // ---------------------------------------------------------
+            // 策略 A：針對 O-A0001 (自動氣象站) 的格式
+            // 特徵：欄位名稱是 AirTemperature, RelativeHumidity... 
+            // 結構：數值可能直接在 WeatherElement 物件下，或是直接在 s 下
+            // ---------------------------------------------------------
             
-            let humidity = parseNum(getVal('HUMD'));
-            // 修正濕度：如果是小數點格式 (0.75) 轉為百分比 (75)，如果是整數 (75) 則維持
-            if (humidity !== null && humidity <= 1 && humidity > 0) humidity *= 100;
+            // 取得 WeatherElement (有些API放在 s.WeatherElement，有些可能攤平)
+            const we = s.WeatherElement || s; 
+
+            // 嘗試讀取自動站欄位 (O-A0001)
+            let temp = parseNum(we.AirTemperature);
+            let hum = parseNum(we.RelativeHumidity);
+            let rain = parseNum(we.Now ? we.Now.Precipitation : we.Precipitation); // 雨量有時在 Now 物件內
+            let wind = parseNum(we.WindSpeed);
+            
+            // 天氣現象：自動站通常沒有文字描述 (Weather)，通常只有 Code
+            // 這裡嘗試抓取，如果沒有就留空
+            let weatherDesc = we.Weather; 
+            
+            // ---------------------------------------------------------
+            // 策略 B：針對 O-A0003 (局屬氣象站) 的格式 (舊版程式碼的邏輯)
+            // 特徵：WeatherElement 是一個陣列，內含 {ElementName: "TEMP", ElementValue: ...}
+            // ---------------------------------------------------------
+            if (Array.isArray(s.WeatherElement)) {
+                const getVal = (name) => {
+                    const item = s.WeatherElement.find(e => e.ElementName === name);
+                    return item ? item.ElementValue : null;
+                };
+                
+                // 如果策略 A 沒抓到值，就用策略 B 覆寫
+                if (temp === null) temp = parseNum(getVal('TEMP'));
+                if (hum === null) hum = parseNum(getVal('HUMD'));
+                if (rain === null) rain = parseNum(getVal('H_24R') || getVal('RAIN'));
+                if (wind === null) wind = parseNum(getVal('WDSD'));
+                if (!weatherDesc) weatherDesc = getVal('Weather');
+            }
+
+            // ---------------------------------------------------------
+            // 處理座標 (GeoInfo)
+            // ---------------------------------------------------------
+            let lat = null, lon = null;
+            if (s.GeoInfo) {
+                // 格式 1: GeoInfo.Coordinates 陣列
+                if (s.GeoInfo.Coordinates) {
+                    const coord = s.GeoInfo.Coordinates.find(c => c.CoordinateName === 'WGS84') || s.GeoInfo.Coordinates[1];
+                    if (coord) {
+                        lat = coord.StationLatitude;
+                        lon = coord.StationLongitude;
+                    }
+                } 
+                // 格式 2: 直接在 GeoInfo 下 (部分 API)
+                else if (s.GeoInfo.StationLatitude) {
+                    lat = s.GeoInfo.StationLatitude;
+                    lon = s.GeoInfo.StationLongitude;
+                }
+            } else if (s.StationLatitude && s.StationLongitude) {
+                // 格式 3: 直接在根目錄 (根據您的描述，有這個可能性)
+                lat = s.StationLatitude;
+                lon = s.StationLongitude;
+            }
+
+            // ---------------------------------------------------------
+            // 濕度修正 (如果數值是 0.75 則轉為 75)
+            // ---------------------------------------------------------
+            if (hum !== null && hum <= 1 && hum > 0) hum *= 100;
 
             return {
                 stationId: s.StationId,
                 stationName: s.StationName,
-                county: s.GeoInfo.CountyName,
-                town: s.GeoInfo.TownName,
-                lat: lat,
-                lon: lon,
-                temperature: parseNum(getVal('TEMP')),
-                weather: getVal('Weather'), // 自動站通常沒有這個欄位，會回傳 null
-                humidity: humidity,
-                precipitation: parseNum(getVal('H_24R')), // 日累積雨量
-                windSpeed: parseNum(getVal('WDSD')),
-                obsTime: s.ObsTime.DateTime
+                county: s.GeoInfo ? s.GeoInfo.CountyName : (s.CountyName || '未知'),
+                town: s.GeoInfo ? s.GeoInfo.TownName : (s.TownName || ''),
+                lat: parseFloat(lat),
+                lon: parseFloat(lon),
+                temperature: temp,
+                weather: weatherDesc,
+                humidity: hum,
+                precipitation: rain,
+                windSpeed: wind,
+                obsTime: s.ObsTime ? s.ObsTime.DateTime : (s.DateTime || '')
             };
         }
 
