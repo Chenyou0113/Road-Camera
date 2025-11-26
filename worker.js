@@ -1,123 +1,123 @@
-// === 核心功能：寫入 D1 資料庫 (保持不變) ===
-async function saveWeatherToD1(env) {
-  const apiKey = env.CWA_API_KEY;
-  if (!apiKey) throw new Error("找不到 API Key");
+// ============================================================
+//  核心功能 1：從氣象署抓取警特報並寫入 D1 (背景執行用)
+// ============================================================
+async function updateWarningsInBackground(env) {
+    const apiKey = env.CWA_API_KEY;
+    if (!apiKey) return console.error("Missing API Key");
 
-  // 抓取自動氣象站 (O-A0001-001)
-  const cwaUrl = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001?Authorization=${apiKey}&format=JSON&StationStatus=OPEN`;
-  
-  const response = await fetch(cwaUrl);
-  if (!response.ok) throw new Error(`氣象署 API 回傳錯誤: ${response.status}`);
-  
-  const data = await response.json();
-  if (!data.records || !data.records.Station) throw new Error("API 資料結構異常");
+    // 警特報 URL (使用 File API)
+    const cwaUrl = `https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/W-C0033-002?Authorization=${apiKey}&downloadType=WEB&format=JSON`;
+    
+    try {
+        console.log("開始背景更新警特報...");
+        const response = await fetch(cwaUrl, { 
+            cf: { cacheTtl: 0 } // 強制不使用 Cloudflare 快取
+        });
 
-  const stations = data.records.Station;
+        if (!response.ok) throw new Error(`CWA API Error: ${response.status}`);
+        
+        const jsonData = await response.text();
+        
+        // 寫入 D1 (ID 固定為 1)
+        await env.DB.prepare(`
+            INSERT OR REPLACE INTO weather_warnings (id, json_data, updated_at) 
+            VALUES (1, ?, ?)
+        `).bind(jsonData, Date.now()).run();
 
-  // 準備 SQL
-  const stmtStation = env.DB.prepare(`
-    INSERT OR REPLACE INTO stations (station_id, name, county, town, lat, lon)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
-  const stmtLog = env.DB.prepare(`
-    INSERT INTO weather_logs (station_id, obs_time, temperature, humidity, rain, weather)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
-  let currentBatch = [];
-  const BATCH_SIZE = 20;
-  const timestamp = Date.now();
-  let totalSaved = 0;
-
-  for (const s of stations) {
-    if (!s.WeatherElement) continue;
-
-    const we = s.WeatherElement;
-
-    // 1. 溫度
-    let tempVal = parseFloat(we.AirTemperature);
-    if (isNaN(tempVal)) tempVal = -99;
-
-    // 2. 濕度
-    let humdVal = parseFloat(we.RelativeHumidity);
-    if (humdVal !== null && humdVal <= 1 && humdVal > 0) humdVal *= 100;
-    if (isNaN(humdVal)) humdVal = null;
-
-    // 3. 雨量
-    let rainVal = 0;
-    if (we.Now && we.Now.Precipitation) {
-        rainVal = parseFloat(we.Now.Precipitation);
+        console.log("警特報背景更新完成");
+        return true;
+    } catch (e) {
+        console.error(`背景更新失敗: ${e.message}`);
+        return false;
     }
-    if (isNaN(rainVal) || rainVal < 0) rainVal = 0;
-
-    // 4. 天氣
-    const weatherVal = we.Weather || null;
-
-    // 地理資訊解析
-    let lat = null, lon = null;
-    if (s.GeoInfo && s.GeoInfo.Coordinates) {
-        const coord = s.GeoInfo.Coordinates.find(c => c.CoordinateName === 'WGS84') || s.GeoInfo.Coordinates[1];
-        if (coord) {
-            lat = parseFloat(coord.StationLatitude);
-            lon = parseFloat(coord.StationLongitude);
-        }
-    }
-
-    // 寫入條件
-    if (tempVal !== null && tempVal > -50) {
-      
-      currentBatch.push(stmtStation.bind(
-          s.StationId,
-          s.StationName,
-          s.GeoInfo.CountyName,
-          s.GeoInfo.TownName,
-          lat,
-          lon
-      ));
-
-      currentBatch.push(stmtLog.bind(
-        s.StationId, 
-        timestamp, 
-        tempVal, 
-        humdVal, 
-        rainVal, 
-        weatherVal
-      ));
-    }
-
-    if (currentBatch.length >= BATCH_SIZE * 2) {
-      await env.DB.batch(currentBatch);
-      totalSaved += (currentBatch.length / 2);
-      currentBatch = [];
-    }
-  }
-
-  if (currentBatch.length > 0) {
-    await env.DB.batch(currentBatch);
-    totalSaved += (currentBatch.length / 2);
-  }
-
-  return `成功！已全數同步 ${totalSaved} 個自動測站資料 (解析模式：物件)`;
 }
 
-// === 主要入口點 ===
+// ============================================================
+//  核心功能 2：儲存氣象站資料 (維持原樣)
+// ============================================================
+async function saveStationDataToD1(env) {
+    const apiKey = env.CWA_API_KEY;
+    if (!apiKey) throw new Error("找不到 API Key");
+
+    const cwaUrl = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001?Authorization=${apiKey}&format=JSON&StationStatus=OPEN`;
+    
+    try {
+        const response = await fetch(cwaUrl);
+        if (!response.ok) throw new Error(`氣象署 API 回傳錯誤: ${response.status}`);
+        
+        const data = await response.json();
+        const stations = data.records?.Station || [];
+
+        // 準備 SQL
+        const stmtStation = env.DB.prepare(`
+            INSERT OR REPLACE INTO stations (station_id, name, county, town, lat, lon)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `);
+
+        const stmtLog = env.DB.prepare(`
+            INSERT INTO weather_logs (station_id, obs_time, temperature, humidity, rain, weather)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `);
+
+        let currentBatch = [];
+        const BATCH_SIZE = 20;
+        const timestamp = Date.now();
+        let totalSaved = 0;
+
+        for (const s of stations) {
+            if (!s.WeatherElement) continue;
+            const we = s.WeatherElement;
+
+            let tempVal = parseFloat(we.AirTemperature);
+            if (isNaN(tempVal) || tempVal < -50) continue;
+
+            let humdVal = parseFloat(we.RelativeHumidity);
+            if (humdVal !== null && humdVal <= 1 && humdVal > 0) humdVal *= 100;
+            if (isNaN(humdVal)) humdVal = null;
+
+            let rainVal = we.Now && we.Now.Precipitation ? parseFloat(we.Now.Precipitation) : 0;
+            if (isNaN(rainVal) || rainVal < 0) rainVal = 0;
+
+            const weatherVal = we.Weather || null;
+
+            let lat = null, lon = null;
+            if (s.GeoInfo?.Coordinates) {
+                const coord = s.GeoInfo.Coordinates.find(c => c.CoordinateName === 'WGS84') || s.GeoInfo.Coordinates[1];
+                if (coord) {
+                    lat = parseFloat(coord.StationLatitude);
+                    lon = parseFloat(coord.StationLongitude);
+                }
+            }
+
+            currentBatch.push(stmtStation.bind(s.StationId, s.StationName, s.GeoInfo.CountyName, s.GeoInfo.TownName, lat, lon));
+            currentBatch.push(stmtLog.bind(s.StationId, timestamp, tempVal, humdVal, rainVal, weatherVal));
+
+            if (currentBatch.length >= BATCH_SIZE * 2) {
+                await env.DB.batch(currentBatch);
+                totalSaved += (currentBatch.length / 2);
+                currentBatch = [];
+            }
+        }
+
+        if (currentBatch.length > 0) {
+            await env.DB.batch(currentBatch);
+            totalSaved += (currentBatch.length / 2);
+        }
+        return `成功同步 ${totalSaved} 個測站`;
+    } catch (e) {
+        console.error("Save Station Error:", e);
+        return `同步失敗: ${e.message}`;
+    }
+}
+
+// ============================================================
+//  主入口 (Main Handler)
+// ============================================================
 export default {
-  // 1. 處理網頁請求 (Proxy 功能)
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-
-    // 🔥 測試後門 (手動觸發寫入 D1)
-    if (url.searchParams.get("test_save") === "true") {
-      try {
-        const result = await saveWeatherToD1(env);
-        return new Response(`測試結果：${result}`);
-      } catch (err) {
-        return new Response(`測試錯誤：${err.message}`, { status: 500 });
-      }
-    }
-
-    // 設定 CORS 標頭 (允許跨網域存取)
+    
+    // 1. 設定 CORS (必須放在最前面)
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, OPTIONS",
@@ -125,48 +125,82 @@ export default {
     };
     if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-    // 取得 dataset 參數 (例如 O-A0001-001 或 W-C0033-002)
-    const dataset = url.searchParams.get("dataset");
-    if (!dataset) return new Response("Error: Missing dataset parameter", { status: 400, headers: corsHeaders });
+    // ========================================================
+    // 🔥 修正重點：這裡先檢查 force_update，不檢查 dataset
+    // ========================================================
+    if (url.searchParams.get("force_update") === "true") {
+        // 使用 waitUntil 讓更新在背景執行，前端不用等
+        ctx.waitUntil(Promise.all([
+            updateWarningsInBackground(env),
+            saveStationDataToD1(env)
+        ]));
 
-    try {
-      // ★ 修改重點：區分一般 API 與 警特報 File API ★
-      let cwaUrl = '';
-      
-      if (dataset === 'W-C0033-002') {
-        // 警特報使用的是 File API
-        cwaUrl = `https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/${dataset}?Authorization=${env.CWA_API_KEY}&downloadType=WEB&format=JSON`;
-      } else {
-        // 其他氣象資料 (如 O-A0001) 使用的是 Datastore API
-        cwaUrl = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/${dataset}?Authorization=${env.CWA_API_KEY}&format=JSON&StationStatus=OPEN`;
-      }
-
-      // 向氣象署發送請求
-      const response = await fetch(cwaUrl);
-      const data = await response.json();
-      
-      // 將資料回傳給前端
-      return new Response(JSON.stringify(data), { 
-        headers: { 
-          ...corsHeaders, 
-          "Content-Type": "application/json;charset=UTF-8",
-          // 建議加入 Cache-Control 減少對氣象署的請求 (例如快取 60 秒)
-          "Cache-Control": "public, max-age=60"
-        } 
-      });
-
-    } catch (err) {
-      return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
+        return new Response("✅ 已觸發背景更新！請等待 5~10 秒後重新整理首頁。", { 
+            headers: { ...corsHeaders, "Content-Type": "text/plain;charset=UTF-8" } 
+        });
     }
+
+    // ========================================================
+    // 2. 現在才檢查 dataset 參數
+    // ========================================================
+    const dataset = url.searchParams.get("dataset");
+
+    // 警特報 (W-C0033-002) 邏輯
+    if (dataset === 'W-C0033-002') {
+        try {
+            // 優先從 D1 讀取
+            const record = await env.DB.prepare("SELECT json_data, updated_at FROM weather_warnings WHERE id = 1").first();
+            
+            // 判斷是否過期 (10分鐘 = 600000ms)
+            const isStale = !record || !record.json_data || (Date.now() - record.updated_at > 600000);
+            
+            if (isStale) {
+                console.log("資料陳舊或不存在，觸發背景更新...");
+                ctx.waitUntil(updateWarningsInBackground(env));
+            }
+
+            // 如果資料庫完全沒資料 (第一次跑)，回傳假資料避免前端報錯
+            let responseData = record && record.json_data ? record.json_data : JSON.stringify({
+                cwaopendata: {
+                    dataset: {
+                        datasetInfo: { datasetDescription: "系統初始化中..." },
+                        contents: { content: { contentText: "正在同步警特報資料，請稍候..." } }
+                    }
+                }
+            });
+
+            return new Response(responseData, {
+                headers: { 
+                    ...corsHeaders, 
+                    "Content-Type": "application/json;charset=UTF-8",
+                    "X-Source": isStale ? "D1-Stale" : "D1-Hit"
+                }
+            });
+        } catch (e) {
+            return new Response(JSON.stringify({ error: "DB Error: " + e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    // 一般氣象資料 (Proxy) 邏輯
+    if (dataset) {
+        try {
+            const cwaUrl = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/${dataset}?Authorization=${env.CWA_API_KEY}&format=JSON&StationStatus=OPEN`;
+            const response = await fetch(cwaUrl);
+            const data = await response.json();
+            return new Response(JSON.stringify(data), { 
+                headers: { ...corsHeaders, "Content-Type": "application/json;charset=UTF-8", "Cache-Control": "public, max-age=60" } 
+            });
+        } catch (err) {
+            return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    // 如果沒有 force_update 也沒有 dataset，才回傳錯誤
+    return new Response("錯誤：缺少資料集參數 (dataset missing)", { status: 400, headers: corsHeaders });
   },
 
-  // 2. 自動排程 (Cron Job)
+  // 3. 排程觸發 (Cron Job)
   async scheduled(event, env, ctx) {
-    try {
-      const result = await saveWeatherToD1(env);
-      console.log("排程執行:", result);
-    } catch (error) {
-      console.error("排程錯誤:", error.message);
-    }
+    ctx.waitUntil(Promise.all([saveStationDataToD1(env), updateWarningsInBackground(env)]));
   }
 };
