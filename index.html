@@ -895,25 +895,28 @@
 
 <script>
         async function loadWeatherWarnings() {
-            // 這裡確保沒有多餘空白
-            const apiUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev?dataset=W-C0033-002&v=2';
+            // 加入 v=3 避免快取
+            const apiUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev?dataset=W-C0033-002&v=3';
             
             const container = document.getElementById('warningTickerContainer');
             const titleEl = document.getElementById('warningTitle');
             const contentEl = document.getElementById('warningContent');
 
             try {
-                // 加入 priority: 'high' 告訴瀏覽器這是重要的
                 const response = await fetch(apiUrl, { priority: 'high' });
                 const data = await response.json();
                 
                 const dataset = data.cwaopendata?.dataset;
                 
-                if (!dataset || !dataset.datasetInfo) return;
+                if (!dataset || !dataset.datasetInfo) {
+                    container.style.display = "none";
+                    return; 
+                }
 
+                // 1. 取得特報名稱
                 const reportName = dataset.datasetInfo.datasetDescription;
 
-                // 時間處理
+                // 2. 取得發布時間 (MM/DD HH:mm)
                 let timeStr = "";
                 if (dataset.datasetInfo.issueTime) {
                     const dateObj = new Date(dataset.datasetInfo.issueTime);
@@ -924,7 +927,7 @@
                     timeStr = `・${month}/${date} ${hours}:${minutes}`;
                 }
 
-                // 結束時間處理
+                // 3. 取得結束時間 (~MM/DD HH:mm)
                 let endTimeStr = "";
                 if (dataset.datasetInfo.validTime && dataset.datasetInfo.validTime.endTime) {
                     const endObj = new Date(dataset.datasetInfo.validTime.endTime);
@@ -935,17 +938,32 @@
                     endTimeStr = ` (~${endMonth}/${endDate} ${endHours}:${endMinutes})`;
                 }
                 
+                // 4. 內容優化處理 (只取重點)
                 let rawContent = "";
                 if (dataset.contents && dataset.contents.content) {
-                    rawContent = dataset.contents.content.contentText.replace(/\s+/g, ' ');
+                    let text = dataset.contents.content.contentText;
+                    
+                    // 去除 "一、概述：" 這種標題
+                    text = text.replace(/^一、概述：/g, '');
+                    
+                    // 只要第一段 (在 "二、" 或 "註：" 之前截止)
+                    const cutIndex = text.search(/[二註]、/);
+                    if (cutIndex !== -1) {
+                        text = text.substring(0, cutIndex);
+                    }
+                    
+                    // 移除多餘換行與前後空白
+                    rawContent = text.replace(/\s+/g, ' ').trim();
                 }
 
+                // 5. 組合文字
                 const fullText = `【${reportName}${timeStr}】 ${rawContent}${endTimeStr}`;
 
                 titleEl.textContent = "警特報"; 
                 contentEl.innerHTML = fullText; 
                 container.style.display = "flex";
 
+                // 動畫設定
                 const containerWidth = container.offsetWidth;
                 const textWidth = contentEl.scrollWidth;
                 const duration = (containerWidth + textWidth) / 50; 
@@ -957,6 +975,7 @@
 
             } catch (error) {
                 console.warn("無法載入警特報:", error);
+                container.style.display = "none";
             }
         }
 
