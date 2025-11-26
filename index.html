@@ -144,7 +144,7 @@
             flex-wrap: wrap;
         }
 
-        /* === 天氣警特報跑馬燈樣式 (新增) === */
+        /* === 天氣警特報跑馬燈 (無縫輪播版) === */
         .warning-ticker-container {
             max-width: 900px;
             margin: 35px auto 0;
@@ -176,29 +176,37 @@
             box-shadow: 2px 0 10px rgba(0,0,0,0.1);
         }
 
+        /* 修正：外層容器 */
         .ticker-wrapper {
             flex: 1;
             overflow: hidden;
-            position: relative;
-            height: 100%;
             display: flex;
             align-items: center;
+            /* 遮罩讓兩側漸層淡出 */
             mask-image: linear-gradient(to right, transparent, black 20px, black 95%, transparent);
             -webkit-mask-image: linear-gradient(to right, transparent, black 20px, black 95%, transparent);
         }
 
+        /* 修正：內層內容 (改用 Flex 排列) */
         .ticker-content {
+            display: flex;
             white-space: nowrap;
-            position: absolute;
-            font-size: 1rem;
-            color: #ffcc80;
-            font-weight: 500;
             will-change: transform;
         }
 
-        @keyframes ticker-scroll {
-            0% { transform: translateX(100%); }
-            100% { transform: translateX(-100%); }
+        /* 修正：單個文字區塊 */
+        .ticker-item {
+            color: #ffcc80;
+            font-weight: 500;
+            font-size: 1rem;
+            padding-right: 50px; /* 這是兩則訊息之間的間距 */
+            flex-shrink: 0; /* 防止文字被壓縮 */
+        }
+
+        /* 修正：無縫滾動動畫 */
+        @keyframes ticker-seamless {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-50%); } /* 只移動一半 (即一組文字的寬度) */
         }
 
         @keyframes fadeIn {
@@ -206,7 +214,7 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
-        /* 深色模式微調 - 跑馬燈 */
+        /* 深色模式微調 */
         body.dark-mode .warning-ticker-container {
             background: rgba(255, 87, 34, 0.15);
             border-color: rgba(255, 87, 34, 0.4);
@@ -215,7 +223,7 @@
             background: #bf360c;
             color: #fff;
         }
-        body.dark-mode .ticker-content {
+        body.dark-mode .ticker-item {
             color: #ffab91;
         }
 
@@ -518,12 +526,6 @@
             border-top: 1px solid rgba(79, 195, 247, 0.1);
         }
     </style>
-
-    <script src="assets/loading-progress.js"></script>
-    <script>
-        // 🚫 禁止自動顯示載入動畫
-        window.AUTO_START_LOADING = false;
-    </script>
 </head>
 <body>
     <div class="particles-bg"></div>
@@ -813,7 +815,7 @@
                 本平臺整合下列政府開放資料：<br>
                 🌤️ <strong>交通部中央氣象署 (CWA)</strong> - 天氣觀測、降雨雷達回波圖<br>
                 🚗 <strong>交通部運輸資料流通服務平臺 (TDX)</strong> - 國道、快速道監視器影像<br>
-                🚆 <strong>國營臺灣鐵路股份有限公司 (TRA)</strong> - 臺鐵即時公告、營運資訊<br>
+                🚆 <strong>國營臺灣鐵路股份有限公司 (TRA)</strong> - 臺鐵即時公告、營運資訊、列車即時位置、車站即時看板、每日車次時刻表、列車延誤時間<br>
                 🚄 <strong>臺灣高速鐵路股份有限公司 (THSRC)</strong> - 高鐵即時公告、營運資訊<br>
                 🛣️ <strong>交通部公路總局 (MOTC)</strong> - 國道、快速公路、省道監視器影像<br>
                 💧 <strong>經濟部水利署 (WRA)</strong> - 水資源、水利監視器、河川水位監測<br>
@@ -893,10 +895,10 @@
         });
     </script>
 
-<script>
+    <script>
         async function loadWeatherWarnings() {
-            // 加入 v=3 避免快取
-            const apiUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev?dataset=W-C0033-002&v=3';
+            // 加入 v=4 避免快取
+            const apiUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev?dataset=W-C0033-002&v=4';
             
             const container = document.getElementById('warningTickerContainer');
             const titleEl = document.getElementById('warningTitle');
@@ -908,6 +910,7 @@
                 
                 const dataset = data.cwaopendata?.dataset;
                 
+                // 如果沒資料就隱藏
                 if (!dataset || !dataset.datasetInfo) {
                     container.style.display = "none";
                     return; 
@@ -938,38 +941,40 @@
                     endTimeStr = ` (~${endMonth}/${endDate} ${endHours}:${endMinutes})`;
                 }
                 
-                // 4. 內容優化處理 (只取重點)
+                // 4. 內容優化 (只取重點)
                 let rawContent = "";
                 if (dataset.contents && dataset.contents.content) {
                     let text = dataset.contents.content.contentText;
-                    
-                    // 去除 "一、概述：" 這種標題
                     text = text.replace(/^一、概述：/g, '');
-                    
-                    // 只要第一段 (在 "二、" 或 "註：" 之前截止)
                     const cutIndex = text.search(/[二註]、/);
-                    if (cutIndex !== -1) {
-                        text = text.substring(0, cutIndex);
-                    }
-                    
-                    // 移除多餘換行與前後空白
+                    if (cutIndex !== -1) text = text.substring(0, cutIndex);
                     rawContent = text.replace(/\s+/g, ' ').trim();
                 }
 
-                // 5. 組合文字
                 const fullText = `【${reportName}${timeStr}】 ${rawContent}${endTimeStr}`;
 
+                // 更新 DOM
                 titleEl.textContent = "警特報"; 
-                contentEl.innerHTML = fullText; 
+                
+                // ★ 關鍵：複製兩份文字，實現無縫輪播
+                // 使用 span class="ticker-item" 包裹
+                contentEl.innerHTML = `<span class="ticker-item">${fullText}</span><span class="ticker-item">${fullText}</span>`;
+                
                 container.style.display = "flex";
 
-                // 動畫設定
-                const containerWidth = container.offsetWidth;
-                const textWidth = contentEl.scrollWidth;
-                const duration = (containerWidth + textWidth) / 50; 
+                // ★ 動畫設定
+                // 取得單一組文字的寬度
+                // (因為現在有兩組，所以 scrollWidth 會是兩倍，我們只需要一半)
+                const singleWidth = contentEl.scrollWidth / 2;
                 
-                contentEl.style.animation = `ticker-scroll ${Math.max(duration, 15)}s linear infinite`;
+                // 速度計算：每秒跑 50px (數字越小越慢)
+                const speed = 50; 
+                const duration = singleWidth / speed;
                 
+                // 設定動畫：從 0% 移動到 -50% (剛好跑完一組文字的距離，然後瞬間跳回 0，視覺上是連續的)
+                contentEl.style.animation = `ticker-seamless ${duration}s linear infinite`;
+                
+                // 滑鼠互動
                 container.addEventListener('mouseenter', () => contentEl.style.animationPlayState = 'paused');
                 container.addEventListener('mouseleave', () => contentEl.style.animationPlayState = 'running');
 
@@ -979,8 +984,7 @@
             }
         }
 
-        // 🔥 關鍵：不等待 DOMContentLoaded，直接執行！
-        // 這樣可以讓請求比地圖和其他圖片更早發出
+        // 立即執行
         loadWeatherWarnings();
     </script>
 </body>
