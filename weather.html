@@ -810,10 +810,27 @@
                 if (jsons[0].error) throw new Error("Worker: " + jsons[0].error);
 
                 const rawStations = [];
+                // 先放入自動站 (O-A0001)
                 if (jsons[0].records && jsons[0].records.Station) rawStations.push(...jsons[0].records.Station);
+                // 再放入局屬站 (O-A0003)
                 if (jsons[1].records && jsons[1].records.Station) rawStations.push(...jsons[1].records.Station);
 
-                allStations = rawStations.map((s, index) => transformStationData(s, index));
+                // === 修改重點：去除重複站名 ===
+                
+                // 1. 先將原始資料轉換成標準格式
+                const processedStations = rawStations.map((s, index) => transformStationData(s, index));
+
+                // 2. 使用 Map 來去除重複
+                // 原理：Map 的 Key (站名) 是唯一的。當我們依序放入資料時，
+                // 如果遇到相同的站名，後面的資料 (局屬站) 會覆蓋前面的 (自動站)。
+                // 這樣正好能保留資料較完整（通常有天氣描述）的局屬站資料。
+                const uniqueStationMap = new Map();
+                processedStations.forEach(s => {
+                    uniqueStationMap.set(s.stationName, s);
+                });
+
+                // 3. 將去重後的 Map 轉回陣列
+                allStations = Array.from(uniqueStationMap.values());
 
             } catch (error) {
                 console.error("Fetch failed:", error);
