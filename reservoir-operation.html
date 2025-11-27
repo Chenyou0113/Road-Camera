@@ -3,603 +3,597 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>水庫每日營運狀況 - 數據可視化</title>
+    <title>臺灣水庫即時戰情室</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="assets/dark-mode.css">
-    <link rel="stylesheet" href="assets/mobile-responsive.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+        /* =========================================
+           🎨 色彩變數系統 (CSS Variables)
+           ========================================= */
+        :root {
+            /* --- 亮色模式 (預設) --- */
+            --primary-color: #0077b6;
+            --bg-color: #f0f4f8;
+            --card-bg: #ffffff;
+            --text-main: #2c3e50;
+            --text-sub: #7f8c8d;
+            --water-container-bg: #eef5f9; /* 水位圖的空背景色 */
+            --input-bg: #ffffff;
+            --border-color: rgba(0,0,0,0.05);
+            --shadow-color: rgba(0,0,0,0.05);
+            
+            /* 狀態色 */
+            --status-good: #2ecc71;
+            --status-fair: #f1c40f;
+            --status-poor: #e74c3c;
+            
+            /* 標籤底色 */
+            --badge-bg-good: #e8f8f5;
+            --badge-text-good: #2ecc71;
+            --badge-bg-fair: #fef9e7;
+            --badge-text-fair: #f1c40f;
+            --badge-bg-poor: #fdedec;
+            --badge-text-poor: #e74c3c;
         }
 
+        /* --- 🌙 深色模式覆寫 --- */
+        [data-theme="dark"] {
+            --primary-color: #48cae4; /* 深色模式下主色調亮一點 */
+            --bg-color: #121212;      /* 極深灰 */
+            --card-bg: #1e1e1e;       /* 卡片深灰 */
+            --text-main: #e0e0e0;     /* 亮灰白 */
+            --text-sub: #a0a0a0;      /* 中灰 */
+            --water-container-bg: #2c3e50; /* 深藍灰作為水的空背景 */
+            --input-bg: #2d2d2d;
+            --border-color: #333333;
+            --shadow-color: #000000;
+
+            /* 深色模式下的狀態標籤 (降低亮度以免刺眼) */
+            --badge-bg-good: rgba(46, 204, 113, 0.2);
+            --badge-text-good: #2ecc71;
+            --badge-bg-fair: rgba(241, 196, 15, 0.2);
+            --badge-text-fair: #f1c40f;
+            --badge-bg-poor: rgba(231, 76, 60, 0.2);
+            --badge-text-poor: #e74c3c;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; transition: background-color 0.3s, color 0.3s; }
+
         body {
-            font-family: 'Microsoft JhengHei', Arial, sans-serif;
-            background: linear-gradient(135deg, #0288D1 0%, #0277BD 100%);
+            font-family: 'Segoe UI', 'Microsoft JhengHei', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
             min-height: 100vh;
+            padding-bottom: 40px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
             padding: 20px;
         }
 
+        /* === 頂部標題區 === */
         .header {
-            background: white;
-            padding: 30px;
-            border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-            margin-bottom: 30px;
+            background: var(--card-bg);
+            padding: 25px;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px var(--shadow-color);
+            margin-bottom: 25px;
             text-align: center;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
         }
 
         .header h1 {
-            color: #0288D1;
-            font-size: 2.5rem;
-            margin-bottom: 10px;
+            color: var(--text-main);
+            font-size: 2rem;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
         }
-
-        .header p {
-            color: #666;
-            font-size: 1.1rem;
-        }
+        .header h1 i { color: var(--primary-color); }
+        .header p { color: var(--text-sub); }
 
         .back-btn {
-            display: inline-block;
-            padding: 12px 24px;
-            background: #0288D1;
-            color: white;
-            text-decoration: none;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            transition: all 0.3s;
-        }
-
-        .back-btn:hover {
-            background: #0277BD;
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-        }
-
-        .controls {
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-        }
-
-        .controls select, .controls input {
-            padding: 10px;
-            border: 2px solid #0288D1;
-            border-radius: 5px;
-            font-size: 1rem;
-            margin-right: 10px;
-            min-width: 150px;
-        }
-
-        .reservoir-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-
-        .reservoir-card {
-            background: white;
-            border-radius: 15px;
-            padding: 20px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-            transition: transform 0.3s;
-        }
-
-        .reservoir-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-        }
-
-        .reservoir-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid #f0f0f0;
-        }
-
-        .reservoir-name {
-            font-size: 1.5rem;
-            font-weight: bold;
-            color: #0288D1;
-        }
-
-        .reservoir-code {
-            background: #0288D1;
-            color: white;
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-size: 0.9rem;
-        }
-
-        .water-level {
-            position: relative;
-            height: 200px;
-            background: linear-gradient(to top, #e3f2fd 0%, #bbdefb 100%);
-            border-radius: 10px;
-            margin: 20px 0;
-            overflow: hidden;
-        }
-
-        .water-fill {
             position: absolute;
-            bottom: 0;
-            width: 100%;
-            background: linear-gradient(to top, #2196F3 0%, #64B5F6 100%);
-            transition: height 0.5s ease;
-        }
-
-        .water-percentage {
-            position: absolute;
+            left: 25px;
             top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            font-size: 2rem;
-            font-weight: bold;
-            color: #1976D2;
-            z-index: 10;
-            text-shadow: 1px 1px 2px white;
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 10px;
-            margin-top: 15px;
-        }
-
-        .stat-item {
-            background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%);
-            padding: 12px;
-            border-radius: 8px;
-            border-left: 4px solid #0288D1;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        }
-
-        .stat-label {
-            font-size: 0.9rem;
-            color: #01579B;
-            margin-bottom: 8px;
-            font-weight: 600;
+            transform: translateY(-50%);
+            text-decoration: none;
+            color: var(--text-sub);
+            font-weight: 500;
             display: flex;
             align-items: center;
             gap: 5px;
         }
+        .back-btn:hover { color: var(--primary-color); }
 
-        .stat-label i {
-            color: #0288D1;
-            font-size: 1rem;
+        /* === 深色模式切換按鈕 === */
+        .theme-toggle {
+            position: absolute;
+            right: 25px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 1.2rem;
         }
+        .theme-toggle:hover { color: var(--primary-color); }
 
-        .stat-value {
-            font-size: 1.3rem;
-            font-weight: bold;
-            color: #212529;
-            text-shadow: 0 1px 2px rgba(255,255,255,0.8);
-        }
-
-        .chart-container {
-            background: white;
-            padding: 20px;
-            border-radius: 15px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 50px;
-            color: white;
-            font-size: 1.5rem;
-        }
-
-        .loading i {
-            font-size: 3rem;
-            margin-bottom: 20px;
-            animation: spin 2s linear infinite;
-        }
-
-        @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
+        /* === 控制區 === */
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-bottom: 25px;
         }
 
         .region-filter {
             display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin-bottom: 20px;
+            background: var(--card-bg);
+            padding: 5px;
+            border-radius: 30px;
+            box-shadow: 0 2px 10px var(--shadow-color);
+            overflow-x: auto;
+            border: 1px solid var(--border-color);
         }
 
         .region-btn {
-            padding: 10px 20px;
-            background: white;
-            border: 2px solid #0288D1;
-            color: #0288D1;
-            border-radius: 8px;
+            padding: 8px 20px;
+            border: none;
+            background: transparent;
+            color: var(--text-sub);
+            border-radius: 25px;
             cursor: pointer;
-            transition: all 0.3s;
-            font-weight: bold;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .region-btn:hover { color: var(--primary-color); background: var(--bg-color); }
+        
+        .region-btn.active {
+            background: var(--primary-color);
+            color: #fff; /* 按鈕文字在選中時永遠是白色 */
         }
 
-        .region-btn:hover, .region-btn.active {
-            background: #0288D1;
-            color: white;
+        .search-box {
+            position: relative;
+            flex: 1;
+            max-width: 300px;
+        }
+        
+        .search-box input {
+            width: 100%;
+            padding: 12px 20px 12px 40px;
+            border: 1px solid var(--border-color);
+            border-radius: 30px;
+            background: var(--card-bg);
+            color: var(--text-main);
+            font-size: 0.95rem;
+            outline: none;
+            box-shadow: 0 2px 10px var(--shadow-color);
+        }
+        
+        .search-box i {
+            position: absolute;
+            left: 15px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-sub);
         }
 
-        .info-panel {
-            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
-            border-left: 4px solid #2196F3;
+        /* === 狀態說明區 === */
+        .status-legend {
+            display: flex;
+            gap: 15px;
+            justify-content: flex-end;
+            margin-bottom: 15px;
+            font-size: 0.85rem;
+            color: var(--text-sub);
+        }
+        .legend-item { display: flex; align-items: center; gap: 6px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; }
+
+        /* === 卡片網格 === */
+        .reservoir-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        /* === 水庫卡片 === */
+        .reservoir-card {
+            background: var(--card-bg);
+            border-radius: 16px;
             padding: 20px;
-            border-radius: 10px;
+            box-shadow: 0 4px 15px var(--shadow-color);
+            border: 1px solid var(--border-color);
+            position: relative;
+            transition: transform 0.3s;
+        }
+
+        .reservoir-card:hover { transform: translateY(-5px); }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 15px;
+        }
+
+        .res-name { font-size: 1.25rem; font-weight: 700; color: var(--text-main); }
+        .res-location { font-size: 0.8rem; color: var(--text-sub); margin-top: 4px; }
+
+        .status-badge {
+            font-size: 0.75rem;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-weight: 600;
+        }
+
+        /* 水位圖視覺 */
+        .water-container {
+            height: 140px;
+            background: var(--water-container-bg);
+            border-radius: 12px;
+            position: relative;
+            overflow: hidden;
             margin-bottom: 20px;
+            box-shadow: inset 0 2px 6px rgba(0,0,0,0.1); 
         }
 
-        .info-panel h3 {
-            color: #1976D2;
-            margin-bottom: 10px;
+        .water-wave {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            /* 螢光藍漸層，在深色模式下會很漂亮 */
+            background: linear-gradient(180deg, #4facfe 0%, #00f2fe 100%);
+            opacity: 0.85;
+            transition: height 1s cubic-bezier(0.4, 0, 0.2, 1);
         }
 
-        .update-time {
-            text-align: center;
-            color: white;
-            font-size: 0.9rem;
-            margin-top: 20px;
-            padding: 10px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 5px;
+        /* 波浪動畫 SVG */
+        .water-wave::before {
+            content: '';
+            position: absolute;
+            top: -10px;
+            left: 0;
+            right: 0;
+            height: 10px;
+            background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 320'%3E%3Cpath fill='%234facfe' fill-opacity='1' d='M0,192L48,197.3C96,203,192,213,288,229.3C384,245,480,267,576,250.7C672,235,768,181,864,181.3C960,181,1056,235,1152,234.7C1248,235,1344,181,1392,154.7L1440,128L1440,320L1392,320C1344,320,1248,320,1152,320C1056,320,960,320,864,320C768,320,672,320,576,320C480,320,384,320,288,320C192,320,96,320,48,320L0,320Z'%3E%3C/path%3E%3C/svg%3E");
+            background-size: 200% 100%;
+            animation: wave 10s linear infinite;
+        }
+
+        @keyframes wave {
+            0% { background-position-x: 0; }
+            100% { background-position-x: 200%; }
+        }
+
+        .percentage-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 2.5rem;
+            font-weight: 800;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+            z-index: 2;
+        }
+        .percentage-text span { font-size: 1rem; color: var(--text-sub); margin-left: 2px; text-shadow: none; font-weight: normal; }
+
+        .data-row { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; font-size: 0.9rem; }
+        .data-item { display: flex; flex-direction: column; gap: 4px; }
+        .data-label { color: var(--text-sub); font-size: 0.8rem; }
+        .data-val { font-weight: 600; color: var(--text-main); }
+
+        /* === 圖表區 === */
+        .charts-section {
+            background: var(--card-bg);
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px var(--shadow-color);
+            margin-top: 40px;
+            border: 1px solid var(--border-color);
+        }
+
+        .loading { text-align: center; padding: 60px; color: var(--text-sub); }
+        .loading i { font-size: 2rem; margin-bottom: 15px; color: var(--primary-color); animation: spin 1s linear infinite; }
+
+        @media (max-width: 768px) {
+            .back-btn { position: static; margin-bottom: 15px; display: inline-flex; }
+            .theme-toggle { top: 20px; right: 20px; transform: none; }
+            .header { text-align: left; padding: 20px; padding-top: 60px; }
+            .header h1 { justify-content: flex-start; }
+            .controls { flex-direction: column; align-items: stretch; }
+            .search-box { max-width: 100%; }
         }
     </style>
 </head>
-<body>
-    <a href="index.html" class="back-btn">
-        <i class="fas fa-arrow-left"></i> 返回首頁
-    </a>
+<body data-theme="light">
+    <div class="container">
+        <div class="header">
+            <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 首頁</a>
+            
+            <button class="theme-toggle" onclick="toggleTheme()" title="切換深色模式">
+                <i class="fas fa-moon"></i>
+            </button>
 
-    <div class="header">
-        <h1><i class="fas fa-water"></i> 水庫每日營運狀況</h1>
-        <p>即時水庫蓄水量與營運數據可視化</p>
-        <p style="font-size: 0.9rem; color: #999; margin-top: 10px;">
-            資料來源：經濟部水利署開放資料平台
-        </p>
-    </div>
-
-    <div class="info-panel">
-        <h3><i class="fas fa-info-circle"></i> 資料說明</h3>
-        <p>本頁面即時顯示全台灣主要水庫的每日營運狀況，包括蓄水量、蓄水率、進水量、出水量等關鍵指標。</p>
-        <p style="margin-top: 10px;"><strong>更新頻率：</strong>每日更新（週末資料於週一統一更新）</p>
-    </div>
-
-    <div class="controls">
-        <div class="region-filter">
-            <button class="region-btn active" onclick="filterByRegion('all')">全部水庫</button>
-            <button class="region-btn" onclick="filterByRegion('10')">北部地區</button>
-            <button class="region-btn" onclick="filterByRegion('20')">中部地區</button>
-            <button class="region-btn" onclick="filterByRegion('30')">南部地區</button>
-            <button class="region-btn" onclick="filterByRegion('40')">東部地區</button>
+            <h1><i class="fas fa-tint"></i> 臺灣水庫即時戰情室</h1>
+            <p>即時監控全台水庫蓄水狀態與營運數據</p>
         </div>
-        <input type="text" id="searchInput" placeholder="搜尋水庫名稱..." onkeyup="filterReservoirs()">
-    </div>
 
-    <div id="loading" class="loading">
-        <i class="fas fa-tint"></i>
-        <div>載入水庫資料中...</div>
-    </div>
+        <div class="controls">
+            <div class="region-filter">
+                <button class="region-btn active" onclick="filterByRegion('all')">全部</button>
+                <button class="region-btn" onclick="filterByRegion('10')">北部</button>
+                <button class="region-btn" onclick="filterByRegion('20')">中部</button>
+                <button class="region-btn" onclick="filterByRegion('30')">南部</button>
+                <button class="region-btn" onclick="filterByRegion('40')">東部</button>
+                <button class="region-btn" onclick="filterByRegion('50')">離島</button>
+            </div>
+            
+            <div class="search-box">
+                <i class="fas fa-search"></i>
+                <input type="text" id="searchInput" placeholder="搜尋水庫名稱..." onkeyup="filterReservoirs()">
+            </div>
+        </div>
 
-    <div id="reservoirs-container" style="display: none;">
-        <div class="reservoir-grid" id="reservoir-grid"></div>
+        <div class="status-legend">
+            <div class="legend-item"><div class="dot" style="background:var(--status-good)"></div>正常 (>50%)</div>
+            <div class="legend-item"><div class="dot" style="background:var(--status-fair)"></div>稍低 (25-50%)</div>
+            <div class="legend-item"><div class="dot" style="background:var(--status-poor)"></div>吃緊 (<25%)</div>
+        </div>
+
+        <div id="loading" class="loading">
+            <i class="fas fa-circle-notch"></i>
+            <p>正在同步水利署資料...</p>
+        </div>
+
+        <div id="reservoir-grid" class="reservoir-grid" style="display: none;"></div>
+
+        <div class="charts-section" id="charts-section" style="display: none;">
+            <h2 style="margin-bottom: 20px; color: var(--text-main); font-size: 1.2rem; border-left: 4px solid var(--primary-color); padding-left: 10px;">
+                重點水庫蓄水率排行
+            </h2>
+            <div style="height: 350px;">
+                <canvas id="capacityChart"></canvas>
+            </div>
+        </div>
         
-        <div class="chart-container">
-            <h2 style="text-align: center; color: #0288D1; margin-bottom: 20px;">
-                <i class="fas fa-chart-bar"></i> 各水庫蓄水率比較
-            </h2>
-            <canvas id="capacityChart"></canvas>
-        </div>
-
-        <div class="chart-container">
-            <h2 style="text-align: center; color: #0288D1; margin-bottom: 20px;">
-                <i class="fas fa-exchange-alt"></i> 水庫進出水量統計
-            </h2>
-            <canvas id="flowChart"></canvas>
-        </div>
+        <p style="text-align: center; color: var(--text-sub); font-size: 0.8rem; margin-top: 30px;" id="updateTime"></p>
     </div>
 
-    <div class="update-time" id="updateTime"></div>
-
-    <script src="assets/navbar.js"></script>
-    <script src="assets/dark-mode.js"></script>
     <script>
+        const API_URL = 'https://reservoir-api.xiaoyouwu5-fd3.workers.dev/';
         let allReservoirs = [];
         let currentRegion = 'all';
         let capacityChart = null;
-        let flowChart = null;
 
-        // API URL
-        const API_URL = 'https://opendata.wra.gov.tw/api/v2/51023e88-4c76-4dbc-bbb9-470da690d539?sort=_importdate%20asc&format=JSON';
-
-        // 地區代碼對應
         const regionMap = {
-            '10': '北部',
-            '20': '中部',
-            '30': '南部',
-            '40': '東部',
-            '50': '離島'
+            '10': '北部地區', '20': '中部地區', '30': '南部地區',
+            '40': '東部地區', '50': '離島地區'
         };
 
-        // 載入水庫資料
-        async function loadReservoirData() {
-            try {
-                console.log('正在載入水庫資料...');
-                const response = await fetch(API_URL);
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
-                const data = await response.json();
-                console.log('載入的資料:', data);
-                
-                allReservoirs = data;
-                
-                // 隱藏載入提示
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('reservoirs-container').style.display = 'block';
-                
-                // 顯示資料
-                displayReservoirs(allReservoirs);
-                updateCharts(allReservoirs);
-                
-                // 更新時間
-                if (allReservoirs.length > 0 && allReservoirs[0].datetime) {
-                    const datetime = new Date(allReservoirs[0].datetime);
-                    document.getElementById('updateTime').textContent = 
-                        `資料更新時間：${datetime.toLocaleString('zh-TW')}`;
-                }
-                
-            } catch (error) {
-                console.error('載入失敗:', error);
-                document.getElementById('loading').innerHTML = `
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <div style="color: #ff6b6b;">載入資料失敗</div>
-                    <div style="font-size: 1rem; margin-top: 10px;">錯誤：${error.message}</div>
-                    <button onclick="loadReservoirData()" style="margin-top: 20px; padding: 10px 20px; background: white; border: none; border-radius: 5px; cursor: pointer;">
-                        <i class="fas fa-redo"></i> 重新載入
-                    </button>
-                `;
+        // === 深色模式邏輯 ===
+        function initTheme() {
+            const savedTheme = localStorage.getItem('theme') || 'light';
+            document.body.setAttribute('data-theme', savedTheme);
+            updateThemeIcon(savedTheme);
+        }
+
+        function toggleTheme() {
+            const current = document.body.getAttribute('data-theme');
+            const next = current === 'light' ? 'dark' : 'light';
+            document.body.setAttribute('data-theme', next);
+            localStorage.setItem('theme', next);
+            updateThemeIcon(next);
+            
+            // 強制更新圖表顏色
+            if(capacityChart) {
+                // 重新渲染圖表以適應新文字顏色
+                renderUI(); 
             }
         }
 
-        // 顯示水庫資料
-        function displayReservoirs(reservoirs) {
-            const container = document.getElementById('reservoir-grid');
-            
-            if (reservoirs.length === 0) {
-                container.innerHTML = '<div style="grid-column: 1/-1; text-align: center; padding: 50px; color: #666;">無符合條件的水庫</div>';
-                return;
+        function updateThemeIcon(theme) {
+            const btn = document.querySelector('.theme-toggle i');
+            if(theme === 'dark') {
+                btn.className = 'fas fa-sun';
+            } else {
+                btn.className = 'fas fa-moon';
             }
-            
-            container.innerHTML = reservoirs.map(res => {
-                // 計算蓄水率
-                const capacity = parseFloat(res.capacity) || 0;
-                const effectiveCapacity = parseFloat(res.effectivecapacity) || capacity;
-                const waterPercentage = effectiveCapacity > 0 ? ((capacity / effectiveCapacity) * 100).toFixed(1) : 0;
-                
-                // 取得地區
-                const regionCode = res.reservoiridentifier ? res.reservoiridentifier.substring(0, 2) : '00';
-                const regionName = regionMap[regionCode] || '其他';
-                
-                // 根據蓄水率設定顏色
-                let statusColor = '#4CAF50'; // 綠色 - 正常
-                if (waterPercentage < 30) statusColor = '#f44336'; // 紅色 - 偏低
-                else if (waterPercentage < 50) statusColor = '#FF9800'; // 橘色 - 注意
-                
-                return `
-                    <div class="reservoir-card">
-                        <div class="reservoir-header">
-                            <div class="reservoir-name">${res.reservoirname || '未知水庫'}</div>
-                            <div class="reservoir-code">${regionName}</div>
-                        </div>
-                        
-                        <div class="water-level">
-                            <div class="water-fill" style="height: ${waterPercentage}%; background: linear-gradient(to top, ${statusColor} 0%, ${statusColor}88 100%);"></div>
-                            <div class="water-percentage" style="color: ${statusColor};">${waterPercentage}%</div>
-                        </div>
-                        
-                        <div class="stats-grid">
-                            <div class="stat-item">
-                                <div class="stat-label"><i class="fas fa-tint"></i> 有效容量</div>
-                                <div class="stat-value">${(capacity / 10000).toFixed(2)} 億m³</div>
-                            </div>
-                            <div class="stat-item">
-                                <div class="stat-label"><i class="fas fa-cloud-rain"></i> 集水區雨量</div>
-                                <div class="stat-value">${res.basinrainfall || 0} mm</div>
-                            </div>
-                            <div class="stat-item">
-                                <div class="stat-label"><i class="fas fa-arrow-down"></i> 進水量</div>
-                                <div class="stat-value">${(parseFloat(res.inflow) / 10000).toFixed(2)} 億m³</div>
-                            </div>
-                            <div class="stat-item">
-                                <div class="stat-label"><i class="fas fa-arrow-up"></i> 出水量</div>
-                                <div class="stat-value">${(parseFloat(res.outflowtotal) / 10000).toFixed(2)} 億m³</div>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
         }
 
-        // 更新圖表
-        function updateCharts(reservoirs) {
-            // 準備數據
-            const labels = reservoirs.map(r => r.reservoirname);
-            const capacityData = reservoirs.map(r => {
-                const capacity = parseFloat(r.capacity) || 0;
-                const effectiveCapacity = parseFloat(r.effectivecapacity) || capacity;
-                return effectiveCapacity > 0 ? ((capacity / effectiveCapacity) * 100).toFixed(1) : 0;
-            });
-            
-            const inflowData = reservoirs.map(r => (parseFloat(r.inflow) || 0) / 10000);
-            const outflowData = reservoirs.map(r => (parseFloat(r.outflowtotal) || 0) / 10000);
-            
-            // 蓄水率圖表
-            const ctxCapacity = document.getElementById('capacityChart').getContext('2d');
-            if (capacityChart) capacityChart.destroy();
-            
-            capacityChart = new Chart(ctxCapacity, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: '蓄水率 (%)',
-                        data: capacityData,
-                        backgroundColor: capacityData.map(val => {
-                            if (val < 30) return '#f44336';
-                            if (val < 50) return '#FF9800';
-                            return '#4CAF50';
-                        }),
-                        borderColor: '#667eea',
-                        borderWidth: 2
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: true,
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            max: 100,
-                            ticks: {
-                                callback: function(value) {
-                                    return value + '%';
-                                }
-                            }
-                        }
-                    },
-                    plugins: {
-                        legend: {
-                            display: true,
-                            position: 'top'
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    return context.dataset.label + ': ' + context.parsed.y + '%';
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-            
-            // 進出水量圖表
-            const ctxFlow = document.getElementById('flowChart').getContext('2d');
-            if (flowChart) flowChart.destroy();
-            
-            flowChart = new Chart(ctxFlow, {
-                type: 'bar',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: '進水量 (億m³)',
-                        data: inflowData,
-                        backgroundColor: 'rgba(33, 150, 243, 0.7)',
-                        borderColor: '#2196F3',
-                        borderWidth: 2
-                    }, {
-                        label: '出水量 (億m³)',
-                        data: outflowData,
-                        backgroundColor: 'rgba(255, 152, 0, 0.7)',
-                        borderColor: '#FF9800',
-                        borderWidth: 2
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: true,
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            ticks: {
-                                callback: function(value) {
-                                    return value.toFixed(2) + ' 億m³';
-                                }
-                            }
-                        }
-                    },
-                    plugins: {
-                        legend: {
-                            display: true,
-                            position: 'top'
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    return context.dataset.label + ': ' + context.parsed.y.toFixed(3) + ' 億m³';
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
-        // 依地區篩選
-        function filterByRegion(region) {
-            currentRegion = region;
-            
-            // 更新按鈕狀態
-            document.querySelectorAll('.region-btn').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            event.target.classList.add('active');
-            
-            // 篩選資料
-            let filtered = allReservoirs;
-            if (region !== 'all') {
-                filtered = allReservoirs.filter(r => 
-                    r.reservoiridentifier && r.reservoiridentifier.startsWith(region)
-                );
-            }
-            
-            displayReservoirs(filtered);
-            updateCharts(filtered);
-        }
-
-        // 搜尋水庫
-        function filterReservoirs() {
-            const searchText = document.getElementById('searchInput').value.toLowerCase();
-            
-            let filtered = allReservoirs;
-            
-            // 依地區篩選
-            if (currentRegion !== 'all') {
-                filtered = filtered.filter(r => 
-                    r.reservoiridentifier && r.reservoiridentifier.startsWith(currentRegion)
-                );
-            }
-            
-            // 依名稱搜尋
-            if (searchText) {
-                filtered = filtered.filter(r => 
-                    r.reservoirname && r.reservoirname.toLowerCase().includes(searchText)
-                );
-            }
-            
-            displayReservoirs(filtered);
-            updateCharts(filtered);
-        }
-
-        // 頁面載入時執行
-        window.addEventListener('DOMContentLoaded', function() {
+        // 啟動
+        window.addEventListener('DOMContentLoaded', () => {
+            initTheme();
             loadReservoirData();
         });
+
+        async function loadReservoirData() {
+            try {
+                const response = await fetch(API_URL);
+                if (!response.ok) throw new Error('Network response was not ok');
+                const data = await response.json();
+                
+                allReservoirs = data.sort((a, b) => a.reservoiridentifier.localeCompare(b.reservoiridentifier));
+                
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('reservoir-grid').style.display = 'grid';
+                document.getElementById('charts-section').style.display = 'block';
+                
+                renderUI();
+                
+                if (data.length > 0) {
+                    const date = new Date(data[0].datetime);
+                    document.getElementById('updateTime').textContent = `最後更新：${date.toLocaleString('zh-TW')}`;
+                }
+
+            } catch (error) {
+                console.error(error);
+                document.getElementById('loading').innerHTML = `<span style="color:var(--status-poor)">無法載入資料，請重新整理</span>`;
+            }
+        }
+
+        function renderUI() {
+            const searchText = document.getElementById('searchInput').value.toLowerCase();
+            
+            const filtered = allReservoirs.filter(r => {
+                const regionMatch = currentRegion === 'all' || r.reservoiridentifier.startsWith(currentRegion);
+                const nameMatch = !searchText || r.reservoirname.toLowerCase().includes(searchText);
+                return regionMatch && nameMatch;
+            });
+
+            const grid = document.getElementById('reservoir-grid');
+            if(filtered.length === 0) {
+                grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; color:var(--text-sub); padding:40px;">找不到相關水庫</div>`;
+            } else {
+                grid.innerHTML = filtered.map(createCardHTML).join('');
+            }
+
+            updateChart(filtered);
+        }
+
+        function createCardHTML(res) {
+            const capacity = res.capacity || 0;
+            const full = res.effectivecapacity || 1;
+            let percentage = (capacity / full * 100).toFixed(1);
+            if(percentage > 100) percentage = 100;
+            
+            // 狀態變數使用 CSS Variable 參照
+            let badgeBg = 'var(--badge-bg-good)';
+            let badgeColor = 'var(--badge-text-good)';
+            let textColorVar = 'var(--status-good)'; 
+            let statusText = '💧 水情正常';
+
+            if (percentage < 25) {
+                badgeBg = 'var(--badge-bg-poor)';
+                badgeColor = 'var(--badge-text-poor)';
+                textColorVar = 'var(--status-poor)';
+                statusText = '🔥 嚴重缺水';
+            } else if (percentage < 50) {
+                badgeBg = 'var(--badge-bg-fair)';
+                badgeColor = 'var(--badge-text-fair)';
+                textColorVar = 'var(--status-fair)';
+                statusText = '⚠️ 需節約';
+            }
+
+            const regionName = regionMap[res.reservoiridentifier.substring(0, 2)] || '其他';
+            const volStr = (capacity / 10000).toFixed(2);
+            const inflowStr = (res.inflow / 10000).toFixed(2);
+            
+            return `
+            <div class="reservoir-card">
+                <div class="card-header">
+                    <div>
+                        <div class="res-name">${res.reservoirname}</div>
+                        <div class="res-location">${regionName}</div>
+                    </div>
+                    <div class="status-badge" style="background:${badgeBg}; color:${badgeColor}">
+                        ${statusText}
+                    </div>
+                </div>
+
+                <div class="water-container">
+                    <div class="water-wave" style="height: ${percentage}%"></div>
+                    <div class="percentage-text" style="color: ${textColorVar}">
+                        ${percentage}<span>%</span>
+                    </div>
+                </div>
+
+                <div class="data-row">
+                    <div class="data-item">
+                        <span class="data-label">有效蓄水量</span>
+                        <span class="data-val">${volStr} 億噸</span>
+                    </div>
+                    <div class="data-item">
+                        <span class="data-label">昨日進水量</span>
+                        <span class="data-val">${inflowStr} 億噸</span>
+                    </div>
+                </div>
+            </div>
+            `;
+        }
+
+        function updateChart(data) {
+            let chartData = [...data].sort((a,b) => b.effectivecapacity - a.effectivecapacity).slice(0, 15);
+            
+            const ctx = document.getElementById('capacityChart').getContext('2d');
+            if(capacityChart) capacityChart.destroy();
+
+            // 判斷目前是否為深色模式，調整圖表文字顏色
+            const isDark = document.body.getAttribute('data-theme') === 'dark';
+            const gridColor = isDark ? '#333' : '#f0f0f0';
+            const textColor = isDark ? '#a0a0a0' : '#666';
+
+            capacityChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: chartData.map(r => r.reservoirname),
+                    datasets: [{
+                        label: '蓄水率 (%)',
+                        data: chartData.map(r => {
+                            let p = (r.capacity / (r.effectivecapacity||1) * 100);
+                            return p > 100 ? 100 : p.toFixed(1);
+                        }),
+                        backgroundColor: chartData.map(r => {
+                            let p = (r.capacity / (r.effectivecapacity||1) * 100);
+                            if(p < 25) return '#e74c3c';
+                            if(p < 50) return '#f1c40f';
+                            return '#2ecc71';
+                        }),
+                        borderRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { 
+                            beginAtZero: true, 
+                            max: 100, 
+                            grid: { color: gridColor },
+                            ticks: { color: textColor }
+                        },
+                        x: { 
+                            grid: { display: false },
+                            ticks: { color: textColor }
+                        }
+                    }
+                }
+            });
+        }
+
+        function filterByRegion(r) {
+            currentRegion = r;
+            document.querySelectorAll('.region-btn').forEach(b => b.classList.remove('active'));
+            // 重新高亮按鈕
+            const btns = document.querySelectorAll('.region-btn');
+            // 根據 onclick 屬性內容匹配
+            btns.forEach(b => {
+                if(b.getAttribute('onclick').includes(`'${r}'`)) b.classList.add('active');
+            });
+            renderUI();
+        }
+        
+        function filterReservoirs() { renderUI(); }
     </script>
 </body>
 </html>
