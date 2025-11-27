@@ -448,34 +448,47 @@
             return { name: name, class: cssClass };
         }
 
+        // ============ 優化版：取得列車停靠站 (三層備援) ============
         async function fetchTrainStops(trainNo) {
+            // 1. 檢查快取
             if (stopsCache[trainNo]) return stopsCache[trainNo];
 
-            const urlGeneral = `/v3/Rail/TRA/GeneralTimetable/TrainNo/${trainNo}?$format=JSON`;
-            const urlDaily = `/v3/Rail/TRA/DailyTimetable/Today/TrainNo/${trainNo}?$format=JSON`;
+            // 定義 API 路徑優先順序
+            const endpoints = [
+                `/v3/Rail/TRA/DailyTimetable/Today/TrainNo/${trainNo}?$format=JSON`, // 優先查今日時刻表 (最準)
+                `/v3/Rail/TRA/GeneralTimetable/TrainNo/${trainNo}?$format=JSON`,     // 其次查定期時刻表
+                `/v2/Rail/TRA/DailyTrainInfo/Today/TrainNo/${trainNo}?$format=JSON`  // 最後手段：查車次基本資料 (V2 API 容錯率高)
+            ];
 
-            const tryFetch = async (url) => {
+            for (const url of endpoints) {
                 try {
                     const data = await tdxApi.fetch(url);
-                    if (data && data.length > 0 && data[0].StopTimes) {
-                        return data[0].StopTimes;
+                    // 檢查回傳結構
+                    if (data && data.length > 0) {
+                        // V3/V2 的欄位可能略有不同，統一嘗試抓取 StopTimes
+                        const trainInfo = data[0];
+                        // V3 欄位是 StopTimes，V2 可能是 DailyTrainInfo.StopTimes
+                        // 我們直接檢查物件本身是否有 StopTimes 屬性
+                        if (trainInfo.StopTimes) {
+                            // 成功找到！存入快取並回傳
+                            stopsCache[trainNo] = trainInfo.StopTimes;
+                            return trainInfo.StopTimes;
+                        }
+                        // 有些 V2 API 結構比較深，檢查 DailyTrainInfo
+                        if (trainInfo.DailyTrainInfo && trainInfo.DailyTrainInfo.StopTimes) {
+                            stopsCache[trainNo] = trainInfo.DailyTrainInfo.StopTimes;
+                            return trainInfo.DailyTrainInfo.StopTimes;
+                        }
                     }
-                } catch (e) { return null; }
-                return null;
-            };
-
-            let stopTimes = await tryFetch(urlGeneral);
-            if (!stopTimes) {
-                stopTimes = await tryFetch(urlDaily);
+                } catch (e) {
+                    // 忽略 404 或其他錯誤，繼續嘗試下一個 API
+                }
             }
 
-            if (stopTimes) {
-                stopsCache[trainNo] = stopTimes;
-                return stopTimes;
-            } else {
-                stopsCache[trainNo] = []; 
-                return [];
-            }
+            // 如果全部都失敗
+            console.warn(`❌ 查無 ${trainNo} 次停靠站資料 (已嘗試 3 種 API)`);
+            stopsCache[trainNo] = []; // 存空陣列避免重複查詢
+            return [];
         }
 
         function addMinutesToTime(timeStr, minutesToAdd) {
