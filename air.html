@@ -586,13 +586,17 @@
         }
         .theme-btn:hover { transform: rotate(15deg) scale(1.1); }
 
-        /* 2. 全局背景變黑 */
+        /* =========================================
+           🌙 深色模式樣式 (Dark Mode 修復版)
+           ========================================= */
+
+        /* 1. 全局背景變黑 */
         body.dark-mode {
             background: #121212;
             color: #e0e0e0;
         }
 
-        /* 3. 卡片與區塊黑化 */
+        /* 2. 卡片與區塊黑化 */
         body.dark-mode .page-header,
         body.dark-mode .stat-item,
         body.dark-mode .controls,
@@ -604,13 +608,16 @@
             border: 1px solid #333;
         }
 
-        /* 4. 文字顏色調整 */
+        /* 3. 文字顏色調整 (確保亮色) */
         body.dark-mode .page-header h1 { color: #90caf9; }
         body.dark-mode .subtitle { color: #b0bec5; }
         body.dark-mode .list-header { color: #b0bec5; border-bottom: 1px solid #333; }
+        
+        /* 統計卡片 */
         body.dark-mode .stat-item .label { color: #cfd8dc; }
+        body.dark-mode .stat-item .value { color: #90caf9; } /* 預設亮藍 */
 
-        /* 5. 輸入框與選單 */
+        /* 4. 輸入框與選單 */
         body.dark-mode input,
         body.dark-mode select {
             background: #2c2c2c;
@@ -618,7 +625,7 @@
             color: #fff;
         }
 
-        /* 6. 列表卡片黑化 */
+        /* 5. 列表卡片黑化 (重點修復) */
         body.dark-mode .air-card {
             background: #2c2c2c;
             border: 1px solid #444;
@@ -626,16 +633,33 @@
         body.dark-mode .air-card:hover {
             background: #383838;
         }
-        body.dark-mode .air-card .county,
-        body.dark-mode .air-card .detail-label {
-            color: #b0bec5;
-        }
-        body.dark-mode .air-card .detail-value {
+        
+        /* 卡片內文字 */
+        body.dark-mode .air-card .card-name { color: #fff; }
+        body.dark-mode .air-card .county { color: #b0bec5; }
+        
+        /* 詳細數據標籤變亮 */
+        body.dark-mode .air-card .detail-label { color: #bdbdbd !important; }
+        body.dark-mode .air-card .detail-value { color: #ffffff !important; font-weight: 700; }
+        
+        /* 狀態標籤 */
+        body.dark-mode .air-card .status-badge {
+            background: #424242;
             color: #fff;
+            border: 1px solid #666;
         }
 
-        /* 7. 地圖黑化 (重要！) */
-        /* 這會反轉地圖顏色，讓亮白地圖變深色地圖 */
+        /* 6. 燈箱 (Modal) 修復 */
+        body.dark-mode .modal-header h2 { color: #fff; }
+        body.dark-mode .close-btn { color: #fff; }
+        body.dark-mode .badge { background: #424242; color: #fff; border: 1px solid #666; }
+        
+        body.dark-mode .data-item { border-bottom-color: #444; }
+        body.dark-mode .data-item label { color: #bbb; }
+        body.dark-mode .data-item span { color: #fff; }
+        body.dark-mode .data-item small { color: #888; }
+
+        /* 7. 地圖黑化 */
         body.dark-mode .leaflet-tile-pane {
             filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
         }
@@ -994,28 +1018,62 @@
         let currentStation = null;
 
         // ✨ 打開詳細資料燈箱
+        // ✨ 打開詳細資料燈箱 (完整版)
         function openModal(st) {
             currentStation = st;
-            
             const colorInfo = getAQIColor(st.aqi);
             
-            // 填入資料
+            // 1. 基本資訊
             document.getElementById('m-name').textContent = st.name;
             document.getElementById('m-county').textContent = st.county;
             
+            // 2. AQI 大圓圈
             document.getElementById('m-aqi').textContent = st.aqi;
-            document.getElementById('m-status').textContent = getAQIShortName(st.aqi);
+            document.getElementById('m-status').textContent = st.status || getAQIShortName(st.aqi);
             
-            // 設定大圓圈顏色
             const circle = document.getElementById('m-aqi-bg');
             circle.style.background = colorInfo.code;
-            // 如果背景是黃色，文字改深色
             circle.style.color = (st.aqi > 50 && st.aqi <= 100) ? '#333' : '#fff';
 
-            // 使用 Number 防止 toFixed 報錯
-            document.getElementById('m-pm25').textContent = Number(st.pm25).toFixed(1);
-            document.getElementById('m-time').textContent = st.time || '未知';
-            document.getElementById('m-coord').textContent = `${st.lat.toFixed(4)}, ${st.lon.toFixed(4)}`;
+            // 3. 詳細數據列表 (動態生成 HTML)
+            const grid = document.querySelector('.data-grid');
+            
+            // 定義要顯示的欄位與單位
+            const fields = [
+                { label: '主要污染物', value: st.pollutant || '無', unit: '' },
+                { label: 'PM 2.5', value: st.pm25, unit: 'μg/m³' },
+                { label: 'PM 2.5 (平均)', value: st.pm25_avg, unit: 'μg/m³' },
+                { label: 'PM 10', value: st.pm10, unit: 'μg/m³' },
+                { label: 'PM 10 (平均)', value: st.pm10_avg, unit: 'μg/m³' },
+                { label: 'O3 (臭氧)', value: st.o3, unit: 'ppb' },
+                { label: 'O3 (8小時)', value: st.o3_8hr, unit: 'ppb' },
+                { label: 'CO (一氧化碳)', value: st.co, unit: 'ppm' },
+                { label: 'CO (8小時)', value: st.co_8hr, unit: 'ppm' },
+                { label: 'SO2 (二氧化硫)', value: st.so2, unit: 'ppb' },
+                { label: 'SO2 (平均)', value: st.so2_avg, unit: 'ppb' },
+                { label: 'NO2 (二氧化氮)', value: st.no2, unit: 'ppb' },
+                { label: 'NOx (氮氧化物)', value: st.nox, unit: 'ppb' },
+                { label: 'NO (一氧化氮)', value: st.no, unit: 'ppb' },
+                { label: '風速', value: st.wind_speed, unit: 'm/s' },
+                { label: '風向', value: st.wind_direc, unit: 'deg' },
+                { label: '發布時間', value: st.publishtime, unit: '', fullWidth: true },
+            ];
+
+            // 生成 HTML
+            let html = '';
+            fields.forEach(f => {
+                const val = (f.value === undefined || f.value === null || f.value === '') ? '-' : f.value;
+                const style = f.fullWidth ? 'grid-column: 1 / -1;' : '';
+                
+                html += `
+                    <div class="data-item" style="${style}">
+                        <label>${f.label}</label>
+                        <span>${val}</span> <small>${f.unit}</small>
+                    </div>
+                `;
+            });
+
+            grid.innerHTML = html;
 
             // 顯示 Modal
             document.getElementById('detail-modal').style.display = 'flex';
