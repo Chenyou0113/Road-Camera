@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         :root {
             --bg-gradient-start: #1976D2;
@@ -733,6 +734,23 @@
                 <button class="close-btn" onclick="closeModal()">&times;</button>
             </div>
             <div class="modal-body" id="modalBody"></div>
+            
+            <!-- 歷史圖表區 -->
+            <div style="margin-top: 30px; padding: 0 20px;">
+                <h3 style="margin-bottom: 15px; color: var(--text-primary);">📊 過去 24 小時趨勢</h3>
+                
+                <div style="height: 250px; margin-bottom: 30px;">
+                    <canvas id="tempChart"></canvas>
+                </div>
+                
+                <div style="height: 250px; margin-bottom: 30px;">
+                    <canvas id="windChart"></canvas>
+                </div>
+                
+                <div style="height: 250px; margin-bottom: 20px;">
+                    <canvas id="rainChart"></canvas>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1061,32 +1079,156 @@
             return '🌤️';
         }
 
+        // 儲存圖表實例
+        const chartInstances = {};
+
         function showModal(id) {
             const s = allStations.find(x => x.stationId === id);
             if (!s) return;
+            
             document.getElementById('modalTitle').textContent = s.stationName;
             
+            // 1. 填寫基本資訊
             const rows = [
                 { l: '地點', v: `${s.county} ${s.town || ''}` },
                 { l: '觀測時間', v: s.obsTime || '--' },
-                { l: '天氣描述', v: s.weather || '(自動站無描述)' },
-                { l: '氣溫', v: s.temperature !== null ? `${s.temperature}°C` : '--' },
+                { l: '天氣', v: s.weather || '-' },
+                { l: '目前氣溫', v: s.temperature !== null ? `${s.temperature}°C` : '--' },
                 { l: '相對濕度', v: s.humidity !== null ? `${Math.round(s.humidity)}%` : '--' },
-                { l: '日累積雨量', v: s.precipitation !== null ? `${s.precipitation} mm` : '0 mm' },
-                { l: '風速', v: s.windSpeed !== null ? `${s.windSpeed} m/s` : '--' },
+                { l: '日雨量', v: s.precipitation !== null ? `${s.precipitation} mm` : '0 mm' },
+                { l: '目前風速', v: s.windSpeed !== null ? `${s.windSpeed} m/s` : '--' },
                 { l: '經緯度', v: `${s.lat}, ${s.lon}` },
                 { l: '測站代碼', v: s.stationId }
             ];
 
             const html = rows.map(r => `
                 <div class="modal-row">
-                    <span style="font-weight:bold; color:#555;">${r.l}</span>
-                    <span>${r.v}</span>
+                    <span class="modal-label">${r.l}</span>
+                    <span class="modal-value">${r.v}</span>
                 </div>
             `).join('');
 
             document.getElementById('modalBody').innerHTML = html;
             document.getElementById('stationModal').classList.add('active');
+
+            // 2. 呼叫 API 獲取歷史資料並繪圖
+            fetchHistoryAndRender(s.stationId);
+        }
+
+        async function fetchHistoryAndRender(stationId) {
+            try {
+                // 呼叫 Worker 的歷史資料 API
+                const response = await fetch(`${CLOUDFLARE_WORKER_URL}?history=true&stationId=${stationId}`);
+                if (!response.ok) throw new Error("History fetch failed");
+                
+                const historyData = await response.json();
+                
+                // 轉換成 Chart.js 需要的格式
+                const labels = [];
+                const temps = [];
+                const winds = [];
+                const rains = [];
+
+                if (historyData.length === 0) {
+                    console.warn("尚無歷史資料");
+                } else {
+                    historyData.forEach(d => {
+                        // 將 timestamp 轉為小時:分鐘
+                        const date = new Date(d.timestamp);
+                        const timeStr = `${date.getHours().toString().padStart(2,'0')}:00`;
+                        labels.push(timeStr);
+                        temps.push(d.temperature);
+                        winds.push(d.wind_speed);
+                        rains.push(d.rain);
+                    });
+                }
+
+                renderCharts(labels, temps, winds, rains);
+
+            } catch (e) {
+                console.error("無法載入歷史圖表", e);
+            }
+        }
+
+        function renderCharts(labels, temps, winds, rains) {
+            const isDark = document.body.classList.contains('dark-mode');
+            const textColor = isDark ? '#bbb' : '#666';
+            const gridColor = isDark ? '#444' : '#eee';
+
+            const commonOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { ticks: { color: textColor }, grid: { display: false } },
+                    y: { ticks: { color: textColor }, grid: { color: gridColor } }
+                },
+                plugins: { legend: { display: false } },
+                interaction: { mode: 'index', intersect: false },
+            };
+
+            // 1. 溫度
+            destroyChart('tempChart');
+            const ctxTemp = document.getElementById('tempChart').getContext('2d');
+            chartInstances['tempChart'] = new Chart(ctxTemp, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '氣溫 (°C)',
+                        data: temps,
+                        borderColor: '#FF9800',
+                        backgroundColor: 'rgba(255, 152, 0, 0.2)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: commonOptions
+            });
+
+            // 2. 風速
+            destroyChart('windChart');
+            const ctxWind = document.getElementById('windChart').getContext('2d');
+            chartInstances['windChart'] = new Chart(ctxWind, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '風速 (m/s)',
+                        data: winds,
+                        borderColor: '#2196F3',
+                        backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: commonOptions
+            });
+
+            // 3. 雨量
+            destroyChart('rainChart');
+            const ctxRain = document.getElementById('rainChart').getContext('2d');
+            chartInstances['rainChart'] = new Chart(ctxRain, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '時雨量 (mm)',
+                        data: rains,
+                        backgroundColor: '#4CAF50',
+                        borderRadius: 4
+                    }]
+                },
+                options: commonOptions
+            });
+        }
+
+        function destroyChart(chartId) {
+            if (chartInstances[chartId]) {
+                chartInstances[chartId].destroy();
+                delete chartInstances[chartId];
+            }
         }
 
         function closeModal(id) {

@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>河川水位監測 | 台灣即時監控</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+
+    <link rel="stylesheet" href="assets/dark-mode.css">
+    
+    <style>
+        /* ... 保留原有 CSS ... */
+        :root {
+            --primary: #0288D1;
+            --bg-light: #e3f2fd;
+            --card-bg: white;
+            --text-main: #333;
+            --border: #e0e0e0;
+            --modal-bg: white;
+        }
+        body.dark-mode {
+            --primary: #4fc3f7;
+            --bg-light: #121212;
+            --card-bg: #1e1e1e;
+            --text-main: #e0e0e0;
+            --border: #333;
+            --modal-bg: #2d2d2d;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Microsoft JhengHei', sans-serif; background: var(--bg-light); color: var(--text-main); height: 100vh; display: flex; flex-direction: column; }
+
+        .header { background: #0277bd; color: white; padding: 15px 20px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 10px rgba(0,0,0,0.2); z-index: 1000; }
+        .header h1 { font-size: 1.4rem; display: flex; align-items: center; gap: 10px; }
+        .back-btn { color: white; text-decoration: none; background: rgba(255,255,255,0.2); padding: 8px 15px; border-radius: 20px; transition: 0.3s; }
+        .back-btn:hover { background: rgba(255,255,255,0.3); }
+
+        .main-content { flex: 1; display: flex; overflow: hidden; position: relative; }
+        #map { flex: 1; height: 100%; z-index: 1; }
+
+        .sidebar { width: 380px; background: var(--card-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; z-index: 2; box-shadow: 2px 0 10px rgba(0,0,0,0.1); }
+        .sidebar-header { padding: 15px; border-bottom: 1px solid var(--border); }
+        
+        .search-box { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card-bg); color: var(--text-main); margin-bottom: 10px; }
+        .filter-tags { display: flex; gap: 8px; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 5px; -webkit-overflow-scrolling: touch; }
+        .filter-tags::-webkit-scrollbar { height: 4px; }
+        .filter-tags::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
+        .tag { padding: 5px 12px; border-radius: 15px; font-size: 0.85rem; cursor: pointer; border: 1px solid var(--border); transition: 0.2s; white-space: nowrap; flex-shrink: 0; }
+        .tag.active { background: var(--primary); color: white; border-color: var(--primary); }
+        
+        .station-list { flex: 1; overflow-y: auto; padding: 10px; }
+        .station-card { padding: 15px; border-bottom: 1px solid var(--border); cursor: pointer; transition: 0.2s; border-radius: 8px; margin-bottom: 5px; }
+        .station-card:hover { background: rgba(0,0,0,0.03); }
+        .st-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+        .st-name { font-weight: bold; font-size: 1.1rem; }
+        .st-river { font-size: 0.85rem; color: #666; background: #eee; padding: 2px 6px; border-radius: 4px; }
+        .st-level { font-size: 1.8rem; font-weight: bold; color: var(--primary); margin: 5px 0; }
+        .st-time { font-size: 0.8rem; color: #999; }
+        
+        .alert-badge { padding: 4px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: bold; color: white; }
+        .level-0 { background: #4CAF50; }
+        .level-3 { background: #FFC107; color: #333; }
+        .level-2 { background: #FF9800; }
+        .level-1 { background: #F44336; }
+
+        .legend { position: absolute; bottom: 20px; right: 20px; background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.2); z-index: 1000; font-size: 0.85rem; }
+        .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; color: #333; }
+        .dot { width: 12px; height: 12px; border-radius: 50%; }
+
+        /* Modal */
+        .modal { display: none; position: fixed; z-index: 2000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.7); align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+        .modal.active { display: flex; }
+        .modal-content { background-color: var(--modal-bg); width: 95%; max-width: 800px; max-height: 90vh; overflow-y: auto; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); animation: slideUp 0.3s ease-out; }
+        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        
+        .modal-header { padding: 15px 20px; background: #0277bd; color: white; display: flex; justify-content: space-between; align-items: center; }
+        .modal-body { padding: 20px; color: var(--text-main); }
+        .chart-container { height: 350px; margin-top: 10px; position: relative; }
+
+        @media (max-width: 768px) {
+            .main-content { flex-direction: column-reverse; }
+            .sidebar { width: 100%; height: 45%; border-top: 2px solid var(--primary); }
+            #map { height: 55%; }
+            .legend { bottom: 10px; right: 10px; padding: 8px; font-size: 0.75rem; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><i class="fas fa-water"></i> 全臺河川水位監測</h1>
+        <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 回首頁</a>
+    </div>
+
+    <div class="main-content">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <input type="text" id="search" class="search-box" placeholder="搜尋測站名稱、河流...">
+                <div class="filter-tags" id="filterTags">
+                    <span class="tag active" onclick="filterData('all')">全部</span>
+                    <span class="tag" onclick="filterData('alert')">⚠️ 警戒中</span>
+                </div>
+            </div>
+            <div id="list" class="station-list">
+                <div style="text-align:center; padding:20px; color:#999;">資料載入中...</div>
+            </div>
+        </div>
+        <div id="map"></div>
+        
+        <div class="legend">
+            <div class="legend-item"><span class="dot" style="background:#F44336"></span> 一級警戒 (危險)</div>
+            <div class="legend-item"><span class="dot" style="background:#FF9800"></span> 二級警戒 (注意)</div>
+            <div class="legend-item"><span class="dot" style="background:#FFC107"></span> 三級警戒 (觀察)</div>
+            <div class="legend-item"><span class="dot" style="background:#4CAF50"></span> 水位正常</div>
+            <div class="legend-item"><span class="dot" style="background:#999"></span> 無數據</div>
+        </div>
+    </div>
+
+    <div class="modal" id="chartModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle" style="margin:0;">測站詳細資料</h3>
+                <button onclick="closeModal()" style="background:none; border:none; color:white; font-size:1.5rem; cursor:pointer;">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="display:flex; justify-content:space-between; margin-bottom:15px; font-size:0.9rem; color:#666;">
+                    <span id="modalTime">更新時間: --</span>
+                    <span id="modalAddress">地點: --</span>
+                </div>
+                <div id="loadingChart" style="text-align:center; padding:50px; color:#999;">
+                    <i class="fas fa-spinner fa-spin"></i> 歷史資料讀取中...
+                </div>
+                <div class="chart-container" style="display:none;" id="chartContainer">
+                    <canvas id="levelChart"></canvas>
+                </div>
+                <p style="text-align:center; font-size:0.8rem; color:#999; margin-top:10px;">
+                    * 註：圖表顯示過去 24 小時的真實監測數據
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'https://river-monitor-api.xiaoyouwu5-fd3.workers.dev'; 
+        
+        let map, markers = [];
+        let allData = [], riverList = [];
+        let levelChart = null; 
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initMap();
+            initFilters();
+            loadData();
+            if(localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
+        });
+
+        function initMap() {
+            map = L.map('map').setView([23.6, 121], 7);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap'
+            }).addTo(map);
+        }
+
+        async function initFilters() {
+            try {
+                const res = await fetch(`${API_BASE}?dataset=river_list`);
+                if (res.ok) {
+                    riverList = await res.json();
+                    const container = document.getElementById('filterTags');
+                    riverList.forEach(river => {
+                        if (!river.name) return;
+                        const span = document.createElement('span');
+                        span.className = 'tag';
+                        span.textContent = river.name;
+                        span.onclick = (e) => {
+                            document.querySelectorAll('.tag').forEach(t => t.classList.remove('active'));
+                            e.target.classList.add('active');
+                            filterData(river.name);
+                        };
+                        container.appendChild(span);
+                    });
+                }
+            } catch (e) {}
+        }
+
+        async function loadData() {
+            try {
+                const res = await fetch(`${API_BASE}?dataset=river`);
+                allData = await res.json();
+                renderUI(allData);
+            } catch(e) {
+                document.getElementById('list').innerHTML = '<div style="padding:20px; text-align:center;">載入失敗</div>';
+            }
+        }
+
+        function renderUI(data) {
+            const list = document.getElementById('list');
+            list.innerHTML = '';
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
+
+            if(data.length === 0) {
+                list.innerHTML = '<div style="padding:20px; text-align:center;">無符合資料</div>';
+                return;
+            }
+
+            data.sort((a,b) => (b.status || 0) - (a.status || 0));
+
+            data.forEach(item => {
+                const color = getColor(item.status);
+                const card = document.createElement('div');
+                card.className = 'station-card';
+                card.innerHTML = `
+                    <div class="st-header">
+                        <span class="st-name">${item.name}</span>
+                        <span class="alert-badge level-${item.status}">${getStatusText(item.status)}</span>
+                    </div>
+                    <span class="st-river">${item.river || '未知'}</span>
+                    <div class="st-level">${item.level !== null ? item.level.toFixed(2) : '--'} <span style="font-size:1rem;color:#666">m</span></div>
+                    <div class="st-time"><i class="far fa-clock"></i> ${formatTime(item.time)}</div>
+                `;
+                card.onclick = () => openChartModal(item);
+                list.appendChild(card);
+
+                if (item.lat && item.lon) {
+                    const marker = L.circleMarker([item.lat, item.lon], {
+                        radius: 8, fillColor: color, color: '#fff', weight: 2, fillOpacity: 0.9
+                    }).bindPopup(`<b>${item.name}</b><br>水位：${item.level} m`);
+                    
+                    marker.on('click', () => openChartModal(item));
+                    marker.addTo(map);
+                    markers.push(marker);
+                }
+            });
+        }
+
+        // ===========================================
+        // 📊 繪製真實歷史水位圖表
+        // ===========================================
+        async function openChartModal(item) {
+            const modal = document.getElementById('chartModal');
+            document.getElementById('modalTitle').textContent = item.name;
+            document.getElementById('modalTime').textContent = `更新: ${formatTime(item.time)}`;
+            document.getElementById('modalAddress').textContent = `地點: ${item.town}`;
+            
+            modal.classList.add('active');
+            
+            // 顯示 Loading
+            document.getElementById('loadingChart').style.display = 'block';
+            document.getElementById('chartContainer').style.display = 'none';
+
+            try {
+                // 呼叫 API 取得歷史紀錄
+                const res = await fetch(`${API_BASE}?history=true&stationId=${item.id}`);
+                const historyData = await res.json();
+
+                renderChart(historyData, item);
+
+            } catch (e) {
+                console.error("歷史資料載入失敗", e);
+                document.getElementById('loadingChart').innerHTML = '無歷史資料';
+            }
+        }
+
+        function renderChart(historyData, item) {
+            document.getElementById('loadingChart').style.display = 'none';
+            document.getElementById('chartContainer').style.display = 'block';
+
+            const ctx = document.getElementById('levelChart').getContext('2d');
+            if(levelChart) levelChart.destroy();
+
+            // 準備數據
+            const labels = [];
+            const dataPoints = [];
+
+            if (historyData.length > 0) {
+                historyData.forEach(d => {
+                    const date = new Date(d.record_time);
+                    const timeStr = `${date.getHours().toString().padStart(2,'0')}:${date.getMinutes().toString().padStart(2,'0')}`;
+                    labels.push(timeStr);
+                    dataPoints.push(d.level);
+                });
+            } else {
+                // 若無歷史資料，至少顯示目前這一個點
+                const now = new Date();
+                labels.push(`${now.getHours()}:${now.getMinutes()}`);
+                dataPoints.push(item.level);
+            }
+
+            // 準備警戒線 (Annotations)
+            const annotations = {};
+            
+            // 堤頂高度 (若有資料則畫，若無則不畫，不再模擬)
+            // 假設 API 沒給堤頂，我們這裡就不畫，除非您想用 "一級警戒 + 2" 當作示意
+            if (item.alert1) {
+                // 堤頂高度 (紫色) - 這裡用 警戒值+2 當作示意，因為 API 沒給
+                const leveeHeight = item.alert1 + 2.0; 
+                annotations.lineLevee = {
+                    type: 'line',
+                    yMin: leveeHeight, yMax: leveeHeight,
+                    borderColor: '#9C27B0', borderWidth: 2,
+                    label: { 
+                        display: true, 
+                        content: `堤頂高度 (估): ${leveeHeight.toFixed(1)}m`, 
+                        position: 'center', 
+                        backgroundColor: 'rgba(156, 39, 176, 0.8)', color: 'white' 
+                    }
+                };
+
+                // 一級警戒 (紅色)
+                annotations.line1 = {
+                    type: 'line',
+                    yMin: item.alert1, yMax: item.alert1,
+                    borderColor: 'red', borderWidth: 2,
+                    label: { 
+                        display: true, 
+                        content: `一級警戒: ${item.alert1}m`, 
+                        position: 'end', 
+                        backgroundColor: 'rgba(255,0,0,0.8)', color: 'white' 
+                    }
+                };
+            }
+
+            if(item.alert2) {
+                annotations.line2 = {
+                    type: 'line',
+                    yMin: item.alert2, yMax: item.alert2,
+                    borderColor: '#FF9800', borderWidth: 2, borderDash: [5, 5],
+                    label: { 
+                        display: true, 
+                        content: `二級警戒: ${item.alert2}m`, 
+                        position: 'start', 
+                        backgroundColor: 'rgba(255,152,0,0.8)', color: 'white' 
+                    }
+                };
+            }
+
+            levelChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '水位 (m)',
+                        data: dataPoints,
+                        borderColor: '#2196F3',
+                        backgroundColor: 'rgba(33, 150, 243, 0.1)',
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 2,
+                        pointHoverRadius: 5
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { 
+                            beginAtZero: false, // 不強制從 0 開始，讓變化更明顯
+                            title: { display: true, text: '水位 (公尺)' }
+                        },
+                        x: { 
+                            ticks: { maxTicksLimit: 8 } // 避免時間軸太擠
+                        }
+                    },
+                    plugins: {
+                        legend: { display: true, position: 'top' },
+                        annotation: { annotations: annotations }
+                    }
+                }
+            });
+        }
+
+        function closeModal() {
+            document.getElementById('chartModal').classList.remove('active');
+        }
+
+        function filterData(type) {
+            let filtered = [];
+            if(type === 'all') {
+                document.querySelectorAll('.tag').forEach(t => t.classList.remove('active'));
+                const allTag = document.querySelector('.tag');
+                if(allTag) allTag.classList.add('active');
+                filtered = allData;
+            } else if(type === 'alert') {
+                document.querySelectorAll('.tag').forEach(t => t.classList.remove('active'));
+                event.target.classList.add('active');
+                filtered = allData.filter(d => d.status > 0);
+            } else {
+                filtered = allData.filter(d => d.river && d.river.includes(type));
+            }
+            renderUI(filtered);
+        }
+
+        function getColor(status) {
+            if(status === 1) return '#F44336';
+            if(status === 2) return '#FF9800';
+            if(status === 3) return '#FFC107';
+            if(status === 0) return '#4CAF50';
+            return '#9E9E9E';
+        }
+        function getStatusText(s) {
+            if(s===1) return "一級警戒";
+            if(s===2) return "二級警戒";
+            if(s===3) return "三級警戒";
+            return "正常";
+        }
+        function formatTime(t) { return t ? t.replace('T', ' ') : '無更新'; }
+        
+        function focusMap(lat, lon) {
+            if (lat && lon) {
+                map.flyTo([lat, lon], 14);
+                if(window.innerWidth < 768) document.getElementById('map').scrollIntoView({behavior: 'smooth'});
+            } else {
+                alert("該測站無座標資料");
+            }
+        }
+
+        document.getElementById('search').addEventListener('input', (e) => {
+            const val = e.target.value;
+            const filtered = allData.filter(d => d.name.includes(val) || (d.river && d.river.includes(val)));
+            renderUI(filtered);
+        });
+    </script>
+</body>
+</html>
