@@ -993,8 +993,8 @@
 
     <script>
         async function loadWeatherWarnings() {
-            // v=8 避免快取
-            const apiUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev?dataset=W-C0033-002&v=8';
+            // v=10 避免快取
+            const apiUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev?dataset=W-C0033-002&v=10';
             
             const container = document.getElementById('warningTickerContainer');
             const titleEl = document.getElementById('warningTitle');
@@ -1002,95 +1002,99 @@
 
             try {
                 const response = await fetch(apiUrl, { priority: 'high' });
-                let dataList = await response.json();
+                let workerData = await response.json();
                 
-                // 容錯：如果不是陣列，轉成陣列
-                if (!Array.isArray(dataList)) {
-                    // 如果是單一物件且包含 cwaopendata，轉陣列
-                    if (dataList.cwaopendata) dataList = [dataList];
-                    else dataList = []; // 格式完全不對
+                // 1. 確保 Worker 回傳的是陣列 (Worker v4.0 會回傳陣列)
+                if (!Array.isArray(workerData)) {
+                    workerData = [workerData];
                 }
 
                 let allWarnings = [];
 
-                // 遍歷資料
-                dataList.forEach((data, index) => {
-                    try {
-                        // 嘗試抓取 dataset
-                        const dataset = data.cwaopendata?.dataset;
-                        if (!dataset || !dataset.datasetInfo) {
-                            console.warn(`第 ${index + 1} 筆資料格式不符`);
-                            return;
-                        }
+                // 2. 第一層迴圈：遍歷 Worker 抓到的每一個 API 來源
+                workerData.forEach(sourceData => {
+                    if (!sourceData.cwaopendata || !sourceData.cwaopendata.dataset) return;
 
-                        // 1. 抓標題 (如果沒有就顯示 "未知特報")
-                        const reportName = dataset.datasetInfo.datasetDescription || "天氣特報";
+                    let datasets = sourceData.cwaopendata.dataset;
 
-                        // 2. 抓發布時間
-                        let timeStr = "";
-                        if (dataset.datasetInfo.issueTime) {
-                            const d = new Date(dataset.datasetInfo.issueTime);
-                            const mm = (d.getMonth() + 1).toString().padStart(2, '0');
-                            const dd = d.getDate().toString().padStart(2, '0');
-                            const hh = d.getHours().toString().padStart(2, '0');
-                            const min = d.getMinutes().toString().padStart(2, '0');
-                            timeStr = `・${mm}/${dd} ${hh}:${min}`;
-                        }
-
-                        // 3. 抓結束時間
-                        let endTimeStr = "";
-                        if (dataset.datasetInfo.validTime && dataset.datasetInfo.validTime.endTime) {
-                            const d = new Date(dataset.datasetInfo.validTime.endTime);
-                            const mm = (d.getMonth() + 1).toString().padStart(2, '0');
-                            const dd = d.getDate().toString().padStart(2, '0');
-                            const hh = d.getHours().toString().padStart(2, '0');
-                            const min = d.getMinutes().toString().padStart(2, '0');
-                            endTimeStr = ` (~${mm}/${dd} ${hh}:${min})`;
-                        }
-                        
-                        // 4. 抓內容 (只抓重點)
-                        let rawContent = "詳見氣象署官網";
-                        if (dataset.contents && dataset.contents.content) {
-                            let text = dataset.contents.content.contentText;
-                            // 簡單過濾標題
-                            text = text.replace(/^一、概述：/g, '');
-                            // 截斷多餘資訊
-                            const cutIndex = text.search(/[二註]、/);
-                            if (cutIndex !== -1) text = text.substring(0, cutIndex);
-                            rawContent = text.replace(/\s+/g, ' ').trim();
-                        }
-
-                        allWarnings.push(`【${reportName}${timeStr}】 ${rawContent}${endTimeStr}`);
-
-                    } catch (innerErr) {
-                        console.error("單筆解析失敗:", innerErr);
+                    // ★ 關鍵修正：如果是多重警報，dataset 本身就是陣列，不需要再包一層
+                    // 如果是單一警報，dataset 是物件，我們把它轉成陣列方便統一處理
+                    if (!Array.isArray(datasets)) {
+                        datasets = [datasets];
                     }
+
+                    // 3. 第二層迴圈：遍歷該來源下的每一個警報 (例如：大雨、強風)
+                    datasets.forEach(dataset => {
+                        try {
+                            const info = dataset.datasetInfo;
+                            const contentObj = dataset.contents?.content;
+
+                            if (!info) return;
+
+                            // A. 抓標題
+                            const reportName = info.datasetDescription;
+
+                            // B. 抓發布時間
+                            let timeStr = "";
+                            if (info.issueTime) {
+                                const d = new Date(info.issueTime);
+                                const mm = (d.getMonth() + 1).toString().padStart(2, '0');
+                                const dd = d.getDate().toString().padStart(2, '0');
+                                const hh = d.getHours().toString().padStart(2, '0');
+                                const min = d.getMinutes().toString().padStart(2, '0');
+                                timeStr = `・${mm}/${dd} ${hh}:${min}`;
+                            }
+
+                            // C. 抓結束時間
+                            let endTimeStr = "";
+                            if (info.validTime && info.validTime.endTime) {
+                                const d = new Date(info.validTime.endTime);
+                                const mm = (d.getMonth() + 1).toString().padStart(2, '0');
+                                const dd = d.getDate().toString().padStart(2, '0');
+                                const hh = d.getHours().toString().padStart(2, '0');
+                                const min = d.getMinutes().toString().padStart(2, '0');
+                                endTimeStr = ` (~${mm}/${dd} ${hh}:${min})`;
+                            }
+
+                            // D. 抓內容並清理
+                            let rawContent = "";
+                            if (contentObj) {
+                                let text = contentObj.contentText;
+                                // 去除 "一、概述："
+                                text = text.replace(/^一、概述：/g, '');
+                                // 截斷 "二、注意" 或 "註：" 之後的內容
+                                const cutIndex = text.search(/[二註]、/);
+                                if (cutIndex !== -1) text = text.substring(0, cutIndex);
+                                rawContent = text.replace(/\s+/g, ' ').trim();
+                            }
+
+                            // E. 組合單則警報
+                            allWarnings.push(`【${reportName}${timeStr}】 ${rawContent}${endTimeStr}`);
+
+                        } catch (err) {
+                            console.error("單筆警報解析錯誤:", err);
+                        }
+                    });
                 });
 
-                // 顯示結果
+                // 4. 顯示結果
                 if (allWarnings.length > 0) {
+                    // 用紅色圓點串接所有警報
                     const fullText = allWarnings.join('&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;🔴&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;');
                     contentEl.innerHTML = `<span class="ticker-item">${fullText}</span>`;
                     container.style.display = "flex";
                 } else {
-                    // ★ 如果有抓到資料(dataList > 0) 但沒解析出內容，顯示除錯訊息
-                    if (dataList.length > 0) {
-                        contentEl.innerHTML = `<span class="ticker-item">⚠️ 讀取到 ${dataList.length} 筆資料，但格式無法解析</span>`;
-                        container.style.display = "flex";
-                    } else {
-                        // 真的沒資料才隱藏
-                        console.log("無任何警特報資料");
-                        container.style.display = "none";
-                    }
+                    // 若無警報則隱藏
+                    container.style.display = "none";
                 }
 
-                // 動畫設定
+                // 5. 動畫設定
                 requestAnimationFrame(() => {
                     const wrapper = container.querySelector('.ticker-wrapper');
                     if (wrapper && contentEl.firstChild) {
                         const containerWidth = wrapper.offsetWidth;
                         const textWidth = contentEl.scrollWidth;
-                        const duration = (containerWidth + textWidth) / 60; // 速度 60
+                        const duration = (containerWidth + textWidth) / 60; // 速度
                         
                         contentEl.style.setProperty('--start-pos', `${containerWidth}px`);
                         contentEl.style.setProperty('--end-pos', `-${textWidth}px`);
@@ -1103,13 +1107,15 @@
 
             } catch (error) {
                 console.warn("連線錯誤:", error);
-                // 錯誤時也顯示一下，方便除錯
-                contentEl.innerHTML = `<span class="ticker-item">❌ 連線失敗: ${error.message}</span>`;
-                container.style.display = "flex";
+                container.style.display = "none";
             }
         }
 
+        // 立即執行
         loadWeatherWarnings();
+        
+        // 每 10 分鐘自動更新
+        setInterval(loadWeatherWarnings, 600000);
     </script>
     <script>
         async function loadWangWeiForecast() {
