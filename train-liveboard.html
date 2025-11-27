@@ -1039,33 +1039,33 @@
                     return;
                 }
 
-                // === 1. 更新跑馬燈內容 ===
+                // === 1. 更新跑馬燈內容 (修正版) ===
                 if (marqueeEl) {
-                    // 1. 先暫停動畫
+                    // 先停止動畫，並強制瀏覽器重繪 (Reflow)
                     marqueeEl.style.animation = 'none';
-                    marqueeEl.offsetHeight; /* 觸發 Reflow (關鍵：強制瀏覽器重繪) */
+                    marqueeEl.offsetHeight; 
                     
-                    marqueeEl.innerHTML = ''; // 清空舊內容
-                    
+                    // 準備 HTML 內容
+                    let marqueeHTML = '';
                     alertList.forEach(alert => {
-                        const span = document.createElement('span');
                         // 移除換行符號，避免跑馬燈斷行
                         const cleanDesc = (alert.Description || '').replace(/[\r\n]+/g, ' ');
-                        const scopeText = alert.Scope?.LineSections?.[0]?.Description 
-                                        ? ` (${alert.Scope.LineSections[0].Description})` 
-                                        : '';
-                        
-                        span.innerText = `【${alert.Title}】${cleanDesc}${scopeText}`;
-                        marqueeEl.appendChild(span);
+                        // 組合文字
+                        marqueeHTML += `<span style="display: inline-block; margin-right: 50px;">【${alert.Title}】${cleanDesc}</span>`;
                     });
                     
-                    // 最後補上免責聲明
-                    const footerSpan = document.createElement('span');
-                    footerSpan.innerText = "⚠️ 實際運行狀況請以車站現場公告為主。";
-                    marqueeEl.appendChild(footerSpan);
+                    // 加上結尾
+                    marqueeHTML += `<span style="color:#ff9800;">(以上資訊由 TDX 提供)</span>`;
                     
-                    // 2. 重新啟動動畫
-                    marqueeEl.style.animation = 'marquee 25s linear infinite';
+                    // 填入內容
+                    marqueeEl.innerHTML = marqueeHTML;
+                    
+                    // ★★★ 關鍵修正：計算速度並指定正確的動畫名稱 (marquee-announce) ★★★
+                    // 根據文字長度動態調整時間 (字越多跑越久)
+                    const duration = Math.max(20, marqueeEl.innerText.length * 0.25); 
+                    
+                    // 這裡必須跟 CSS 裡的 @keyframes 名稱一致！
+                    marqueeEl.style.animation = `marquee-announce ${duration}s linear infinite`;
                 }
 
                 // === 2. 更新公告面板內容 (如果有) ===
@@ -1493,34 +1493,58 @@
         }
 
         // 顯示列車停靠站跑馬燈
-        // ============ 輔助函式：取得時刻表 (優先查 D1) ============
+        // ============ 優化版：取得時刻表 (含快取與防呆) ============
+        const failedTrainCache = new Set(); // 記錄查不到的車次，避免重複查
+
         async function fetchScheduleWithFallback(trainNo) {
-            // 1. 優先嘗試：您自己的 Cloudflare D1 Worker
+            // 1. 檢查是否已經查過且失敗
+            if (failedTrainCache.has(trainNo)) {
+                console.log(`🚫 跳過已知無資料車次: ${trainNo}`);
+                return [];
+            }
+
+            // 2. 優先嘗試：Cloudflare D1 Worker (最快)
             try {
-                // 🔥 這裡已經填入您剛剛部署成功的 Worker 網址
                 const myApiUrl = `https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev/api/schedule?trainNo=${trainNo}`;
-                
                 const response = await fetch(myApiUrl);
                 if (response.ok) {
                     const data = await response.json();
-                    // 檢查格式是否正確 (Worker 回傳的是 TDX 格式陣列)
                     if (data && data.length > 0 && data[0].StopTimes) {
-                        // console.log(`✅ 從 Cloudflare D1 取得 ${trainNo} 次時刻表`);
                         return data[0].StopTimes;
                     }
                 }
             } catch (e) {
-                console.warn(`⚠️ D1 查詢失敗，將降級使用 TDX API...`, e);
+                console.warn(`⚠️ D1 查詢失敗 (${trainNo})`, e);
             }
 
-            // 2. 備援：如果 D1 沒反應，才去問 TDX V2
+            // 3. 備援 1：TDX V3 DailyTimetable (準確度高)
             try {
-                const v2Data = await tdxApi.fetch(`/v2/Rail/TRA/DailyTrainInfo/TrainNo/${trainNo}?$format=JSON`);
-                // 🔥 優化：處理 null 返回值 (404 情況)
-                if (v2Data && v2Data.length > 0) return v2Data[0].StopTimes;
+                const v3Url = `/v3/Rail/TRA/DailyTimetable/Today/TrainNo/${trainNo}?$format=JSON`;
+                const v3Data = await tdxApi.fetch(v3Url);
+                if (v3Data && v3Data.length > 0 && v3Data[0].StopTimes) {
+                    return v3Data[0].StopTimes;
+                }
             } catch (e) {
-                // V2 也找不到，那就真的沒時刻表了 (只顯示即時位置)
+                // 404 或 429 都會進到這裡
             }
+
+            // 4. 備援 2：TDX V2 DailyTrainInfo (最後手段)
+            try {
+                const v2Url = `/v2/Rail/TRA/DailyTrainInfo/TrainNo/${trainNo}?$format=JSON`;
+                const v2Data = await tdxApi.fetch(v2Url);
+                if (v2Data && v2Data.length > 0 && v2Data[0].StopTimes) {
+                    return v2Data[0].StopTimes;
+                }
+            } catch (e) {
+                // 真的找不到
+            }
+
+            // 5. 如果都找不到，記錄下來，下次別再查了
+            console.warn(`❌ 查無 ${trainNo} 次時刻表，已加入黑名單`);
+            failedTrainCache.add(trainNo);
+            
+            // 10分鐘後清除黑名單，以免誤殺
+            setTimeout(() => failedTrainCache.delete(trainNo), 600000);
 
             return [];
         }
