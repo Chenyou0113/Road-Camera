@@ -176,25 +176,25 @@
             box-shadow: 2px 0 10px rgba(0,0,0,0.1);
         }
 
-        /* === 修改：無縫輪播樣式 === */
+        /* === 修改：跑馬燈從最右邊出來 === */
 
         .ticker-wrapper {
             flex: 1;
             overflow: hidden;
-            display: flex; /* 讓內部元素橫向排列 */
-            align-items: center;
-            /* 兩側漸層淡出遮罩 */
+            position: relative; /* 讓內部的 absolute 定位以這裡為基準 */
+            height: 100%;
+            /* 保留兩側淡出遮罩，質感較好 */
             mask-image: linear-gradient(to right, transparent, black 20px, black 95%, transparent);
             -webkit-mask-image: linear-gradient(to right, transparent, black 20px, black 95%, transparent);
         }
 
         .ticker-content {
-            display: flex; /* 讓兩組文字橫向並排 */
+            position: absolute; /* 絕對定位，脫離文檔流 */
             white-space: nowrap;
             will-change: transform;
-            /* 移除之前的 absolute 定位，回復正常流 */
-            position: relative; 
-            left: auto; 
+            left: 0; 
+            /* 預設隱藏在最右邊，避免 JS 計算前閃爍 */
+            transform: translateX(100vw); 
         }
 
         /* 修正：單個文字區塊 */
@@ -202,17 +202,28 @@
             color: #ffcc80;
             font-weight: 500;
             font-size: 1rem;
-            padding-right: 50px; /* ★ 設定兩則訊息之間的間距 */
-            flex-shrink: 0;      /* 防止文字被壓縮 */
+            /* 不再需要右邊距，因為跑完會重頭算 */
         }
 
-        /* 定義無縫滾動動畫：只移動 50% (因為內容有兩份) */
-        @keyframes ticker-seamless {
+        /* 深色模式字體顏色設定 */
+        body.dark-mode .ticker-content.type-warning .ticker-item { color: #ffab91; }
+        body.dark-mode .ticker-content.type-wangwei .ticker-item { color: #90caf9; }
+
+        /* 手機版字體設定 */
+        @media (max-width: 768px) {
+            #wangweiTickerContainer .ticker-item {
+                font-size: 1.1rem !important;
+                font-weight: 600 !important;
+            }
+        }
+
+        /* === 通用動畫：使用 CSS 變數控制起點與終點 === */
+        @keyframes ticker-from-right {
             0% {
-                transform: translateX(0);
+                transform: translateX(var(--start-pos)); /* 起點：容器最右邊 */
             }
             100% {
-                transform: translateX(-50%); /* 移動完第一組的距離後，瞬間跳回 0，視覺上是連續的 */
+                transform: translateX(var(--end-pos));   /* 終點：文字完全跑出左邊 */
             }
         }
 
@@ -897,13 +908,14 @@
             <p style="margin-bottom: 15px; color: #fff; font-weight: 600;">📄 資料來源與鳴謝</p>
             <p style="margin-bottom: 20px; font-size: 0.95rem; line-height: 1.6;">
                 本平臺整合下列政府開放資料：<br>
-                🌤️ <strong>交通部中央氣象署 (CWA)</strong> - 天氣觀測、降雨雷達回波圖<br>
-                🚗 <strong>交通部運輸資料流通服務平臺 (TDX)</strong> - 國道、快速道監視器影像<br>
-                🚆 <strong>國營臺灣鐵路股份有限公司 (TRA)</strong> - 臺鐵即時公告、營運資訊、列車即時位置、車站即時看板、每日車次時刻表、列車延誤時間<br>
-                🚄 <strong>臺灣高速鐵路股份有限公司 (THSRC)</strong> - 高鐵即時公告、營運資訊<br>
-                🛣️ <strong>交通部公路總局 (MOTC)</strong> - 國道、快速公路、省道監視器影像<br>
-                💧 <strong>經濟部水利署 (WRA)</strong> - 水資源、水利監視器、河川水位監測<br>
-                🏭 <strong>環境部 (MOE)</strong> - 空氣品質監測站及實時數據<br>
+                🌤️ <strong>交通部中央氣象署 </strong> - 天氣觀測、降雨雷達回波圖<br>
+                🚗 <strong>交通部運輸資料流通服務平臺 </strong> - 國道、快速道監視器影像<br>
+                🚆 <strong>國營臺灣鐵路股份有限公司 </strong> - 臺鐵即時公告、營運資訊、列車即時位置、車站即時看板、每日車次時刻表、列車延誤時間<br>
+                🚄 <strong>臺灣高速鐵路股份有限公司 </strong> - 高鐵即時公告、營運資訊<br>
+                🛣️ <strong>交通部公路總局 </strong> - 快速公路、省道監視器影像<br>
+                🛣️ <strong>交通部高速公路局 </strong> - 國道監視器影像<br>
+                💧 <strong>經濟部水利署 </strong> - 水資源、水利監視器、河川水位監測<br>
+                🏭 <strong>環境部 </strong> - 空氣品質監測站及實時數據<br>
                 ⛰️ <strong>農業部農村發展及水土保持署</strong> - 土石流及山洪預警監測
             </p>
             <p style="font-size: 0.85rem; color: #888;">⚠️ 免責聲明：本網站對整合之資料不簽鑑。一切資料監查詳參原官方網站。</p>
@@ -981,8 +993,7 @@
 
     <script>
         async function loadWeatherWarnings() {
-            // 加入 v=4 避免快取
-            const apiUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev?dataset=W-C0033-002&v=4';
+            const apiUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev?dataset=W-C0033-002&v=5';
             
             const container = document.getElementById('warningTickerContainer');
             const titleEl = document.getElementById('warningTitle');
@@ -994,17 +1005,13 @@
                 
                 const dataset = data.cwaopendata?.dataset;
                 
-                // ★ 修改邏輯：如果沒資料，這時候才隱藏容器
                 if (!dataset || !dataset.datasetInfo) {
-                    console.log("目前無警特報");
-                    container.style.display = "none"; // 隱藏
+                    container.style.display = "none";
                     return; 
                 }
 
-                // 1. 取得特報名稱
+                // 1. 內容處理
                 const reportName = dataset.datasetInfo.datasetDescription;
-
-                // 2. 取得發布時間 (MM/DD HH:mm)
                 let timeStr = "";
                 if (dataset.datasetInfo.issueTime) {
                     const dateObj = new Date(dataset.datasetInfo.issueTime);
@@ -1015,7 +1022,6 @@
                     timeStr = `・${month}/${date} ${hours}:${minutes}`;
                 }
 
-                // 3. 取得結束時間 (~MM/DD HH:mm)
                 let endTimeStr = "";
                 if (dataset.datasetInfo.validTime && dataset.datasetInfo.validTime.endTime) {
                     const endObj = new Date(dataset.datasetInfo.validTime.endTime);
@@ -1026,7 +1032,6 @@
                     endTimeStr = ` (~${endMonth}/${endDate} ${endHours}:${endMinutes})`;
                 }
                 
-                // 4. 內容優化 (只取重點)
                 let rawContent = "";
                 if (dataset.contents && dataset.contents.content) {
                     let text = dataset.contents.content.contentText;
@@ -1038,75 +1043,74 @@
 
                 const fullText = `【${reportName}${timeStr}】 ${rawContent}${endTimeStr}`;
 
-                // 更新 DOM
-                titleEl.textContent = "警特報"; 
-                
-                // ★ 修改：複製兩份文字，實現無縫輪播
-                contentEl.innerHTML = `<span class="ticker-item">${fullText}</span><span class="ticker-item">${fullText}</span>`;
-                
-                // container 預設已經是 display: flex，所以不用再設定
+                // 2. 寫入文字 (只一份)
+                contentEl.innerHTML = `<span class="ticker-item">${fullText}</span>`;
+                container.style.display = "flex";
 
-                // ★ 修改：動畫時間計算 (以單份文字寬度計算)
-                // scrollWidth 是兩份文字的總寬，所以除以 2
-                const singleWidth = contentEl.scrollWidth / 2;
+                // 3. 計算並設定動畫
+                const containerWidth = container.querySelector('.ticker-wrapper').offsetWidth;
+                const textWidth = contentEl.scrollWidth;
+                const totalDistance = containerWidth + textWidth; // 總跑動距離
+                const speed = 60; // 速度 (數字越大越快)
+                const duration = totalDistance / speed;
+
+                // 設定 CSS 變數
+                contentEl.style.setProperty('--start-pos', `${containerWidth}px`);
+                contentEl.style.setProperty('--end-pos', `-${textWidth}px`);
                 
-                // 速度：每秒跑 50px (數字越小越慢)
-                const speed = 50; 
-                const duration = singleWidth / speed;
+                // 啟動動畫 (linear infinite 代表跑完馬上重來)
+                contentEl.style.animation = `ticker-from-right ${Math.max(duration, 10)}s linear infinite`;
                 
-                // 設定動畫：使用 ticker-seamless
-                contentEl.style.animation = `ticker-seamless ${Math.max(duration, 10)}s linear infinite`;
-                
-                // 滑鼠互動
                 container.addEventListener('mouseenter', () => contentEl.style.animationPlayState = 'paused');
                 container.addEventListener('mouseleave', () => contentEl.style.animationPlayState = 'running');
 
             } catch (error) {
                 console.warn("無法載入警特報:", error);
-                // 發生錯誤時保持顯示「資料讀取中」或選擇隱藏
-                // container.style.display = "none"; 
+                container.style.display = "none";
             }
         }
 
-        // 立即執行
         loadWeatherWarnings();
-        
-        // ========================================
-        // 天氣報吼哩災跑馬燈
-        // ========================================
+    </script>
+    <script>
         async function loadWangWeiForecast() {
             const container = document.getElementById('wangweiTickerContainer');
             const contentEl = document.getElementById('wangweiContent');
             
-            // ★ 更新：連線到新的 Worker
-            const apiUrl = 'https://wang-weather.xiaoyouwu5-fd3.workers.dev/message';
+            const apiUrl = 'https://wang-weather.xiaoyouwu5-fd3.workers.dev/message?v=5';
 
             try {
                 const response = await fetch(apiUrl);
                 const data = await response.json();
-                
                 const text = data.message || "暫無預報資料";
 
-                // ★ 修改：複製兩份文字
-                contentEl.innerHTML = `<span class="ticker-item">${text}</span><span class="ticker-item">${text}</span>`;
+                // 1. 寫入文字 (只一份)
+                contentEl.innerHTML = `<span class="ticker-item">${text}</span>`;
 
-                // ★ 修改：動畫時間計算
-                const singleWidth = contentEl.scrollWidth / 2;
-                const speed = 50; 
-                const duration = singleWidth / speed;
+                // 2. 計算並設定動畫
+                // 稍微延遲一下確保 DOM 寬度計算正確
+                requestAnimationFrame(() => {
+                    const containerWidth = container.querySelector('.ticker-wrapper').offsetWidth;
+                    const textWidth = contentEl.scrollWidth;
+                    const totalDistance = containerWidth + textWidth;
+                    const speed = 60; 
+                    const duration = totalDistance / speed;
 
-                contentEl.style.animation = `ticker-seamless ${Math.max(duration, 10)}s linear infinite`;
+                    contentEl.style.setProperty('--start-pos', `${containerWidth}px`);
+                    contentEl.style.setProperty('--end-pos', `-${textWidth}px`);
+                    
+                    contentEl.style.animation = `ticker-from-right ${Math.max(duration, 10)}s linear infinite`;
+                });
 
                 container.addEventListener('mouseenter', () => contentEl.style.animationPlayState = 'paused');
                 container.addEventListener('mouseleave', () => contentEl.style.animationPlayState = 'running');
                 
             } catch (e) {
-                console.warn("無法載入天氣報吼哩災", e);
+                console.warn("無法載入王偉預報", e);
                 contentEl.innerHTML = `<span class="ticker-item">目前無法取得預報資訊</span>`;
             }
         }
 
-        // 立即執行
         loadWangWeiForecast();
     </script>
 </body>
