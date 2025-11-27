@@ -993,73 +993,93 @@
 
     <script>
         async function loadWeatherWarnings() {
-            const apiUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev?dataset=W-C0033-002&v=5';
+            const apiUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev?dataset=W-C0033-002&v=7';
             
             const container = document.getElementById('warningTickerContainer');
-            const titleEl = document.getElementById('warningTitle');
             const contentEl = document.getElementById('warningContent');
 
             try {
                 const response = await fetch(apiUrl, { priority: 'high' });
-                const data = await response.json();
+                // ★ 注意：現在 data 是一個陣列 (Array)
+                let dataList = await response.json();
                 
-                const dataset = data.cwaopendata?.dataset;
-                
-                if (!dataset || !dataset.datasetInfo) {
+                // 如果回傳的不是陣列，轉成陣列 (相容舊格式)
+                if (!Array.isArray(dataList)) {
+                    dataList = [dataList];
+                }
+
+                let allWarnings = [];
+
+                // 遍歷所有抓到的資料集 (例如：豪大雨、颱風)
+                dataList.forEach(data => {
+                    const dataset = data.cwaopendata?.dataset;
+                    if (!dataset || !dataset.datasetInfo) return;
+
+                    // 1. 特報名稱
+                    const reportName = dataset.datasetInfo.datasetDescription;
+
+                    // 2. 發布時間
+                    let timeStr = "";
+                    if (dataset.datasetInfo.issueTime) {
+                        const dateObj = new Date(dataset.datasetInfo.issueTime);
+                        const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
+                        const date = dateObj.getDate().toString().padStart(2, '0');
+                        const hours = dateObj.getHours().toString().padStart(2, '0');
+                        const minutes = dateObj.getMinutes().toString().padStart(2, '0');
+                        timeStr = `・${month}/${date} ${hours}:${minutes}`;
+                    }
+
+                    // 3. 結束時間
+                    let endTimeStr = "";
+                    if (dataset.datasetInfo.validTime && dataset.datasetInfo.validTime.endTime) {
+                        const endObj = new Date(dataset.datasetInfo.validTime.endTime);
+                        const endMonth = (endObj.getMonth() + 1).toString().padStart(2, '0');
+                        const endDate = endObj.getDate().toString().padStart(2, '0');
+                        const endHours = endObj.getHours().toString().padStart(2, '0');
+                        const endMinutes = endObj.getMinutes().toString().padStart(2, '0');
+                        endTimeStr = ` (~${endMonth}/${endDate} ${endHours}:${endMinutes})`;
+                    }
+                    
+                    // 4. 內容優化
+                    let rawContent = "";
+                    if (dataset.contents && dataset.contents.content) {
+                        let text = dataset.contents.content.contentText;
+                        text = text.replace(/^一、概述：/g, '');
+                        const cutIndex = text.search(/[二註]、/);
+                        if (cutIndex !== -1) text = text.substring(0, cutIndex);
+                        rawContent = text.replace(/\s+/g, ' ').trim();
+                    }
+
+                    // 組合單則訊息
+                    allWarnings.push(`【${reportName}${timeStr}】 ${rawContent}${endTimeStr}`);
+                });
+
+                // 如果完全沒有警報
+                if (allWarnings.length === 0) {
                     container.style.display = "none";
-                    return; 
+                    return;
                 }
 
-                // 1. 內容處理
-                const reportName = dataset.datasetInfo.datasetDescription;
-                let timeStr = "";
-                if (dataset.datasetInfo.issueTime) {
-                    const dateObj = new Date(dataset.datasetInfo.issueTime);
-                    const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
-                    const date = dateObj.getDate().toString().padStart(2, '0');
-                    const hours = dateObj.getHours().toString().padStart(2, '0');
-                    const minutes = dateObj.getMinutes().toString().padStart(2, '0');
-                    timeStr = `・${month}/${date} ${hours}:${minutes}`;
-                }
+                // ★ 將多則警報用紅色圓點串起來
+                const fullText = allWarnings.join('&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;🔴&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;');
 
-                let endTimeStr = "";
-                if (dataset.datasetInfo.validTime && dataset.datasetInfo.validTime.endTime) {
-                    const endObj = new Date(dataset.datasetInfo.validTime.endTime);
-                    const endMonth = (endObj.getMonth() + 1).toString().padStart(2, '0');
-                    const endDate = endObj.getDate().toString().padStart(2, '0');
-                    const endHours = endObj.getHours().toString().padStart(2, '0');
-                    const endMinutes = endObj.getMinutes().toString().padStart(2, '0');
-                    endTimeStr = ` (~${endMonth}/${endDate} ${endHours}:${endMinutes})`;
-                }
-                
-                let rawContent = "";
-                if (dataset.contents && dataset.contents.content) {
-                    let text = dataset.contents.content.contentText;
-                    text = text.replace(/^一、概述：/g, '');
-                    const cutIndex = text.search(/[二註]、/);
-                    if (cutIndex !== -1) text = text.substring(0, cutIndex);
-                    rawContent = text.replace(/\s+/g, ' ').trim();
-                }
-
-                const fullText = `【${reportName}${timeStr}】 ${rawContent}${endTimeStr}`;
-
-                // 2. 寫入文字 (只一份)
+                // 寫入 DOM
                 contentEl.innerHTML = `<span class="ticker-item">${fullText}</span>`;
                 container.style.display = "flex";
 
-                // 3. 計算並設定動畫
-                const containerWidth = container.querySelector('.ticker-wrapper').offsetWidth;
-                const textWidth = contentEl.scrollWidth;
-                const totalDistance = containerWidth + textWidth; // 總跑動距離
-                const speed = 60; // 速度 (數字越大越快)
-                const duration = totalDistance / speed;
+                // 動畫設定
+                requestAnimationFrame(() => {
+                    const containerWidth = container.querySelector('.ticker-wrapper').offsetWidth;
+                    const textWidth = contentEl.scrollWidth;
+                    const totalDistance = containerWidth + textWidth;
+                    const speed = 60; 
+                    const duration = totalDistance / speed;
 
-                // 設定 CSS 變數
-                contentEl.style.setProperty('--start-pos', `${containerWidth}px`);
-                contentEl.style.setProperty('--end-pos', `-${textWidth}px`);
-                
-                // 啟動動畫 (linear infinite 代表跑完馬上重來)
-                contentEl.style.animation = `ticker-from-right ${Math.max(duration, 10)}s linear infinite`;
+                    contentEl.style.setProperty('--start-pos', `${containerWidth}px`);
+                    contentEl.style.setProperty('--end-pos', `-${textWidth}px`);
+                    
+                    contentEl.style.animation = `ticker-from-right ${Math.max(duration, 10)}s linear infinite`;
+                });
                 
                 container.addEventListener('mouseenter', () => contentEl.style.animationPlayState = 'paused');
                 container.addEventListener('mouseleave', () => contentEl.style.animationPlayState = 'running');
