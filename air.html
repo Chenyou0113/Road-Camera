@@ -819,52 +819,27 @@
             mapInitialized = true;
         }
 
-        // === 抓取空品資料 ===
+        // === 抓取空品資料 (D1 加速版) ===
         async function fetchAirQualityData() {
-            // ✨ 改進：不再直接呼叫環保署 API (會被 CORS 擋)
-            // 改成呼叫自己的後端 API (Cloudflare Functions)
-            // 這樣的好處：
-            // 1. 解決 CORS 問題
-            // 2. API Key 不會洩漏 (藏在後端環境變數)
-            // 3. 自動快取 10 分鐘，節省 API 額度
-            // 4. 資料已經過清洗，只有需要的欄位
-
             try {
-                // ✅ 改成呼叫自己的後端 API
-                const response = await fetch('/api/air-quality');
+                // ★ 指向新的 Worker 網址
+                const apiUrl = 'https://air-quality-api.xiaoyouwu5-fd3.workers.dev'; 
                 
-                if (!response.ok) {
-                    throw new Error(`API Error: HTTP ${response.status}`);
-                }
+                const response = await fetch(apiUrl);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
-                // 後端已經清洗過資料，直接回傳陣列
                 const stations = await response.json();
+                
+                if (!Array.isArray(stations)) throw new Error('資料格式異常');
 
-                if (!Array.isArray(stations)) {
-                    throw new Error('資料格式異常');
-                }
-
-                // 資料已經清洗過了，直接回傳
-                return stations.filter(s => s.lat && s.lon); // 過濾有效座標
+                // 過濾有效座標
+                return stations.filter(s => s.lat && s.lon); 
 
             } catch (error) {
-                console.error('🌤️ 空品 API 載入失敗:', error);
-                console.warn('提示：請確保 Cloudflare 後台已設定 MOENV_API_KEY 環境變數');
-                
-                // 如果失敗，返回示範資料
-                return getDefaultData();
+                console.error('空品資料載入失敗:', error);
+                showError('無法載入空品資料，請稍後再試');
+                return [];
             }
-        }
-
-        // === 示範資料 ===
-        function getDefaultData() {
-            return [
-                { id: '1', name: '板橋', county: '新北市', lat: 25.0092, lon: 121.4605, aqi: 78, pm25: 25, pm10: 45 },
-                { id: '2', name: '台北', county: '台北市', lat: 25.0330, lon: 121.5654, aqi: 65, pm25: 18, pm10: 35 },
-                { id: '3', name: '新莊', county: '新北市', lat: 25.0586, lon: 121.4308, aqi: 82, pm25: 28, pm10: 52 },
-                { id: '4', name: '台中', county: '台中市', lat: 24.1477, lon: 120.6736, aqi: 95, pm25: 35, pm10: 68 },
-                { id: '5', name: '高雄', county: '高雄市', lat: 22.6428, lon: 120.3014, aqi: 88, pm25: 31, pm10: 58 },
-            ];
         }
 
         // === 渲染 UI ===
