@@ -944,19 +944,36 @@
         }
 
         async function fetchScheduleWithFallback(trainNo) {
+            // 策略 1: 嘗試使用 V3 的一般時刻表 API (適用於大多數對號列車)
             try {
                 const v3Url = `/v3/Rail/TRA/DailyTimetable/Today/TrainNo/${trainNo}?$format=JSON`;
                 const v3Data = await tdxApi.fetch(v3Url);
                 if (v3Data && v3Data.length > 0 && v3Data[0].StopTimes) return v3Data[0].StopTimes;
-            } catch (e) {}
+            } catch (e) {
+                // V3 API 找不到是正常的，繼續嘗試下一個策略
+            }
             
+            // 策略 2: 嘗試使用 V2 的每日列車資訊 API (適用於區間車及加班車)
             try {
-                const v2Url = `/v2/Rail/TRA/DailyTrainInfo/TrainNo/${trainNo}?$format=JSON`;
+                const v2Url = `/v2/Rail/TRA/DailyTimetable/TrainNo/${trainNo}/${getTodayDateString()}?$format=JSON`;
                 const v2Data = await tdxApi.fetch(v2Url);
                 if (v2Data && v2Data.length > 0 && v2Data[0].StopTimes) return v2Data[0].StopTimes;
-            } catch (e) {}
+            } catch (e) {
+                // V2 API 也找不到
+            }
 
+            // 策略 3: 如果都失敗，回傳空陣列，避免讓使用者看到錯誤
+            console.warn(`無法取得車次 ${trainNo} 的時刻表`);
             return [];
+        }
+
+        // 輔助函式：取得今天的日期字串 (YYYY-MM-DD)
+        function getTodayDateString() {
+            const d = new Date();
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
         }
 
         function addMinutesToTime(timeStr, minutesToAdd) {

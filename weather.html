@@ -429,6 +429,108 @@
             color: #64B5F6; /* 標題改為亮藍色 */
         }
     </style>
+
+    <!-- 補上缺少的載入畫面功能 -->
+    <style>
+        /* 載入畫面樣式 */
+        #app-loader {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            z-index: 99999;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            transition: opacity 0.5s ease, visibility 0.5s ease;
+        }
+        
+        .loader-spinner {
+            width: 60px;
+            height: 60px;
+            border: 5px solid rgba(255, 255, 255, 0.1);
+            border-top: 5px solid #FF7043;
+            border-radius: 50%;
+            animation: loader-spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        
+        .loader-text {
+            color: white;
+            font-size: 1.2rem;
+            font-weight: 500;
+            margin-bottom: 15px;
+            letter-spacing: 1px;
+        }
+        
+        .loader-progress-container {
+            width: 300px;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        .loader-progress-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #FF7043, #FFAB91);
+            border-radius: 10px;
+            transition: width 0.3s ease;
+        }
+        
+        @keyframes loader-spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+
+    <script>
+        // 定義全域載入函數 (修復 window.startLoading is not a function 錯誤)
+        window.startLoading = function(options = {}) {
+            // 如果 loader 已存在就不重複建立
+            if (document.getElementById('app-loader')) return;
+
+            const loader = document.createElement('div');
+            loader.id = 'app-loader';
+            loader.innerHTML = `
+                <div class="loader-spinner" style="border-top-color: ${options.color || '#FF7043'}"></div>
+                <div class="loader-text" id="loader-text">${options.labelText || '載入中...'}</div>
+                <div class="loader-progress-container">
+                    <div class="loader-progress-bar" id="loader-bar" style="width: 0%; background: ${options.color || '#FF7043'}"></div>
+                </div>
+            `;
+            document.body.appendChild(loader);
+        };
+
+        window.setLoadingProgress = function(percent) {
+            const bar = document.getElementById('loader-bar');
+            if (bar) {
+                bar.style.width = percent + '%';
+            }
+        };
+
+        window.updateLoadingLabel = function(text) {
+            const label = document.getElementById('loader-text');
+            if (label) {
+                label.textContent = text;
+            }
+        };
+
+        window.finishLoading = function() {
+            const loader = document.getElementById('app-loader');
+            if (loader) {
+                loader.style.opacity = '0';
+                loader.style.visibility = 'hidden';
+                setTimeout(() => {
+                    loader.remove();
+                }, 500);
+            }
+        };
+    </script>
 </head>
 <body>
     <header>
@@ -510,7 +612,7 @@
                 </div>
                 
                 <div class="chart-container">
-                    <div style="height: 250px;"><canvas id="windChart"></canvas></div>
+                    <div style="height: 250px;"><canvas id="humChart"></canvas></div>
                 </div>
             </div>
         </div>
@@ -889,153 +991,155 @@
                 if (!response.ok) throw new Error("History fetch failed");
                 let historyData = await response.json();
                 
-                // 確保資料依照時間由舊到新排序 (Chart.js 需要左舊右新)
-                historyData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                historyData.sort((a, b) => a.timestamp - b.timestamp);
 
                 const labels = [];
                 const temps = [];
-                const winds = [];
+                const hums = [];
                 const rains = [];
 
                 if (historyData.length > 0) {
                     historyData.forEach(d => {
                         const date = new Date(d.timestamp);
-                        // 修正：抓取實際的分鐘數，而不只是整點
                         const hours = date.getHours().toString().padStart(2, '0');
                         const minutes = date.getMinutes().toString().padStart(2, '0');
                         const timeStr = `${hours}:${minutes}`;
                         
                         labels.push(timeStr);
                         temps.push(d.temperature <= -90 ? null : d.temperature);
-                        winds.push(d.wind_speed <= -90 ? null : d.wind_speed);
-                        rains.push((d.rain === 'T' || d.rain === -98) ? 0 : (d.rain < 0 ? 0 : d.rain));
+                        // 處理濕度：如果是 0.75 轉成 75，如果是 75 就維持 75
+                        let h = d.humidity;
+                        if (h !== null) {
+                            if (h <= 1 && h > 0) h *= 100;
+                            h = Math.round(h);
+                        }
+                        hums.push(h);
+                        rains.push((d.rain === 'T' || d.rain === -98 || d.rain < 0) ? 0 : d.rain);
                     });
                 }
-                renderCharts(labels, temps, winds, rains);
+                renderCharts(labels, temps, hums, rains);
             } catch (e) {
                 console.error("無法載入歷史圖表", e);
             }
         }
 
-        function renderCharts(labels, temps, winds, rains) {
+        function renderCharts(labels, temps, hums, rains) {
             const isDark = document.body.classList.contains('dark-mode');
-            const textColor = isDark ? '#bbb' : '#666';
-            const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : '#eee';
-            
-            // 【修正重點】判斷是否為手機 (螢幕寬度小於 768px)
             const isMobile = window.innerWidth < 768;
 
-            const createOptions = (title, yUnit) => ({
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    x: { 
-                        ticks: { 
-                            color: textColor,
-                            maxRotation: 0, // 強制文字不旋轉 (保持水平)
-                            autoSkip: true, // 【修正重點】開啟自動跳過，避免手機版擠成一團
-                            maxTicksLimit: isMobile ? 6 : 12, // 【修正重點】手機最多顯示 6 個時間點，電腦 12 個
-                            // callback: 雖然開啟 autoSkip，我們還是保留這個邏輯，優先顯示整點
-                            callback: function(val, index, ticks) {
-                                const label = this.getLabelForValue(val);
-                                // 為了美觀，只顯示 :00 結尾的時間，或者如果是資料少的時候顯示全部
-                                return label.endsWith(':00') ? label : null;
-                            }
-                        }, 
-                        grid: { 
-                            // 只在有標籤顯示的地方畫格線
-                            color: function(context) {
-                                // 檢查該點是否有被 ticks callback 隱藏
-                                if (context.tick && context.tick.label) {
-                                    return gridColor;
-                                }
-                                return 'transparent'; 
-                            }
+            const styles = {
+                titleColor: isDark ? '#64B5F6' : '#28629f',
+                subTitleColor: isDark ? '#aaa' : '#666',
+                gridColor: isDark ? 'rgba(255, 255, 255, 0.1)' : '#eee',
+                textColor: isDark ? '#ccc' : '#555',
+                tempLine: '#F59E0B',
+                humLine: '#0EA5E9',
+                rainBar:  '#94a3b8'
+            };
+
+            // 2. 計算時間範圍 (用於副標題)
+            const timeRange = labels.length > 0 
+                ? `${new Date().getFullYear()}/${labels[0]} ~ ${new Date().getFullYear()}/${labels[labels.length-1]}`
+                : '-- ~ --';
+
+            const createConfig = (type, title, yLabel, datasetLabel, dataValues, color) => ({
+                type: type,
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: datasetLabel,
+                        data: dataValues,
+                        borderColor: color,
+                        backgroundColor: type === 'bar' ? color : 'transparent',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        pointRadius: 0,
+                        pointHoverRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    layout: { padding: { top: 10, right: 20, left: 10, bottom: 10 } },
+                    scales: {
+                        x: {
+                            ticks: {
+                                color: styles.textColor,
+                                maxRotation: 45,
+                                minRotation: 45,
+                                autoSkip: true,
+                                maxTicksLimit: isMobile ? 6 : 12,
+                                font: { size: 11 }
+                            },
+                            grid: { display: false },
+                            title: { display: true, text: '小時', color: styles.subTitleColor, font: {size: 12}, padding: {top: 10} }
                         },
-                        title: { display: !isMobile, text: '時間 (時)', color: textColor } // 手機版隱藏 "時間(時)" 標題以節省空間
+                        y: {
+                            ticks: { color: styles.textColor, padding: 5 },
+                            grid: { color: styles.gridColor, drawBorder: false },
+                            title: { display: true, text: yLabel, color: styles.subTitleColor, font: {size: 12} },
+                            beginAtZero: type === 'bar',
+                            max: (datasetLabel === '相對濕度') ? 100 : undefined
+                        }
                     },
-                    y: { 
-                        ticks: { color: textColor }, 
-                        grid: { color: gridColor },
-                        title: { display: true, text: yUnit, color: textColor }
+                    plugins: {
+                        legend: { display: false },
+                        title: {
+                            display: true,
+                            text: title,
+                            color: styles.titleColor,
+                            font: { size: 16, weight: 'bold', family: 'Microsoft JhengHei' },
+                            padding: { top: 10, bottom: 5 }
+                        },
+                        subtitle: {
+                            display: true,
+                            text: timeRange,
+                            color: styles.subTitleColor,
+                            font: { size: 12, family: 'Arial' },
+                            padding: { bottom: 15 }
+                        },
+                        tooltip: {
+                            mode: 'index',
+                            intersect: false,
+                            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                            titleColor: '#333',
+                            bodyColor: '#333',
+                            borderColor: '#ccc',
+                            borderWidth: 1,
+                            padding: 10,
+                            displayColors: true
+                        }
                     }
-                },
-                plugins: { 
-                    legend: { display: false },
-                    // 手機版標題字體縮小
-                    title: { display: true, text: title, color: textColor, font: { size: isMobile ? 14 : 16 } },
-                    tooltip: {
-                        mode: 'index',
-                        intersect: false,
-                        backgroundColor: isDark ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.9)',
-                        titleColor: isDark ? '#fff' : '#000',
-                        bodyColor: isDark ? '#fff' : '#000',
-                        borderColor: isDark ? '#555' : '#ddd',
-                        borderWidth: 1
-                    }
-                },
-                interaction: { mode: 'nearest', axis: 'x', intersect: false },
-                elements: {
-                    point: {
-                        radius: 0, 
-                        hitRadius: 10,
-                        hoverRadius: 5
-                    },
-                    line: { tension: 0.4 }
                 }
             });
 
-            // 1. 氣溫圖
-            destroyChart('tempChart');
-            chartInstances['tempChart'] = new Chart(document.getElementById('tempChart').getContext('2d'), {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: '氣溫',
-                        data: temps,
-                        borderColor: '#FF9800',
-                        backgroundColor: 'rgba(255, 152, 0, 0.2)',
-                        borderWidth: 2,
-                        fill: true,
-                    }]
-                },
-                options: createOptions('過去歷史紀錄 (氣溫)', '溫度 (°C)')
-            });
+            const destroy = (id) => { if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; } };
 
-            // 2. 風速圖
-            destroyChart('windChart');
-            chartInstances['windChart'] = new Chart(document.getElementById('windChart').getContext('2d'), {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: '風速',
-                        data: winds,
-                        borderColor: '#2196F3',
-                        backgroundColor: 'rgba(33, 150, 243, 0.1)',
-                        borderWidth: 2,
-                        fill: true,
-                    }]
-                },
-                options: createOptions('過去歷史紀錄 (風速)', '風速 (m/s)')
-            });
+            // === 1. 溫度圖 ===
+            destroy('tempChart');
+            chartInstances['tempChart'] = new Chart(
+                document.getElementById('tempChart').getContext('2d'),
+                createConfig('line', `過去24小時溫度變化圖`, '溫度 (°C)', '氣溫', temps, styles.tempLine)
+            );
 
-            // 3. 雨量圖
-            destroyChart('rainChart');
-            chartInstances['rainChart'] = new Chart(document.getElementById('rainChart').getContext('2d'), {
-                type: 'bar', 
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: '時雨量',
-                        data: rains,
-                        backgroundColor: '#4CAF50',
-                        borderRadius: 4
-                    }]
-                },
-                options: createOptions('過去歷史紀錄 (雨量)', '雨量 (mm)')
-            });
+            // === 2. 相對濕度圖 ===
+            const humCanvas = document.getElementById('humChart') || document.getElementById('windChart');
+            if (humCanvas) {
+                destroy('windChart');
+                destroy('humChart');
+
+                chartInstances['humChart'] = new Chart(
+                    humCanvas.getContext('2d'),
+                    createConfig('line', `過去24小時相對濕度變化圖`, '相對濕度 (%)', '相對濕度', hums, styles.humLine)
+                );
+            }
+
+            // === 3. 雨量圖 ===
+            destroy('rainChart');
+            chartInstances['rainChart'] = new Chart(
+                document.getElementById('rainChart').getContext('2d'),
+                createConfig('bar', `過去24小時雨量變化圖`, '毫米 (mm)', '雨量', rains, styles.rainBar)
+            );
         }
 
         function destroyChart(chartId) {
