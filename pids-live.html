@@ -378,9 +378,10 @@
     </div>
 
     <script src="assets/config.js"></script>
+    <script src="assets/config.js"></script>
     <script>
-        // ============ 全局常數 ============
-        // 確認這裡指向您的 Cloudflare Worker
+        // ============ 全局設定 ============
+        // 請確認您的 Worker 網址正確
         const WORKER_URL = 'https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev';
         const stopsCache = {};
         
@@ -538,42 +539,46 @@
         }
 
         // === [核心修正] 主資料更新函式 ===
+        // 🔥【關鍵修正】主資料更新函式
         async function updatePidsData(stationID) {
             try {
-                // 1. 修改：改用 fetch 呼叫 Worker 的 Proxy API (不再用 tdxApi)
+                // 1. 呼叫 Worker (Proxy)
                 const [scheduleRes, liveRes] = await Promise.all([
                     fetch(`${WORKER_URL}/api/station/schedule?stationID=${stationID}`).then(r => r.json()),
                     fetch(`${WORKER_URL}/api/station/live?stationID=${stationID}`).then(r => r.json())
                 ]);
 
                 let allTrains = [];
-                // 2. 修改：處理 Worker 回傳的 V3 結構 (StationTimetables)
-                const stationData = scheduleRes.StationTimetables || scheduleRes;
+                // 2. 🔥 解開第一層 (車站容器)
+                const rootData = scheduleRes.StationTimetables || scheduleRes;
 
-                if (stationData && Array.isArray(stationData)) {
-                    stationData.forEach(st => {
-                        // 確保安全讀取屬性
-                        const getZhTw = (val) => (val && typeof val === 'object' && val.Zh_tw) ? val.Zh_tw : val;
+                if (rootData && Array.isArray(rootData)) {
+                    rootData.forEach(stationContainer => {
+                        // 3. 🔥🔥 解開第二層 (這才是真正的車次列表)
+                        const innerTrains = stationContainer.StationTimetables || [];
                         
-                        // V3 欄位名稱
-                        const depTime = st.DepartureTime || st.ArrivalTime;
-                        if (!depTime) return; // 沒有時間就跳過
+                        innerTrains.forEach(st => {
+                            const getZhTw = (val) => (val && typeof val === 'object' && val.Zh_tw) ? val.Zh_tw : val;
+                            const depTime = st.DepartureTime || st.ArrivalTime;
+                            
+                            if (!depTime) return; // 沒時間就跳過
 
-                        const train = {
-                            TrainNo: st.TrainNo,
-                            Direction: st.Direction,
-                            TrainTypeName: getZhTw(st.TrainTypeName) || '列車',
-                            EndingStationName: getZhTw(st.EndingStationName) || '未知',
-                            ScheduledDepartureTime: depTime,
-                            DelayTime: 0, 
-                            Status: 'future'
-                        };
-                        allTrains.push(train);
+                            const train = {
+                                TrainNo: st.TrainNo,
+                                Direction: st.Direction,
+                                TrainTypeName: getZhTw(st.TrainTypeName) || '列車',
+                                EndingStationName: getZhTw(st.EndingStationName) || '未知',
+                                ScheduledDepartureTime: depTime,
+                                DelayTime: 0, 
+                                Status: 'future'
+                            };
+                            allTrains.push(train);
+                        });
                     });
                 }
 
+                // 處理即時誤點
                 const liveMap = new Map();
-                // 處理誤點資訊
                 const liveBoardData = liveRes.StationLiveBoards || liveRes;
                 if (liveBoardData && Array.isArray(liveBoardData)) {
                     liveBoardData.forEach(t => liveMap.set(t.TrainNo, t.DelayTime));
@@ -588,14 +593,12 @@
                     return train;
                 }).filter(t => isTimeAfter(t.ScheduledDepartureTime, nowTime, -15));
 
-                // 排序
                 allTrains.sort((a, b) => a.ScheduledDepartureTime.localeCompare(b.ScheduledDepartureTime));
 
                 const trains1 = allTrains.filter(t => String(t.Direction) === '1'); // 逆行
                 const trains0 = allTrains.filter(t => String(t.Direction) === '0'); // 順行
                 
-                // 3. 修改：移除 fetchTrainAttributes 呼叫 (Worker 目前不支援屬性旗標，避免報錯)
-                // 直接轉換資料格式
+                // 簡單轉換，不再呼叫 fetchTrainAttributes
                 const finalMap = (list) => list.map(t => ({
                     TrainNo: t.TrainNo,
                     TrainTypeName: t.TrainTypeName,
@@ -603,7 +606,7 @@
                     DepartureTime: t.ScheduledDepartureTime,
                     Delay: t.DelayTime,
                     Direction: t.Direction,
-                    Attributes: {} // 暫時給空物件，避免 UI 報錯
+                    Attributes: {} 
                 }));
 
                 renderScreen('1', finalMap(trains1), '逆行');
@@ -614,7 +617,7 @@
 
             } catch (e) {
                 console.error("API Error", e);
-                const errorMsg = "⚠️ 連線異常 (請檢查 Worker)";
+                const errorMsg = "⚠️ 資料載入中或連線異常...";
                 updateBottomMarquee('marquee1', null, errorMsg, stationID);
                 updateBottomMarquee('marquee0', null, errorMsg, stationID);
             }

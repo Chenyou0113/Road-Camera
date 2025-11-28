@@ -784,33 +784,36 @@
                 ]);
 
                 let allTrains = [];
-                // Worker 結構: { schedules: [...] }
-                const stationData = scheduleRes.schedules || scheduleRes || [];
+                // 🔥 修正：拆開兩層 StationTimetables 結構
+                const rootData = scheduleRes.StationTimetables || scheduleRes.schedules || scheduleRes || [];
                 
-                if (Array.isArray(stationData)) {
-                    stationData.forEach(st => {
-                        // 安全取得屬性 (支援 String 或 Object 格式)
-                        const getZhTw = (val) => (val && typeof val === 'object' && val.Zh_tw) ? val.Zh_tw : val;
-
-                        const depTime = st.DepartureTime || st.ArrivalTime;
+                if (Array.isArray(rootData)) {
+                    rootData.forEach(stationContainer => {
+                        // 🔥🔥 拆開第二層 (真正的列車)
+                        const innerTrains = stationContainer.StationTimetables || stationContainer.schedules || [];
                         
-                        // 🔥【新增檢查】如果沒有時間資料，直接跳過這筆，避免後續排序報錯
-                        if (!depTime) return;
+                        innerTrains.forEach(st => {
+                            const getZhTw = (val) => (val && typeof val === 'object' && val.Zh_tw) ? val.Zh_tw : val;
 
-                        const trainTypeName = getZhTw(st.TrainTypeName) || '列車';
-                        const endingStationName = getZhTw(st.EndingStationName) || '未知';
+                            const depTime = st.DepartureTime || st.ArrivalTime;
+                            
+                            if (!depTime) return;
 
-                        const train = {
-                            TrainNo: st.TrainNo,
-                            Direction: st.Direction, // 0: 順行, 1: 逆行
-                            TrainTypeName: trainTypeName,
-                            TrainTypeCode: st.TrainTypeCode,
-                            EndingStationName: endingStationName,
-                            ScheduledDepartureTime: depTime,
-                            DelayTime: 0,
-                            Status: 'future'
-                        };
-                        allTrains.push(train);
+                            const trainTypeName = getZhTw(st.TrainTypeName) || '列車';
+                            const endingStationName = getZhTw(st.EndingStationName) || '未知';
+
+                            const train = {
+                                TrainNo: st.TrainNo,
+                                Direction: st.Direction || 0,
+                                TrainTypeName: trainTypeName,
+                                TrainTypeCode: st.TrainTypeCode,
+                                EndingStationName: endingStationName,
+                                ScheduledDepartureTime: depTime,
+                                DelayTime: 0,
+                                Status: 'future'
+                            };
+                            allTrains.push(train);
+                        });
                     });
                 }
 
