@@ -261,9 +261,8 @@
         
         .close-btn { 
             position: absolute; top: 10px; right: 10px; /* 調整位置，避免與 theme button 重疊 */
-            background: none; border: none; font-size: 2em; cursor: pointer; color: var(--text-sub); transition: color 0.2s; 
-            z-index: 3000; /* 確保在 theme button 上方 */
-            color: #fff; /* 修正顏色以確保在 header 上可見 */
+            background: none; border: none; font-size: 2em; cursor: pointer; color: white; /* 設置為白色確保在 header 上可見 */
+            z-index: 3000; 
         }
         .close-btn:hover { color: var(--primary-color); }
 
@@ -371,8 +370,7 @@
     <div class="container">
         <div class="page-header">
             <a href="index.html" class="back-btn">
-                <i class="fas fa-arrow-left"></i> 返回首頁
-            </a>
+                <i class="fas fa-arrow-left"></i> 返回首頁</a>
 
             <h1><i class="fas fa-wind"></i> 臺灣即時空品戰情室</h1>
             <p class="subtitle">全台 85+ 測站即時監控數據</p>
@@ -498,8 +496,7 @@
                     <div class="data-card">
                         <div class="dc-label">風向</div>
                         <div class="dc-value" id="m-direc">--</div>
-                        <div class="dc-unit">°</div>
-                    </div>
+                        <div class="dc-unit" id="m-direc-unit">°</div> </div>
                 </div>
             </div>
         </div>
@@ -516,6 +513,17 @@
             return { code: '#7e0023', name: '危害', desc: '健康威脅緊急，所有人都可能受到嚴重影響。' };
         }
 
+        // === 16 方位轉換邏輯 ===
+        function convertDegreesTo16Point(deg) {
+            if (deg === null || deg === undefined || isNaN(deg)) return '-';
+            const directions = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+            // Normalize and shift by half a sector (11.25)
+            let index = Math.floor(((deg + 11.25) % 360) / 22.5);
+            if (index === 16) index = 0; 
+            return directions[index];
+        }
+
+
         // === 全局變數 ===
         let allStations = [];
         let map = null;
@@ -531,20 +539,14 @@
 
         async function initAirPage() {
             try {
-                // 讀取資料 (使用您的 Worker)
                 const stations = await fetchAirQualityData();
                 allStations = stations.sort((a, b) => b.aqi - a.aqi);
 
-                // 產生篩選器
                 populateCityFilter(allStations);
-
-                // 渲染畫面
                 renderUI(allStations);
                 updateStats(allStations);
 
                 document.querySelector('.map-loading').style.display = 'none';
-
-                // 綁定搜尋
                 bindSearchEvent();
                 
             } catch (error) {
@@ -562,7 +564,6 @@
 
         async function fetchAirQualityData() {
             try {
-                // 記得確認 Worker 網址
                 const apiUrl = 'https://air-quality-api.xiaoyouwu5-fd3.workers.dev/';
                 const response = await fetch(apiUrl);
                 if (!response.ok) throw new Error('API Error');
@@ -570,7 +571,6 @@
                 return stations.filter(s => s.lat && s.lon);
             } catch (error) {
                 console.warn('API 連線失敗，請檢查 Worker 狀態');
-                // 這裡可以加入模擬資料的備案
                 return [];
             }
         }
@@ -579,7 +579,6 @@
         function renderUI(stations) {
             const grid = document.getElementById('air-grid');
             grid.innerHTML = '';
-
             markers.forEach(m => map.removeLayer(m));
             markers = [];
 
@@ -663,15 +662,18 @@
             document.getElementById('m-no2').textContent = safe(st.no2);
             
             document.getElementById('m-wind').textContent = safe(st.wind_speed);
-            document.getElementById('m-direc').textContent = safe(st.wind_direc);
+            
+            // ★ 核心修正：風向轉換
+            document.getElementById('m-direc').textContent = convertDegreesTo16Point(st.wind_direc);
+            document.getElementById('m-direc-unit').textContent = ''; // 移除單位符號
 
-            document.body.classList.add('modal-open'); // ★ 新增：打開 Modal 時，為 Body 添加 class
+            document.body.classList.add('modal-open'); // ★ 核心修正：打開 Modal 時，為 Body 添加 class
             document.getElementById('detail-modal').classList.add('active');
         }
 
         function closeModal() {
             document.getElementById('detail-modal').classList.remove('active');
-            document.body.classList.remove('modal-open'); // ★ 新增：關閉 Modal 時，移除 Body 上的 class
+            document.body.classList.remove('modal-open'); // ★ 核心修正：關閉 Modal 時，移除 Body 上的 class
         }
 
         function locateOnMap() {
