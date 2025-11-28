@@ -9,7 +9,6 @@
     <link rel="stylesheet" href="assets/mobile-responsive.css">
     <script>window.CURRENT_PAGE = 'train-liveboard';</script>
     <script src="assets/config.js"></script>
-    <script src="assets/tdx-api.js"></script>
     <script src="assets/train-line-classification.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -641,8 +640,7 @@
         // 載入公告
         async function loadTraAlerts() {
             try {
-                const endpoint = '/v3/Rail/TRA/Alert?$format=JSON&$top=5&$orderby=PublishTime%20desc';
-                const response = await tdxApi.fetch(endpoint);
+                const response = await fetch(`${WORKER_URL}/api/alert`).then(r => r.json());
                 const panel = document.getElementById('traAlertPanel');
                 const content = document.getElementById('traAlertContent');
                 const marqueeEl = document.getElementById('marqueeText');
@@ -655,7 +653,7 @@
                         const cleanDesc = (alert.Description || '').replace(/[\r\n]+/g, ' ');
                         marqueeHTML += `<span style="display: inline-block; margin-right: 50px;">【${alert.Title}】${cleanDesc}</span>`;
                     });
-                    marqueeHTML += `<span style="color:#ff9800;">(以上資訊由 TDX 提供)</span>`;
+                    marqueeHTML += `<span style="color:#ff9800;">(以上資訊由 Worker 提供)</span>`;
                     marqueeEl.innerHTML = marqueeHTML;
                     const duration = Math.max(20, marqueeEl.innerText.length * 0.25); 
                     marqueeEl.style.animation = `marquee-announce ${duration}s linear infinite`;
@@ -780,17 +778,16 @@
             document.getElementById('trainContainer').style.display = 'block';
 
             try {
-                const today = new Date().toISOString().split('T')[0];
                 const [scheduleRes, liveRes] = await Promise.all([
-                    tdxApi.fetch(`/v3/Rail/TRA/DailyStationTimetable/Today/Station/${currentStationID}?$format=JSON`),
-                    tdxApi.fetch(`/v3/Rail/TRA/StationLiveBoard/Station/${currentStationID}?$format=JSON`)
+                    fetch(`${WORKER_URL}/api/station/schedule?stationID=${currentStationID}`).then(r => r.json()),
+                    fetch(`${WORKER_URL}/api/station/live?stationID=${currentStationID}`).then(r => r.json())
                 ]);
 
                 let allTrains = [];
-                // V3 結構: { StationID, TrainDate, StationTimetables: [...] }
-                const stationData = scheduleRes.StationTimetables || scheduleRes;
+                // Worker 結構: { schedules: [...] }
+                const stationData = scheduleRes.schedules || scheduleRes || [];
                 
-                if (stationData && Array.isArray(stationData)) {
+                if (Array.isArray(stationData)) {
                     stationData.forEach(st => {
                         // 安全取得屬性 (支援 String 或 Object 格式)
                         const getZhTw = (val) => (val && typeof val === 'object' && val.Zh_tw) ? val.Zh_tw : val;
@@ -818,8 +815,8 @@
                 }
 
                 const liveMap = new Map();
-                const liveBoardData = liveRes.StationLiveBoards || liveRes;
-                if (liveBoardData && Array.isArray(liveBoardData)) {
+                const liveBoardData = liveRes.live || liveRes || [];
+                if (Array.isArray(liveBoardData)) {
                     liveBoardData.forEach(t => liveMap.set(t.TrainNo, t.DelayTime));
                 }
 
