@@ -799,18 +799,62 @@
             const selectedOption = stationSelect.options[stationSelect.selectedIndex];
             currentStationName = selectedOption.text.split(' - ')[1];
             queryBtn.disabled = true;
+            
+            document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><i class="fas fa-spinner fa-spin"></i><p>載入即時班表中...</p></div>';
+            document.getElementById('trainContainer').style.display = 'block';
 
             try {
-                const endpoint = `/v2/Rail/TRA/LiveBoard?$filter=StationID eq '${currentStationID}'&$format=JSON`;
-                const response = await tdxApi.fetch(endpoint);
-                const trains = Array.isArray(response) ? response : [];
+                const today = new Date().toISOString().split('T')[0];
+                
+                const [scheduleData, liveData] = await Promise.all([
+                    tdxApi.fetch(`/v2/Rail/TRA/DailyTimetable/Station/${currentStationID}/${today}?$format=JSON`),
+                    tdxApi.fetch(`/v2/Rail/TRA/LiveBoard?$filter=StationID eq '${currentStationID}'&$format=JSON`)
+                ]);
 
-                if (trains.length > 0) renderBoard(trains);
-                else showNoData('目前無列車進出站資訊');
+                let allTrains = [];
+                if (Array.isArray(scheduleData)) {
+                    scheduleData.forEach(record => {
+                        const train = {
+                            TrainNo: record.TrainNo,
+                            Direction: record.Direction,
+                            TrainTypeName: record.TrainTypeName,
+                            TrainTypeID: record.TrainTypeID,
+                            EndingStationName: record.EndingStationName,
+                            ScheduledDepartureTime: record.DepartureTime || record.ArrivalTime,
+                            DelayTime: 0,
+                            Status: 'future'
+                        };
+                        allTrains.push(train);
+                    });
+                }
+
+                const liveMap = new Map();
+                if (Array.isArray(liveData)) {
+                    liveData.forEach(t => { liveMap.set(t.TrainNo, t.DelayTime); });
+                }
+
+                const nowTime = new Date().toTimeString().slice(0, 5);
+                
+                allTrains = allTrains.map(train => {
+                    if (liveMap.has(train.TrainNo)) {
+                        train.DelayTime = liveMap.get(train.TrainNo);
+                        train.Status = 'live';
+                    }
+                    return train;
+                });
+
+                // 過濾掉很久以前的車 (保留現在時間 - 30分鐘以後的車)
+                allTrains = allTrains.filter(t => isTimeAfter(t.ScheduledDepartureTime, nowTime, -30));
+
+                // 排序
+                allTrains.sort((a, b) => a.ScheduledDepartureTime.localeCompare(b.ScheduledDepartureTime));
+
+                if (allTrains.length > 0) renderBoard(allTrains);
+                else showNoData('今日已無更多列車班次');
 
             } catch (error) {
                 console.error('查詢失敗:', error);
-                showNoData('查詢失敗，請檢查網路');
+                showNoData('查詢失敗，請檢查網路或稍後再試');
             } finally {
                 queryBtn.disabled = false;
             }
@@ -822,15 +866,17 @@
             const directionFilter = document.getElementById('directionFilter').value;
             const pidsLink = `pids-live.html?station=${currentStationID}&name=${encodeURIComponent(currentStationName)}`;
 
-            document.getElementById('stationTitle').innerHTML = `${currentStationName} 即時看板 <a href="${pidsLink}" target="_blank" class="pids-btn"><i class="fas fa-desktop"></i> 開啟 PIDS 模擬</a>`;
+            document.getElementById('stationTitle').innerHTML = `${currentStationName} 列車動態 <a href="${pidsLink}" target="_blank" class="pids-btn"><i class="fas fa-desktop"></i> PIDS 模擬</a>`;
             document.getElementById('stationInfo').textContent = `車站代碼：${currentStationID}`;
             updateTime();
 
+            // 1. 先依使用者選擇的方向過濾
             let filteredTrains = trains;
             if (directionFilter !== '') {
                 filteredTrains = trains.filter(t => String(t.Direction) === directionFilter);
             }
 
+            // 2. 分組 (順行/逆行)
             const grouped = {
                 '0': { title: '順行 (南下/西行)', trains: [] },
                 '1': { title: '逆行 (北上/東上)', trains: [] }
@@ -841,23 +887,46 @@
                 if (grouped[dir]) grouped[dir].trains.push(train);
             });
 
+            // 3. 排序 (確保時間由近到遠)
             Object.values(grouped).forEach(g => {
                 g.trains.sort((a, b) => (a.ScheduledDepartureTime || '').localeCompare(b.ScheduledDepartureTime || ''));
             });
 
+            // 4. 產生 HTML
             let html = '';
             Object.entries(grouped).forEach(([dir, data]) => {
                 if (data.trains.length === 0) return;
+
+                // === 【關鍵修改】限制顯示數量 ===
+                // 這裡設定每個方向最多顯示 5 班車，避免列表過長
+                const trainsToShow = data.trains.slice(0, 5); 
+
                 html += `<div class="direction-section"><div class="direction-header"><i class="fas fa-arrow-right"></i> ${data.title}</div>`;
                 
-                data.trains.forEach(train => {
+                trainsToShow.forEach(train => {
                     const timeText = train.ScheduledDepartureTime ? train.ScheduledDepartureTime.slice(0,5) : '--:--';
-                    const delayStatus = getDelayStatus(train);
-                    const endStation = train.EndingStationName?.Zh_tw || train.EndingStationName || '未知';
+                    
+                    // 顯示狀態邏輯
+                    let delayStatus;
+                    if (train.Status === 'live') {
+                        delayStatus = getDelayStatus(train);
+                    } else {
+                        delayStatus = '<span class="delay-badge" style="background:#f5f5f5; color:#999; font-weight:normal;">表定</span>';
+                    }
+
+                    let endStation = '未知';
+                    if (train.EndingStationName) {
+                        endStation = typeof train.EndingStationName === 'object' ? train.EndingStationName.Zh_tw : train.EndingStationName;
+                    }
+                    
                     const trainInfo = getTrainDisplayInfo(train);
 
+                    // 判斷是否為已過時的車 (透明度處理)
+                    const isPast = train.Status !== 'live' && isTimeAfter(new Date().toTimeString().slice(0,5), timeText, 0); 
+                    const rowOpacity = isPast ? 'opacity: 0.6; filter: grayscale(0.8);' : '';
+
                     html += `
-                        <div class="train-card" 
+                        <div class="train-card" style="${rowOpacity}"
                              onclick="showTrainStops('${train.TrainNo}', '${currentStationID}', '${endStation}')"
                              onmouseenter="prefetchTrainData('${train.TrainNo}')"
                              title="點擊查看沿途停靠站">
@@ -868,16 +937,24 @@
                                     <div class="destination">往 ${endStation}</div>
                                 </div>
                             </div>
-                            <div class="schedule-time">${timeText}<div class="schedule-label">表定</div></div>
+                            <div class="schedule-time">${timeText}<div class="schedule-label">開車</div></div>
                             <div class="delay-status">${delayStatus}</div>
                         </div>
                     `;
                 });
+                
+                // 如果還有更多車次沒顯示，加一個小提示
+                if (data.trains.length > 5) {
+                    html += `<div style="text-align:center; padding:10px; color:#999; font-size:0.9rem; background:#f9f9f9;">
+                        ... 尚有 ${data.trains.length - 5} 班列車未顯示 ...
+                    </div>`;
+                }
+                
                 html += '</div>';
             });
 
             if (html === '') {
-                showNoData('該方向無列車資訊');
+                showNoData('該方向今日已無更多列車');
                 return;
             }
             trainsBoard.innerHTML = html;
@@ -948,12 +1025,29 @@
             try {
                 const v3Url = `/v3/Rail/TRA/DailyTimetable/Today/TrainNo/${trainNo}?$format=JSON`;
                 const v3Data = await tdxApi.fetch(v3Url);
-                if (v3Data && v3Data.length > 0 && v3Data[0].StopTimes) return v3Data[0].StopTimes;
+                // V3 回傳結構通常是 { TrainTimetables: [...] } 或直接陣列
+                const trains = v3Data.TrainTimetables || v3Data;
+                if (trains && trains.length > 0 && trains[0].StopTimes) return trains[0].StopTimes;
             } catch (e) {
                 // V3 API 找不到是正常的，繼續嘗試下一個策略
             }
-            
-            // 策略 2: 嘗試使用 V2 的每日列車資訊 API (適用於區間車及加班車)
+
+            // 策略 2: 查詢 Worker 資料庫 (這是我們的最後防線)
+            try {
+                const workerUrl = `https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev/api/schedule?trainNo=${trainNo}`;
+                const res = await fetch(workerUrl);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.length > 0 && data[0].StopTimes) {
+                        console.log(`✅ 從 Worker 資料庫找到 ${trainNo} 次時刻表`);
+                        return data[0].StopTimes;
+                    }
+                }
+            } catch (e) {
+                console.warn('Worker DB query failed', e);
+            }
+
+            // 策略 3: 嘗試使用 V2 的每日列車資訊 API (適用於區間車及加班車)
             try {
                 const v2Url = `/v2/Rail/TRA/DailyTimetable/TrainNo/${trainNo}/${getTodayDateString()}?$format=JSON`;
                 const v2Data = await tdxApi.fetch(v2Url);
@@ -962,7 +1056,7 @@
                 // V2 API 也找不到
             }
 
-            // 策略 3: 如果都失敗，回傳空陣列，避免讓使用者看到錯誤
+            // 策略 4: 如果都失敗，回傳空陣列，避免讓使用者看到錯誤
             console.warn(`無法取得車次 ${trainNo} 的時刻表`);
             return [];
         }
@@ -997,23 +1091,29 @@
             content.style.animation = 'none';
 
             try {
-                let stopTimes, liveData;
+                let stopTimes, liveRes;
                 if (trainDataCache[trainNo]) {
-                    [stopTimes, liveData] = await trainDataCache[trainNo];
+                    [stopTimes, liveRes] = await trainDataCache[trainNo];
                 } else {
-                    [stopTimes, liveData] = await Promise.all([
+                    // 改用您的 Worker API，這不會有 429 或 CORS 問題
+                    const liveUrl = `https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev/api/live?trainNo=${trainNo}`;
+                    
+                    [stopTimes, liveRes] = await Promise.all([
                         fetchScheduleWithFallback(trainNo),
-                        tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`).catch(() => null)
+                        fetch(liveUrl).then(r => r.json()).catch(() => ({ TrainLiveBoards: [] }))
                     ]);
-                    trainDataCache[trainNo] = Promise.resolve([stopTimes, liveData]);
+                    trainDataCache[trainNo] = Promise.resolve([stopTimes, liveRes]);
                 }
 
+                // 解析 Worker 回傳的資料
+                const liveData = (liveRes.TrainLiveBoards && liveRes.TrainLiveBoards.length > 0) ? liveRes.TrainLiveBoards[0] : null;
+                
                 let marqueeHTML = '';
                 const delayTime = (liveData && liveData.DelayTime) ? liveData.DelayTime : 0;
 
                 // 1. 目前位置
                 if (liveData && liveData.StationName) {
-                    const lastStation = liveData.StationName.Zh_tw;
+                    const lastStation = typeof liveData.StationName === 'object' ? liveData.StationName.Zh_tw : liveData.StationName;
                     const delayText = delayTime <= 0 ? '<span style="color:#00e676;">(準點)</span>' : `<span style="color:#ff5252;">(晚 ${delayTime} 分)</span>`;
                     marqueeHTML += `<span style="color:#aaa;">目前位置：</span><span style="color:#ffeb3b; font-weight:bold;">${lastStation}</span> ${delayText}`;
                 } else {
@@ -1038,7 +1138,10 @@
                 if (stopTimes.length > 0) {
                     const idx = stopTimes.findIndex(s => s.StationID === currentStationID);
                     if (idx !== -1 && idx < stopTimes.length - 1) {
-                        const stops = stopTimes.slice(idx + 1).map(s => `<span class="station-stop">${s.StationName.Zh_tw}</span>`).join('<span class="station-arrow">▶</span>');
+                        const stops = stopTimes.slice(idx + 1).map(s => {
+                            const stationName = typeof s.StationName === 'object' ? s.StationName.Zh_tw : s.StationName;
+                            return `<span class="station-stop">${stationName}</span>`;
+                        }).join('<span class="station-arrow">▶</span>');
                         marqueeHTML += `<span style="margin:0 20px; border-left:1px solid #555;"></span><span style="color:#aaa;">後續停靠：</span>${stops}`;
                     }
                 }
