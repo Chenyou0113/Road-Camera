@@ -580,6 +580,9 @@
     <script src="assets/navbar.js"></script>
     <script src="assets/dark-mode.js"></script>
     <script>
+        // ============ 全局常數 ============
+        const WORKER_URL = 'https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev';
+        
         // ============ 全局變數 ============
         let currentStationID = '';
         let currentStationName = '';
@@ -1021,43 +1024,28 @@
         }
 
         async function fetchScheduleWithFallback(trainNo) {
-            // 策略 1: 嘗試使用 V3 的一般時刻表 API (適用於大多數對號列車)
+            // 優化策略：直接查詢 Worker 資料庫 (最穩定、最完整的資料來源)
+            // Worker 已經同步了全台所有車次 (包含區間車、加班車)
+            // 完全避開 TDX 的 429 (Too Many Requests) 和 404 (Not Found) 問題
+            
             try {
-                const v3Url = `/v3/Rail/TRA/DailyTimetable/Today/TrainNo/${trainNo}?$format=JSON`;
-                const v3Data = await tdxApi.fetch(v3Url);
-                // V3 回傳結構通常是 { TrainTimetables: [...] } 或直接陣列
-                const trains = v3Data.TrainTimetables || v3Data;
-                if (trains && trains.length > 0 && trains[0].StopTimes) return trains[0].StopTimes;
-            } catch (e) {
-                // V3 API 找不到是正常的，繼續嘗試下一個策略
-            }
-
-            // 策略 2: 查詢 Worker 資料庫 (這是我們的最後防線)
-            try {
-                const workerUrl = `https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev/api/schedule?trainNo=${trainNo}`;
+                const workerUrl = `${WORKER_URL}/api/schedule?trainNo=${trainNo}`;
                 const res = await fetch(workerUrl);
+                
                 if (res.ok) {
                     const data = await res.json();
+                    // Worker 回傳格式: [{ TrainInfo, StopTimes: [...] }]
                     if (data && data.length > 0 && data[0].StopTimes) {
-                        console.log(`✅ 從 Worker 資料庫找到 ${trainNo} 次時刻表`);
+                        // console.log(`✅ 從 Worker 取得 ${trainNo} 次時刻表`);
                         return data[0].StopTimes;
                     }
                 }
             } catch (e) {
-                console.warn('Worker DB query failed', e);
+                console.warn(`Worker 查詢失敗 (${trainNo}):`, e);
             }
 
-            // 策略 3: 嘗試使用 V2 的每日列車資訊 API (適用於區間車及加班車)
-            try {
-                const v2Url = `/v2/Rail/TRA/DailyTimetable/TrainNo/${trainNo}/${getTodayDateString()}?$format=JSON`;
-                const v2Data = await tdxApi.fetch(v2Url);
-                if (v2Data && v2Data.length > 0 && v2Data[0].StopTimes) return v2Data[0].StopTimes;
-            } catch (e) {
-                // V2 API 也找不到
-            }
-
-            // 策略 4: 如果都失敗，回傳空陣列，避免讓使用者看到錯誤
-            console.warn(`無法取得車次 ${trainNo} 的時刻表`);
+            // 如果 Worker 也查不到 (極少見，除非資料庫沒同步)，回傳空陣列
+            console.warn(`⚠️ 無法取得車次 ${trainNo} 的時刻表 (Worker 無資料)`);
             return [];
         }
 
@@ -1078,9 +1066,6 @@
             d.setHours(h); d.setMinutes(m + minutesToAdd);
             return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
         }
-
-        // 您的 Worker 網址
-        const WORKER_URL = 'https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev';
 
         async function showTrainStops(trainNo, currentStationID, destName) {
             const bar = document.getElementById('trainMarqueeBar');
