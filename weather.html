@@ -920,8 +920,10 @@
         function renderCharts(labels, temps, winds, rains) {
             const isDark = document.body.classList.contains('dark-mode');
             const textColor = isDark ? '#bbb' : '#666';
-            // 深色模式下的格線顏色調整
-            const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : '#eee'; 
+            const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : '#eee';
+            
+            // 【修正重點】判斷是否為手機 (螢幕寬度小於 768px)
+            const isMobile = window.innerWidth < 768;
 
             const createOptions = (title, yUnit) => ({
                 responsive: true,
@@ -930,28 +932,27 @@
                     x: { 
                         ticks: { 
                             color: textColor,
-                            maxRotation: 0, // 強制文字水平
-                            autoSkip: false, // 關閉自動跳過，由下方 callback 自行控制
-                            // 【核心修改】只顯示 "整點" (:00) 的標籤
-                            callback: function(val, index) {
+                            maxRotation: 0, // 強制文字不旋轉 (保持水平)
+                            autoSkip: true, // 【修正重點】開啟自動跳過，避免手機版擠成一團
+                            maxTicksLimit: isMobile ? 6 : 12, // 【修正重點】手機最多顯示 6 個時間點，電腦 12 個
+                            // callback: 雖然開啟 autoSkip，我們還是保留這個邏輯，優先顯示整點
+                            callback: function(val, index, ticks) {
                                 const label = this.getLabelForValue(val);
-                                // 只有當字串結尾是 :00 時才顯示
-                                if (label.endsWith(':00')) {
-                                    return label;
-                                }
-                                return null; // 其他時間隱藏
+                                // 為了美觀，只顯示 :00 結尾的時間，或者如果是資料少的時候顯示全部
+                                return label.endsWith(':00') ? label : null;
                             }
                         }, 
                         grid: { 
-                            // 【視覺優化】讓垂直格線也只畫在整點上
+                            // 只在有標籤顯示的地方畫格線
                             color: function(context) {
-                                if (context.tick && context.tick.label && context.tick.label.endsWith(':00')) {
+                                // 檢查該點是否有被 ticks callback 隱藏
+                                if (context.tick && context.tick.label) {
                                     return gridColor;
                                 }
-                                return 'transparent'; // 非整點不畫線
+                                return 'transparent'; 
                             }
                         },
-                        title: { display: true, text: '時間 (時)', color: textColor }
+                        title: { display: !isMobile, text: '時間 (時)', color: textColor } // 手機版隱藏 "時間(時)" 標題以節省空間
                     },
                     y: { 
                         ticks: { color: textColor }, 
@@ -961,7 +962,8 @@
                 },
                 plugins: { 
                     legend: { display: false },
-                    title: { display: true, text: title, color: textColor, font: { size: 16 } },
+                    // 手機版標題字體縮小
+                    title: { display: true, text: title, color: textColor, font: { size: isMobile ? 14 : 16 } },
                     tooltip: {
                         mode: 'index',
                         intersect: false,
@@ -998,7 +1000,7 @@
                         fill: true,
                     }]
                 },
-                options: createOptions('過去 24 小時氣溫變化', '溫度 (°C)')
+                options: createOptions('過去歷史紀錄 (氣溫)', '溫度 (°C)')
             });
 
             // 2. 風速圖
@@ -1016,7 +1018,7 @@
                         fill: true,
                     }]
                 },
-                options: createOptions('過去 24 小時風速變化', '風速 (m/s)')
+                options: createOptions('過去歷史紀錄 (風速)', '風速 (m/s)')
             });
 
             // 3. 雨量圖
@@ -1032,7 +1034,7 @@
                         borderRadius: 4
                     }]
                 },
-                options: createOptions('過去 24 小時降雨量', '雨量 (mm)')
+                options: createOptions('過去歷史紀錄 (雨量)', '雨量 (mm)')
             });
         }
 
