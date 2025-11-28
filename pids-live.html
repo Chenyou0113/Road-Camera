@@ -571,50 +571,107 @@
 
         async function updatePidsData(stationID) {
             try {
-                const data = await tdxApi.fetch(`/v2/Rail/TRA/LiveBoard?$filter=StationID eq '${stationID}'&$format=JSON`);
+                // 1. 抓取今日全日班表 (改用 Worker 以避免 429/404，且 Worker 已有完整時刻表)
+                // 由於 Worker 目前只有 "查單一車次" 的 API，我們這裡還是得先用 TDX 抓 "該站全日班表"
+                // 但為了穩定，我們改用 V2 DailyTimetable (比較輕量) 加上 V3 LiveBoard 合併
                 
-                if (!data || data.length === 0) {
-                    const noDataMsg = "目前無列車資訊";
-                    updateBottomMarquee('marquee1', null, noDataMsg, stationID);
-                    updateBottomMarquee('marquee0', null, noDataMsg, stationID);
-                    renderScreen('1', [], '逆行');
-                    renderScreen('0', [], '順行');
-                    return;
+                const today = new Date().toISOString().split('T')[0];
+                
+                const [scheduleRes, liveRes] = await Promise.all([
+                    // V2 DailyTimetable/Station (全日班表)
+                    tdxApi.fetch(`/v2/Rail/TRA/DailyTimetable/Station/${stationID}/${today}?$format=JSON`),
+                    // V2 LiveBoard (即時誤點)
+                    tdxApi.fetch(`/v2/Rail/TRA/LiveBoard?$filter=StationID eq '${stationID}'&$format=JSON`)
+                ]);
+
+                // 2. 整理全日班表
+                let allTrains = [];
+                if (Array.isArray(scheduleRes)) {
+                    scheduleRes.forEach(record => {
+                        const train = {
+                            TrainNo: record.TrainNo,
+                            Direction: record.Direction,
+                            // V2 回傳的 TrainTypeName 是物件 { Zh_tw: '...' }
+                            TrainTypeName: record.TrainTypeName.Zh_tw || record.TrainTypeName,
+                            EndingStationName: record.EndingStationName.Zh_tw || record.EndingStationName,
+                            ScheduledDepartureTime: record.DepartureTime || record.ArrivalTime,
+                            DelayTime: 0, // 預設準點
+                            Status: 'future'
+                        };
+                        allTrains.push(train);
+                    });
                 }
 
-                const standardizedData = data.map(t => ({
-                    TrainNo: t.TrainNo,
-                    TrainTypeID: t.TrainTypeID,
-                    TrainTypeName: t.TrainTypeName,
-                    EndingStationName: t.EndingStationName?.Zh_tw || t.EndingStationName,
-                    DepartureTime: t.ScheduledDepartureTime,
-                    DepartureHHMM: t.ScheduledDepartureTime ? t.ScheduledDepartureTime.slice(0,5) : '',
-                    Delay: t.DelayTime || 0,
-                    Direction: t.Direction,
-                    StationID: t.StationID
-                }));
+                // 3. 合併即時誤點資訊
+                const liveMap = new Map();
+                if (Array.isArray(liveRes)) {
+                    liveRes.forEach(t => {
+                        liveMap.set(t.TrainNo, t.DelayTime);
+                    });
+                }
 
-                const nowH = new Date().getHours();
+                // 4. 過濾與排序
+                const nowTime = new Date().toTimeString().slice(0, 5);
                 
+                allTrains = allTrains.map(train => {
+                    if (liveMap.has(train.TrainNo)) {
+                        train.DelayTime = liveMap.get(train.TrainNo);
+                        train.Status = 'live';
+                    }
+                    return train;
+                });
+
+                // 過濾掉已開走的車 (表定時間 < 現在 - 15分鐘)
+                allTrains = allTrains.filter(t => isTimeAfter(t.ScheduledDepartureTime, nowTime, -15));
+
+                // 排序 (跨日處理邏輯)
+                const nowH = new Date().getHours();
                 const midnightSort = (a, b) => {
                     const getWeight = (timeStr) => {
                         const [h, m] = timeStr.split(':').map(Number);
-                        if (nowH < 4 && h > 18) {
-                            return (h * 60 + m) - (24 * 60); 
+                        // 如果現在是凌晨 (0~3點)，而車次是晚上 (18點後)，代表那是昨天的車，權重設很小
+                        // 但這裡是 DailyTimetable，通常不會有昨天的車
+                        // 主要處理：現在是晚上 23:00，列表有 00:10 的車，00:10 應該排在最後
+                        if (nowH > 18 && h < 4) {
+                            return (h * 60 + m) + (24 * 60); // 明天的車加 24 小時
                         }
                         return h * 60 + m;
                     };
-                    return getWeight(a.DepartureHHMM) - getWeight(b.DepartureHHMM);
+                    return getWeight(a.ScheduledDepartureTime) - getWeight(b.ScheduledDepartureTime);
                 };
+                
+                allTrains.sort(midnightSort);
 
-                const trains1 = standardizedData.filter(t => t.Direction == 1).sort(midnightSort);
-                const trains0 = standardizedData.filter(t => t.Direction == 0).sort(midnightSort);
+                // 5. 轉換成 PIDS 渲染格式
+                // 我們需要為每台車抓取屬性 (輪椅/單車)，這會產生很多請求
+                // 為了效能，我們只抓「即將顯示在前 6 筆」的車次屬性
+                const trains1 = allTrains.filter(t => t.Direction == 1);
+                const trains0 = allTrains.filter(t => t.Direction == 0);
+                
+                const topTrains = [...trains1.slice(0, 6), ...trains0.slice(0, 6)];
+                const trainNos = topTrains.map(t => t.TrainNo);
+                
+                const attrPromises = trainNos.map(no => fetchTrainAttributes(no));
+                const attrs = await Promise.all(attrPromises);
+                const attrMap = {};
+                trainNos.forEach((no, i) => attrMap[no] = attrs[i]);
 
-                renderScreen('1', trains1, '逆行');
-                renderScreen('0', trains0, '順行');
+                // 綁定屬性到渲染資料
+                const finalMap = (list) => list.map(t => ({
+                    TrainNo: t.TrainNo,
+                    TrainTypeName: t.TrainTypeName,
+                    EndingStationName: t.EndingStationName,
+                    DepartureTime: t.ScheduledDepartureTime, // PIDS 用這個欄位
+                    Delay: t.DelayTime,
+                    Direction: t.Direction,
+                    Attributes: attrMap[t.TrainNo] || {} // 沒抓到的就給空
+                }));
 
-                updateBottomMarquee('marquee1', trains1, null, stationID);
-                updateBottomMarquee('marquee0', trains0, null, stationID);
+                renderScreen('1', finalMap(trains1), '逆行');
+                renderScreen('0', finalMap(trains0), '順行');
+
+                updateBottomMarquee('marquee1', finalMap(trains1), null, stationID);
+                updateBottomMarquee('marquee0', finalMap(trains0), null, stationID);
 
             } catch (e) {
                 console.error("API Error", e);
@@ -622,6 +679,17 @@
                 updateBottomMarquee('marquee1', null, errorMsg, stationID);
                 updateBottomMarquee('marquee0', null, errorMsg, stationID);
             }
+        }
+        
+        // 補上 isTimeAfter 函式 (如果 PIDS 裡沒有的話)
+        function isTimeAfter(targetTime, baseTime, offsetMinutes) {
+            if (!targetTime || !baseTime) return true;
+            const [h1, m1] = targetTime.split(':').map(Number);
+            const [h2, m2] = baseTime.split(':').map(Number);
+            const t1 = h1 * 60 + m1;
+            let t2 = h2 * 60 + m2 + offsetMinutes;
+            if (t1 < t2 && (t2 - t1) > 720) return true; 
+            return t1 >= t2;
         }
 
         function generateDirectionTitle(trains, defaultTitle) {
@@ -670,6 +738,7 @@
             }
         }
 
+        // === [修正版] 底部跑馬燈：增強錯誤處理與資料解析 ===
         async function updateBottomMarquee(elementId, trains, customMsg, currentStationID) {
             const el = document.getElementById(elementId);
             const container = el.parentElement;
@@ -689,50 +758,74 @@
                 let liveInfo = null;
 
                 try {
-                    // === 核心修改：改向 Worker 請求資料 ===
+                    // 改用 Worker API，並加入 console.log 除錯
                     const [scheduleRes, liveRes] = await Promise.all([
                         fetch(`${WORKER_URL}/api/schedule?trainNo=${trainNo}`).then(r => r.json()).catch(() => []),
                         fetch(`${WORKER_URL}/api/live?trainNo=${trainNo}`).then(r => r.json()).catch(() => ({}))
                     ]);
                     
-                    // 解析 Worker 回傳
-                    stopTimes = (scheduleRes && scheduleRes.length > 0) ? scheduleRes[0].StopTimes : [];
-                    liveInfo = (liveRes.TrainLiveBoards && liveRes.TrainLiveBoards.length > 0) ? liveRes.TrainLiveBoards[0] : null;
+                    // 解析 Worker 回傳 (修正路徑)
+                    // Worker schedule 回傳結構: [{ TrainInfo:..., StopTimes: [...] }]
+                    if (scheduleRes && scheduleRes.length > 0) {
+                        stopTimes = scheduleRes[0].StopTimes || [];
+                    }
+
+                    // Worker live 回傳結構: { TrainLiveBoards: [...] }
+                    if (liveRes && liveRes.TrainLiveBoards && liveRes.TrainLiveBoards.length > 0) {
+                        liveInfo = liveRes.TrainLiveBoards[0];
+                    }
 
                 } catch (e) { console.warn("Worker API Error", e); }
 
                 // 1. 狀態顯示
                 let delayHtml = delayTime > 0 ? `<span style="color: #ff1744;">(晚 ${delayTime} 分)</span>` : `<span style="color: #00e676;">(準點)</span>`;
 
-                // 2. 計算開車時間
+                // 2. 計算本站開車時間 (關鍵修正：如果 Worker 沒抓到時刻表，回退使用列表中的 DepartureTime)
                 let departureTime = "--:--";
                 let currentStationIndex = -1;
+
                 if (stopTimes && stopTimes.length > 0) {
                     const currentIdStr = String(currentStationID);
                     currentStationIndex = stopTimes.findIndex(s => String(s.StationID) === currentIdStr);
+                    
                     if (currentStationIndex !== -1) {
                         const myStation = stopTimes[currentStationIndex];
+                        // 優先顯示開車時間，若無則顯示到站時間
                         const tableTime = myStation.DepartureTime || myStation.ArrivalTime;
                         departureTime = addMinutesToTime(tableTime, delayTime);
                     }
+                } else {
+                    // Fallback: 如果 Worker 沒抓到時刻表，使用列表傳進來的時間
+                    // train.DepartureHHMM 是我們在 updatePidsData 裡整理好的表定時間
+                    if (train.DepartureHHMM) {
+                        departureTime = addMinutesToTime(train.DepartureHHMM, delayTime);
+                    }
                 }
 
-                // 3. 組合跑馬燈文字
+                // === 組合跑馬燈文字 ===
                 textHTML += `<span style="color: #ffeb3b; font-weight:bold; font-size: 1.2em;">${trainNo} 次 ${trainInfo.name} ${delayHtml}</span> `;
                 textHTML += `<span style="color: #ffffff; font-weight:bold; font-size: 1.2em; margin: 0 10px;">${departureTime} 開車</span> `;
                 textHTML += `<span style="color: #ffeb3b; font-weight:bold; font-size: 1.2em;">往 ${train.EndingStationName}</span>`;
+                
                 textHTML += `<span style="margin: 0 20px; color: #555; font-size: 1.2em;">|</span> `;
 
+                // 列車位置
                 let locationText = "列車行駛中";
                 if (liveInfo && liveInfo.StationName) {
                     const stName = liveInfo.StationName.Zh_tw || liveInfo.StationName;
                     locationText = `列車目前位置：${stName}`;
-                } 
+                } else if (!liveInfo) {
+                    // 如果真的沒抓到即時位置，顯示提示
+                    locationText = "暫無即時位置訊號";
+                }
                 textHTML += `<span style="color: #4fc3f7; font-size: 1.1em;">${locationText}</span>`;
+                
                 textHTML += `<span style="margin: 0 20px; color: #555; font-size: 1.2em;">|</span> `;
 
+                // 停靠站
                 if (stopTimes && stopTimes.length > 0 && currentStationIndex !== -1) {
                     const futureStops = stopTimes.slice(currentStationIndex + 1);
+                    
                     if (futureStops.length > 0) {
                         const isLocalTrain = trainInfo.name.includes('區間');
                         let stopsStr = "";
@@ -750,7 +843,8 @@
                         textHTML += `<span style="color: #ff9800; font-size: 1.1em;">本站為終點站</span>`;
                     }
                 } else {
-                    textHTML += `<span style="color: #999;">本列車不停靠本站 (通過)</span>`;
+                    // 如果真的沒抓到時刻表，顯示提示
+                    textHTML += `<span style="color: #999;">(無法取得詳細停靠站)</span>`;
                 }
 
                 if (train.Attributes && train.Attributes.note) {
@@ -766,8 +860,8 @@
             const textWidth = el.scrollWidth;
             el.style.setProperty('--start-pos', `${containerWidth}px`);
             el.style.setProperty('--end-pos', `-${textWidth}px`);
+            
             const duration = Math.max(10, el.innerText.length * 0.25); 
-
             el.style.animation = `dynamic-marquee ${duration}s linear infinite`;
         }
     </script>
