@@ -920,7 +920,8 @@
         function renderCharts(labels, temps, winds, rains) {
             const isDark = document.body.classList.contains('dark-mode');
             const textColor = isDark ? '#bbb' : '#666';
-            const gridColor = isDark ? '#444' : '#eee';
+            // 深色模式下的格線顏色調整
+            const gridColor = isDark ? 'rgba(255, 255, 255, 0.1)' : '#eee'; 
 
             const createOptions = (title, yUnit) => ({
                 responsive: true,
@@ -929,11 +930,27 @@
                     x: { 
                         ticks: { 
                             color: textColor,
-                            maxRotation: 0, // 保持文字水平
-                            autoSkip: true, // 自動隱藏過密的標籤
-                            maxTicksLimit: 12 // 限制 X 軸最多顯示 12 個時間點 (避免擁擠)
+                            maxRotation: 0, // 強制文字水平
+                            autoSkip: false, // 關閉自動跳過，由下方 callback 自行控制
+                            // 【核心修改】只顯示 "整點" (:00) 的標籤
+                            callback: function(val, index) {
+                                const label = this.getLabelForValue(val);
+                                // 只有當字串結尾是 :00 時才顯示
+                                if (label.endsWith(':00')) {
+                                    return label;
+                                }
+                                return null; // 其他時間隱藏
+                            }
                         }, 
-                        grid: { display: false },
+                        grid: { 
+                            // 【視覺優化】讓垂直格線也只畫在整點上
+                            color: function(context) {
+                                if (context.tick && context.tick.label && context.tick.label.endsWith(':00')) {
+                                    return gridColor;
+                                }
+                                return 'transparent'; // 非整點不畫線
+                            }
+                        },
                         title: { display: true, text: '時間 (時)', color: textColor }
                     },
                     y: { 
@@ -947,22 +964,26 @@
                     title: { display: true, text: title, color: textColor, font: { size: 16 } },
                     tooltip: {
                         mode: 'index',
-                        intersect: false, // 讓滑鼠不用精準指到點也能顯示數值
+                        intersect: false,
+                        backgroundColor: isDark ? 'rgba(0,0,0,0.8)' : 'rgba(255,255,255,0.9)',
+                        titleColor: isDark ? '#fff' : '#000',
+                        bodyColor: isDark ? '#fff' : '#000',
+                        borderColor: isDark ? '#555' : '#ddd',
+                        borderWidth: 1
                     }
                 },
                 interaction: { mode: 'nearest', axis: 'x', intersect: false },
                 elements: {
                     point: {
-                        radius: 0, // 預設隱藏小圓點，讓線條更平滑
-                        hitRadius: 10, // 增加滑鼠感應範圍
-                        hoverRadius: 4 // 滑鼠移上去時顯示圓點
+                        radius: 0, 
+                        hitRadius: 10,
+                        hoverRadius: 5
                     },
-                    line: {
-                        tension: 0.4 // 曲線圓滑度
-                    }
+                    line: { tension: 0.4 }
                 }
             });
 
+            // 1. 氣溫圖
             destroyChart('tempChart');
             chartInstances['tempChart'] = new Chart(document.getElementById('tempChart').getContext('2d'), {
                 type: 'line',
@@ -980,6 +1001,7 @@
                 options: createOptions('過去 24 小時氣溫變化', '溫度 (°C)')
             });
 
+            // 2. 風速圖
             destroyChart('windChart');
             chartInstances['windChart'] = new Chart(document.getElementById('windChart').getContext('2d'), {
                 type: 'line',
@@ -997,6 +1019,7 @@
                 options: createOptions('過去 24 小時風速變化', '風速 (m/s)')
             });
 
+            // 3. 雨量圖
             destroyChart('rainChart');
             chartInstances['rainChart'] = new Chart(document.getElementById('rainChart').getContext('2d'), {
                 type: 'bar', 
