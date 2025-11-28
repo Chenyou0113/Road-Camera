@@ -1079,6 +1079,9 @@
             return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
         }
 
+        // 您的 Worker 網址
+        const WORKER_URL = 'https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev';
+
         async function showTrainStops(trainNo, currentStationID, destName) {
             const bar = document.getElementById('trainMarqueeBar');
             const content = document.getElementById('mqContent');
@@ -1087,78 +1090,100 @@
             document.getElementById('mqTrainNo').textContent = `${trainNo} 次`;
             document.getElementById('mqDest').textContent = `往 ${destName}`;
             
-            if (!trainDataCache[trainNo]) content.innerHTML = '<span style="color:#aaa;">載入中...</span>';
+            content.innerHTML = '<span style="color:#aaa;">正在從雲端資料庫讀取...</span>';
             content.style.animation = 'none';
 
             try {
-                let stopTimes, liveRes;
-                if (trainDataCache[trainNo]) {
-                    [stopTimes, liveRes] = await trainDataCache[trainNo];
-                } else {
-                    // 改用您的 Worker API，這不會有 429 或 CORS 問題
-                    const liveUrl = `https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev/api/live?trainNo=${trainNo}`;
-                    
-                    [stopTimes, liveRes] = await Promise.all([
-                        fetchScheduleWithFallback(trainNo),
-                        fetch(liveUrl).then(r => r.json()).catch(() => ({ TrainLiveBoards: [] }))
-                    ]);
-                    trainDataCache[trainNo] = Promise.resolve([stopTimes, liveRes]);
-                }
+                // === 核心修改：改向 Worker 請求資料 (一次取得 時刻表 + 即時位置) ===
+                const [scheduleRes, liveRes] = await Promise.all([
+                    fetch(`${WORKER_URL}/api/schedule?trainNo=${trainNo}`).then(r => r.json()).catch(() => []),
+                    fetch(`${WORKER_URL}/api/live?trainNo=${trainNo}`).then(r => r.json()).catch(() => ({}))
+                ]);
 
-                // 解析 Worker 回傳的資料
-                const liveData = (liveRes.TrainLiveBoards && liveRes.TrainLiveBoards.length > 0) ? liveRes.TrainLiveBoards[0] : null;
+                // 解析資料 (Worker 回傳格式)
+                // scheduleRes 是一個陣列 [{StopTimes: [...]}]
+                const stopTimes = (scheduleRes && scheduleRes.length > 0) ? scheduleRes[0].StopTimes : [];
                 
-                let marqueeHTML = '';
-                const delayTime = (liveData && liveData.DelayTime) ? liveData.DelayTime : 0;
+                // liveRes 是物件 { TrainLiveBoards: [...] }
+                const liveData = (liveRes.TrainLiveBoards && liveRes.TrainLiveBoards.length > 0) ? liveRes.TrainLiveBoards[0] : null;
 
-                // 1. 目前位置
+                let marqueeHTML = '';
+                const delayTime = liveData ? liveData.DelayTime : 0;
+
+                // A. 目前位置
                 if (liveData && liveData.StationName) {
-                    const lastStation = typeof liveData.StationName === 'object' ? liveData.StationName.Zh_tw : liveData.StationName;
-                    const delayText = delayTime <= 0 ? '<span style="color:#00e676;">(準點)</span>' : `<span style="color:#ff5252;">(晚 ${delayTime} 分)</span>`;
+                    const lastStation = liveData.StationName.Zh_tw || liveData.StationName;
+                    const delayText = delayTime <= 0 ? 
+                        '<span style="color:#00e676;">(準點)</span>' : 
+                        `<span style="color:#ff5252;">(晚 ${delayTime} 分)</span>`;
+                    
                     marqueeHTML += `<span style="color:#aaa;">目前位置：</span><span style="color:#ffeb3b; font-weight:bold;">${lastStation}</span> ${delayText}`;
                 } else {
-                    marqueeHTML += `<span style="color:#aaa;">(暫無即時位置訊號)</span>`;
+                    marqueeHTML += `<span style="color:#aaa;">(暫無即時訊號)</span>`;
                 }
                 
                 marqueeHTML += `<span style="margin:0 20px; border-left:1px solid #555;"></span>`;
 
-                // 2. 本站預計
+                // B. 本站預計
                 if (stopTimes.length > 0) {
                     const idx = stopTimes.findIndex(s => s.StationID === currentStationID);
                     if (idx !== -1) {
                         const myStation = stopTimes[idx];
-                        const tableTime = myStation.ArrivalTime || myStation.DepartureTime;
+                        const tableTime = myStation.DepartureTime || myStation.ArrivalTime;
                         const predictedTime = addMinutesToTime(tableTime, delayTime);
                         const timeColor = delayTime > 0 ? '#ff5252' : '#4fc3f7';
-                        marqueeHTML += `本站預計：<span style="color:${timeColor}; font-weight:bold; font-size:1.2rem;">${predictedTime}</span> 抵達`;
+                        
+                        marqueeHTML += `本站預計：<span style="color:${timeColor}; font-weight:bold; font-size:1.2rem;">${predictedTime}</span> 開車`;
                     }
                 }
 
-                // 3. 後續停靠
+                // C. 後續停靠
                 if (stopTimes.length > 0) {
                     const idx = stopTimes.findIndex(s => s.StationID === currentStationID);
                     if (idx !== -1 && idx < stopTimes.length - 1) {
-                        const stops = stopTimes.slice(idx + 1).map(s => {
-                            const stationName = typeof s.StationName === 'object' ? s.StationName.Zh_tw : s.StationName;
-                            return `<span class="station-stop">${stationName}</span>`;
-                        }).join('<span class="station-arrow">▶</span>');
-                        marqueeHTML += `<span style="margin:0 20px; border-left:1px solid #555;"></span><span style="color:#aaa;">後續停靠：</span>${stops}`;
+                        const nextStops = stopTimes.slice(idx + 1, idx + 6);
+                        const stopsHTML = nextStops.map(s => 
+                            `<span class="station-stop">${s.StationName.Zh_tw}</span><span style="font-size:0.8rem;color:#888;">(${s.ArrivalTime.slice(0,5)})</span>`
+                        ).join('<span class="station-arrow">▶</span>');
+                        
+                        marqueeHTML += `<span style="margin:0 20px; border-left:1px solid #555;"></span><span style="color:#aaa;">後續停靠：</span>${stopsHTML}`;
+                        
+                        if (stopTimes.length - 1 > idx + 5) {
+                            marqueeHTML += `<span class="station-arrow">...</span>`;
+                        }
                     }
                 }
 
                 content.innerHTML = marqueeHTML;
                 void content.offsetHeight;
-                const duration = Math.max(8, content.innerText.length * 0.4);
+                const duration = Math.max(10, content.innerText.length * 0.35);
                 content.style.animation = `marquee-scroll ${duration}s linear infinite`;
 
             } catch (e) {
-                console.error(e);
-                content.innerHTML = '無法載入詳細資料';
+                console.error("Worker API Error:", e);
+                content.innerHTML = '無法連線至資料庫';
             }
         }
 
         function closeMarquee() {
             document.getElementById('trainMarqueeBar').style.display = 'none';
+        }
+
+        // 輔助函式：判斷 targetTime 是否在 baseTime + offsetMinutes 之後
+        function isTimeAfter(targetTime, baseTime, offsetMinutes) {
+            if (!targetTime || !baseTime) return true;
+            
+            const [h1, m1] = targetTime.split(':').map(Number);
+            const [h2, m2] = baseTime.split(':').map(Number);
+            
+            const t1 = h1 * 60 + m1;
+            let t2 = h2 * 60 + m2 + offsetMinutes;
+            
+            // 簡單的跨日處理 (防止半夜查詢出錯)
+            // 如果目標時間比基準時間小很多 (例如現在 23:00，車次是 00:10)，假設它是明天的車
+            if (t1 < t2 && (t2 - t1) > 720) return true;
+            
+            return t1 >= t2;
         }
     </script>
 </body>

@@ -386,6 +386,9 @@
     <script src="assets/config.js"></script>
     <script src="assets/tdx-api.js"></script>
     <script>
+        // ============ 全局常數 ============
+        const WORKER_URL = 'https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev';
+        
         // ============ 1. 全局配置與資料庫 ============
         const TRAIN_TYPE_DB = [
           { "id": "1100", "name": "自強", "code": "3" },
@@ -686,20 +689,22 @@
                 let liveInfo = null;
 
                 try {
-                    // 改用 Worker API
-                    const [stops, liveRes] = await Promise.all([
-                        fetchTrainStops(trainNo),
-                        fetch(`${WORKER_URL}/api/live?trainNo=${trainNo}`).then(r => r.json()).catch(() => null)
+                    // === 核心修改：改向 Worker 請求資料 ===
+                    const [scheduleRes, liveRes] = await Promise.all([
+                        fetch(`${WORKER_URL}/api/schedule?trainNo=${trainNo}`).then(r => r.json()).catch(() => []),
+                        fetch(`${WORKER_URL}/api/live?trainNo=${trainNo}`).then(r => r.json()).catch(() => ({}))
                     ]);
-                    stopTimes = stops;
-                    liveInfo = (liveRes && liveRes.TrainLiveBoards && liveRes.TrainLiveBoards.length > 0) 
-                               ? liveRes.TrainLiveBoards[0] : null;
-                } catch (e) { console.warn(e); }
+                    
+                    // 解析 Worker 回傳
+                    stopTimes = (scheduleRes && scheduleRes.length > 0) ? scheduleRes[0].StopTimes : [];
+                    liveInfo = (liveRes.TrainLiveBoards && liveRes.TrainLiveBoards.length > 0) ? liveRes.TrainLiveBoards[0] : null;
 
-                // 1. 狀態顯示 (晚 X 分)
+                } catch (e) { console.warn("Worker API Error", e); }
+
+                // 1. 狀態顯示
                 let delayHtml = delayTime > 0 ? `<span style="color: #ff1744;">(晚 ${delayTime} 分)</span>` : `<span style="color: #00e676;">(準點)</span>`;
 
-                // 2. 取得本站開車時間
+                // 2. 計算開車時間
                 let departureTime = "--:--";
                 let currentStationIndex = -1;
                 if (stopTimes && stopTimes.length > 0) {
@@ -707,56 +712,37 @@
                     currentStationIndex = stopTimes.findIndex(s => String(s.StationID) === currentIdStr);
                     if (currentStationIndex !== -1) {
                         const myStation = stopTimes[currentStationIndex];
-                        // 優先顯示預計開車時間 (表定 + 誤點)
                         const tableTime = myStation.DepartureTime || myStation.ArrivalTime;
                         departureTime = addMinutesToTime(tableTime, delayTime);
                     }
                 }
 
-                // === 第一段：車次 車種 (狀態) 時間 開車 往 終點 ===
+                // 3. 組合跑馬燈文字
                 textHTML += `<span style="color: #ffeb3b; font-weight:bold; font-size: 1.2em;">${trainNo} 次 ${trainInfo.name} ${delayHtml}</span> `;
                 textHTML += `<span style="color: #ffffff; font-weight:bold; font-size: 1.2em; margin: 0 10px;">${departureTime} 開車</span> `;
                 textHTML += `<span style="color: #ffeb3b; font-weight:bold; font-size: 1.2em;">往 ${train.EndingStationName}</span>`;
-                
-                // 分隔線
                 textHTML += `<span style="margin: 0 20px; color: #555; font-size: 1.2em;">|</span> `;
 
-                // === 第二段：列車位置 ===
                 let locationText = "列車行駛中";
                 if (liveInfo && liveInfo.StationName) {
-                    const stName = typeof liveInfo.StationName === 'object' ? liveInfo.StationName.Zh_tw : liveInfo.StationName;
+                    const stName = liveInfo.StationName.Zh_tw || liveInfo.StationName;
                     locationText = `列車目前位置：${stName}`;
                 } 
                 textHTML += `<span style="color: #4fc3f7; font-size: 1.1em;">${locationText}</span>`;
                 textHTML += `<span style="margin: 0 20px; color: #555; font-size: 1.2em;">|</span> `;
 
-                // === 第三段：停靠站 (區間車全列) ===
                 if (stopTimes && stopTimes.length > 0 && currentStationIndex !== -1) {
                     const futureStops = stopTimes.slice(currentStationIndex + 1);
-                    
                     if (futureStops.length > 0) {
-                        // 判斷是否為區間車 (包含 區間、區間快)
                         const isLocalTrain = trainInfo.name.includes('區間');
-                        
                         let stopsStr = "";
                         if (isLocalTrain) {
-                            // 區間車：列出所有站點
-                            stopsStr = futureStops.map(s => {
-                                const sName = typeof s.StationName === 'object' ? s.StationName.Zh_tw : s.StationName;
-                                return sName;
-                            }).join('、');
+                            stopsStr = futureStops.map(s => s.StationName.Zh_tw).join('、');
                         } else {
-                            // 對號車：如果站點太多 (>8站)，只列前 8 站 + ...
                             if (futureStops.length > 8) {
-                                stopsStr = futureStops.slice(0, 8).map(s => {
-                                    const sName = typeof s.StationName === 'object' ? s.StationName.Zh_tw : s.StationName;
-                                    return sName;
-                                }).join('、') + ' ...';
+                                stopsStr = futureStops.slice(0, 8).map(s => s.StationName.Zh_tw).join('、') + ' ...';
                             } else {
-                                stopsStr = futureStops.map(s => {
-                                    const sName = typeof s.StationName === 'object' ? s.StationName.Zh_tw : s.StationName;
-                                    return sName;
-                                }).join('、');
+                                stopsStr = futureStops.map(s => s.StationName.Zh_tw).join('、');
                             }
                         }
                         textHTML += `<span style="color: #fff; font-size: 1.1em;">停靠站：${stopsStr}</span>`;
@@ -767,7 +753,6 @@
                     textHTML += `<span style="color: #999;">本列車不停靠本站 (通過)</span>`;
                 }
 
-                // 備註
                 if (train.Attributes && train.Attributes.note) {
                      textHTML += ` <span style="margin: 0 20px; color: #555;">|</span> <span style="color: #f48fb1;">${train.Attributes.note}</span>`;
                 }
@@ -781,8 +766,6 @@
             const textWidth = el.scrollWidth;
             el.style.setProperty('--start-pos', `${containerWidth}px`);
             el.style.setProperty('--end-pos', `-${textWidth}px`);
-            
-            // 動態調整速度：字越多跑越久 (基準：每字 0.25秒，區間車站名多，稍微調慢一點)
             const duration = Math.max(10, el.innerText.length * 0.25); 
 
             el.style.animation = `dynamic-marquee ${duration}s linear infinite`;
