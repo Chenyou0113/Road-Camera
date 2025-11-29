@@ -762,7 +762,7 @@
             if (stations.length === 1) select.selectedIndex = 1;
         }
 
-        // ============ 查詢功能 (修正雙層結構版) ============
+        // ============ 查詢功能 (含錯誤偵測版) ============
         async function fetchTrainLiveBoard() {
             const stationSelect = document.getElementById('stationSelect');
             const queryBtn = document.getElementById('queryBtn');
@@ -784,36 +784,30 @@
                     fetch(`${WORKER_URL}/api/station/live?stationID=${currentStationID}`).then(r => r.json())
                 ]);
 
+                // 🔥【新增】錯誤檢查：如果 Worker 回傳錯誤，直接跳出警告
+                if (scheduleRes.error) throw new Error("時刻表 API 錯誤: " + scheduleRes.error);
+                if (liveRes.error) console.warn("即時動態 API 警告: " + liveRes.error);
+
                 let allTrains = [];
                 
-                // 🔥【關鍵修正】TDX V3 的結構有兩層
-                // scheduleRes.StationTimetables 是「車站陣列」
+                // 2. 解析資料 (解開兩層結構)
                 const rootData = scheduleRes.StationTimetables || scheduleRes;
                 
                 if (rootData && Array.isArray(rootData)) {
-                    // 第一層迴圈：遍歷車站 (通常只有一個，就是您查的那個站)
                     rootData.forEach(stationContainer => {
-                        
-                        // 🔥🔥【這行救命】解開第二層，這才是真正的「列車清單」
                         const innerTrains = stationContainer.StationTimetables || []; 
                         
-                        // 第二層迴圈：遍歷該車站的列車
                         innerTrains.forEach(st => {
                             const getZhTw = (val) => (val && typeof val === 'object' && val.Zh_tw) ? val.Zh_tw : val;
                             const depTime = st.DepartureTime || st.ArrivalTime;
-                            
-                            // 沒時間就跳過
                             if (!depTime) return;
-
-                            const trainTypeName = getZhTw(st.TrainTypeName) || '列車';
-                            const endingStationName = getZhTw(st.EndingStationName) || '未知';
 
                             const train = {
                                 TrainNo: st.TrainNo,
                                 Direction: st.Direction,
-                                TrainTypeName: trainTypeName,
+                                TrainTypeName: getZhTw(st.TrainTypeName) || '列車',
                                 TrainTypeCode: st.TrainTypeCode,
-                                EndingStationName: endingStationName,
+                                EndingStationName: getZhTw(st.EndingStationName) || '未知',
                                 ScheduledDepartureTime: depTime,
                                 DelayTime: 0,
                                 Status: 'future'
@@ -821,16 +815,19 @@
                             allTrains.push(train);
                         });
                     });
+                } else {
+                    // 如果格式不對，拋出錯誤以便 Debug
+                    console.error("API 回傳格式異常:", scheduleRes);
+                    throw new Error("Worker 回傳了非陣列資料，請檢查 Console");
                 }
 
-                // 處理誤點資訊
+                // 3. 整合誤點資訊
                 const liveMap = new Map();
                 const liveBoardData = liveRes.StationLiveBoards || liveRes;
                 if (liveBoardData && Array.isArray(liveBoardData)) {
                     liveBoardData.forEach(t => liveMap.set(t.TrainNo, t.DelayTime));
                 }
 
-                // 過濾過期班次 (保留最近 30 分鐘內的)
                 const nowTime = new Date().toTimeString().slice(0, 5);
                 allTrains = allTrains.map(train => {
                     if (liveMap.has(train.TrainNo)) {
@@ -843,11 +840,13 @@
                 allTrains.sort((a, b) => a.ScheduledDepartureTime.localeCompare(b.ScheduledDepartureTime));
 
                 if (allTrains.length > 0) renderBoard(allTrains);
-                else showNoData('今日已無更多列車班次');
+                else showNoData('今日已無更多列車班次 (或資料篩選後為空)');
 
             } catch (error) {
                 console.error('查詢失敗:', error);
-                showNoData('查詢失敗，請檢查 Worker 狀態');
+                // 🔥【新增】顯示具體錯誤給使用者
+                alert(`查詢失敗！\n錯誤原因：${error.message}\n請檢查 Worker 設定或 Console`);
+                showNoData('系統發生錯誤，請稍後再試');
             } finally {
                 queryBtn.disabled = false;
             }
