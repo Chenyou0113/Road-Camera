@@ -380,11 +380,10 @@
     <script src="assets/config.js"></script>
     <script>
         // ============ 全局設定 ============
-        // 請確認您的 Worker 網址正確
         const WORKER_URL = 'https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev';
         const stopsCache = {};
-        
-        // ============ 1. 車種對照 ============
+
+        // ============ 車種定義 ============
         const TRAIN_TYPE_DB = [
           { "id": "1100", "name": "自強", "code": "3" }, { "id": "1101", "name": "太魯閣", "code": "1" },
           { "id": "1102", "name": "自強", "code": "3" }, { "id": "1103", "name": "自強", "code": "3" },
@@ -537,15 +536,18 @@
             el.style.animation = `dynamic-marquee ${duration}s linear infinite`;
         }
 
-        // === [核心修正] 主資料更新函式 ===
-        // 🔥【關鍵修正】主資料更新函式
+        // 🔥【關鍵修正】雙層結構 + 錯誤偵測
         async function updatePidsData(stationID) {
             try {
-                // 1. 呼叫 Worker (Proxy)
+                console.log("開始載入 PIDS 資料, 車站:", stationID);
                 const [scheduleRes, liveRes] = await Promise.all([
                     fetch(`${WORKER_URL}/api/station/schedule?stationID=${stationID}`).then(r => r.json()),
                     fetch(`${WORKER_URL}/api/station/live?stationID=${stationID}`).then(r => r.json())
                 ]);
+
+                // 🛑 錯誤檢查：如果 Worker 回傳錯誤訊息，直接丟出例外
+                if (scheduleRes.error) throw new Error("Worker Error: " + scheduleRes.error);
+                if (liveRes.error) console.warn("Live API Warning:", liveRes.error);
 
                 let allTrains = [];
                 // 🔥 第一層：車站容器
@@ -553,7 +555,7 @@
 
                 if (rootData && Array.isArray(rootData)) {
                     rootData.forEach(stationContainer => {
-                        // 🔥🔥 第二層：真正的車次列表 (這行救了資料！)
+                        // 🔥🔥 第二層：真正的車次列表
                         const innerTrains = stationContainer.StationTimetables || [];
                         
                         innerTrains.forEach(st => {
@@ -573,9 +575,10 @@
                             allTrains.push(train);
                         });
                     });
+                } else {
+                    console.warn("API 回傳格式不如預期 (非陣列):", scheduleRes);
                 }
 
-                // 處理即時誤點
                 const liveMap = new Map();
                 const liveBoardData = liveRes.StationLiveBoards || liveRes;
                 if (liveBoardData && Array.isArray(liveBoardData)) {
@@ -614,7 +617,8 @@
 
             } catch (e) {
                 console.error("API Error", e);
-                const errorMsg = "⚠️ 資料載入中或連線異常...";
+                // 顯示詳細錯誤在跑馬燈上
+                const errorMsg = `⚠️ 連線異常: ${e.message || '未知錯誤'}`;
                 updateBottomMarquee('marquee1', null, errorMsg, stationID);
                 updateBottomMarquee('marquee0', null, errorMsg, stationID);
             }
