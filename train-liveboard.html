@@ -1,4 +1,3 @@
-train-liveboard.html
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -744,6 +743,15 @@ train-liveboard.html
             opacity: 0.9;
             white-space: nowrap;
         }
+        
+        /* 🔥 新增：預計時間樣式 */
+        .marquee-time {
+            font-size: 0.95rem;
+            color: #00e676; /* 亮綠色 */
+            font-weight: bold;
+            margin-top: 2px;
+            white-space: nowrap;
+        }
 
         /* === 右側跑馬燈區域 === */
         .marquee-content-wrapper {
@@ -807,6 +815,7 @@ train-liveboard.html
             .marquee-info { min-width: 100px; padding: 0 8px; }
             .marquee-train-no { font-size: 1.2rem; }
             .marquee-dest { font-size: 0.9rem; }
+            .marquee-time { font-size: 0.85rem; } /* 手機版時間字體 */
             .marquee-content { font-size: 1.1rem; }
             body { padding-bottom: 70px; }
         }
@@ -854,18 +863,15 @@ train-liveboard.html
     </div>
 
     <div class="container">
-        <!-- ✨ 新增：台鐵營運通阻公告 -->
         <div class="info-panel rail-news" id="traAlertPanel" style="display: none;">
             <h3>
                 <span><i class="fas fa-bullhorn"></i> 台鐵營運通阻</span>
                 <small style="font-size: 0.8rem; margin-left: 10px; font-weight: normal;">(近 5 筆)</small>
             </h3>
             <div id="traAlertContent" class="news-content">
-                <!-- 公告內容將由 JS 動態插入 -->
-            </div>
+                </div>
         </div>
 
-        <!-- 控制面板 -->
         <div class="control-panel">
             <h3>
                 <i class="fas fa-search"></i> 查詢即時看板
@@ -901,18 +907,15 @@ train-liveboard.html
             </div>
         </div>
 
-        <!-- ✨ 1. 台鐵風格跑馬燈 (即時公告) -->
         <div class="tra-marquee">
             <div class="marquee-icon"><i class="fas fa-bell"></i></div>
             <div class="marquee-wrapper">
                 <div class="marquee-content" id="marqueeText">
-                    <!-- 預設內容，JS 載入後會覆蓋 -->
                     <span>歡迎搭乘台鐵。本看板資料由 TDX 提供，僅供參考，實際運行請以車站現場為主。</span>
                 </div>
             </div>
         </div>
 
-        <!-- ✨ 2. 台鐵資料說明與免責聲明 -->
         <div class="data-disclaimer">
             <i class="fas fa-exclamation-triangle"></i>
             <div>
@@ -926,7 +929,6 @@ train-liveboard.html
             </div>
         </div>
 
-        <!-- 列車看板 -->
         <div id="trainContainer" class="train-container" style="display: none;">
             <div class="board-header">
                 <div class="board-title">
@@ -950,16 +952,15 @@ train-liveboard.html
         </div>
     </div>
 
-    <!-- ✨ 新增：底部列車停靠站跑馬燈 -->
     <div id="trainMarqueeBar" class="marquee-bar" style="display: none;">
         <div class="marquee-info">
             <span class="marquee-train-no" id="mqTrainNo"></span>
             <span class="marquee-dest" id="mqDest"></span>
+            <span class="marquee-time" id="mqTime"></span>
         </div>
         <div class="marquee-content-wrapper">
             <div class="marquee-content" id="mqContent">
-                <!-- 這裡會動態填入停靠站 -->
-            </div>
+                </div>
         </div>
         <button class="marquee-close" onclick="closeMarquee()">×</button>
     </div>
@@ -1547,11 +1548,13 @@ train-liveboard.html
             const content = document.getElementById('mqContent');
             const mqTrainNo = document.getElementById('mqTrainNo');
             const mqDest = document.getElementById('mqDest');
+            const mqTime = document.getElementById('mqTime'); // 新增
 
             // 1. 介面秒開
             bar.style.display = 'flex';
             mqTrainNo.textContent = `${trainNo} 次`;
             mqDest.textContent = `往 ${destName}`;
+            mqTime.textContent = ''; // 先清空，等資料載入
             
             // 如果有快取，就不顯示 Loading，直接顯示內容 (提升感知速度)
             if (!trainDataCache[trainNo]) {
@@ -1580,6 +1583,18 @@ train-liveboard.html
                 // 3. 準備變數
                 let marqueeHTML = '';
                 const delayTime = (liveData && liveData.DelayTime) ? liveData.DelayTime : 0;
+                
+                // 🚀 【新增功能】在左側面板顯示預計抵達本站時間
+                if (stopTimes.length > 0) {
+                    const currentStationIndex = stopTimes.findIndex(s => s.StationID === currentStationID);
+                    if (currentStationIndex !== -1) {
+                         const myStation = stopTimes[currentStationIndex];
+                         const tableTime = (myStation.ArrivalTime && myStation.ArrivalTime !== "") ? myStation.ArrivalTime : myStation.DepartureTime;
+                         const predictedTime = addMinutesToTime(tableTime, delayTime);
+                         // 填入左側固定區
+                         mqTime.innerHTML = `<i class="far fa-clock"></i> 預計 ${predictedTime} 抵達`;
+                    }
+                }
 
                 // ==========================================
                 // ✨ 第一部分：列車目前位置區間 (優先使用 V3 LiveBoard)
@@ -1710,9 +1725,7 @@ train-liveboard.html
                 
                 const textLength = content.innerText.length;
                 
-                // 🚀 加速修改說明：
-                // 原本是 * 0.9 (每字 0.9 秒)，現在改為 * 0.4 (每字 0.4 秒)
-                // Math.max(8, ...) 代表最短播放時間至少 8 秒，避免文字太少時一閃而過
+                // 🚀 加速修改：從 0.9 -> 0.4 (大幅加速)
                 const duration = Math.max(8, textLength * 0.4); 
                 
                 content.style.animation = `marquee-scroll ${duration}s linear infinite`;
