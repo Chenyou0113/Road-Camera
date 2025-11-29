@@ -379,133 +379,14 @@
 
     <script src="assets/config.js"></script>
     <script>
-        // ============ 終極除錯版 PIDS 腳本 ============
+        // ============ 智慧偵測與修復版 PIDS ============
         const WORKER_URL = 'https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev';
         const stopsCache = {};
 
         // 輔助函式
         const getZhTw = (val) => (val && typeof val === 'object' && val.Zh_tw) ? val.Zh_tw : val;
         function formatTime(t) { return t ? t.slice(0, 5) : '--:--'; }
-        function addMinutesToTime(timeStr, minutesToAdd) {
-            if (!timeStr) return '--:--';
-            const [h, m] = timeStr.split(':').map(Number);
-            const d = new Date(); d.setHours(h); d.setMinutes(m + minutesToAdd || 0);
-            return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-        }
         
-        // 寬鬆的時間過濾 (除錯用，顯示過去 24 小時內的車)
-        function isTimeAfter(targetTime, baseTime) {
-            return true; // 🔥 強制顯示所有班次，不做過濾，確認是否有讀到資料
-        }
-
-        document.addEventListener('DOMContentLoaded', () => {
-            const params = new URLSearchParams(window.location.search);
-            const stationID = params.get('station');
-            const stationName = decodeURIComponent(params.get('name') || '臺鐵車站');
-            document.getElementById('stationName1').textContent = stationName;
-            document.getElementById('stationName0').textContent = stationName;
-            
-            // 顯示時間
-            updateClock();
-            setInterval(updateClock, 1000);
-            
-            // 顯示除錯訊息
-            showDebugMsg("準備載入資料...", "marquee1");
-            showDebugMsg("準備載入資料...", "marquee0");
-
-            if (stationID) {
-                updatePidsData(stationID);
-            } else {
-                showDebugMsg("❌ 無車站代碼", "marquee1");
-            }
-        });
-
-        function showDebugMsg(msg, elId) {
-            const el = document.getElementById(elId);
-            if(el) {
-                el.innerHTML = `<span style="color:#ffeb3b; font-size:1.5rem;">🔧 ${msg}</span>`;
-                el.style.animation = 'none'; // 暫停動畫以便閱讀
-                el.style.transform = 'translateX(20px)';
-            }
-        }
-
-        async function updatePidsData(stationID) {
-            try {
-                // 1. 取得資料
-                const scheduleRes = await fetch(`${WORKER_URL}/api/station/schedule?stationID=${stationID}`).then(r => r.json());
-                
-                // 2. 檢查 API 回傳
-                if (scheduleRes.error) throw new Error("API Error: " + scheduleRes.error);
-                
-                // 3. 解析資料 (紀錄筆數)
-                let allTrains = [];
-                let debugLog = [];
-                
-                const rootData = scheduleRes.StationTimetables || scheduleRes;
-                debugLog.push(`Root是陣列? ${Array.isArray(rootData)}`);
-
-                if (Array.isArray(rootData)) {
-                    debugLog.push(`第一層長度: ${rootData.length}`);
-                    rootData.forEach((container, idx) => {
-                        const innerList = container.StationTimetables;
-                        debugLog.push(`[${idx}]第二層長度: ${innerList ? innerList.length : '無'}`);
-                        
-                        if (innerList) {
-                            innerList.forEach(st => {
-                                const depTime = st.DepartureTime || st.ArrivalTime;
-                                if (depTime) {
-                                    allTrains.push({
-                                        TrainNo: st.TrainNo,
-                                        Direction: st.Direction,
-                                        TrainTypeName: getZhTw(st.TrainTypeName),
-                                        EndingStationName: getZhTw(st.EndingStationName),
-                                        ScheduledDepartureTime: depTime,
-                                        DelayTime: 0
-                                    });
-                                }
-                            });
-                        }
-                    });
-                }
-
-                const totalFound = allTrains.length;
-                
-                // 4. 顯示診斷結果在跑馬燈
-                const msg = `✅ API回應OK | 解析: ${totalFound} 班車 | ${debugLog.join(' | ')}`;
-                console.log(msg); // 也印在 Console 備查
-                showDebugMsg(msg, "marquee1");
-                showDebugMsg(msg, "marquee0");
-
-                // 5. 如果有抓到車，嘗試渲染 (不分順逆行，全部印出來看看)
-                if (totalFound > 0) {
-                    allTrains.sort((a, b) => a.ScheduledDepartureTime.localeCompare(b.ScheduledDepartureTime));
-                    renderDebugScreen(allTrains);
-                }
-
-            } catch (e) {
-                console.error(e);
-                showDebugMsg(`💥 發生錯誤: ${e.message}`, "marquee1");
-            }
-        }
-
-        function renderDebugScreen(trains) {
-            // 強制渲染到逆行表格，無視方向，只為了看資料
-            const tbody = document.getElementById('body1');
-            tbody.innerHTML = '';
-            trains.slice(0, 8).forEach(t => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td style="color:#fff;">${t.TrainNo}</td>
-                    <td style="color:#fff;">${t.TrainTypeName}</td>
-                    <td style="color:#fff;">${t.EndingStationName}</td>
-                    <td style="color:#fff;">${t.ScheduledDepartureTime}</td>
-                    <td style="color:#aaa;">(測試)</td>
-                `;
-                tbody.appendChild(row);
-            });
-        }
-        
-        // 必須保留的空函式，避免報錯
         function updateClock() {
             const now = new Date();
             const timeStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
@@ -516,6 +397,164 @@
             if(document.getElementById('date0')) document.getElementById('date0').textContent = dateStr;
         }
         setInterval(updateClock, 1000);
+
+        function showDebug(msg) {
+            console.log(msg);
+            document.getElementById('marquee1').innerHTML = `<span style="color:#ffeb3b; font-weight:bold;">🔍 ${msg}</span>`;
+            document.getElementById('marquee1').style.animation = 'none';
+            document.getElementById('marquee1').style.transform = 'translateX(20px)';
+            document.getElementById('marquee0').innerHTML = `<span style="color:#ffeb3b; font-weight:bold;">🔍 ${msg}</span>`;
+            document.getElementById('marquee0').style.animation = 'none';
+            document.getElementById('marquee0').style.transform = 'translateX(20px)';
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const params = new URLSearchParams(window.location.search);
+            const stationID = params.get('station');
+            const stationName = decodeURIComponent(params.get('name') || '臺鐵車站');
+            document.getElementById('stationName1').textContent = stationName;
+            document.getElementById('stationName0').textContent = stationName;
+
+            if (stationID) {
+                showDebug("正在分析資料結構...");
+                updatePidsData(stationID);
+            } else {
+                showDebug("❌ 無車站代碼");
+            }
+        });
+
+        async function updatePidsData(stationID) {
+            try {
+                // 1. 取得資料
+                const [scheduleRes, liveRes] = await Promise.all([
+                    fetch(`${WORKER_URL}/api/station/schedule?stationID=${stationID}`).then(r => r.json()),
+                    fetch(`${WORKER_URL}/api/station/live?stationID=${stationID}`).then(r => r.json())
+                ]);
+
+                // 2. 智慧解析 (Smart Parse)
+                let allTrains = [];
+                const rootData = scheduleRes.StationTimetables || scheduleRes;
+
+                if (Array.isArray(rootData) && rootData.length > 0) {
+                    
+                    // A. 檢查是否 Root 直接就是列車列表 (檢查有沒有 TrainNo)
+                    if (rootData[0].TrainNo) {
+                        showDebug("結構識別：Root 即為列車列表");
+                        allTrains = rootData.map(convertTrainData);
+                    } 
+                    // B. 檢查是否包在內層
+                    else {
+                        // 取得第一層物件的所有 Keys，用來除錯
+                        const keys = Object.keys(rootData[0]).join(", ");
+                        
+                        rootData.forEach(container => {
+                            // 嘗試各種可能的屬性名稱
+                            const innerList = container.StationTimetables || 
+                                              container.TrainTimetables || 
+                                              container.Timetables || 
+                                              container.Data || [];
+                            
+                            if (innerList.length > 0) {
+                                innerList.forEach(t => allTrains.push(convertTrainData(t)));
+                            }
+                        });
+
+                        if (allTrains.length === 0) {
+                            // 🔥 關鍵：如果還是抓不到，印出 Keys 讓我們看
+                            showDebug(`解析失敗 | Root長度:${rootData.length} | 第一筆Keys: [${keys}]`);
+                            return; 
+                        }
+                    }
+                }
+
+                // 3. 成功抓到資料，開始渲染
+                showDebug(`✅ 成功解析 ${allTrains.length} 班列車！`);
+                
+                // 整合誤點
+                const liveMap = new Map();
+                const liveBoardData = liveRes.StationLiveBoards || liveRes;
+                if (Array.isArray(liveBoardData)) {
+                    liveBoardData.forEach(t => liveMap.set(t.TrainNo, t.DelayTime));
+                }
+
+                allTrains = allTrains.map(train => {
+                    if (liveMap.has(train.TrainNo)) {
+                        train.DelayTime = liveMap.get(train.TrainNo);
+                    }
+                    return train;
+                });
+
+                // 排序並顯示
+                allTrains.sort((a, b) => a.ScheduledDepartureTime.localeCompare(b.ScheduledDepartureTime));
+                const trains1 = allTrains.filter(t => String(t.Direction) === '1');
+                const trains0 = allTrains.filter(t => String(t.Direction) === '0');
+                renderScreen('1', trains1, '逆行');
+                renderScreen('0', trains0, '順行');
+
+                // 恢復跑馬燈正常功能
+                setTimeout(() => {
+                    updateBottomMarquee('marquee1', trains1);
+                    updateBottomMarquee('marquee0', trains0);
+                }, 2000);
+
+            } catch (e) {
+                showDebug(`💥 錯誤: ${e.message}`);
+            }
+        }
+
+        function convertTrainData(st) {
+            const getZhTw = (val) => (val && typeof val === 'object' && val.Zh_tw) ? val.Zh_tw : val;
+            const depTime = st.DepartureTime || st.ArrivalTime;
+            return {
+                TrainNo: st.TrainNo,
+                Direction: st.Direction,
+                TrainTypeName: getZhTw(st.TrainTypeName) || '列車',
+                EndingStationName: getZhTw(st.EndingStationName) || '未知',
+                ScheduledDepartureTime: depTime || '00:00',
+                DelayTime: 0
+            };
+        }
+
+        // 渲染函式 (簡化版)
+        function renderScreen(dirCode, trains, dirName) {
+            const tbody = document.getElementById(`body${dirCode}`);
+            const destLabel = document.getElementById(`destList${dirCode}`);
+            tbody.innerHTML = '';
+            
+            const destinations = [...new Set(trains.map(t => t.EndingStationName))];
+            const displayDest = destinations.slice(0, 2).join('、'); 
+            destLabel.textContent = trains.length > 0 ? `往 ${displayDest} 方向` : `往 ${dirName === '逆行' ? '北上' : '南下'} 方向`;
+
+            trains.slice(0, 6).forEach((train, index) => {
+                let delayText = '準點';
+                let statusClass = 'status-ontime';
+                if (train.DelayTime > 0) { delayText = `晚 ${train.DelayTime} 分`; statusClass = 'status-delay'; }
+
+                const row = document.createElement('tr');
+                if (index === 0) row.classList.add('highlight-row');
+                
+                row.innerHTML = `
+                    <td style="color:#fff;">${train.TrainNo}</td>
+                    <td style="color:#fff;">${train.TrainTypeName}</td>
+                    <td style="color:#fff;">${train.EndingStationName}</td>
+                    <td style="color:#fff; font-family:Consolas;">${formatTime(train.ScheduledDepartureTime)}</td>
+                    <td class="${statusClass}">${delayText}</td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // 恢復正常跑馬燈
+        async function updateBottomMarquee(elId, trains) {
+            const el = document.getElementById(elId);
+            if(!trains || trains.length === 0) {
+                el.innerHTML = '本日已無更多班次';
+                return;
+            }
+            const t = trains[0];
+            el.innerHTML = `${t.TrainNo} 次 ${t.TrainTypeName} 往 ${t.EndingStationName} ${t.ScheduledDepartureTime} 開`;
+            el.style.animation = 'dynamic-marquee 15s linear infinite';
+        }
     </script>
 </body>
 </html>
