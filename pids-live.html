@@ -1,4 +1,3 @@
-pids-live.html
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -383,6 +382,9 @@ pids-live.html
     <script src="assets/config.js"></script>
     <script src="assets/tdx-api.js"></script>
     <script>
+        // ============ 0. 設定：Cloudflare Worker (請確認網址正確) ============
+        const TRA_WORKER_URL = "https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev";
+
         // ============ 1. 全局配置與資料庫 ============
         const TRAIN_TYPE_DB = [
           { "id": "1100", "name": "自強", "code": "3" },
@@ -445,9 +447,26 @@ pids-live.html
             return { name: name, class: cssClass };
         }
 
+        // 🔥 核心修改：時刻表查詢 (Worker 優先 -> TDX 備援)
         async function fetchTrainStops(trainNo) {
             if (stopsCache[trainNo]) return stopsCache[trainNo];
 
+            // 1. 嘗試 Cloudflare Worker
+            try {
+                const response = await fetch(`${TRA_WORKER_URL}/api/schedule?trainNo=${trainNo}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data && data.length > 0 && data[0].StopTimes) {
+                        stopsCache[trainNo] = data[0].StopTimes;
+                        return data[0].StopTimes;
+                    }
+                }
+            } catch (e) {
+                // Worker 失敗，默默繼續，改用 TDX
+                // console.warn(`Worker schedule failed for ${trainNo}, fallback to TDX.`);
+            }
+
+            // 2. 備援：TDX API (General / Daily)
             const urlGeneral = `/v3/Rail/TRA/GeneralTimetable/TrainNo/${trainNo}?$format=JSON`;
             const urlDaily = `/v3/Rail/TRA/DailyTimetable/Today/TrainNo/${trainNo}?$format=JSON`;
 
@@ -522,6 +541,7 @@ pids-live.html
 
             if (stationID) {
                 updatePidsData(stationID);
+                // 每 60 秒更新一次看板列表
                 setInterval(() => updatePidsData(stationID), 60000);
             } else {
                 renderScreen('1', [], '逆行');
@@ -552,6 +572,7 @@ pids-live.html
 
         async function updatePidsData(stationID) {
             try {
+                // 使用 TDX V2 LiveBoard 抓取進出站列車列表
                 const data = await tdxApi.fetch(`/v2/Rail/TRA/LiveBoard?$filter=StationID eq '${stationID}'&$format=JSON`);
                 
                 if (!data || data.length === 0) {
@@ -563,6 +584,7 @@ pids-live.html
                     return;
                 }
 
+                // 資料正規化
                 const standardizedData = data.map(t => ({
                     TrainNo: t.TrainNo,
                     TrainTypeID: t.TrainTypeID,
@@ -575,8 +597,8 @@ pids-live.html
                     StationID: t.StationID
                 }));
 
+                // 跨日排序邏輯
                 const nowH = new Date().getHours();
-                
                 const midnightSort = (a, b) => {
                     const getWeight = (timeStr) => {
                         const [h, m] = timeStr.split(':').map(Number);
@@ -594,6 +616,7 @@ pids-live.html
                 renderScreen('1', trains1, '逆行');
                 renderScreen('0', trains0, '順行');
 
+                // 更新底部跑馬燈 (傳入該方向第一班車)
                 updateBottomMarquee('marquee1', trains1, null, stationID);
                 updateBottomMarquee('marquee0', trains0, null, stationID);
 
@@ -651,6 +674,7 @@ pids-live.html
             }
         }
 
+        // 🔥 核心修改：底部跑馬燈更新 (Worker 優先 -> 備援 TDX)
         async function updateBottomMarquee(elementId, trains, customMsg, currentStationID) {
             const el = document.getElementById(elementId);
             const container = el.parentElement;
@@ -671,20 +695,54 @@ pids-live.html
                 let liveData = null;
 
                 try {
-                    [stopTimes, liveData] = await Promise.all([
-                        fetchTrainStops(trainNo),
-                        tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`).catch(() => null)
-                    ]);
+                    // 1. 定義 Worker Live Data 請求
+                    const liveWorkerPromise = fetch(`${TRA_WORKER_URL}/api/live?trainNo=${trainNo}`)
+                        .then(r => r.json())
+                        .catch(() => null);
+
+                    // 2. 定義時刻表請求 (已包含 Worker -> TDX fallback 邏輯)
+                    const schedulePromise = fetchTrainStops(trainNo);
+
+                    // 3. 平行執行
+                    let liveRawData;
+                    [stopTimes, liveRawData] = await Promise.all([schedulePromise, liveWorkerPromise]);
+
+                    // 4. 解析 Worker 回傳的 Live Data
+                    if (liveRawData) {
+                        if (liveRawData.TrainLiveBoards && liveRawData.TrainLiveBoards.length > 0) {
+                            liveData = liveRawData.TrainLiveBoards[0];
+                        } else if (Array.isArray(liveRawData) && liveRawData.length > 0) {
+                            liveData = liveRawData[0];
+                        } else if (liveRawData.StationName) {
+                            liveData = liveRawData;
+                        }
+                    }
+
+                    // 5. 🔥 備援：如果 Worker 沒抓到即時位置，改問 TDX V3
+                    if (!liveData) {
+                        try {
+                            // console.log(`Worker live missing for ${trainNo}, try TDX V3...`);
+                            const tdxResp = await tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`);
+                            if (tdxResp && tdxResp.TrainLiveBoards && tdxResp.TrainLiveBoards.length > 0) {
+                                liveData = tdxResp.TrainLiveBoards[0];
+                            }
+                        } catch (e) {
+                            // TDX 也失敗，就算了
+                        }
+                    }
+
                 } catch (e) {
                     console.warn('Marquee data fetch failed', e);
                 }
 
+                // === 構建跑馬燈文字 ===
                 textHTML += `<span style="color: #ffeb3b; font-weight:bold;">${trainNo} 次 ${trainInfo.name} 往 ${train.EndingStationName}</span> `;
                 textHTML += `<span style="margin: 0 15px; color: #555;">|</span> `;
 
+                // 位置資訊
                 let locationText = "";
                 if (liveData && liveData.StationName) {
-                    const lastStationName = liveData.StationName.Zh_tw;
+                    const lastStationName = liveData.StationName.Zh_tw || liveData.StationName;
                     let nextStopName = "";
                     if (stopTimes && stopTimes.length > 0) {
                         const passedIndex = stopTimes.findIndex(s => s.StationName.Zh_tw === lastStationName);
@@ -695,8 +753,13 @@ pids-live.html
                     locationText = nextStopName 
                         ? `目前位置：${lastStationName} ➡ ${nextStopName} 區間` 
                         : `目前位置：${lastStationName}`;
+                    
+                    // 加上誤點資訊
+                    const liveDelay = liveData.DelayTime ? parseInt(liveData.DelayTime) : 0;
+                     if (liveDelay > 0) locationText += ` (晚 ${liveDelay} 分)`;
                 } 
                 else if (stopTimes && stopTimes.length > 0) {
+                    // 無即時資料，用時間推算
                     const now = new Date();
                     const currentTimeStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
                     const firstStation = stopTimes[0];
@@ -716,6 +779,7 @@ pids-live.html
                 textHTML += `<span style="color: #4fc3f7;">${locationText}</span>`;
                 textHTML += `<span style="margin: 0 15px; color: #555;">|</span> `;
 
+                // 本站資訊與後續停靠
                 if (stopTimes && stopTimes.length > 0) {
                     const currentIdStr = String(currentStationID);
                     const currentStationIndex = stopTimes.findIndex(s => String(s.StationID) === currentIdStr);
@@ -748,6 +812,7 @@ pids-live.html
                 }
             }
             
+            // 寫入並重啟動畫
             el.innerHTML = textHTML;
             el.style.animation = 'none';
             void el.offsetWidth;
@@ -756,6 +821,7 @@ pids-live.html
             const textWidth = el.scrollWidth;
             el.style.setProperty('--start-pos', `${containerWidth}px`);
             el.style.setProperty('--end-pos', `-${textWidth}px`);
+            
             const duration = Math.max(8, el.innerText.length * 0.4); 
 
             el.style.animation = `dynamic-marquee ${duration}s linear infinite`;
