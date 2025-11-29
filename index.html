@@ -977,44 +977,32 @@
             const apiUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev?dataset=W-C0033-002&v=10';
             
             const container = document.getElementById('warningTickerContainer');
-            const titleEl = document.getElementById('warningTitle');
             const contentEl = document.getElementById('warningContent');
+            // 取得標籤元素以便換色
+            const labelEl = container.querySelector('.ticker-label'); 
 
             try {
                 const response = await fetch(apiUrl, { priority: 'high' });
                 let workerData = await response.json();
                 
-                // 1. 確保 Worker 回傳的是陣列 (Worker v4.0 會回傳陣列)
                 if (!Array.isArray(workerData)) {
                     workerData = [workerData];
                 }
 
                 let allWarnings = [];
 
-                // 2. 第一層迴圈：遍歷 Worker 抓到的每一個 API 來源
                 workerData.forEach(sourceData => {
                     if (!sourceData.cwaopendata || !sourceData.cwaopendata.dataset) return;
-
                     let datasets = sourceData.cwaopendata.dataset;
+                    if (!Array.isArray(datasets)) datasets = [datasets];
 
-                    // ★ 關鍵修正：如果是多重警報，dataset 本身就是陣列，不需要再包一層
-                    // 如果是單一警報，dataset 是物件，我們把它轉成陣列方便統一處理
-                    if (!Array.isArray(datasets)) {
-                        datasets = [datasets];
-                    }
-
-                    // 3. 第二層迴圈：遍歷該來源下的每一個警報 (例如：大雨、強風)
                     datasets.forEach(dataset => {
                         try {
                             const info = dataset.datasetInfo;
                             const contentObj = dataset.contents?.content;
-
                             if (!info) return;
 
-                            // A. 抓標題
                             const reportName = info.datasetDescription;
-
-                            // B. 抓發布時間
                             let timeStr = "";
                             if (info.issueTime) {
                                 const d = new Date(info.issueTime);
@@ -1025,60 +1013,63 @@
                                 timeStr = `・${mm}/${dd} ${hh}:${min}`;
                             }
 
-                            // C. 抓結束時間
-                            let endTimeStr = "";
-                            if (info.validTime && info.validTime.endTime) {
-                                const d = new Date(info.validTime.endTime);
-                                const mm = (d.getMonth() + 1).toString().padStart(2, '0');
-                                const dd = d.getDate().toString().padStart(2, '0');
-                                const hh = d.getHours().toString().padStart(2, '0');
-                                const min = d.getMinutes().toString().padStart(2, '0');
-                                endTimeStr = ` (~${mm}/${dd} ${hh}:${min})`;
-                            }
-
-                            // D. 抓內容並清理
                             let rawContent = "";
                             if (contentObj) {
                                 let text = contentObj.contentText;
-                                // 去除 "一、概述："
                                 text = text.replace(/^一、概述：/g, '');
-                                // 截斷 "二、注意" 或 "註：" 之後的內容
                                 const cutIndex = text.search(/[二註]、/);
                                 if (cutIndex !== -1) text = text.substring(0, cutIndex);
                                 rawContent = text.replace(/\s+/g, ' ').trim();
                             }
-
-                            // E. 組合單則警報
-                            allWarnings.push(`【${reportName}${timeStr}】 ${rawContent}${endTimeStr}`);
-
+                            allWarnings.push(`【${reportName}${timeStr}】 ${rawContent}`);
                         } catch (err) {
                             console.error("單筆警報解析錯誤:", err);
                         }
                     });
                 });
 
-                // 4. 顯示結果
+                // 🟢 修改重點：判斷有無警報並切換樣式
                 if (allWarnings.length > 0) {
-                    // 用紅色圓點串接所有警報
+                    // === 有警報：顯示橘色警戒樣式 ===
                     const fullText = allWarnings.join('&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;🔴&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;');
                     contentEl.innerHTML = `<span class="ticker-item">${fullText}</span>`;
+                    
+                    // 設定橘色
+                    if (labelEl) labelEl.style.background = '#ff9800';
+                    container.style.borderColor = 'rgba(255, 152, 0, 0.4)';
+                    container.style.background = 'rgba(255, 152, 0, 0.15)';
+                    
                     container.style.display = "flex";
                 } else {
-                    // 若無警報則隱藏
-                    container.style.display = "none";
+                    // === 無警報：顯示綠色安全樣式 ===
+                    // 這裡顯示「目前無發布任何氣象警特報」
+                    contentEl.innerHTML = `<span class="ticker-item" style="color: #4CAF50; font-weight: bold;"><i class="fas fa-check-circle"></i> 目前無發布任何氣象警特報</span>`;
+                    
+                    // 設定綠色 (讓使用者覺得安心)
+                    if (labelEl) labelEl.style.background = '#2e7d32'; // 深綠標籤
+                    container.style.borderColor = 'rgba(76, 175, 80, 0.4)'; // 綠色邊框
+                    container.style.background = 'rgba(76, 175, 80, 0.15)'; // 淺綠背景
+                    
+                    container.style.display = "flex"; // ★ 強制顯示，不隱藏
                 }
 
-                // 5. 動畫設定
+                // 5. 動畫設定 (這部分保持不變)
                 requestAnimationFrame(() => {
                     const wrapper = container.querySelector('.ticker-wrapper');
                     if (wrapper && contentEl.firstChild) {
                         const containerWidth = wrapper.offsetWidth;
                         const textWidth = contentEl.scrollWidth;
-                        const duration = (containerWidth + textWidth) / 60; // 速度
                         
-                        contentEl.style.setProperty('--start-pos', `${containerWidth}px`);
-                        contentEl.style.setProperty('--end-pos', `-${textWidth}px`);
-                        contentEl.style.animation = `ticker-from-right ${Math.max(duration, 10)}s linear infinite`;
+                        // 如果文字很短(例如無警報時)，不需要跑馬燈，直接置中或靜止
+                        if (textWidth < containerWidth) {
+                            contentEl.style.animation = 'none';
+                            contentEl.style.transform = 'translateX(20px)'; // 稍微留點邊距
+                        } else {
+                            const duration = (containerWidth + textWidth) / 60;
+                            contentEl.style.setProperty('--start-pos', `${containerWidth}px`);
+                            contentEl.style.setProperty('--end-pos', `-${textWidth}px`);
+                            contentEl.style.animation = `ticker-from-right ${Math.max(duration, 10)}s linear infinite`;
+                        }
                     }
                 });
                 
@@ -1087,7 +1078,9 @@
 
             } catch (error) {
                 console.warn("連線錯誤:", error);
-                container.style.display = "none";
+                // 連線錯誤時也可以選擇顯示或隱藏
+                contentEl.innerHTML = `<span class="ticker-item" style="color: #aaa;">暫時無法取得警報資訊</span>`;
+                container.style.display = "flex";
             }
         }
 
