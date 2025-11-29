@@ -214,6 +214,12 @@
             100% { transform: translateX(var(--end-pos)); }
         }
 
+        /* === 新增：無縫循環動畫 === */
+        @keyframes ticker-seamless {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(var(--move-distance)); } /* 移動變數距離 */
+        }
+
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
@@ -971,26 +977,22 @@
         });
     </script>
 
-    <script>
+<script>
         async function loadWeatherWarnings() {
-            // v=10 避免快取
             const apiUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev?dataset=W-C0033-002&v=10';
-            
             const container = document.getElementById('warningTickerContainer');
             const contentEl = document.getElementById('warningContent');
-            // 取得標籤元素以便換色
             const labelEl = container.querySelector('.ticker-label'); 
+            
+            // 定義分隔符號 (紅點 + 空白)
+            const SEPARATOR = '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;🔴&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;';
 
             try {
                 const response = await fetch(apiUrl, { priority: 'high' });
                 let workerData = await response.json();
-                
-                if (!Array.isArray(workerData)) {
-                    workerData = [workerData];
-                }
+                if (!Array.isArray(workerData)) workerData = [workerData];
 
                 let allWarnings = [];
-
                 workerData.forEach(sourceData => {
                     if (!sourceData.cwaopendata || !sourceData.cwaopendata.dataset) return;
                     let datasets = sourceData.cwaopendata.dataset;
@@ -1001,7 +1003,7 @@
                             const info = dataset.datasetInfo;
                             const contentObj = dataset.contents?.content;
                             if (!info) return;
-
+                            
                             const reportName = info.datasetDescription;
                             let timeStr = "";
                             if (info.issueTime) {
@@ -1012,119 +1014,139 @@
                                 const min = d.getMinutes().toString().padStart(2, '0');
                                 timeStr = `・${mm}/${dd} ${hh}:${min}`;
                             }
-
                             let rawContent = "";
                             if (contentObj) {
-                                let text = contentObj.contentText;
-                                text = text.replace(/^一、概述：/g, '');
+                                let text = contentObj.contentText.replace(/^一、概述：/g, '');
                                 const cutIndex = text.search(/[二註]、/);
                                 if (cutIndex !== -1) text = text.substring(0, cutIndex);
                                 rawContent = text.replace(/\s+/g, ' ').trim();
                             }
                             allWarnings.push(`【${reportName}${timeStr}】 ${rawContent}`);
-                        } catch (err) {
-                            console.error("單筆警報解析錯誤:", err);
-                        }
+                        } catch (err) { console.error(err); }
                     });
                 });
 
-                // 🟢 修改重點：判斷有無警報並切換樣式
+                // --- 顯示邏輯 ---
                 if (allWarnings.length > 0) {
-                    // === 有警報：顯示橘色警戒樣式 ===
-                    const fullText = allWarnings.join('&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;🔴&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;');
-                    contentEl.innerHTML = `<span class="ticker-item">${fullText}</span>`;
-                    
-                    // 設定橘色
+                    // 有警報：開啟無縫跑馬燈
                     if (labelEl) labelEl.style.background = '#ff9800';
                     container.style.borderColor = 'rgba(255, 152, 0, 0.4)';
                     container.style.background = 'rgba(255, 152, 0, 0.15)';
-                    
                     container.style.display = "flex";
+
+                    // 1. 組合原始字串 (結尾也要加分隔符號，這樣才能接上下一個)
+                    const baseText = allWarnings.join(SEPARATOR) + SEPARATOR;
+
+                    // 2. 計算單組寬度 (為了設定動畫距離)
+                    const tempSpan = document.createElement('span');
+                    tempSpan.className = 'ticker-item';
+                    tempSpan.innerHTML = baseText;
+                    tempSpan.style.visibility = 'hidden';
+                    tempSpan.style.position = 'absolute';
+                    document.body.appendChild(tempSpan);
+                    const singleWidth = tempSpan.offsetWidth;
+                    document.body.removeChild(tempSpan);
+
+                    // 3. 計算需要複製幾次才能填滿螢幕 (至少複製 2 次以達成循環)
+                    const containerWidth = container.offsetWidth;
+                    let copies = Math.ceil((containerWidth + singleWidth) / singleWidth) + 1;
+                    if (copies < 2) copies = 2;
+
+                    // 4. 生成 HTML
+                    let finalHTML = '';
+                    for(let i=0; i<copies; i++) {
+                        finalHTML += `<span class="ticker-item">${baseText}</span>`;
+                    }
+                    contentEl.innerHTML = finalHTML;
+
+                    // 5. 設定無縫動畫
+                    // 讓它往左移動「一組內容的寬度」，然後無縫跳回開頭
+                    contentEl.style.setProperty('--move-distance', `-${singleWidth}px`);
+                    
+                    // 速度控制 (數值越大越快)
+                    const speed = 150; 
+                    const duration = singleWidth / speed;
+                    
+                    contentEl.style.animation = `ticker-seamless ${duration}s linear infinite`;
+                    contentEl.style.transform = 'translateX(0)'; // 重置位置
+
                 } else {
-                    // === 無警報：顯示綠色安全樣式 ===
-                    // 這裡顯示「目前無發布任何氣象警特報」
+                    // 無警報：靜態顯示
                     contentEl.innerHTML = `<span class="ticker-item" style="color: #4CAF50; font-weight: bold;"><i class="fas fa-check-circle"></i> 目前無發布任何氣象警特報</span>`;
-                    
-                    // 設定綠色 (讓使用者覺得安心)
-                    if (labelEl) labelEl.style.background = '#2e7d32'; // 深綠標籤
-                    container.style.borderColor = 'rgba(76, 175, 80, 0.4)'; // 綠色邊框
-                    container.style.background = 'rgba(76, 175, 80, 0.15)'; // 淺綠背景
-                    
-                    container.style.display = "flex"; // ★ 強制顯示，不隱藏
+                    if (labelEl) labelEl.style.background = '#2e7d32';
+                    container.style.borderColor = 'rgba(76, 175, 80, 0.4)';
+                    container.style.background = 'rgba(76, 175, 80, 0.15)';
+                    contentEl.style.animation = 'none';
+                    contentEl.style.transform = 'translateX(0)'; // 靠左對齊
+                    contentEl.style.justifyContent = 'flex-start'; 
+                    contentEl.style.paddingLeft = '20px';
+                    container.style.display = "flex";
                 }
 
-                // 5. 動畫設定 (這部分保持不變)
-                requestAnimationFrame(() => {
-                    const wrapper = container.querySelector('.ticker-wrapper');
-                    if (wrapper && contentEl.firstChild) {
-                        const containerWidth = wrapper.offsetWidth;
-                        const textWidth = contentEl.scrollWidth;
-                        
-                        // 如果文字很短(例如無警報時)，不需要跑馬燈，直接置中或靜止
-                        if (textWidth < containerWidth) {
-                            contentEl.style.animation = 'none';
-                            contentEl.style.transform = 'translateX(20px)'; // 稍微留點邊距
-                        } else {
-                            const duration = (containerWidth + textWidth) / 150;
-                            contentEl.style.setProperty('--start-pos', `${containerWidth}px`);
-                            contentEl.style.setProperty('--end-pos', `-${textWidth}px`);
-                            contentEl.style.animation = `ticker-from-right ${Math.max(duration, 10)}s linear infinite`;
-                        }
-                    }
-                });
-                
                 container.addEventListener('mouseenter', () => contentEl.style.animationPlayState = 'paused');
                 container.addEventListener('mouseleave', () => contentEl.style.animationPlayState = 'running');
 
             } catch (error) {
-                console.warn("連線錯誤:", error);
-                // 連線錯誤時也可以選擇顯示或隱藏
-                contentEl.innerHTML = `<span class="ticker-item" style="color: #aaa;">暫時無法取得警報資訊</span>`;
+                console.warn("警報連線錯誤", error);
+                contentEl.innerHTML = `<span class="ticker-item" style="color:#aaa;">暫時無法取得資訊</span>`;
                 container.style.display = "flex";
             }
         }
-
-        // 立即執行
-        loadWeatherWarnings();
         
-        // 每 10 分鐘自動更新
+        loadWeatherWarnings();
         setInterval(loadWeatherWarnings, 600000);
-    </script>
     <script>
         async function loadWangWeiForecast() {
             const container = document.getElementById('wangweiTickerContainer');
             const contentEl = document.getElementById('wangweiContent');
-            
             const apiUrl = 'https://wang-weather.xiaoyouwu5-fd3.workers.dev/message?v=5';
+            const SEPARATOR = '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'; // 分隔符號
 
             try {
                 const response = await fetch(apiUrl);
                 const data = await response.json();
-                const text = data.message || "暫無預報資料";
+                let text = data.message || "暫無預報資料";
 
-                // 1. 寫入文字 (只一份)
-                contentEl.innerHTML = `<span class="ticker-item">${text}</span>`;
+                // 1. 準備基礎字串 (結尾加分隔)
+                const baseText = text + SEPARATOR;
 
-                // 2. 計算並設定動畫
-                // 稍微延遲一下確保 DOM 寬度計算正確
-                requestAnimationFrame(() => {
-                    const containerWidth = container.querySelector('.ticker-wrapper').offsetWidth;
-                    const textWidth = contentEl.scrollWidth;
-                    const totalDistance = containerWidth + textWidth;
-                    const speed = 150; 
-                    const duration = totalDistance / speed;
+                // 2. 計算單組寬度
+                const tempSpan = document.createElement('span');
+                tempSpan.className = 'ticker-item';
+                tempSpan.innerHTML = baseText;
+                tempSpan.style.visibility = 'hidden';
+                tempSpan.style.position = 'absolute';
+                document.body.appendChild(tempSpan);
+                const singleWidth = tempSpan.offsetWidth;
+                document.body.removeChild(tempSpan);
 
-                    contentEl.style.setProperty('--start-pos', `${containerWidth}px`);
-                    contentEl.style.setProperty('--end-pos', `-${textWidth}px`);
-                    
-                    contentEl.style.animation = `ticker-from-right ${Math.max(duration, 10)}s linear infinite`;
-                });
+                // 3. 計算複製份數
+                const containerWidth = container.offsetWidth;
+                let copies = Math.ceil((containerWidth + singleWidth) / singleWidth) + 1;
+                if (copies < 2) copies = 2;
+
+                // 4. 生成 HTML
+                let finalHTML = '';
+                for(let i=0; i<copies; i++) {
+                    finalHTML += `<span class="ticker-item">${baseText}</span>`;
+                }
+                contentEl.innerHTML = finalHTML;
+
+                // 5. 設定動畫
+                contentEl.style.setProperty('--move-distance', `-${singleWidth}px`);
+                
+                // 速度設定 (這裡設快一點 150)
+                const speed = 150; 
+                const duration = singleWidth / speed;
+                
+                contentEl.style.animation = `ticker-seamless ${duration}s linear infinite`;
+                contentEl.style.transform = 'translateX(0)';
 
                 container.addEventListener('mouseenter', () => contentEl.style.animationPlayState = 'paused');
                 container.addEventListener('mouseleave', () => contentEl.style.animationPlayState = 'running');
                 
             } catch (e) {
-                console.warn("無法載入王偉預報", e);
+                console.warn("無法載入天氣報吼哩災", e);
                 contentEl.innerHTML = `<span class="ticker-item">目前無法取得預報資訊</span>`;
             }
         }
