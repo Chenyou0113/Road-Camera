@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>台鐵 PIDS 全螢幕時刻表 (V9.1 型號顯示版)</title>
+    <title>台鐵 PIDS 全螢幕時刻表 (V10.1 智慧離站判斷)</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -25,9 +25,8 @@
         .train-table td { padding: 12px 5px; vertical-align: middle; color: #fff; }
         .highlight-row { background-color: rgba(255, 255, 255, 0.15) !important; border: 2px solid #ffeb3b !important; }
         
-        /* 🔥 調整標籤樣式：加寬以容納型號 */
-        .train-type-badge { display: inline-block; padding: 5px 10px; border-radius: 4px; color: white; font-size: 1.5rem; font-weight: bold; white-space: nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.5); min-width: 160px; text-align: center; }
-        
+        /* 車種標籤 */
+        .train-type-badge { display: inline-block; padding: 5px 10px; border-radius: 4px; color: white; font-size: 1.5rem; font-weight: bold; white-space: nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.5); min-width: 180px; text-align: center; }
         .type-自強 { background-color: #FF5722; }
         .type-柴自強 { background-color: #D84315; border: 1px solid #FF5722; }
         .type-新自強 { background: linear-gradient(135deg, #000000 0%, #333333 100%); border: 1px solid #666; }
@@ -117,10 +116,9 @@
 
     <script src="assets/config.js"></script>
     <script>
-        // ============ V9.1 名稱美化與型號顯示版 ============
+        // ============ PIDS V10.1 智慧離站判斷版 ============
         const WORKER_URL = 'https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev';
         
-        // 輔助函式
         const getZhTw = (val) => (val && typeof val === 'object' && val.Zh_tw) ? val.Zh_tw : val;
         function formatTime(t) { return t ? t.slice(0, 5) : '--:--'; }
         
@@ -152,12 +150,34 @@
             }
         });
 
-        // 🔥 新增：車種型號判斷
+        // 🔥 判斷列車是否尚未離站 (包含誤點計算)
+        // bufferMinutes: 緩衝時間 (例如 -5 表示車子開走 5 分鐘後才消失)
+        function isTrainHasNotLeft(targetTimeStr, delayMinutes, bufferMinutes) {
+            if (!targetTimeStr) return true;
+
+            const now = new Date();
+            const currentTotalMinutes = now.getHours() * 60 + now.getMinutes();
+
+            // 解析表定時間
+            const [h, m] = targetTimeStr.split(':').map(Number);
+            let targetTotalMinutes = h * 60 + m;
+
+            // 加上誤點時間 (這才是真正的預計離站時間)
+            targetTotalMinutes += (delayMinutes || 0);
+
+            // 處理跨日 (例如現在 23:50，車子是 00:10，那車子是明天的)
+            if (currentTotalMinutes > 18 * 60 && targetTotalMinutes < 6 * 60) {
+                targetTotalMinutes += 24 * 60;
+            }
+
+            // 判斷：(實際離站時間 + 緩衝) 是否大於 現在時間
+            return (targetTotalMinutes - bufferMinutes) >= currentTotalMinutes;
+        }
+
         function getPrettyTrainInfo(rawName, typeID) {
             let name = rawName || '列車';
             let cssClass = '其他';
 
-            // 1. 樣式判斷
             if (name.includes('自強(3000)') || name.includes('EMU3000')) cssClass = '新自強';
             else if (name.includes('普悠瑪')) cssClass = '普悠瑪';
             else if (name.includes('太魯閣')) cssClass = '太魯閣';
@@ -168,14 +188,12 @@
             else if (name.includes('復興')) cssClass = '復興';
             else if (name.includes('普快')) cssClass = '普快';
 
-            // 2. 名稱簡化與型號追加
-            if (cssClass === '新自強') name = '新自強'; // 統一叫新自強
+            if (cssClass === '新自強') name = '新自強';
             else if (cssClass === '普悠瑪') name = '普悠瑪';
             else if (cssClass === '太魯閣') name = '太魯閣';
             else if (cssClass === '自強') {
-                // 嘗試判斷柴聯
-                if (typeID && ['110D','110E','110F','1103'].includes(typeID)) {
-                    name = '柴自強'; 
+                if (name.includes('柴聯') || name.includes('DMU') || (typeID && ['110D','110E','110F','1103'].includes(typeID))) {
+                    name = '柴自強';
                     cssClass = '柴自強';
                 } else {
                     name = '自強號';
@@ -184,7 +202,6 @@
             else if (cssClass === '區間快') name = '區間快';
             else if (cssClass === '區間') {
                 name = '區間車';
-                // 🔥 區間車型號判斷 (根據 ID 或 名稱)
                 if (typeID === '113A' || name.includes('500')) name = '區間(500型)';
                 else if (typeID === '113B' || name.includes('700')) name = '區間(700型)';
                 else if (typeID === '113C' || name.includes('800')) name = '區間(800型)';
@@ -192,11 +209,10 @@
             }
             else if (cssClass === '莒光') name = '莒光號';
             else if (cssClass === '復興') name = '復興號';
+            else if (cssClass === '普快') name = '普快車';
 
-            // 專車判斷
             if (typeID && ['1104','1105','1106','1112','1113','1130'].includes(typeID)) {
                 cssClass = '專車';
-                // name 保持原樣或顯示為專車
             }
 
             return { name: name, class: cssClass };
@@ -228,7 +244,7 @@
                             TrainNo: st.TrainNo,
                             Direction: st.Direction, 
                             TrainTypeName: getZhTw(st.TrainTypeName) || '列車',
-                            TrainTypeID: st.TrainTypeID, // 🔥 記得傳遞 ID 用於判斷型號
+                            TrainTypeID: st.TrainTypeID, 
                             EndingStationName: getZhTw(destRaw) || '未知',
                             ScheduledDepartureTime: depTime,
                             DelayTime: 0
@@ -245,6 +261,9 @@
                     if (liveMap.has(train.TrainNo)) train.DelayTime = liveMap.get(train.TrainNo);
                     return train;
                 });
+
+                // 🔥 套用新的過濾邏輯：表定+誤點 > 現在-5分鐘
+                allTrains = allTrains.filter(t => isTrainHasNotLeft(t.ScheduledDepartureTime, t.DelayTime, -5));
 
                 allTrains.sort((a, b) => a.ScheduledDepartureTime.localeCompare(b.ScheduledDepartureTime));
 
@@ -275,12 +294,8 @@
             const displayDest = destinations.slice(0, 2).join('、'); 
             destLabel.textContent = trains.length > 0 ? `往 ${displayDest} 方向` : `往 ${dirName === '逆行' ? '北上' : '南下'} 方向`;
 
-            const nowTime = new Date().toTimeString().slice(0, 5);
-            let startIndex = trains.findIndex(t => t.ScheduledDepartureTime >= nowTime);
-            if (startIndex === -1 && trains.length > 0) startIndex = Math.max(0, trains.length - 6);
-            if (startIndex === -1) startIndex = 0;
-
-            const showList = trains.slice(startIndex, startIndex + 6);
+            // 顯示最近 6 班
+            const showList = trains.slice(0, 6);
 
             showList.forEach((train, index) => {
                 let delayText = '準點';
@@ -290,7 +305,6 @@
                 const row = document.createElement('tr');
                 if (index === 0) row.classList.add('highlight-row');
                 
-                // 🔥 使用新版名稱判斷
                 const trainInfo = getPrettyTrainInfo(train.TrainTypeName, train.TrainTypeID);
 
                 row.innerHTML = `
@@ -315,9 +329,8 @@
 
             if (!trains || trains.length === 0) { el.innerHTML = debugMsg || '本日已無更多班次'; return; }
             
-            const nowTime = new Date().toTimeString().slice(0, 5);
-            let t = trains.find(x => x.ScheduledDepartureTime >= nowTime);
-            if (!t) t = trains[trains.length-1];
+            // 取列表第一班 (因為已經過濾且排序過，這就是最接近的一班)
+            let t = trains[0];
 
             const delayText = t.DelayTime > 0 ? `(晚 ${t.DelayTime} 分)` : '(準點)';
             const timeColor = t.DelayTime > 0 ? '#ff5252' : '#00e676';
@@ -363,3 +376,5 @@
             } catch (e) {}
         }
     </script>
+</body>
+</html>
