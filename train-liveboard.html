@@ -762,7 +762,7 @@
             if (stations.length === 1) select.selectedIndex = 1;
         }
 
-        // ============ 查詢功能 ============
+        // ============ 查詢功能 (修正雙層結構版) ============
         async function fetchTrainLiveBoard() {
             const stationSelect = document.getElementById('stationSelect');
             const queryBtn = document.getElementById('queryBtn');
@@ -778,25 +778,31 @@
             document.getElementById('trainContainer').style.display = 'block';
 
             try {
+                // 1. 呼叫 Worker
                 const [scheduleRes, liveRes] = await Promise.all([
                     fetch(`${WORKER_URL}/api/station/schedule?stationID=${currentStationID}`).then(r => r.json()),
                     fetch(`${WORKER_URL}/api/station/live?stationID=${currentStationID}`).then(r => r.json())
                 ]);
 
                 let allTrains = [];
-                // 🔥 修正：拆開兩層 StationTimetables 結構
-                const rootData = scheduleRes.StationTimetables || scheduleRes.schedules || scheduleRes || [];
                 
-                if (Array.isArray(rootData)) {
+                // 🔥【關鍵修正】TDX V3 的結構有兩層
+                // scheduleRes.StationTimetables 是「車站陣列」
+                const rootData = scheduleRes.StationTimetables || scheduleRes;
+                
+                if (rootData && Array.isArray(rootData)) {
+                    // 第一層迴圈：遍歷車站 (通常只有一個，就是您查的那個站)
                     rootData.forEach(stationContainer => {
-                        // 🔥🔥 拆開第二層 (真正的列車)
-                        const innerTrains = stationContainer.StationTimetables || stationContainer.schedules || [];
                         
+                        // 🔥🔥【這行救命】解開第二層，這才是真正的「列車清單」
+                        const innerTrains = stationContainer.StationTimetables || []; 
+                        
+                        // 第二層迴圈：遍歷該車站的列車
                         innerTrains.forEach(st => {
                             const getZhTw = (val) => (val && typeof val === 'object' && val.Zh_tw) ? val.Zh_tw : val;
-
                             const depTime = st.DepartureTime || st.ArrivalTime;
                             
+                            // 沒時間就跳過
                             if (!depTime) return;
 
                             const trainTypeName = getZhTw(st.TrainTypeName) || '列車';
@@ -804,7 +810,7 @@
 
                             const train = {
                                 TrainNo: st.TrainNo,
-                                Direction: st.Direction || 0,
+                                Direction: st.Direction,
                                 TrainTypeName: trainTypeName,
                                 TrainTypeCode: st.TrainTypeCode,
                                 EndingStationName: endingStationName,
@@ -817,12 +823,14 @@
                     });
                 }
 
+                // 處理誤點資訊
                 const liveMap = new Map();
-                const liveBoardData = liveRes.live || liveRes || [];
-                if (Array.isArray(liveBoardData)) {
+                const liveBoardData = liveRes.StationLiveBoards || liveRes;
+                if (liveBoardData && Array.isArray(liveBoardData)) {
                     liveBoardData.forEach(t => liveMap.set(t.TrainNo, t.DelayTime));
                 }
 
+                // 過濾過期班次 (保留最近 30 分鐘內的)
                 const nowTime = new Date().toTimeString().slice(0, 5);
                 allTrains = allTrains.map(train => {
                     if (liveMap.has(train.TrainNo)) {
@@ -839,7 +847,7 @@
 
             } catch (error) {
                 console.error('查詢失敗:', error);
-                showNoData('查詢失敗，請檢查網路或稍後再試');
+                showNoData('查詢失敗，請檢查 Worker 狀態');
             } finally {
                 queryBtn.disabled = false;
             }
