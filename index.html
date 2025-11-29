@@ -210,10 +210,10 @@
         /* 無警報時的綠色文字 */
         body.dark-mode .no-warning-text { color: #81c784 !important; } 
 
-        /* === 新增：無縫循環動畫 === */
-        @keyframes ticker-seamless {
-            0% { transform: translateX(0); }
-            100% { transform: translateX(var(--move-distance)); } /* 移動變數距離 */
+        /* === 新增：從右邊跑入的動畫 === */
+        @keyframes ticker-from-right {
+            0% { transform: translateX(var(--start-pos)); }
+            100% { transform: translateX(var(--end-pos)); }
         }
 
         @keyframes fadeIn {
@@ -949,12 +949,16 @@
             } catch (e) { countEl.innerText = "---"; }
         });
 
-        // 氣象警特報 (無縫跑馬燈)
+        // ==========================================
+        // 1. 氣象警特報 (改為：有警報時從最右邊開始跑)
+        // ==========================================
         async function loadWeatherWarnings() {
             const apiUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev?dataset=W-C0033-002&v=10';
             const container = document.getElementById('warningTickerContainer');
             const contentEl = document.getElementById('warningContent');
             const labelEl = container.querySelector('.ticker-label'); 
+            
+            // 定義分隔符號
             const SEPARATOR = '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;🔴&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;';
 
             try {
@@ -973,6 +977,7 @@
                             const info = dataset.datasetInfo;
                             const contentObj = dataset.contents?.content;
                             if (!info) return;
+                            
                             const reportName = info.datasetDescription;
                             let timeStr = "";
                             if (info.issueTime) {
@@ -991,92 +996,104 @@
                                 rawContent = text.replace(/\s+/g, ' ').trim();
                             }
                             allWarnings.push(`【${reportName}${timeStr}】 ${rawContent}`);
-                        } catch (err) {}
+                        } catch (err) { console.error(err); }
                     });
                 });
 
+                // --- 顯示邏輯 ---
                 if (allWarnings.length > 0) {
+                    // === 有警報：啟動跑馬燈 (從右邊跑入) ===
                     if (labelEl) labelEl.style.background = '#ff9800';
                     container.style.borderColor = 'rgba(255, 152, 0, 0.4)';
                     container.style.background = 'rgba(255, 152, 0, 0.15)';
-                    
-                    const baseText = allWarnings.join(SEPARATOR) + SEPARATOR;
-                    const tempSpan = document.createElement('span');
-                    tempSpan.className = 'ticker-item';
-                    tempSpan.innerHTML = baseText;
-                    tempSpan.style.visibility = 'hidden';
-                    tempSpan.style.position = 'absolute';
-                    document.body.appendChild(tempSpan);
-                    const singleWidth = tempSpan.offsetWidth;
-                    document.body.removeChild(tempSpan);
+                    container.style.display = "flex";
 
+                    // 1. 組合文字
+                    const baseText = allWarnings.join(SEPARATOR);
+                    contentEl.innerHTML = `<span class="ticker-item">${baseText}</span>`;
+
+                    // 2. 重置動畫
+                    contentEl.style.animation = 'none';
+                    contentEl.style.transform = ''; 
+                    contentEl.style.justifyContent = 'flex-start'; 
+                    contentEl.style.paddingLeft = '0';
+                    void contentEl.offsetWidth; // Trigger reflow
+
+                    // 3. 計算距離
                     const containerWidth = container.offsetWidth;
-                    let copies = Math.ceil((containerWidth + singleWidth) / singleWidth) + 1;
-                    if (copies < 2) copies = 2;
+                    const textWidth = contentEl.scrollWidth;
 
-                    let finalHTML = '';
-                    for(let i=0; i<copies; i++) finalHTML += `<span class="ticker-item">${baseText}</span>`;
-                    contentEl.innerHTML = finalHTML;
-                    contentEl.style.setProperty('--move-distance', `-${singleWidth}px`);
-                    
-                    const speed = 150; 
-                    const duration = singleWidth / speed;
-                    contentEl.style.animation = `ticker-seamless ${duration}s linear infinite`;
-                    contentEl.style.transform = 'translateX(0)';
+                    // 4. 設定起點 (容器最右) 與 終點 (完全移出左側)
+                    contentEl.style.setProperty('--start-pos', `${containerWidth}px`);
+                    contentEl.style.setProperty('--end-pos', `-${textWidth}px`);
+
+                    // 5. 設定動畫 (速度固定)
+                    const totalDistance = containerWidth + textWidth;
+                    const speed = 150; // 速度
+                    const duration = totalDistance / speed;
+
+                    contentEl.style.animation = `ticker-from-right ${duration}s linear infinite`;
 
                 } else {
+                    // === 無警報：靜態顯示 (不跑動) ===
                     contentEl.innerHTML = `<span class="ticker-item no-warning-text" style="color: #2e7d32; font-weight: bold;"><i class="fas fa-check-circle"></i> 目前無發布任何氣象警特報</span>`;
                     if (labelEl) labelEl.style.background = '#4CAF50';
                     container.style.borderColor = 'rgba(76, 175, 80, 0.4)';
                     container.style.background = 'rgba(76, 175, 80, 0.15)';
+                    
                     contentEl.style.animation = 'none';
+                    contentEl.style.transform = 'translateX(0)'; 
                     contentEl.style.justifyContent = 'flex-start'; 
-                    contentEl.style.paddingLeft = '20px';
+                    contentEl.style.paddingLeft = '20px'; // 稍微留點邊距
+                    container.style.display = "flex";
                 }
 
+                // 滑鼠暫停功能
                 container.addEventListener('mouseenter', () => contentEl.style.animationPlayState = 'paused');
                 container.addEventListener('mouseleave', () => contentEl.style.animationPlayState = 'running');
 
             } catch (error) {
+                console.warn("警報連線錯誤", error);
                 contentEl.innerHTML = `<span class="ticker-item" style="color:#aaa;">暫時無法取得資訊</span>`;
+                container.style.display = "flex";
             }
         }
         
-        // 天氣報吼哩災 (無縫跑馬燈)
+        // ==========================================
+        // 2. 天氣報吼哩災 (改為：從最右邊開始跑)
+        // ==========================================
         async function loadWangWeiForecast() {
             const container = document.getElementById('wangweiTickerContainer');
             const contentEl = document.getElementById('wangweiContent');
             const apiUrl = 'https://wang-weather.xiaoyouwu5-fd3.workers.dev/message?v=5';
-            const SEPARATOR = '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;|&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;'; 
 
             try {
                 const response = await fetch(apiUrl);
                 const data = await response.json();
                 let text = data.message || "暫無預報資料";
-                const baseText = text + SEPARATOR;
 
-                const tempSpan = document.createElement('span');
-                tempSpan.className = 'ticker-item';
-                tempSpan.innerHTML = baseText;
-                tempSpan.style.visibility = 'hidden';
-                tempSpan.style.position = 'absolute';
-                document.body.appendChild(tempSpan);
-                const singleWidth = tempSpan.offsetWidth;
-                document.body.removeChild(tempSpan);
-
-                const containerWidth = container.offsetWidth;
-                let copies = Math.ceil((containerWidth + singleWidth) / singleWidth) + 1;
-                if (copies < 2) copies = 2;
-
-                let finalHTML = '';
-                for(let i=0; i<copies; i++) finalHTML += `<span class="ticker-item">${baseText}</span>`;
-                contentEl.innerHTML = finalHTML;
-                contentEl.style.setProperty('--move-distance', `-${singleWidth}px`);
+                // 1. 設定內容
+                contentEl.innerHTML = `<span class="ticker-item">${text}</span>`;
                 
+                // 2. 重置動畫
+                contentEl.style.animation = 'none';
+                contentEl.style.transform = '';
+                void contentEl.offsetWidth; 
+
+                // 3. 計算距離
+                const containerWidth = container.offsetWidth;
+                const textWidth = contentEl.scrollWidth;
+
+                // 4. 設定起點與終點
+                contentEl.style.setProperty('--start-pos', `${containerWidth}px`);
+                contentEl.style.setProperty('--end-pos', `-${textWidth}px`);
+                
+                // 5. 設定動畫
+                const totalDistance = containerWidth + textWidth;
                 const speed = 150; 
-                const duration = singleWidth / speed;
-                contentEl.style.animation = `ticker-seamless ${duration}s linear infinite`;
-                contentEl.style.transform = 'translateX(0)';
+                const duration = totalDistance / speed;
+                
+                contentEl.style.animation = `ticker-from-right ${duration}s linear infinite`;
 
                 container.addEventListener('mouseenter', () => contentEl.style.animationPlayState = 'paused');
                 container.addEventListener('mouseleave', () => contentEl.style.animationPlayState = 'running');
@@ -1086,8 +1103,11 @@
             }
         }
 
+        // 啟動函式
         loadWeatherWarnings();
         loadWangWeiForecast();
+        
+        // 每 10 分鐘更新一次警報
         setInterval(loadWeatherWarnings, 600000);
     </script>
 </body>
