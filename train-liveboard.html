@@ -778,10 +778,11 @@
             document.getElementById('trainContainer').style.display = 'block';
 
             try {
-                // 1. 呼叫 Worker
+                // 1. 呼叫 Worker (加上時間戳記避開快取)
+                const ts = Date.now();
                 const [scheduleRes, liveRes] = await Promise.all([
-                    fetch(`${WORKER_URL}/api/station/schedule?stationID=${currentStationID}`).then(r => r.json()),
-                    fetch(`${WORKER_URL}/api/station/live?stationID=${currentStationID}`).then(r => r.json())
+                    fetch(`${WORKER_URL}/api/station/schedule?stationID=${currentStationID}&t=${ts}`).then(r => r.json()),
+                    fetch(`${WORKER_URL}/api/station/live?stationID=${currentStationID}&t=${ts}`).then(r => r.json())
                 ]);
 
                 // 🔥【新增】錯誤檢查：如果 Worker 回傳錯誤，直接跳出警告
@@ -790,24 +791,28 @@
 
                 let allTrains = [];
                 
-                // 2. 解析資料 (解開兩層結構)
+                // 2. 解析資料 (解開兩層結構 + 自動適應欄位)
                 const rootData = scheduleRes.StationTimetables || scheduleRes;
                 
                 if (rootData && Array.isArray(rootData)) {
                     rootData.forEach(stationContainer => {
-                        const innerTrains = stationContainer.StationTimetables || []; 
+                        // 🔥 自動適應: TimeTables 或 StationTimetables
+                        const innerTrains = stationContainer.TimeTables || stationContainer.StationTimetables || []; 
                         
                         innerTrains.forEach(st => {
                             const getZhTw = (val) => (val && typeof val === 'object' && val.Zh_tw) ? val.Zh_tw : val;
                             const depTime = st.DepartureTime || st.ArrivalTime;
                             if (!depTime) return;
 
+                            // 🔥 欄位自動適應: DestinationStationName 或 EndingStationName
+                            const destRaw = st.DestinationStationName || st.EndingStationName;
+
                             const train = {
                                 TrainNo: st.TrainNo,
                                 Direction: st.Direction,
                                 TrainTypeName: getZhTw(st.TrainTypeName) || '列車',
                                 TrainTypeCode: st.TrainTypeCode,
-                                EndingStationName: getZhTw(st.EndingStationName) || '未知',
+                                EndingStationName: getZhTw(destRaw) || '未知',
                                 ScheduledDepartureTime: depTime,
                                 DelayTime: 0,
                                 Status: 'future'
