@@ -791,12 +791,17 @@
 
                 let allTrains = [];
                 
-                // 2. 解析資料 (解開兩層結構 + 自動適應欄位)
-                const rootData = scheduleRes.StationTimetables || scheduleRes;
+                // 2. 解析資料 (處理單一物件或陣列)
+                let rootData = scheduleRes.StationTimetables || scheduleRes;
                 
-                if (rootData && Array.isArray(rootData)) {
+                // 🔥【關鍵修復】: 強制將單一物件轉為陣列，統一處理邏輯
+                if (!Array.isArray(rootData)) {
+                    rootData = [rootData];
+                }
+                
+                if (rootData) {
                     rootData.forEach(stationContainer => {
-                        // 🔥 自動適應: TimeTables 或 StationTimetables
+                        // 嘗試各種可能的列表屬性 (TimeTables 是 V3 標準)
                         const innerTrains = stationContainer.TimeTables || stationContainer.StationTimetables || []; 
                         
                         innerTrains.forEach(st => {
@@ -823,14 +828,16 @@
                 } else {
                     // 如果格式不對，拋出錯誤以便 Debug
                     console.error("API 回傳格式異常:", scheduleRes);
-                    throw new Error("Worker 回傳了非陣列資料，請檢查 Console");
+                    throw new Error("Worker 回傳了無效資料，請檢查 Console");
                 }
 
                 // 3. 整合誤點資訊
                 const liveMap = new Map();
                 const liveBoardData = liveRes.StationLiveBoards || liveRes;
-                if (liveBoardData && Array.isArray(liveBoardData)) {
-                    liveBoardData.forEach(t => liveMap.set(t.TrainNo, t.DelayTime));
+                // 相容陣列或單一物件
+                const liveArray = Array.isArray(liveBoardData) ? liveBoardData : (liveBoardData ? [liveBoardData] : []);
+                if (liveArray && liveArray.length > 0) {
+                    liveArray.forEach(t => liveMap.set(t.TrainNo, t.DelayTime));
                 }
 
                 const nowTime = new Date().toTimeString().slice(0, 5);

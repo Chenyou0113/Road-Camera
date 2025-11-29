@@ -379,7 +379,7 @@
 
     <script src="assets/config.js"></script>
     <script>
-        // ============ PIDS 最終無敵版 (v6.0) ============
+        // ============ PIDS 最終修復版 (v7.1 結構適應) ============
         const WORKER_URL = 'https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev';
         
         // 輔助函式
@@ -416,7 +416,7 @@
 
         async function updatePidsData(stationID) {
             try {
-                // 加上時間戳記 timestamp 避開快取
+                // 1. 取得資料
                 const ts = Date.now();
                 const [scheduleRes, liveRes] = await Promise.all([
                     fetch(`${WORKER_URL}/api/station/schedule?stationID=${stationID}&t=${ts}`).then(r => r.json()),
@@ -426,39 +426,42 @@
                 if (scheduleRes.error) throw new Error(scheduleRes.error);
 
                 let allTrains = [];
-                // 相容各種變形結構
-                const rootData = scheduleRes.StationTimetables || scheduleRes;
+                // 取得資料根節點
+                let rootData = scheduleRes.StationTimetables || scheduleRes;
 
-                if (Array.isArray(rootData)) {
-                    rootData.forEach(container => {
-                        // 嘗試抓取各種可能的列表名稱 (TimeTables 是 V3 標準)
-                        const innerList = container.TimeTables || container.StationTimetables || [];
-                        
-                        innerList.forEach(st => {
-                            const depTime = st.DepartureTime || st.ArrivalTime;
-                            if (!depTime) return;
+                // 🔥【關鍵修復】: 強制將單一物件轉為陣列，統一處理邏輯
+                if (!Array.isArray(rootData)) {
+                    rootData = [rootData];
+                }
 
-                            // 🔥 欄位名稱自動適應 (DestinationStationName 或 EndingStationName)
-                            const destRaw = st.DestinationStationName || st.EndingStationName;
+                rootData.forEach(container => {
+                    // 嘗試抓取 TimeTables (V3) 或 StationTimetables (V2)
+                    const innerList = container.TimeTables || container.StationTimetables || [];
+                    
+                    innerList.forEach(st => {
+                        const depTime = st.DepartureTime || st.ArrivalTime;
+                        if (!depTime) return;
 
-                            allTrains.push({
-                                TrainNo: st.TrainNo,
-                                Direction: st.Direction, 
-                                TrainTypeName: getZhTw(st.TrainTypeName) || '列車',
-                                EndingStationName: getZhTw(destRaw) || '未知',
-                                ScheduledDepartureTime: depTime,
-                                DelayTime: 0
-                            });
+                        // 🔥 欄位名稱自動適應 (DestinationStationName)
+                        const destRaw = st.DestinationStationName || st.EndingStationName;
+
+                        allTrains.push({
+                            TrainNo: st.TrainNo,
+                            Direction: st.Direction, 
+                            TrainTypeName: getZhTw(st.TrainTypeName) || '列車',
+                            EndingStationName: getZhTw(destRaw) || '未知',
+                            ScheduledDepartureTime: depTime,
+                            DelayTime: 0
                         });
                     });
-                }
+                });
 
-                // 整合誤點
+                // 2. 整合誤點資訊
                 const liveMap = new Map();
                 const liveBoardData = liveRes.StationLiveBoards || liveRes;
-                if (Array.isArray(liveBoardData)) {
-                    liveBoardData.forEach(t => liveMap.set(t.TrainNo, t.DelayTime));
-                }
+                const liveArray = Array.isArray(liveBoardData) ? liveBoardData : (liveBoardData ? [liveBoardData] : []);
+                
+                liveArray.forEach(t => liveMap.set(t.TrainNo, t.DelayTime));
 
                 allTrains = allTrains.map(train => {
                     if (liveMap.has(train.TrainNo)) {
@@ -467,20 +470,20 @@
                     return train;
                 });
 
-                // 🔥【強制顯示】不進行時間過濾，確保資料能顯示
-                // 排序
+                // 3. 排序 (不強制過濾時間，確保有資料顯示)
                 allTrains.sort((a, b) => a.ScheduledDepartureTime.localeCompare(b.ScheduledDepartureTime));
 
-                const trains1 = allTrains.filter(t => String(t.Direction) === '1');
-                const trains0 = allTrains.filter(t => String(t.Direction) === '0');
+                // 4. 分流順逆行
+                const trains1 = allTrains.filter(t => String(t.Direction) === '1'); // 逆行
+                const trains0 = allTrains.filter(t => String(t.Direction) === '0'); // 順行
 
                 renderScreen('1', trains1, '逆行');
                 renderScreen('0', trains0, '順行');
 
-                // 在跑馬燈顯示診斷資訊
-                const debugInfo = `✅ 系統正常 | 逆行:${trains1.length}班 | 順行:${trains0.length}班`;
-                updateBottomMarquee('marquee1', trains1, debugInfo);
-                updateBottomMarquee('marquee0', trains0, debugInfo);
+                // 5. 啟動跑馬燈
+                const debugMsg = `✅ 讀取成功 | 逆行:${trains1.length}班 | 順行:${trains0.length}班`;
+                updateBottomMarquee('marquee1', trains1, debugMsg);
+                updateBottomMarquee('marquee0', trains0, debugMsg);
 
             } catch (e) {
                 console.error(e);
@@ -490,6 +493,7 @@
             }
         }
 
+        // 顯示畫面 (含現在時間定位)
         function renderScreen(dirCode, trains, dirName) {
             const tbody = document.getElementById(`body${dirCode}`);
             const destLabel = document.getElementById(`destList${dirCode}`);
@@ -499,11 +503,14 @@
             const displayDest = destinations.slice(0, 2).join('、'); 
             destLabel.textContent = trains.length > 0 ? `往 ${displayDest} 方向` : `往 ${dirName === '逆行' ? '北上' : '南下'} 方向`;
 
-            // 顯示前 6 班 (因為沒過濾，可能會顯示早上的車，這是正常的測試現象)
-            // 為了讓您看到「現在」的車，我們嘗試找「現在時間之後」的第 1 班開始顯示
+            // 🔥 智慧定位：顯示「現在時間之後」的班次
             const nowTime = new Date().toTimeString().slice(0, 5);
             let startIndex = trains.findIndex(t => t.ScheduledDepartureTime >= nowTime);
-            if (startIndex === -1) startIndex = 0; // 如果都過期了，就從頭顯示
+            // 如果今天是 23:59 或是都沒車了，為了不留白，顯示最後幾班
+            if (startIndex === -1 && trains.length > 0) startIndex = Math.max(0, trains.length - 6);
+            if (startIndex === -1) startIndex = 0;
+
+            // 取 6 班顯示
             const showList = trains.slice(startIndex, startIndex + 6);
 
             showList.forEach((train, index) => {
@@ -538,22 +545,25 @@
 
         async function updateBottomMarquee(elId, trains, debugMsg) {
             const el = document.getElementById(elId);
+            // 先重置動畫
+            el.style.animation = 'none';
+            el.offsetHeight; /* trigger reflow */
+
             if (!trains || trains.length === 0) { el.innerHTML = debugMsg || '本日已無更多班次'; return; }
             
-            // 找出最接近的一班車
             const nowTime = new Date().toTimeString().slice(0, 5);
             let t = trains.find(x => x.ScheduledDepartureTime >= nowTime);
-            if (!t) t = trains[trains.length-1]; // 如果都過了，顯示最後一班
+            if (!t) t = trains[trains.length-1];
 
             const delayText = t.DelayTime > 0 ? `(晚 ${t.DelayTime} 分)` : '(準點)';
             const timeColor = t.DelayTime > 0 ? '#ff5252' : '#00e676';
 
-            // 嘗試抓詳細停靠站
+            // 嘗試抓詳細停靠站 (Worker)
             let stopInfo = '';
             try {
                 const stops = await fetch(`${WORKER_URL}/api/schedule?trainNo=${t.TrainNo}`).then(r=>r.json()).catch(()=>[]);
                 if (stops.length > 0 && stops[0].StopTimes) {
-                     stopInfo = ` <span style="color:#aaa;">|</span> (已讀取詳細資訊)`;
+                     stopInfo = ` <span style="color:#aaa;">|</span> (詳細資訊已載入)`;
                 }
             } catch(e) {}
 
@@ -564,7 +574,10 @@
                 <span style="color:${timeColor}; font-weight:bold;">${t.ScheduledDepartureTime} 開 ${delayText}</span>
                 ${stopInfo}
             `;
-            el.style.animation = 'dynamic-marquee 20s linear infinite';
+            
+            // 重新啟動動畫
+            const duration = Math.max(15, el.innerText.length * 0.25);
+            el.style.animation = `dynamic-marquee ${duration}s linear infinite`;
         }
 
         async function loadTraAlertsToMarquee() {
