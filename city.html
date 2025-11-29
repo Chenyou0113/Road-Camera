@@ -816,6 +816,7 @@
         }
 
         // 加載指定縣市的資料
+        // 加載指定縣市的資料 (改為使用 Cloudflare Worker)
         async function loadCityData(cityCode, cityName) {
             console.log(`🚀 開始載入 ${cityName} (${cityCode}) 的資料...`);
             
@@ -833,164 +834,71 @@
                 <div class="loading">
                     <i class="fas fa-spinner fa-spin" style="font-size: 3rem; margin-bottom: 1.5rem; color: #1e40af;"></i>
                     <div style="font-size: 1.2rem; font-weight: bold; color: #1e40af;">正在加載 ${cityName} 的監視器資料...</div>
-                    <p style="margin-top: 15px; color: #666;">請稍候</p>
+                    <p style="margin-top: 15px; color: #666;">資料來源：Cloudflare D1 加速資料庫</p>
                 </div>
             `;
             
-            // 立即啟動進度條（如果可用）
-            if (typeof window.startLoading === 'function') {
-                try {
-                    window.startLoading({
-                        labelText: `加載 ${cityName} 監視器...`,
-                        color: '#1e40af',
-                        showLabel: true
-                    });
-                } catch (error) {
-                    console.warn('進度條啟動失敗:', error);
-                }
-            }
-            
             try {
-                // 使用現有的 loadCameras 邏輯，但只加載指定的城市
-                const endpoint = `/v2/Road/Traffic/CCTV/City/${cityCode}?$format=JSON`;
-                console.log(`📡 正在請求端點: ${endpoint}`);
+                // 🔥 修改重點：這裡換成你的 Worker 網址
+                const endpoint = `https://tdx-cctv-backend.xiaoyouwu5-fd3.workers.dev/api/cameras?city=${cityCode}`;
                 
-                let cameras = [];
-                let apiSuccess = false;
+                console.log(`📡 請求 Worker API: ${endpoint}`);
+                const response = await fetch(endpoint);
                 
-                try {
-                    console.log(`🔄 調用 tdxApi.fetchCCTV()`);
-                    const response = await tdxApi.fetchCCTV(endpoint);
-                    console.log(`📨 API 回應類型: ${typeof response}, 是否為陣列: ${Array.isArray(response)}`);
-                    
-                    // 處理可能的多種回應格式
-                    let cameraData = [];
-                    if (Array.isArray(response)) {
-                        cameraData = response;
-                    } else if (response && typeof response === 'object') {
-                        // 嘗試從常見的包裝結構中提取數據 (TDX API 使用 CCTVs)
-                        cameraData = response.CCTVs || response.data || response.records || response.results || response.value || [];
-                        console.log(`📦 從物件中提取數據，找到 ${cameraData.length} 筆記錄`);
-                    }
-                    
-                    if (cameraData && Array.isArray(cameraData) && cameraData.length > 0) {
-                        cameras = cameraData.map(camera => {
-                            let processedCamera = {
-                                ...camera,
-                                city: cityName,
-                                City: cityName,
-                                FreewayNumber: getFreewayNumber(camera.RoadName),
-                                DirectionName: getDirectionName(camera.RoadDirection),
-                                source: 'tdx'
-                            };
-                            return enhanceCameraData(processedCamera);
-                        });
-                        console.log(`✅ ${cityName} 載入成功，共 ${cameras.length} 個監視器`);
-                        apiSuccess = true;
-                    } else {
-                        console.warn(`⚠️ ${cityName} 無監視器數據（response type: ${typeof response}, 內容類型: ${typeof cameraData}）`);
-                    }
-                } catch (apiError) {
-                    console.error(`❌ TDX API 呼叫失敗:`, apiError.message);
-                    console.error(`詳細錯誤:`, apiError);
+                if (!response.ok) {
+                    throw new Error(`Worker 回應錯誤: ${response.status}`);
                 }
-                
-                // 如果 API 失敗或無數據，加載示範資料
-                if (!apiSuccess || cameras.length === 0) {
-                    console.log(`📝 正在加載 ${cityName} 的示範監視器資料...`);
-                    cameras = getDefaultCamerasByCity(cityName);
-                    if (cameras.length > 0) {
-                        console.log(`✅ 已加載 ${cameras.length} 個示範監視器`);
-                    } else {
-                        console.warn(`⚠️ ${cityName} 無示範數據`);
-                    }
+
+                const cameras = await response.json();
+                console.log(`✅ ${cityName} 載入成功，共 ${cameras.length} 個監視器`);
+
+                if (cameras.length === 0) {
+                     container.innerHTML = `
+                        <div class="loading" style="color: #f57c00;">
+                            <i class="fas fa-exclamation-circle"></i><br>
+                            目前資料庫無此縣市資料<br>
+                            <small>請確認後台排程是否已執行</small>
+                        </div>
+                    `;
+                    return;
                 }
                 
                 // 更新全域資料
-                console.log(`💾 更新全域資料，監視器數: ${cameras.length}`);
                 allCameras = cameras;
                 filteredCameras = cameras;
                 currentPage = 1;
                 
                 // 填充篩選器和顯示監視器
-                console.log(`🔄 開始填充篩選器和顯示監視器...`);
                 populateFilters();
                 updateStats();
-                console.log(`📊 allCameras 長度: ${allCameras.length}, filteredCameras 長度: ${filteredCameras.length}`);
                 displayCameras(allCameras);
                 
-                // ★ 顯示地圖切換按鈕
+                // 顯示地圖切換按鈕
                 const mapToggleBtn = document.getElementById('mapToggleBtn');
                 if (mapToggleBtn && allCameras.length > 0) {
                     mapToggleBtn.style.display = 'inline-block';
                 }
                 
-                // ★ 初始化地圖並顯示監視器
+                // 初始化地圖
                 const mapContainer = document.getElementById('map-container');
                 if (mapContainer && allCameras.length > 0) {
-                    console.log(`🗺️ 地圖容器初始寬度: ${mapContainer.offsetWidth}px, 高度: ${mapContainer.offsetHeight}px`);
                     mapContainer.style.display = 'block';
-                    
-                    // 等待 DOM 重新渲染後再初始化
                     requestAnimationFrame(() => {
-                        console.log(`🗺️ 地圖容器顯示後寬度: ${mapContainer.offsetWidth}px, 高度: ${mapContainer.offsetHeight}px`);
                         initMap();
                         updateMapMarkers(allCameras);
-                        
-                        // 多次強制重新計算大小，確保完全正確
-                        if (map) {
-                            console.log(`🔄 執行 map.invalidateSize()...`);
-                            map.invalidateSize();
-                            console.log(`✅ invalidateSize() 完成`);
-                        }
-                        
-                        // 第二次重新計算（保險起見）
-                        setTimeout(() => {
-                            if (map) {
-                                console.log(`🔄 執行第二次 map.invalidateSize()...`);
-                                map.invalidateSize();
-                                console.log(`✅ 第二次 invalidateSize() 完成`);
-                            }
-                        }, 200);
+                        if (map) map.invalidateSize();
                     });
                 }
                 
-                // 完成進度條
-                if (typeof window.finishLoading === 'function') {
-                    try {
-                        setTimeout(() => window.finishLoading(), 500);
-                    } catch (error) {
-                        console.warn('進度條完成失敗:', error);
-                    }
-                }
-                
             } catch (error) {
-                console.error(`❌ 加載 ${cityName} 時發生錯誤:`, error);
-                
+                console.error(`❌ 加載失敗:`, error);
                 container.innerHTML = `
                     <div class="loading" style="color: #ff6b6b;">
                         <i class="fas fa-exclamation-triangle"></i><br>
-                        加載 ${cityName} 時發生錯誤<br><br>
-                        <small style="color: #ffb3b3;">
-                            ${error.message}<br><br>
-                            <button onclick="loadCityData('${cityCode}', '${cityName}')" style="margin: 10px 5px; padding: 8px 15px; background: #1e40af; color: white; border: none; border-radius: 5px; cursor: pointer;">
-                                <i class="fas fa-redo"></i> 重試
-                            </button>
-                            <button onclick="showCitiesSelection()" style="margin: 10px 5px; padding: 8px 15px; background: #FF9800; color: white; border: none; border-radius: 5px; cursor: pointer;">
-                                <i class="fas fa-arrow-left"></i> 返回選擇
-                            </button>
-                        </small>
+                        讀取資料失敗<br><br>
+                        <small>${error.message}</small>
                     </div>
                 `;
-                
-                // 完成進度條（失敗狀態）
-                if (typeof window.finishLoading === 'function') {
-                    try {
-                        window.finishLoading();
-                    } catch (error) {
-                        console.warn('進度條完成失敗:', error);
-                    }
-                }
             }
         }
 
