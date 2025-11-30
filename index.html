@@ -632,7 +632,7 @@
                 </div>
                 <div class="ticker-wrapper">
                     <div class="ticker-content" id="warningContent">
-                        <span class="ticker-item">連線氣象署資料中...</span>
+                        <span class="ticker-item" id="alertText">連線氣象署資料中...</span>
                     </div>
                 </div>
             </div>
@@ -643,7 +643,7 @@
                 </div>
                 <div class="ticker-wrapper">
                     <div class="ticker-content" id="wangweiContent">
-                        <span class="ticker-item">載入中...</span>
+                        <span class="ticker-item" id="forecastText">載入中...</span>
                     </div>
                 </div>
             </div>
@@ -969,7 +969,78 @@
         })();
     </script>
 
-<script>
+    <script>
+        // ==========================================
+        // 🌤️ 氣象局資料串接設定
+        // ==========================================
+        
+        // 🔑 請在此填入您的氣象局 API Key (若無，程式會顯示模擬資料)
+        // 申請網址: https://opendata.cwa.gov.tw/user/authkey
+        const CWA_API_KEY = ""; // 例如 "CWA-1234-ABCD-..."
+
+        document.addEventListener('DOMContentLoaded', () => {
+            updateWeatherStatus();
+        });
+
+        async function updateWeatherStatus() {
+            const alertEl = document.getElementById('alertText');
+            const forecastEl = document.getElementById('forecastText');
+
+            // 1. 如果沒有 API Key，顯示預設模擬訊息 (避免卡在載入中)
+            if (!CWA_API_KEY) {
+                console.warn("⚠️ 未設定 API Key，顯示模擬氣象資料");
+                
+                // 模擬延遲 1 秒後顯示
+                setTimeout(() => {
+                    if(alertEl) alertEl.textContent = "目前全臺無發布警特報 (這是模擬狀態，請設定 API Key)";
+                    if(forecastEl) forecastEl.textContent = "全臺各地多雲時晴，午後山區偶有短暫陣雨 (模擬資料)";
+                }, 1000);
+                return;
+            }
+
+            // 2. 有 Key 的話，嘗試抓取真實資料
+            try {
+                // (A) 抓取警特報 (W-C0033-001: 縣市天氣特報)
+                // 注意：氣象局 API 有時會有 CORS 問題，建議安裝 Allow CORS 套件測試，或由後端轉發
+                const alertUrl = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0033-001?Authorization=${CWA_API_KEY}&format=JSON`;
+                
+                const alertRes = await fetch(alertUrl);
+                const alertData = await alertRes.json();
+                
+                // 解析警報 (簡單範例：檢查是否有 records.location)
+                const alerts = alertData.records?.location || [];
+                if (alerts && alerts.length > 0) {
+                    // 這裡簡化處理，將所有有警報的縣市列出來
+                    const alertCounties = alerts.map(item => item.locationName).join('、');
+                    const hazardTypes = [...new Set(alerts.flatMap(item => 
+                        item.hazardConditions?.hazards?.map(h => h.info?.name) || []
+                    ))].join('、');
+                    
+                    if(alertEl) alertEl.textContent = `【${hazardTypes}】影響區域：${alertCounties}`;
+                } else {
+                    if(alertEl) {
+                        alertEl.textContent = "目前全臺無發布氣象警特報";
+                        alertEl.classList.add('no-warning-text');
+                    }
+                }
+
+                // (B) 抓取天氣預報 (F-C0032-001: 一般天氣預報)
+                // 這裡為了示範，簡單顯示「預報載入成功」
+                // 實務上您可能需要抓取特定縣市的 PoP (降雨機率) 或 Wx (天氣現象)
+                if(forecastEl) {
+                    forecastEl.textContent = "今日全臺各地天氣大致穩定，詳細資訊請查看儀表板。";
+                }
+
+            } catch (error) {
+                console.error("氣象資料載入失敗:", error);
+                // 🔥 失敗時的防呆顯示，不要讓它卡在「載入中」
+                if(alertEl) alertEl.textContent = "⚠️ 無法連線氣象署 (請檢查 API Key 或網路)";
+                if(forecastEl) forecastEl.textContent = "⚠️ 預報資料暫時無法取得";
+            }
+        }
+    </script>
+
+    <script>
         document.addEventListener('DOMContentLoaded', async () => {
             const countEl = document.getElementById('visitCount');
             if(!countEl) return;
