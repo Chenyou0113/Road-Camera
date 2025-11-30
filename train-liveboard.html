@@ -879,13 +879,27 @@
                 html += `<span style="border-left: 2px solid #555; margin: 0 15px;"></span>`;
                 if (liveData?.StationName) {
                     const stName = liveData.StationName.Zh_tw || liveData.StationName;
-                    const delayText = delayTime <= 0 ? `<span style="color:#00e676;">(準點)</span>` : `<span style="color:#ff5252;">(晚 ${delayTime} 分)</span>`;
-                    let nextSt = "";
-                    if (stopTimes.length > 0) {
-                        const idx = stopTimes.findIndex(s => s.StationName.Zh_tw === stName);
-                        if (idx !== -1 && idx < stopTimes.length-1) nextSt = stopTimes[idx+1].StationName.Zh_tw;
+                    
+                    // 🔥 加入防呆檢查
+                    if (isLocationReasonable(stopTimes, currentStationID, stName)) {
+                        // 1. 位置合理，正常顯示
+                        const delayText = delayTime <= 0 ? 
+                            `<span style="color:#00e676;">(準點)</span>` : 
+                            `<span style="color:#ff5252;">(晚 ${delayTime} 分)</span>`;
+                            
+                        let nextSt = "";
+                        if (stopTimes.length > 0) {
+                            const idx = stopTimes.findIndex(s => s.StationName.Zh_tw === stName);
+                            if (idx !== -1 && idx < stopTimes.length-1) nextSt = stopTimes[idx+1].StationName.Zh_tw;
+                        }
+                        
+                        html += nextSt ? 
+                            `列車目前位置：<span style="color: #4fc3f7;">${stName} ➡ ${nextSt}</span> ${delayText}` : 
+                            `列車目前位置：<span style="color: #4fc3f7;">${stName}</span> ${delayText}`;
+                    } else {
+                        // 2. 位置不合理 (例如距離太遠)，顯示偵測中
+                        html += `<span style="color:#aaa;">(訊號偵測中...)</span>`;
                     }
-                    html += nextSt ? `列車目前位置：<span style="color: #4fc3f7;">${stName} ➡ ${nextSt}</span> ${delayText}` : `列車目前位置：<span style="color: #4fc3f7;">${stName}</span> ${delayText}`;
                 } else {
                     html += `<span style="color:#aaa;">(暫無即時位置訊號)</span>`;
                 }
@@ -911,6 +925,34 @@
         }
 
         function closeMarquee() { document.getElementById('trainMarqueeBar').style.display = 'none'; }
+
+        // 🔥 新增：檢查位置是否合理
+        function isLocationReasonable(stopTimes, currentStationID, reportedName) {
+            // 1. 沒時刻表無法判斷，放行
+            if (!stopTimes || stopTimes.length === 0) return true;
+
+            // 2. 找出「本站」在時刻表的第幾站
+            const currentIdx = stopTimes.findIndex(s => s.StationID === currentStationID);
+            
+            // 3. 找出「回報位置」在時刻表的第幾站
+            // 注意：reportedName 可能是物件或字串
+            const nameStr = (typeof reportedName === 'object') ? reportedName.Zh_tw : reportedName;
+            const reportedIdx = stopTimes.findIndex(s => s.StationName.Zh_tw === nameStr);
+
+            // 找不到資料 (可能在支線)，放行
+            if (currentIdx === -1 || reportedIdx === -1) return true;
+
+            // 4. 計算距離 (站數差)
+            const gap = Math.abs(currentIdx - reportedIdx);
+
+            // 🔥 核心判斷：如果距離超過 10 站，視為異常 (資料重置/幽靈車)
+            if (gap > 10) {
+                console.warn(`[Liveboard防呆] 隱藏異常位置: ${nameStr} (距離本站 ${gap} 站)`);
+                return false;
+            }
+
+            return true;
+        }
     </script>
 </body>
 </html>
