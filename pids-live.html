@@ -632,6 +632,33 @@
             }
         }
 
+        // 🔥 新增：檢查列車位置是否合理 (防呆機制)
+        function isLocationReasonable(currentStationID, reportedStationName, stopTimes) {
+            if (!stopTimes || stopTimes.length === 0) return true; // 沒時刻表無法判斷，放行
+
+            // 1. 找出 PIDS 所在車站的順序
+            const pidsIndex = stopTimes.findIndex(s => String(s.StationID) === String(currentStationID));
+            
+            // 2. 找出回報位置的車站順序
+            // 注意：liveData 有時是物件 {Zh_tw: "猴硐"} 有時是字串 "猴硐"，需處理
+            const nameStr = (typeof reportedStationName === 'object') ? reportedStationName.Zh_tw : reportedStationName;
+            const trainIndex = stopTimes.findIndex(s => s.StationName.Zh_tw === nameStr);
+
+            // 如果找不到車站 (可能在支線)，無法判斷，放行
+            if (pidsIndex === -1 || trainIndex === -1) return true;
+
+            // 3. 計算距離 (站數差)
+            const gap = Math.abs(pidsIndex - trainIndex);
+
+            // 🔥 核心判斷：如果距離超過 10 站，視為異常 (資料重置/幽靈車)
+            if (gap > 10) {
+                console.warn(`[PIDS防呆] 隱藏異常位置: ${nameStr} (距離本站 ${gap} 站)`);
+                return false;
+            }
+
+            return true;
+        }
+
         async function updateBottomMarquee(elementId, trains, customMsg, currentStationID) {
             const el = document.getElementById(elementId);
             const container = el.parentElement;
@@ -676,14 +703,21 @@
                 let locationText = "";
                 if (liveData && liveData.StationName) {
                     const lastStationName = liveData.StationName.Zh_tw || liveData.StationName;
-                    let nextStopName = "";
-                    if (stopTimes && stopTimes.length > 0) {
-                        const passedIndex = stopTimes.findIndex(s => s.StationName.Zh_tw === lastStationName);
-                        if (passedIndex !== -1 && passedIndex < stopTimes.length - 1) nextStopName = stopTimes[passedIndex + 1].StationName.Zh_tw;
+                    
+                    // 🔥 呼叫防呆函式檢查
+                    if (isLocationReasonable(currentStationID, lastStationName, stopTimes)) {
+                        let nextStopName = "";
+                        if (stopTimes && stopTimes.length > 0) {
+                            const passedIndex = stopTimes.findIndex(s => s.StationName.Zh_tw === lastStationName);
+                            if (passedIndex !== -1 && passedIndex < stopTimes.length - 1) nextStopName = stopTimes[passedIndex + 1].StationName.Zh_tw;
+                        }
+                        locationText = nextStopName ? `列車目前位置：${lastStationName} ➡ ${nextStopName}` : `列車目前位置：${lastStationName}`;
+                        const liveDelay = liveData.DelayTime ? parseInt(liveData.DelayTime) : 0;
+                        if (liveDelay > 0) locationText += ` (晚 ${liveDelay} 分)`;
+                    } else {
+                        // 🔥 如果位置不合理 (例如還在屏東)，顯示這個
+                        locationText = "(訊號偵測中...)";
                     }
-                    locationText = nextStopName ? `列車目前位置：${lastStationName} ➡ ${nextStopName}` : `列車目前位置：${lastStationName}`;
-                    const liveDelay = liveData.DelayTime ? parseInt(liveData.DelayTime) : 0;
-                    if (liveDelay > 0) locationText += ` (晚 ${liveDelay} 分)`;
                 } else {
                     locationText = train.IsTomorrow ? "列車尚未發車 (明日班次)" : "列車行駛中";
                 }
