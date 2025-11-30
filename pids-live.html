@@ -531,72 +531,39 @@
             el.style.animation = `dynamic-marquee ${duration}s linear infinite`;
         }
 
-        // 🔥 PIDS 核心修改：整合時刻表 (Today/Tomorrow) + 即時誤點
-        // 🔥 PIDS 核心修改：V2 API + 台灣時間 + 整合時刻表
+        // 🔥 PIDS 核心修改：呼叫 Worker API (高併發優化)
         async function updatePidsData(stationID) {
             try {
-                // 1. 修正：取得台灣時間的日期 (YYYY-MM-DD)
-                const getTaiwanDateStr = (addDays = 0) => {
-                    const d = new Date();
-                    d.setDate(d.getDate() + addDays);
-                    const year = d.getFullYear();
-                    const month = String(d.getMonth() + 1).padStart(2, '0');
-                    const day = String(d.getDate()).padStart(2, '0');
-                    return `${year}-${month}-${day}`;
-                };
+                // 🔥 優化完成：PIDS 呼叫 Worker API
+                const workerApiUrl = `${TRA_WORKER_URL}/api/liveboard/station?station=${stationID}`;
+                const response = await fetch(workerApiUrl);
 
-                const todayStr = getTaiwanDateStr(0);
-                const tomorrowStr = getTaiwanDateStr(1);
-                const now = new Date();
-                const currentTimeStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
+                if (!response.ok) throw new Error(`Worker Error: ${response.status}`);
+                
+                // Worker 返回的數據已經是整合好、篩選過的 trains 列表
+                const trains = await response.json();
 
-                // 2. 平行請求：改用 V2 API 避免 404
-                const [todaySchedule, tomorrowSchedule, liveBoardData] = await Promise.all([
-                    tdxApi.fetch(`/v2/Rail/TRA/DailyTimetable/Station/${stationID}/${todayStr}?$format=JSON`),
-                    tdxApi.fetch(`/v2/Rail/TRA/DailyTimetable/Station/${stationID}/${tomorrowStr}?$format=JSON`),
-                    tdxApi.fetch(`/v2/Rail/TRA/LiveBoard?$filter=StationID eq '${stationID}'&$format=JSON`).catch(() => [])
-                ]);
-
-                // 3. 建立誤點 Map
-                const delayMap = {};
-                if (Array.isArray(liveBoardData)) {
-                    liveBoardData.forEach(t => delayMap[t.TrainNo] = t.DelayTime || 0);
+                if (!trains || trains.length === 0) {
+                    const noDataMsg = "目前無列車資訊 (或 Worker 數據庫正在同步)";
+                    renderScreen('1', [], '逆行');
+                    renderScreen('0', [], '順行');
+                    updateBottomMarquee('marquee1', null, noDataMsg, stationID);
+                    updateBottomMarquee('marquee0', null, noDataMsg, stationID);
+                    return;
                 }
 
-                // 4. 資料合併
-                let allTrains = [];
-
-                // 處理今日 (過濾掉已過的班次)
-                if (Array.isArray(todaySchedule) && todaySchedule.length > 0 && todaySchedule[0].StationTimetables) {
-                    todaySchedule[0].StationTimetables.forEach(t => {
-                        const time = t.DepartureTime || t.ArrivalTime;
-                        if (time >= currentTimeStr) {
-                            allTrains.push(normalizeTrain(t, delayMap, false));
-                        }
-                    });
-                }
-
-                // 處理明日 (全部加入)
-                if (Array.isArray(tomorrowSchedule) && tomorrowSchedule.length > 0 && tomorrowSchedule[0].StationTimetables) {
-                    tomorrowSchedule[0].StationTimetables.forEach(t => {
-                        allTrains.push(normalizeTrain(t, delayMap, true));
-                    });
-                }
-
-                // 5. 分類與切片 (每方向只取 6 班)
-                // 修正：使用 String() 確保方向比對正確
-                const trains1 = allTrains.filter(t => String(t.Direction) === '1').slice(0, 6); // 逆行
-                const trains0 = allTrains.filter(t => String(t.Direction) === '0').slice(0, 6); // 順行
+                // 數據已在 Worker 中按時間排序，現在只需按方向分組
+                const trains1 = trains.filter(t => String(t.Direction) === '1'); // 逆行
+                const trains0 = trains.filter(t => String(t.Direction) === '0'); // 順行
 
                 renderScreen('1', trains1, '逆行');
                 renderScreen('0', trains0, '順行');
-
                 updateBottomMarquee('marquee1', trains1, null, stationID);
                 updateBottomMarquee('marquee0', trains0, null, stationID);
 
             } catch (e) {
-                console.error("PIDS Update Error", e);
-                const errorMsg = "⚠️ 連線異常，請稍候...";
+                console.error("PIDS Worker Error", e);
+                const errorMsg = "⚠️ 連線 Worker 異常，請檢查網路...";
                 updateBottomMarquee('marquee1', null, errorMsg, stationID);
                 updateBottomMarquee('marquee0', null, errorMsg, stationID);
             }

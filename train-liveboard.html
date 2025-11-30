@@ -617,56 +617,7 @@
         }
 
         // ============ 整合查詢：時刻表 + LiveBoard ============
-        // ============ 整合查詢：時刻表 + LiveBoard (修復時區與404問題版) ============
-        // ============ 🔥 新増：時刻表統一獲取與備援函式 (V3 優先 -> V2 備援) ============
-        // 此函式會返回一個統一格式的列車時刻表陣列
-        async function fetchAndUnifyTimetable(stationID, dateStr) {
-            // 1. 嘗試 V3 API (結構最簡單，只需一步處理)
-            try {
-                const v3Response = await tdxApi.fetch(`/v3/Rail/TRA/DailyTimetable/Station/${stationID}/${dateStr}?$format=JSON`);
-                if (v3Response && v3Response[0]?.StationTimetables?.length > 0) {
-                    // console.log(`✅ Timetable V3 成功`);
-                    // 返回 V3 的 StationTimetables 陣列
-                    return v3Response[0].StationTimetables; 
-                }
-            } catch (e) {
-                console.warn(`Timetable V3 失敗，轉向 V2 備援...`, e);
-            }
-
-            // 2. 嘗試 V2 API (結構複雜，需手動提取停靠站)
-            try {
-                const v2Response = await tdxApi.fetch(`/v2/Rail/TRA/DailyTimetable/Station/${stationID}/${dateStr}?$format=JSON`);
-                
-                if (v2Response && v2Response.length > 0) {
-                    // console.log(`🔄 Timetable V2 成功，正在映射資料...`);
-                    let mappedData = [];
-                    // V2 結構是 [ { TrainInfo: {}, StopTimes: [] } ]
-                    v2Response.forEach(trainEntry => {
-                        // 找到該列車在本站的停靠資訊
-                        const stop = trainEntry.StopTimes.find(st => st.StationID === stationID);
-                        if (stop) {
-                            // 映射成 V3 StationTimetables 相似的結構
-                            mappedData.push({
-                                TrainNo: trainEntry.TrainInfo.TrainNo,
-                                Direction: trainEntry.TrainInfo.Direction,
-                                TrainTypeName: trainEntry.TrainInfo.TrainTypeName,
-                                TrainTypeID: trainEntry.TrainInfo.TrainTypeID,
-                                DestinationStationName: trainEntry.TrainInfo.EndingStationName,
-                                DepartureTime: stop.DepartureTime || stop.ArrivalTime,
-                                StationID: stationID,
-                            });
-                        }
-                    });
-                    return mappedData;
-                }
-            } catch (e) {
-                console.error(`Timetable V2 失敗:`, e);
-            }
-
-            return [];
-        }
-
-        // ============ 整合查詢：時刻表 + LiveBoard (使用新輔助函式) ============
+        // ============ 整合查詢：時刻表 + LiveBoard (呼叫 Worker API) ============
         async function fetchTrainLiveBoard() {
             const stationSelect = document.getElementById('stationSelect');
             const queryBtn = document.getElementById('queryBtn');
@@ -680,71 +631,27 @@
             document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><i class="fas fa-spinner fa-spin"></i><p>正在整合時刻表與即時資訊...</p></div>';
 
             try {
-                const now = new Date();
-                const todayStr = now.toISOString().split('T')[0];
-                const tomorrow = new Date(now);
-                tomorrow.setDate(tomorrow.getDate() + 1);
-                const tomorrowStr = tomorrow.toISOString().split('T')[0];
-                const currentTimeStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
-
-                // 🔥 使用新的輔助函數，並與 LiveBoard 平行處理
-                const [todayTimetableRaw, tomorrowTimetableRaw, liveBoardData] = await Promise.all([
-                    fetchAndUnifyTimetable(currentStationID, todayStr),
-                    fetchAndUnifyTimetable(currentStationID, tomorrowStr),
-                    tdxApi.fetch(`/v2/Rail/TRA/LiveBoard?$filter=StationID eq '${currentStationID}'&$format=JSON`).catch(() => [])
-                ]);
-
-                // 建立誤點 Map (與 V2 Timetable 無關，單純獲取延誤狀態)
-                const delayMap = {};
-                if (Array.isArray(liveBoardData)) {
-                    liveBoardData.forEach(t => delayMap[t.TrainNo] = t.DelayTime || 0);
-                }
-
-                let allTrains = [];
-
-                // 1. 處理今日班次
-                if (todayTimetableRaw.length > 0) {
-                    todayTimetableRaw.forEach(t => {
-                        const time = t.DepartureTime || t.ArrivalTime;
-                        if (time >= currentTimeStr) allTrains.push(processTrainData(t, delayMap, false));
-                    });
-                }
-                // 2. 處理明日班次
-                if (tomorrowTimetableRaw.length > 0) {
-                    tomorrowTimetableRaw.forEach(t => {
-                        allTrains.push(processTrainData(t, delayMap, true));
-                    });
-                }
-
-                // 修正過的篩選邏輯
-                let trains0 = allTrains.filter(t => String(t.Direction) === '0').slice(0, 6);
-                let trains1 = allTrains.filter(t => String(t.Direction) === '1').slice(0, 6);
+                // 🔥 優化完成：Client 只需呼叫 Worker API
+                const workerApiUrl = `${TRA_WORKER_URL}/api/liveboard/station?station=${currentStationID}`;
+                const response = await fetch(workerApiUrl);
                 
-                renderBoard([...trains0, ...trains1]);
+                if (!response.ok) throw new Error(`Worker Error: ${response.status}`);
+                
+                // Worker 返回的 data 已經是整合好且過濾過的 finalDisplayList
+                const finalDisplayList = await response.json(); 
+
+                if (finalDisplayList && finalDisplayList.length > 0) {
+                    renderBoard(finalDisplayList);
+                } else {
+                    document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><p>目前該時段無列車資訊</p></div>';
+                }
 
             } catch (error) {
-                console.error("嚴重错誤，無法處理資料:", error);
-                document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><p>查詢失敗，請稍後再試</p></div>';
+                console.error("Worker API 故障:", error);
+                document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><p>Worker API 故障，請稍後再試</p></div>';
             } finally {
                 queryBtn.disabled = false;
             }
-        }
-
-        // ============ 資料結構轉換函式 (配合 V2/V3 統一格式) ============
-        function processTrainData(t, delayMap, isTomorrow) {
-            // t 現在可以是 V3 結構，也可以是 V2 映射後的結構
-            return {
-                TrainNo: t.TrainNo,
-                Direction: t.Direction,
-                // 兼容 V2 (物件) 和 V3 (物件或字串) 的 TrainTypeName
-                TrainTypeName: t.TrainTypeName?.Zh_tw || t.TrainTypeName, 
-                TrainTypeID: t.TrainTypeID,
-                // 兼容 V2 (DestinationStationName) 和 V3 (EndingStationName) 的欄位
-                EndingStationName: t.DestinationStationName?.Zh_tw || t.DestinationStationName || t.EndingStationName?.Zh_tw || t.EndingStationName, 
-                ScheduledDepartureTime: t.DepartureTime || t.ArrivalTime,
-                DelayTime: delayMap[t.TrainNo] !== undefined ? delayMap[t.TrainNo] : 0,
-                IsTomorrow: isTomorrow
-            };
         }
 
         function renderBoard(trains) {
