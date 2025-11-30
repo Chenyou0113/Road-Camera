@@ -8,6 +8,46 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="assets/dark-mode.css">
     
+    <script>
+        // 定義全域載入函式，防止報錯
+        window.startLoading = function(message) {
+            console.log("🚀 系統載入中:", message);
+            const loader = document.getElementById('loading');
+            if (loader) {
+                loader.style.display = 'flex';
+                // 如果有文字框，嘗試更新文字
+                const textEl = loader.querySelector('div:last-child') || loader;
+                if(message) textEl.innerText = message;
+            }
+        };
+
+        window.setLoadingProgress = function(percent, message) {
+            console.log(`📊 載入進度: ${percent}% - ${message}`);
+            // 這裡可以選擇性地更新介面上的進度條，如果有的話
+            const loader = document.getElementById('loading');
+            if (loader && message) {
+                 const textEl = loader.querySelector('div:last-child') || loader;
+                 textEl.innerText = `${percent}% ${message}`;
+            }
+        };
+
+        window.stopLoading = function() {
+            console.log("✅ 載入完成");
+            const loader = document.getElementById('loading');
+            if (loader) {
+                // 加上淡出效果
+                loader.style.opacity = '0';
+                setTimeout(() => {
+                    loader.style.display = 'none';
+                    loader.style.opacity = '1';
+                }, 500);
+            }
+        };
+        
+        // 預防性定義，以免其他地方呼叫錯誤
+        window.updateDashboardProgress = window.setLoadingProgress;
+    </script>
+    
     <style>
         :root {
             --primary-blue: #0d6efd;
@@ -328,9 +368,6 @@
         // 🌤️ 氣象即時看板核心邏輯
         // ==========================================
 
-        // 🔥 請將您的 API Key 填入下方引號中 (例如: "CWA-xxxx-xxxx...")
-        const CWA_API_KEY = "您的API_KEY填在這裡";
-
         async function initWeatherMarquee() {
             const alertEl = document.getElementById('alertText');
             const forecastEl = document.getElementById('forecastText');
@@ -339,20 +376,18 @@
             // 防呆：如果找不到元素就跳過
             if (!alertEl || !forecastEl) return;
 
-            // 1. 檢查是否有設定 API Key
-            if (!CWA_API_KEY || CWA_API_KEY === "您的API_KEY填在這裡") {
-                console.warn("⚠️ 未設定 CWA_API_KEY，切換為模擬模式");
-                simulateWeatherData(alertEl, forecastEl, marqueeContainer);
-                return;
-            }
-
-            // 2. 開始抓取真實資料
+            // 透過 Cloudflare Worker 代理 API 呼叫（從環境變數讀取 CWA_API_KEY）
             try {
-                // --- (A) 抓取警特報 (W-C0033-001) ---
-                const alertUrl = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0033-001?Authorization=${CWA_API_KEY}&format=JSON`;
+                // --- (A) 抓取警特報 ---
+                const alertUrl = '/api/weather-proxy?type=alert';
                 
                 const alertRes = await fetch(alertUrl);
                 const alertData = await alertRes.json();
+
+                // 檢查是否有錯誤
+                if (alertData.success === false) {
+                    throw new Error(alertData.error || '警特報 API 回應錯誤');
+                }
                 
                 // 解析氣象署複雜的 JSON 結構
                 const hazards = alertData.records?.location;
@@ -373,11 +408,16 @@
                     marqueeContainer.classList.remove('alert');
                 }
 
-                // --- (B) 抓取一般預報 (F-C0032-001) ---
-                const forecastUrl = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization=${CWA_API_KEY}&format=JSON`;
+                // --- (B) 抓取一般預報 ---
+                const forecastUrl = '/api/weather-proxy?type=forecast';
                 
                 const foreRes = await fetch(forecastUrl);
                 const foreData = await foreRes.json();
+
+                // 檢查是否有錯誤
+                if (foreData.success === false) {
+                    throw new Error(foreData.error || '天氣預報 API 回應錯誤');
+                }
                 
                 // 抓取「臺北市」作為範例
                 const locationData = foreData.records.location.find(L => L.locationName === "臺北市");
