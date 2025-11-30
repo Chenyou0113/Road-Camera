@@ -610,59 +610,91 @@
         }
 
         // ============ 整合查詢：時刻表 + LiveBoard ============
+        // ============ 整合查詢：時刻表 + LiveBoard (修復時區與404問題版) ============
         async function fetchTrainLiveBoard() {
             const stationSelect = document.getElementById('stationSelect');
             const queryBtn = document.getElementById('queryBtn');
             currentStationID = stationSelect.value;
-            if (!currentStationID) { alert('請先選擇車站'); return; }
+            
+            if (!currentStationID) { 
+                alert('請先選擇車站'); 
+                return; 
+            }
             
             const selectedOption = stationSelect.options[stationSelect.selectedIndex];
             currentStationName = selectedOption.text.split(' - ')[1];
             queryBtn.disabled = true;
+            
             document.getElementById('trainContainer').style.display = 'block';
             document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><i class="fas fa-spinner fa-spin"></i><p>正在整合時刻表與即時資訊...</p></div>';
 
             try {
-                const now = new Date();
-                const todayStr = now.toISOString().split('T')[0];
-                const tomorrow = new Date(now);
-                tomorrow.setDate(tomorrow.getDate() + 1);
-                const tomorrowStr = tomorrow.toISOString().split('T')[0];
+                // 1. 🔥 修正：正確取得台灣時區的「今天」與「明天」
+                // toLocaleDateString 確保拿到的是 11/30 而不是 UTC 的 11/29
+                const getTaiwanDateStr = (addDays = 0) => {
+                    const d = new Date();
+                    d.setDate(d.getDate() + addDays);
+                    // 格式化為 YYYY-MM-DD
+                    const year = d.getFullYear();
+                    const month = String(d.getMonth() + 1).padStart(2, '0');
+                    const day = String(d.getDate()).padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                };
 
+                const todayStr = getTaiwanDateStr(0);      // 修正後的今天
+                const tomorrowStr = getTaiwanDateStr(1);   // 修正後的明天
+                
+                console.log(`📅 查詢日期: 今天=${todayStr}, 明天=${tomorrowStr}`);
+
+                // 2. 🔥 修正：時刻表改用 V2 API (比較穩定，不會 404)
+                // V2 Endpoint: /v2/Rail/TRA/DailyTimetable/Station/{StationID}/{Date}
                 const [todaySchedule, tomorrowSchedule, liveBoardData] = await Promise.all([
-                    tdxApi.fetch(`/v3/Rail/TRA/DailyTimetable/Station/${currentStationID}/${todayStr}?$format=JSON`),
-                    tdxApi.fetch(`/v3/Rail/TRA/DailyTimetable/Station/${currentStationID}/${tomorrowStr}?$format=JSON`),
+                    tdxApi.fetch(`/v2/Rail/TRA/DailyTimetable/Station/${currentStationID}/${todayStr}?$format=JSON`),
+                    tdxApi.fetch(`/v2/Rail/TRA/DailyTimetable/Station/${currentStationID}/${tomorrowStr}?$format=JSON`),
                     tdxApi.fetch(`/v2/Rail/TRA/LiveBoard?$filter=StationID eq '${currentStationID}'&$format=JSON`).catch(() => [])
                 ]);
 
+                // 3. 建立誤點 Map
                 const delayMap = {};
                 if (Array.isArray(liveBoardData)) {
                     liveBoardData.forEach(t => delayMap[t.TrainNo] = t.DelayTime || 0);
                 }
 
                 let allTrains = [];
+                const now = new Date();
                 const currentTimeStr = now.toLocaleTimeString('zh-TW', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
-                if (todaySchedule && todaySchedule[0]?.StationTimetables) {
+                // 4. 資料處理 (V2 的結構是 Array，第一層通常只有一筆資料包含 StationTimetables)
+                
+                // 處理今天
+                if (Array.isArray(todaySchedule) && todaySchedule.length > 0 && todaySchedule[0].StationTimetables) {
                     todaySchedule[0].StationTimetables.forEach(t => {
                         const time = t.DepartureTime || t.ArrivalTime;
-                        if (time >= currentTimeStr) allTrains.push(processTrainData(t, delayMap, false));
+                        // 只顯示現在時間之後的班次
+                        if (time >= currentTimeStr) {
+                            allTrains.push(processTrainData(t, delayMap, false));
+                        }
                     });
                 }
-                if (tomorrowSchedule && tomorrowSchedule[0]?.StationTimetables) {
+                
+                // 處理明天 (全部加入)
+                if (Array.isArray(tomorrowSchedule) && tomorrowSchedule.length > 0 && tomorrowSchedule[0].StationTimetables) {
                     tomorrowSchedule[0].StationTimetables.forEach(t => {
                         allTrains.push(processTrainData(t, delayMap, true));
                     });
                 }
 
+                // 5. 分組與切片
+                // 注意：使用 String() 確保數字或字串都能正確篩選
                 let trains0 = allTrains.filter(t => String(t.Direction) === '0').slice(0, 6);
                 let trains1 = allTrains.filter(t => String(t.Direction) === '1').slice(0, 6);
                 
+                console.log(`✅ 成功取得資料: 順行${trains0.length}班, 逆行${trains1.length}班`);
                 renderBoard([...trains0, ...trains1]);
 
             } catch (error) {
-                console.error(error);
-                document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><p>查詢失敗，請稍後再試</p></div>';
+                console.error("❌ 查詢失敗詳細錯誤:", error);
+                document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><p>查詢失敗，請檢查網路或稍後再試</p></div>';
             } finally {
                 queryBtn.disabled = false;
             }
