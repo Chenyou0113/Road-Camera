@@ -207,34 +207,27 @@
         /* 深色模式字體顏色設定 */
         body.dark-mode .ticker-content .ticker-item { color: #ffab91; }
         
-        /* === 新增：跑馬燈動畫關鍵影格 === */
-        @keyframes marquee-scroll {
-            0% { transform: translateX(100%); } /* 從容器最右邊外面開始 */
-            100% { transform: translateX(-100%); } /* 跑到容器最左邊外面結束 */
+        /* === 優化版：跑馬燈動畫 === */
+        @keyframes marquee-flow {
+            /* 從容器的最右邊 (parentWidth) 開始 */
+            from { transform: translateX(var(--start-pos)); }
+            /* 跑到文字的最左邊完全離開 (contentWidth) 結束 */
+            to { transform: translateX(var(--end-pos)); }
         }
 
         /* 用來啟動動畫的 class */
         .running-animation {
-            animation-name: marquee-scroll;
-            animation-timing-function: linear;
-            animation-iteration-count: infinite;
-            /* animation-duration 會由 JS 動態計算 */
+            display: inline-block;
+            white-space: nowrap; /* 強制不換行 */
+            will-change: transform; /* 效能優化 */
+            
+            animation-name: marquee-flow;
+            animation-timing-function: linear; /* 等速移動 */
+            animation-iteration-count: infinite; /* 🔥 關鍵：無限循環 */
         }
         
         /* 無警報時的綠色文字 */
         body.dark-mode .no-warning-text { color: #81c784 !important; } 
-
-        /* === 新增：無縫循環動畫 === */
-        @keyframes ticker-seamless {
-            0% { transform: translateX(0); }
-            100% { transform: translateX(var(--move-distance)); } /* 移動變數距離 */
-        }
-        
-        /* 右進左出動畫 */
-        @keyframes ticker-from-right {
-            0% { transform: translateX(var(--start-pos)); }
-            100% { transform: translateX(var(--end-pos)); }
-        }
 
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
@@ -1138,22 +1131,35 @@
         // ==========================================
         // 🏃‍♂️ 啟動跑馬燈動畫的通用函式 (v2.0 優化版)
         // ==========================================
+        // ==========================================
+        // 🏃‍♂️ 啟動跑馬燈動畫 (v3.0 精準無限循環版)
+        // ==========================================
         function startMarquee(elementId) {
             const el = document.getElementById(elementId);
             if (!el) return;
 
-            // 重置動畫
+            // 1. 重置動畫狀態
             el.classList.remove('running-animation');
-            void el.offsetWidth; // 強制重繪
+            void el.offsetWidth; // 強制瀏覽器重繪 (Magic!)
 
-            // 檢查內容是否真的需要跑馬燈 (如果文字很短就不用跑)
-            // 但為了視覺統一，這裡設定為總是跑動
-            const parentWidth = el.parentElement.offsetWidth;
-            const contentWidth = el.scrollWidth;
-            
-            // 計算速度: 每秒跑 80px (可自行調整數字)
-            const duration = (contentWidth + parentWidth) / 80;
-            
+            // 2. 取得父容器與文字的寬度 (像素 px)
+            const parent = el.parentElement;
+            const parentWidth = parent.offsetWidth; // 容器多寬
+            const contentWidth = el.scrollWidth;    // 文字多長
+
+            // 3. 設定 CSS 變數：讓動畫知道從哪裡跑到哪裡
+            // --start-pos: 從容器的最右邊開始 (正數)
+            el.style.setProperty('--start-pos', `${parentWidth}px`);
+            // --end-pos: 跑到文字完全移出左邊界為止 (負數)
+            el.style.setProperty('--end-pos', `-${contentWidth}px`);
+
+            // 4. 計算速度 (像素/秒)
+            // 設定每秒跑 100px (數字越大跑越快，您可以調整這個 100)
+            const speed = 100; 
+            const totalDistance = parentWidth + contentWidth; // 總共要跑的距離
+            const duration = totalDistance / speed;
+
+            // 5. 套用時間並啟動
             el.style.animationDuration = `${duration}s`;
             el.classList.add('running-animation');
         }
@@ -1168,41 +1174,51 @@
         });
 
         // ==========================================
-        // 🚨 警特報更新函式 (v3.0 針對截圖格式修正)
+        // 🚨 警特報更新函式 (v4.0 完美格式版)
+        // 格式：【陸上強風特報 12/01 16:28】內文... (~12/02 23:00)
         // ==========================================
         async function updateWeatherStatus() {
             const alertEl = document.getElementById('alertText');
+            // 使用您的 Worker 網址
             const alertUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev/api/weather/alert';
 
             try {
                 const alertRes = await fetch(alertUrl);
                 const alertData = await alertRes.json();
                 
-                // --- 解析邏輯開始 ---
                 let displayMessage = "";
-                
-                // 取得資料核心節點
-                // 結構通常是: cwaopendata.dataset...
                 const dataset = alertData.cwaopendata?.dataset;
                 
                 if (dataset) {
-                    // 1. 抓標題 (對應截圖中的【陸上強風特報...】)
-                    // API 欄位通常是 datasetInfo.datasetDescription
-                    const title = dataset.datasetInfo?.datasetDescription;
+                    const info = dataset.datasetInfo;
                     
-                    // 2. 抓內文 (對應截圖中的「風力偏強，1日下午...」)
-                    // API 欄位通常是 contents.content.contentText
+                    // 1. 抓標題
+                    const title = info?.datasetDescription;
+                    
+                    // 2. 抓內文
                     const content = dataset.contents?.content?.contentText;
 
-                    // 3. 組合顯示文字
-                    if (title && content) {
-                        // 如果標題是 "無理" 或空，就忽略
-                        if (title !== "無理") {
-                            // 格式：【陸上強風特報】風力偏強，1日下午至...
-                            displayMessage = `【${title}】${content}`;
-                        }
-                    } 
-                    // 4. 如果沒有內文，才嘗試去找舊版的 location 列表 (備用方案)
+                    // 3. 時間格式化小工具 (把 2025-12-01T16:28:00+08:00 變成 12/01 16:28)
+                    const formatTime = (timeStr) => {
+                        if (!timeStr) return "";
+                        const d = new Date(timeStr);
+                        const mm = String(d.getMonth() + 1).padStart(2, '0');
+                        const dd = String(d.getDate()).padStart(2, '0');
+                        const hh = String(d.getHours()).padStart(2, '0');
+                        const min = String(d.getMinutes()).padStart(2, '0');
+                        return `${mm}/${dd} ${hh}:${min}`;
+                    };
+
+                    // 4. 抓發布時間 & 結束時間
+                    const issueTime = formatTime(info?.issueTime);
+                    const endTime = formatTime(info?.validTime?.endTime);
+
+                    // 5. 組合最終字串
+                    if (title && content && title !== "無理") {
+                        // 格式：【標題 發布時間】內文 (~結束時間)
+                        displayMessage = `【${title} ${issueTime}】${content} (~${endTime})`;
+                    }
+                    // (備用) 如果是舊版 location 陣列格式
                     else if (dataset.location && dataset.location.length > 0) {
                          const locationNames = dataset.location.map(l => l.locationName).join('、');
                          const hazardTypes = [...new Set(dataset.location.flatMap(item => 
@@ -1212,15 +1228,14 @@
                     }
                 }
 
-                // --- 顯示與動畫邏輯 ---
+                // --- 顯示與動畫 ---
                 if (displayMessage) {
                     if(alertEl) {
-                        // 填入文字
                         alertEl.textContent = displayMessage;
                         alertEl.classList.remove('no-warning-text');
                         
-                        // 🔥 關鍵：因為文字可能很長，必須重新計算動畫時間
-                        // 稍微延遲一下，確保文字已經撐開寬度
+                        // 啟動跑馬燈動畫
+                        // 確保 DOM 渲染後再計算寬度
                         setTimeout(() => {
                             startMarquee('warningContent');
                         }, 100);
