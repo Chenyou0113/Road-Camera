@@ -206,7 +206,7 @@
     </div>
 
     <script>
-        // 深色模式切換 (保持不變)
+        // 深色模式切換
         function toggleTheme() {
             document.body.classList.toggle('dark-mode');
             const isDark = document.body.classList.contains('dark-mode');
@@ -238,19 +238,32 @@
                 
                 const result = await response.json();
                 
-                // TDX API 返回結構解析
                 let data = [];
                 if (Array.isArray(result)) {
                     data = result;
                 } else if (result.Newses && Array.isArray(result.Newses)) {
                     data = result.Newses;
                 }
+
+                // 🔥【過濾邏輯】只剔除「人事徵才」類公告
+                // 保留：招商、觀光、商品販售、營運資訊
+                data = data.filter(news => {
+                    const title = (news.Title?.Zh_tw || news.Title || "").toString();
+                    
+                    // 只封鎖這些關鍵字
+                    const blockKeywords = [
+                        "招聘", "錄取", "甄選", "徵才", "招考", "遴選", "聘用", "錄用"
+                    ];
+                    
+                    const hasKeyword = blockKeywords.some(keyword => title.includes(keyword));
+                    return !hasKeyword; 
+                });
                 
-                // 🔥【修正 1】加入時間排序邏輯 (由新到舊)
+                // 時間排序 (由新到舊)
                 data.sort((a, b) => {
                     const timeA = new Date(a.PublishTime || a.UpdateTime || a.SrcUpdateTime || 0);
                     const timeB = new Date(b.PublishTime || b.UpdateTime || b.SrcUpdateTime || 0);
-                    return timeB - timeA; // B - A 代表降序 (最新的在前面)
+                    return timeB - timeA; 
                 });
 
                 displayNews(data);
@@ -273,25 +286,22 @@
             }
 
             container.innerHTML = data.map((news) => {
-                // 處理時間
                 const dateStr = news.PublishTime || news.UpdateTime || news.SrcUpdateTime;
-                
-                // 處理標題 (支援多語言物件)
                 let title = news.Title?.Zh_tw || news.Title || '無標題';
-                
-                // 處理說明 (支援多語言物件)
                 let description = news.Description?.Zh_tw || news.Description || '無詳細說明';
                 
-                // 🔥【修正 2】按鈕邏輯：檢查有無有效連結
-                // 有些公告網址可能在 AttachmentUrl (附件) 裡
+                // 🔥【連結按鈕邏輯】自動尋找有效連結
+                // 優先順序：官方網址 > 新聞來源 > 附件連結
                 const validUrl = news.NewsUrl || news.NewsSource || (news.AttachmentUrl ? news.AttachmentUrl[0] : null);
                 
-                // 如果有連結才產生按鈕 HTML，否則留空字串
+                // 如果有連結，顯示藍色按鈕；如果沒有，顯示提示文字
                 const buttonHtml = validUrl 
-                    ? `<a href="${validUrl}" target="_blank" class="news-link" rel="noopener noreferrer">
+                    ? `<a href="${validUrl}" target="_blank" class="news-link" rel="noopener noreferrer" style="display:inline-flex; align-items:center; gap:5px; margin-top:10px;">
                          <i class="fas fa-external-link-alt"></i> 點我前往原始公告
                        </a>`
-                    : `<span style="color:#999; font-size:0.9rem;"><i class="fas fa-info-circle"></i> 本公告無外部連結</span>`;
+                    : `<span style="color:#999; font-size:0.9rem; display:block; margin-top:10px;">
+                         <i class="fas fa-info-circle"></i> 本公告無外部連結
+                       </span>`;
 
                 return `
                 <div class="news-card">
@@ -310,15 +320,11 @@
             if (!dateString) return '日期不詳';
             try {
                 const date = new Date(dateString);
-                // 檢查日期是否有效
                 if (isNaN(date.getTime())) return dateString;
-                
                 return date.toLocaleDateString('zh-TW', { 
                     year: 'numeric', 
                     month: '2-digit', 
-                    day: '2-digit',
-                    hour: '2-digit',
-                    minute: '2-digit'
+                    day: '2-digit'
                 });
             } catch (e) {
                 return dateString;
@@ -331,7 +337,6 @@
             document.getElementById('loading').style.display = 'none';
         }
 
-        // 初始化
         window.addEventListener('DOMContentLoaded', () => {
             loadTheme();
             loadTRANews();
