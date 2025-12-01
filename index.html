@@ -1174,12 +1174,11 @@
         });
 
         // ==========================================
-        // 🚨 警特報更新函式 (v4.0 完美格式版)
-        // 格式：【陸上強風特報 12/01 16:28】內文... (~12/02 23:00)
+        // 🚨 警特報更新函式 (v5.0 精簡版：去頭去尾)
+        // 格式：【標題 時間】核心內文 (~結束時間)
         // ==========================================
         async function updateWeatherStatus() {
             const alertEl = document.getElementById('alertText');
-            // 使用您的 Worker 網址
             const alertUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev/api/weather/alert';
 
             try {
@@ -1191,14 +1190,23 @@
                 
                 if (dataset) {
                     const info = dataset.datasetInfo;
-                    
-                    // 1. 抓標題
                     const title = info?.datasetDescription;
-                    
-                    // 2. 抓內文
-                    const content = dataset.contents?.content?.contentText;
+                    let content = dataset.contents?.content?.contentText;
 
-                    // 3. 時間格式化小工具 (把 2025-12-01T16:28:00+08:00 變成 12/01 16:28)
+                    // --- 🔥 文字清洗邏輯 (重點在這裡) ---
+                    if (content) {
+                        // 1. 去除開頭的「一、概述：」 (包含冒號和空白)
+                        content = content.replace(/^一、概述[：:]\s*/, '');
+
+                        // 2. 去除「二、注意事項...」之後的所有文字
+                        // 只要偵測到「二、」就從那裡切斷
+                        const splitIndex = content.indexOf('二、');
+                        if (splitIndex !== -1) {
+                            content = content.substring(0, splitIndex).trim();
+                        }
+                    }
+
+                    // 3. 時間格式化
                     const formatTime = (timeStr) => {
                         if (!timeStr) return "";
                         const d = new Date(timeStr);
@@ -1209,16 +1217,14 @@
                         return `${mm}/${dd} ${hh}:${min}`;
                     };
 
-                    // 4. 抓發布時間 & 結束時間
                     const issueTime = formatTime(info?.issueTime);
                     const endTime = formatTime(info?.validTime?.endTime);
 
-                    // 5. 組合最終字串
+                    // 4. 組合最終字串
                     if (title && content && title !== "無理") {
-                        // 格式：【標題 發布時間】內文 (~結束時間)
                         displayMessage = `【${title} ${issueTime}】${content} (~${endTime})`;
                     }
-                    // (備用) 如果是舊版 location 陣列格式
+                    // (備用) 舊版 location 格式
                     else if (dataset.location && dataset.location.length > 0) {
                          const locationNames = dataset.location.map(l => l.locationName).join('、');
                          const hazardTypes = [...new Set(dataset.location.flatMap(item => 
@@ -1234,8 +1240,7 @@
                         alertEl.textContent = displayMessage;
                         alertEl.classList.remove('no-warning-text');
                         
-                        // 啟動跑馬燈動畫
-                        // 確保 DOM 渲染後再計算寬度
+                        // 重新計算跑馬燈寬度
                         setTimeout(() => {
                             startMarquee('warningContent');
                         }, 100);
