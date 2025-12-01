@@ -700,11 +700,8 @@
                 if (historyData.length > 0) {
                     historyData.forEach(d => {
                         const date = new Date(d.timestamp);
-                        const hours = date.getHours().toString().padStart(2, '0');
-                        const minutes = date.getMinutes().toString().padStart(2, '0');
-                        const timeStr = `${hours}:${minutes}`;
-                        
-                        labels.push(timeStr);
+                        // 儲存完整 timestamp，讓 Chart.js callback 使用
+                        labels.push(d.timestamp);
                         temps.push(d.temperature <= -90 ? null : d.temperature);
                         let h = d.humidity;
                         if (h !== null) {
@@ -735,8 +732,19 @@
                 rainBar:  '#94a3b8'
             };
 
+            // ✅ 修復：格式化時間，將 timestamp 轉換為 MM/DD HH:MM
+            const formatFullTime = (timestamp) => {
+                const d = new Date(timestamp);
+                return `${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+            };
+
+            const formatShortTime = (timestamp) => {
+                const d = new Date(timestamp);
+                return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+            };
+
             const timeRange = labels.length > 0 
-                ? `${new Date().getFullYear()}/${labels[0]} ~ ${new Date().getFullYear()}/${labels[labels.length-1]}`
+                ? `${formatFullTime(labels[0])} ~ ${formatFullTime(labels[labels.length-1])}`
                 : '-- ~ --';
 
             const createConfig = (type, title, yLabel, datasetLabel, dataValues, color) => ({
@@ -762,11 +770,15 @@
                         x: {
                             ticks: {
                                 color: styles.textColor,
-                                maxRotation: 45,
-                                minRotation: 45,
+                                maxRotation: 0,
+                                minRotation: 0,
                                 autoSkip: true,
-                                maxTicksLimit: isMobile ? 6 : 12,
-                                font: { size: 11 }
+                                maxTicksLimit: isMobile ? 6 : 8,  // 🔥 限制最多顯示 6-8 個時間點
+                                font: { size: 11 },
+                                callback: function(value, index, values) {
+                                    // 轉換 timestamp 為短時間格式 (HH:MM)
+                                    return formatShortTime(labels[index]);
+                                }
                             },
                             grid: { display: false },
                             title: { display: true, text: '小時', color: styles.subTitleColor, font: {size: 12}, padding: {top: 10} }
@@ -804,7 +816,16 @@
                             borderColor: '#ccc',
                             borderWidth: 1,
                             padding: 10,
-                            displayColors: true
+                            displayColors: true,
+                            callbacks: {
+                                title: function(items) {
+                                    // Tooltip 顯示完整日期時間
+                                    if (items.length > 0) {
+                                        return formatFullTime(labels[items[0].dataIndex]);
+                                    }
+                                    return '';
+                                }
+                            }
                         }
                     }
                 }
