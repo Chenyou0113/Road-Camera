@@ -1166,7 +1166,7 @@
         });
 
         // ==========================================
-        // 🚨 警特報更新函式 (v2.0 支援強風特報格式)
+        // 🚨 警特報更新函式 (v3.0 針對截圖格式修正)
         // ==========================================
         async function updateWeatherStatus() {
             const alertEl = document.getElementById('alertText');
@@ -1178,50 +1178,55 @@
                 
                 // --- 解析邏輯開始 ---
                 let displayMessage = "";
-
-                // 嘗試解析 CWA W-C0033-002 (即時訊息) 的結構
-                // 結構通常是: cwaopendata.dataset.datasetInfo.datasetDescription (標題)
-                // 內容在: cwaopendata.dataset.contents.content.contentText (內文)
                 
+                // 取得資料核心節點
+                // 結構通常是: cwaopendata.dataset...
                 const dataset = alertData.cwaopendata?.dataset;
                 
                 if (dataset) {
-                    // 1. 抓標題 (例如: 陸上強風特報)
+                    // 1. 抓標題 (對應截圖中的【陸上強風特報...】)
+                    // API 欄位通常是 datasetInfo.datasetDescription
                     const title = dataset.datasetInfo?.datasetDescription;
                     
-                    // 2. 抓內容 (例如: 東北風明顯偏強...)
+                    // 2. 抓內文 (對應截圖中的「風力偏強，1日下午...」)
+                    // API 欄位通常是 contents.content.contentText
                     const content = dataset.contents?.content?.contentText;
 
-                    // 3. 抓位置 (如果有 location 陣列)
-                    const locations = dataset.location;
-
-                    if (title && title !== "無理") { // 有時候氣象局會回傳"無理"代表無資料
-                        if (locations && locations.length > 0) {
-                             // 如果有詳細縣市列表 (例如豪雨特報)
-                             const locationNames = locations.map(l => l.locationName).join('、');
-                             displayMessage = `【${title}】影響區域：${locationNames}`;
-                        } else {
-                             // 如果只有純文字描述 (例如您的截圖: 強風特報)
-                             // 截取前 60 個字以上還需要省略
-                             displayMessage = `【${title}】${content ? content.substring(0, 60) + '...' : '請注意氣象署最新發布'}`;
+                    // 3. 組合顯示文字
+                    if (title && content) {
+                        // 如果標題是 "無理" 或空，就忽略
+                        if (title !== "無理") {
+                            // 格式：【陸上強風特報】風力偏強，1日下午至...
+                            displayMessage = `【${title}】${content}`;
                         }
+                    } 
+                    // 4. 如果沒有內文，才嘗試去找舊版的 location 列表 (備用方案)
+                    else if (dataset.location && dataset.location.length > 0) {
+                         const locationNames = dataset.location.map(l => l.locationName).join('、');
+                         const hazardTypes = [...new Set(dataset.location.flatMap(item => 
+                            item.hazardConditions?.hazards?.map(h => h.info?.name) || []
+                         ))].join('、');
+                         displayMessage = `【${hazardTypes}】影響區域：${locationNames}`;
                     }
                 }
 
-                // --- 顯示邏輯 ---
+                // --- 顯示與動畫邏輯 ---
                 if (displayMessage) {
                     if(alertEl) {
+                        // 填入文字
                         alertEl.textContent = displayMessage;
                         alertEl.classList.remove('no-warning-text');
                         
-                        // 啟動跑馬燈 (如果文字太長)
-                        setTimeout(() => startMarquee('warningContent'), 100);
+                        // 🔥 關鍵：因為文字可能很長，必須重新計算動畫時間
+                        // 稍微延遲一下，確保文字已經撐開寬度
+                        setTimeout(() => {
+                            startMarquee('warningContent');
+                        }, 100);
                     }
                 } else {
                     if(alertEl) {
                         alertEl.textContent = "目前全臺無發布氣象警特報";
                         alertEl.classList.add('no-warning-text');
-                        // 沒警報就移除動畫 class
                         document.getElementById('warningContent')?.classList.remove('running-animation');
                     }
                 }
