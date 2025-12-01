@@ -967,7 +967,7 @@
                         <div class="feature-header">
                             <div class="feature-icon"><i class="fas fa-water"></i></div>
                             <h3 class="feature-title">水庫運作監測</h3>
-                            <span class="feature-badge"><i class="fas fa-tint"></i> 水利署國營臺鐵公司</span>
+                            <span class="feature-badge"><i class="fas fa-tint"></i> 水利署</span>
                         </div>
                         <div class="feature-body">
                             <p class="feature-desc">全臺水庫蓄水狀況、進出水流量及運轉參數監測。</p>
@@ -978,7 +978,7 @@
                         <div class="feature-header">
                             <div class="feature-icon"><i class="fas fa-ruler-vertical"></i></div>
                             <h3 class="feature-title">河川水位監測</h3>
-                            <span class="feature-badge"><i class="fas fa-wave-square"></i> 水利署國營臺鐵公司</span>
+                            <span class="feature-badge"><i class="fas fa-wave-square"></i> 水利署</span>
                         </div>
                         <div class="feature-body">
                             <p class="feature-desc">全臺主要河川水位即時數據、警戒等級監控及歷史水位查詢。</p>
@@ -1136,28 +1136,26 @@
         }
 
         // ==========================================
-        // 🏃‍♂️ 啟動跑馬燈動畫的通用函式
+        // 🏃‍♂️ 啟動跑馬燈動畫的通用函式 (v2.0 優化版)
         // ==========================================
-        function startMarquee(contentId) {
-            const element = document.getElementById(contentId);
-            if (!element) return;
+        function startMarquee(elementId) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
 
-            // 1. 先移除動畫 (重置狀態)
-            element.classList.remove('running-animation');
-            void element.offsetWidth; // 觸發重繪 (Magic!)
+            // 重置動畫
+            el.classList.remove('running-animation');
+            void el.offsetWidth; // 強制重繪
 
-            // 2. 計算文字寬度與容器寬度
-            const parent = element.parentElement;
-            const contentWidth = element.scrollWidth;
-            const parentWidth = parent.offsetWidth;
-
-            // 3. 計算動畫時間 (速度控制：數值越大跑越慢)
-            // 公式：(文字長度 + 容器寬度) / 速度係數
-            const duration = (contentWidth + parentWidth) / 80; 
-
-            // 4. 設定時間並啟動動畫
-            element.style.animationDuration = `${duration}s`;
-            element.classList.add('running-animation');
+            // 檢查內容是否真的需要跑馬燈 (如果文字很短就不用跑)
+            // 但為了視覺統一，這裡設定為總是跑動
+            const parentWidth = el.parentElement.offsetWidth;
+            const contentWidth = el.scrollWidth;
+            
+            // 計算速度: 每秒跑 80px (可自行調整數字)
+            const duration = (contentWidth + parentWidth) / 80;
+            
+            el.style.animationDuration = `${duration}s`;
+            el.classList.add('running-animation');
         }
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -1167,50 +1165,64 @@
             updateWeatherStatus();
         });
 
+        // ==========================================
+        // 🚨 警特報更新函式 (v2.0 支援強風特報格式)
+        // ==========================================
         async function updateWeatherStatus() {
             const alertEl = document.getElementById('alertText');
-            
-            // ✅ 直接使用您提供的新網址（加上 /api/weather/alert 路徑）
             const alertUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev/api/weather/alert';
 
             try {
                 const alertRes = await fetch(alertUrl);
                 const alertData = await alertRes.json();
                 
-                // 解析資料 (相容陣列結構或原始物件)
-                let alerts = [];
+                // --- 解析邏輯開始 ---
+                let displayMessage = "";
+
+                // 嘗試解析 CWA W-C0033-002 (即時訊息) 的結構
+                // 結構通常是: cwaopendata.dataset.datasetInfo.datasetDescription (標題)
+                // 內容在: cwaopendata.dataset.contents.content.contentText (內文)
                 
-                // 情況 A: 如果回傳的是資料庫存的陣列結構 [{"cwaopendata": ...}]
-                if (Array.isArray(alertData) && alertData[0]?.cwaopendata?.dataset?.location) {
-                    alerts = alertData[0].cwaopendata.dataset.location;
-                } 
-                // 情況 B: 如果回傳的是 CWA 原始 JSON { records: { location: ... } }
-                else if (alertData.records?.location) {
-                    alerts = alertData.records.location;
-                }
-                // 情況 C: 如果回傳的是 CWA 另一種格式 { cwaopendata: ... }
-                else if (alertData.cwaopendata?.dataset?.location) {
-                    alerts = alertData.cwaopendata.dataset.location;
+                const dataset = alertData.cwaopendata?.dataset;
+                
+                if (dataset) {
+                    // 1. 抓標題 (例如: 陸上強風特報)
+                    const title = dataset.datasetInfo?.datasetDescription;
+                    
+                    // 2. 抓內容 (例如: 東北風明顯偏強...)
+                    const content = dataset.contents?.content?.contentText;
+
+                    // 3. 抓位置 (如果有 location 陣列)
+                    const locations = dataset.location;
+
+                    if (title && title !== "無理") { // 有時候氣象局會回傳"無理"代表無資料
+                        if (locations && locations.length > 0) {
+                             // 如果有詳細縣市列表 (例如豪雨特報)
+                             const locationNames = locations.map(l => l.locationName).join('、');
+                             displayMessage = `【${title}】影響區域：${locationNames}`;
+                        } else {
+                             // 如果只有純文字描述 (例如您的截圖: 強風特報)
+                             // 截取前 60 個字以上還需要省略
+                             displayMessage = `【${title}】${content ? content.substring(0, 60) + '...' : '請注意氣象署最新發布'}`;
+                        }
+                    }
                 }
 
-                if (alerts && alerts.length > 0) {
-                    const alertCounties = alerts.map(item => item.locationName).join('、');
-                    // 抓取警報類型 (例如: 豪雨特報、強風特報)
-                    const hazardTypes = [...new Set(alerts.flatMap(item => 
-                        item.hazardConditions?.hazards?.map(h => h.info?.name) || []
-                    ))].join('、');
-                    
+                // --- 顯示邏輯 ---
+                if (displayMessage) {
                     if(alertEl) {
-                        alertEl.textContent = `【${hazardTypes}】影響區域：${alertCounties}`;
+                        alertEl.textContent = displayMessage;
                         alertEl.classList.remove('no-warning-text');
                         
-                        // 🔥 啟動黃色跑馬燈動畫
-                        startMarquee('warningContent');
+                        // 啟動跑馬燈 (如果文字太長)
+                        setTimeout(() => startMarquee('warningContent'), 100);
                     }
                 } else {
                     if(alertEl) {
                         alertEl.textContent = "目前全臺無發布氣象警特報";
                         alertEl.classList.add('no-warning-text');
+                        // 沒警報就移除動畫 class
+                        document.getElementById('warningContent')?.classList.remove('running-animation');
                     }
                 }
 
@@ -1221,40 +1233,32 @@
         }
 
         // ==========================================
-        // 🚀 修正版：對接 Wang Weather Worker
+        // 🏃‍♂️ 天氣報吼哩災 (v2.0 快速顯示版)
         // ==========================================
         async function updateWangweiMsg() {
             const textEl = document.getElementById('forecastText'); 
             if (!textEl) return;
 
-            // ✅ 直接使用您提供的新網址（加上 /message 路徑）
             const url = 'https://wang-weather.xiaoyouwu5-fd3.workers.dev/message';
 
             try {
                 const res = await fetch(url);
-                
-                // 嘗試解析回傳的資料
-                // 您的 Worker 可能回傳 { "text": "..." } 或 { "message": "..." } 或直接是字串
                 const data = await res.json();
                 
-                let msg = "";
-                if (data.text) msg = data.text;
-                else if (data.message) msg = data.message;
-                else if (data.value) msg = data.value;
+                let msg = data.text || data.message || data.value;
                 
                 if (msg) {
+                    // 🔥 拿到資料，立刻顯示！不要等！
                     textEl.textContent = msg;
                     
-                    // 🔥 啟動藍色跑馬燈動畫 (稍微延遲確保文字已渲染)
-                    setTimeout(() => {
+                    // 文字出來後，再呼叫動畫計算 (只需要極短的延遲讓瀏覽器重繪)
+                    requestAnimationFrame(() => {
                         startMarquee('wangweiContent');
-                    }, 100);
-                } else {
-                    textEl.textContent = "目前無特殊天氣叮嚀";
+                    });
                 }
             } catch (e) {
                 console.error("無法載入天氣叮嚀:", e);
-                textEl.textContent = "載入失敗，請稍後再試";
+                textEl.textContent = "目前無特殊天氣叮嚀";
             }
         }
     </script>
