@@ -984,26 +984,41 @@
 
         async function updateWeatherStatus() {
             const alertEl = document.getElementById('alertText');
-            const forecastEl = document.getElementById('forecastText');
-
-            // 1. 移除檢查 API Key 的程式碼，直接設定正確的後端網址
-            const alertUrl = `/api/weather/alert`;
+            
+            // ✅ 直接使用您提供的新網址
+            const alertUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev/';
 
             try {
-                // 2. 開始連線
                 const alertRes = await fetch(alertUrl);
                 const alertData = await alertRes.json();
                 
-                // 解析警報 (簡單範例：檢查是否有 records.location)
-                const alerts = alertData.records?.location || [];
+                // 解析資料 (相容陣列結構或原始物件)
+                let alerts = [];
+                
+                // 情況 A: 如果回傳的是資料庫存的陣列結構 [{"cwaopendata": ...}]
+                if (Array.isArray(alertData) && alertData[0]?.cwaopendata?.dataset?.location) {
+                    alerts = alertData[0].cwaopendata.dataset.location;
+                } 
+                // 情況 B: 如果回傳的是 CWA 原始 JSON { records: { location: ... } }
+                else if (alertData.records?.location) {
+                    alerts = alertData.records.location;
+                }
+                // 情況 C: 如果回傳的是 CWA 另一種格式 { cwaopendata: ... }
+                else if (alertData.cwaopendata?.dataset?.location) {
+                    alerts = alertData.cwaopendata.dataset.location;
+                }
+
                 if (alerts && alerts.length > 0) {
-                    // 這裡簡化處理，將所有有警報的縣市列出來
                     const alertCounties = alerts.map(item => item.locationName).join('、');
+                    // 抓取警報類型 (例如: 豪雨特報、強風特報)
                     const hazardTypes = [...new Set(alerts.flatMap(item => 
                         item.hazardConditions?.hazards?.map(h => h.info?.name) || []
                     ))].join('、');
                     
-                    if(alertEl) alertEl.textContent = `【${hazardTypes}】影響區域：${alertCounties}`;
+                    if(alertEl) {
+                        alertEl.textContent = `【${hazardTypes}】影響區域：${alertCounties}`;
+                        alertEl.classList.remove('no-warning-text');
+                    }
                 } else {
                     if(alertEl) {
                         alertEl.textContent = "目前全臺無發布氣象警特報";
@@ -1011,46 +1026,42 @@
                     }
                 }
 
-                // (B) 抓取天氣預報 (F-C0032-001: 一般天氣預報)
-                // 這裡為了示範，簡單顯示「預報載入成功」
-                // 實務上您可能需要抓取特定縣市的 PoP (降雨機率) 或 Wx (天氣現象)
-                if(forecastEl) {
-                    forecastEl.textContent = "今日全臺各地天氣大致穩定，詳細資訊請查看儀表板。";
-                }
-
             } catch (error) {
                 console.error("氣象資料載入失敗:", error);
-                // 🔥 失敗時的防呆顯示，不要讓它卡在「載入中」
-                if(alertEl) alertEl.textContent = "⚠️ 無法連線氣象署 (請檢查 API Key 或網路)";
-                if(forecastEl) forecastEl.textContent = "⚠️ 預報資料暫時無法取得";
+                if(alertEl) alertEl.textContent = "⚠️ 連線氣象署資料失敗";
             }
         }
 
         // ==========================================
-        // 🚀 修正版：對接 /message API
+        // 🚀 修正版：對接 Wang Weather Worker
         // ==========================================
         async function updateWangweiMsg() {
             const textEl = document.getElementById('forecastText'); 
-            // 注意：這裡對應您 HTML 裡面的 ID，如果是 wangweiContent 下面的 span，請確認 ID 是否為 forecastText
-            // 如果您的跑馬燈 ID 是其他名字 (例如 ticker-content)，請自行修改 document.getElementById 的參數
-
             if (!textEl) return;
 
-            try {
-                // 1. 修改網址：根據您的 Worker，路徑是 /message
-                const res = await fetch('/message'); 
-                
-                if (!res.ok) throw new Error("API 回應錯誤");
+            // ✅ 直接使用您提供的新網址
+            const url = 'https://wang-weather.xiaoyouwu5-fd3.workers.dev/';
 
+            try {
+                const res = await fetch(url);
+                
+                // 嘗試解析回傳的資料
+                // 您的 Worker 可能回傳 { "text": "..." } 或 { "message": "..." } 或直接是字串
                 const data = await res.json();
                 
-                // 2. 修改欄位：您的 Worker 回傳的是 { message: "..." }
-                if (data.message) {
-                    textEl.textContent = data.message;
+                let msg = "";
+                if (data.text) msg = data.text;
+                else if (data.message) msg = data.message;
+                else if (data.value) msg = data.value;
+                
+                if (msg) {
+                    textEl.textContent = msg;
+                } else {
+                    textEl.textContent = "目前無特殊天氣叮嚀";
                 }
             } catch (e) {
                 console.error("無法載入天氣叮嚀:", e);
-                textEl.textContent = "目前無特殊天氣叮嚀 (連線中...)";
+                textEl.textContent = "載入失敗，請稍後再試";
             }
         }
     </script>
