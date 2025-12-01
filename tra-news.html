@@ -206,7 +206,7 @@
     </div>
 
     <script>
-        // 深色模式切換
+        // 深色模式切換 (保持不變)
         function toggleTheme() {
             document.body.classList.toggle('dark-mode');
             const isDark = document.body.classList.contains('dark-mode');
@@ -220,7 +220,6 @@
             icon.className = isDark ? 'fas fa-sun' : 'fas fa-moon';
         }
 
-        // 載入保存的主題
         function loadTheme() {
             const savedTheme = localStorage.getItem('theme');
             if (savedTheme === 'dark') {
@@ -238,23 +237,22 @@
                 if (!response.ok) throw new Error('API 請求失敗');
                 
                 const result = await response.json();
-                console.log('TRA News API 回應:', result);
                 
-                // TDX API 返回 { Newses: [...], UpdateTime: ..., ... } 格式
-                let data;
+                // TDX API 返回結構解析
+                let data = [];
                 if (Array.isArray(result)) {
                     data = result;
                 } else if (result.Newses && Array.isArray(result.Newses)) {
                     data = result.Newses;
-                } else if (result.data && Array.isArray(result.data)) {
-                    data = result.data;
-                } else if (result.News && Array.isArray(result.News)) {
-                    data = result.News;
-                } else {
-                    data = [];
                 }
                 
-                console.log('處理後的數據:', data);
+                // 🔥【修正 1】加入時間排序邏輯 (由新到舊)
+                data.sort((a, b) => {
+                    const timeA = new Date(a.PublishTime || a.UpdateTime || a.SrcUpdateTime || 0);
+                    const timeB = new Date(b.PublishTime || b.UpdateTime || b.SrcUpdateTime || 0);
+                    return timeB - timeA; // B - A 代表降序 (最新的在前面)
+                });
+
                 displayNews(data);
             } catch (error) {
                 console.error('錯誤:', error);
@@ -268,60 +266,39 @@
             
             loading.style.display = 'none';
             
-            // 確保 data 是數組
-            if (!Array.isArray(data)) {
-                console.warn('数据不是数组:', data);
-                data = [];
-            }
-            
-            if (data.length === 0) {
+            if (!Array.isArray(data) || data.length === 0) {
                 container.innerHTML = '<p style="grid-column: 1/-1; text-align: center; color: #999;">目前沒有新公告</p>';
                 container.style.display = 'grid';
                 return;
             }
 
-            container.innerHTML = data.map((news, index) => {
-                // 處理多種可能的時間字段名稱
-                const dateStr = news.PublishTime || news.UpdateTime || news.SrcUpdateTime || new Date().toISOString();
+            container.innerHTML = data.map((news) => {
+                // 處理時間
+                const dateStr = news.PublishTime || news.UpdateTime || news.SrcUpdateTime;
                 
-                // 處理多語言標題 (優先繁體中文)
-                let title = '無標題';
-                if (news.Title) {
-                    if (typeof news.Title === 'string') {
-                        title = news.Title;
-                    } else if (news.Title.Zh_tw) {
-                        title = news.Title.Zh_tw;
-                    } else if (news.Title.Zh_CN) {
-                        title = news.Title.Zh_CN;
-                    } else if (news.Title.En) {
-                        title = news.Title.En;
-                    }
-                }
+                // 處理標題 (支援多語言物件)
+                let title = news.Title?.Zh_tw || news.Title || '無標題';
                 
-                // 處理多語言說明 (優先繁體中文)
-                let description = '無詳細說明';
-                if (news.Description) {
-                    if (typeof news.Description === 'string') {
-                        description = news.Description;
-                    } else if (news.Description.Zh_tw) {
-                        description = news.Description.Zh_tw;
-                    } else if (news.Description.Zh_CN) {
-                        description = news.Description.Zh_CN;
-                    } else if (news.Description.En) {
-                        description = news.Description.En;
-                    }
-                }
+                // 處理說明 (支援多語言物件)
+                let description = news.Description?.Zh_tw || news.Description || '無詳細說明';
                 
-                const newsUrl = news.NewsUrl || news.NewsSource || '#';
+                // 🔥【修正 2】按鈕邏輯：檢查有無有效連結
+                // 有些公告網址可能在 AttachmentUrl (附件) 裡
+                const validUrl = news.NewsUrl || news.NewsSource || (news.AttachmentUrl ? news.AttachmentUrl[0] : null);
                 
+                // 如果有連結才產生按鈕 HTML，否則留空字串
+                const buttonHtml = validUrl 
+                    ? `<a href="${validUrl}" target="_blank" class="news-link" rel="noopener noreferrer">
+                         <i class="fas fa-external-link-alt"></i> 點我前往原始公告
+                       </a>`
+                    : `<span style="color:#999; font-size:0.9rem;"><i class="fas fa-info-circle"></i> 本公告無外部連結</span>`;
+
                 return `
                 <div class="news-card">
                     <div class="news-date">${formatDate(dateStr)}</div>
                     <h3>${title}</h3>
                     <p>${description}</p>
-                    <a href="${newsUrl}" target="_blank" class="news-link" rel="noopener noreferrer">
-                        <i class="fas fa-external-link-alt"></i> 點我前往原始公告
-                    </a>
+                    ${buttonHtml}
                 </div>
             `;
             }).join('');
@@ -333,6 +310,9 @@
             if (!dateString) return '日期不詳';
             try {
                 const date = new Date(dateString);
+                // 檢查日期是否有效
+                if (isNaN(date.getTime())) return dateString;
+                
                 return date.toLocaleDateString('zh-TW', { 
                     year: 'numeric', 
                     month: '2-digit', 
