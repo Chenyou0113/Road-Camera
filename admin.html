@@ -33,6 +33,15 @@
         }
         .code-display:active { transform: scale(0.98); background: #111; }
         .hint { font-size: 0.8rem; color: #888; text-align: center; margin-top: -10px; margin-bottom: 15px; display: none; }
+        
+        /* === 新增：開關切換按鈕樣式 === */
+        .switch { position: relative; display: inline-block; width: 50px; height: 26px; vertical-align: middle; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #333; transition: .4s; border-radius: 34px; border: 1px solid #555; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #4caf50; border-color: #4caf50; }
+        input:checked + .slider:before { transform: translateX(24px); }
+        .switch-label { margin-left: 10px; font-size: 16px; color: #fff; vertical-align: middle; }
     </style>
 </head>
 <body>
@@ -50,16 +59,34 @@
         <div class="hidden" id="editSection">
             <div class="card" style="margin-bottom: 20px;">
                 <div class="header-bar">
-                    <h2 style="margin:0; font-size: 1.2rem;">🎙️ 王偉預報管理</h2>
+                    <h2 style="margin:0; font-size: 1.2rem;">🎙️ 天氣報吼哩災</h2>
                     <div style="font-size: 0.9rem; color: #aaa;">
                         <span id="currentUser" style="color:#4fc3f7; font-weight:bold;"></span> | 
                         <a href="#" onclick="logout()" style="color:#ff5252; text-decoration:none;">登出</a>
                     </div>
                 </div>
-                
                 <textarea id="message" placeholder="載入中..."></textarea>
-                <button class="save-btn" onclick="saveMessage()">💾 更新並發布</button>
+                <button class="save-btn" onclick="saveMessage()">💾 更新跑馬燈</button>
                 <div class="status" id="editStatus"></div>
+            </div>
+
+            <div class="card" style="margin-bottom: 20px; border-color: #ff9800;">
+                <h3 style="color: #ff9800;">📢 系統彈窗公告</h3>
+                
+                <div style="margin-bottom: 15px; display: flex; align-items: center;">
+                    <label class="switch">
+                        <input type="checkbox" id="ann_active">
+                        <span class="slider"></span>
+                    </label>
+                    <span class="switch-label" id="ann_label">狀態：關閉</span>
+                </div>
+
+                <input type="text" id="ann_title" placeholder="公告標題 (例如：🎉 系統更新)">
+                <textarea id="ann_content" style="height: 80px;" placeholder="公告內文..."></textarea>
+                <textarea id="ann_list" style="height: 100px;" placeholder="清單項目 (一行一個，留空則不顯示)&#10;✅ 修復了 A 功能&#10;✅ 新增了 B 功能"></textarea>
+                
+                <button class="save-btn" style="background: linear-gradient(45deg, #ff9800, #f57c00);" onclick="saveAnnouncement()">💾 儲存並發布公告</button>
+                <div class="status" id="annStatus"></div>
             </div>
 
             <div class="card">
@@ -110,14 +137,33 @@
             location.reload();
         }
 
-        // 載入跑馬燈內容
+        // 載入跑馬燈內容 & 公告設定
         async function loadCurrent() {
             try {
-                const res = await fetch(`${API_BASE}/message`);
-                const data = await res.json();
-                document.getElementById('message').value = data.message;
+                // 1. 載入跑馬燈
+                const resMsg = await fetch(`${API_BASE}/message`);
+                const dataMsg = await resMsg.json();
+                document.getElementById('message').value = dataMsg.message;
+
+                // 2. 載入公告設定
+                const resAnn = await fetch(`${API_BASE}/announcement`);
+                const dataAnn = await resAnn.json();
+                
+                // 填入欄位
+                document.getElementById('ann_active').checked = dataAnn.active;
+                document.getElementById('ann_label').innerText = dataAnn.active ? "狀態：開啟 (顯示中)" : "狀態：關閉";
+                document.getElementById('ann_title').value = dataAnn.title || "";
+                document.getElementById('ann_content').value = dataAnn.content || "";
+                document.getElementById('ann_list').value = (dataAnn.list || []).join('\n');
+
+                // 綁定開關文字變化
+                document.getElementById('ann_active').onchange = function() {
+                    document.getElementById('ann_label').innerText = this.checked ? "狀態：開啟 (顯示中)" : "狀態：關閉";
+                };
+
             } catch (e) {
-                document.getElementById('editStatus').innerText = "❌ 無法讀取目前內容";
+                console.error(e);
+                document.getElementById('editStatus').innerText = "⚠️ 部分資料讀取失敗";
             }
         }
 
@@ -141,6 +187,44 @@
                 const data = await res.json();
                 if (data.success) {
                     statusEl.innerText = "✅ 更新成功！首頁已同步。";
+                    statusEl.style.color = "#4caf50";
+                } else {
+                    handleError(statusEl, data.error);
+                }
+            } catch (e) {
+                statusEl.innerText = "❌ 連線失敗";
+                statusEl.style.color = "#ff5252";
+            }
+        }
+
+        // [新增] 儲存公告設定
+        async function saveAnnouncement() {
+            const user = localStorage.getItem('wangwei_user');
+            const pass = localStorage.getItem('wangwei_pass');
+            const statusEl = document.getElementById('annStatus');
+
+            // 收集資料
+            const payload = {
+                active: document.getElementById('ann_active').checked,
+                title: document.getElementById('ann_title').value,
+                content: document.getElementById('ann_content').value,
+                // 把清單文字轉成陣列 (過濾空行)
+                list: document.getElementById('ann_list').value.split('\n').filter(line => line.trim() !== '')
+            };
+
+            statusEl.innerText = "⏳ 儲存中...";
+            statusEl.style.color = "#aaa";
+
+            try {
+                const res = await fetch(`${API_BASE}/announcement`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Username': user, 'X-Password': pass },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    statusEl.innerText = "✅ 公告已更新！";
                     statusEl.style.color = "#4caf50";
                 } else {
                     handleError(statusEl, data.error);
