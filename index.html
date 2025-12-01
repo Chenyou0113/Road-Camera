@@ -1103,14 +1103,57 @@
         const CWA_API_KEY = ""; // 例如 "CWA-1234-ABCD-..."
 
         // === 維護公告控制邏輯 ===
-        function initMaintenanceModal() {
+        // ==========================================
+        // 📢 動態系統公告 (讀取後台設定)
+        // ==========================================
+        async function checkSystemAnnouncement() {
             const modal = document.getElementById('maintenanceModal');
-            
-            // 檢查 SessionStorage，如果這次已經關過，就不再顯示
-            if (!sessionStorage.getItem('maintenance_seen')) {
-                setTimeout(() => {
-                    modal.style.display = 'flex';
-                }, 500); // 延遲 0.5 秒跳出，比較有質感
+            if (!modal) return;
+
+            // 1. 檢查是否已經看過 (避免一直跳出來煩人)
+            // 如果您想測試，可以先註解掉下面這行，測完再打開
+            if (sessionStorage.getItem('maintenance_seen')) return;
+
+            try {
+                // 🔥 這裡要呼叫您的 wang-weather Worker
+                const res = await fetch('https://wang-weather.xiaoyouwu5-fd3.workers.dev/announcement');
+                const config = await res.json();
+
+                // 2. 檢查後台開關 (active 為 true 才顯示)
+                if (config.active) {
+                    
+                    // 填入標題
+                    if (config.title) document.getElementById('modalTitle').textContent = config.title;
+                    
+                    // 填入內文
+                    if (config.content) document.getElementById('modalDesc').textContent = config.content;
+                    
+                    // 填入清單
+                    const listEl = document.getElementById('modalList');
+                    listEl.innerHTML = ''; // 先清空
+                    
+                    if (config.list && Array.isArray(config.list)) {
+                        config.list.forEach(item => {
+                            const li = document.createElement('li');
+                            // 自動判斷 icon
+                            let icon = '<i class="fas fa-info-circle" style="color: #4fc3f7;"></i>';
+                            if(item.includes('已修復') || item.includes('完成')) icon = '<i class="fas fa-check-circle" style="color: #66bb6a;"></i>';
+                            if(item.includes('即將') || item.includes('修復中')) icon = '<i class="fas fa-tools" style="color: #ff9800;"></i>';
+                            
+                            li.innerHTML = `${icon} <strong>${item}</strong>`;
+                            listEl.appendChild(li);
+                        });
+                    }
+
+                    // 顯示彈窗
+                    setTimeout(() => {
+                        modal.style.display = 'flex';
+                    }, 500);
+                } else {
+                    console.log("公告目前由後台關閉中");
+                }
+            } catch (e) {
+                console.warn("公告讀取失敗:", e);
             }
         }
 
@@ -1170,7 +1213,7 @@
             updateWangweiMsg();
             
             // ⬇️ 其他功能
-            initMaintenanceModal();
+            checkSystemAnnouncement();
         });
 
         // ==========================================
@@ -1324,23 +1367,20 @@
         });
     </script>
 
-    <!-- === 系統維護公告彈窗 HTML === -->
+    <!-- === 系統公告彈窗 HTML === -->
     <div id="maintenanceModal" class="modal-overlay" style="display: none;">
         <div class="modal-container">
             <div class="modal-header">
                 <div class="modal-icon">
-                    <i class="fas fa-tools"></i>
+                    <i class="fas fa-bullhorn"></i>
                 </div>
-                <h3>系統升級與維護公告</h3>
+                <h3 id="modalTitle">系統公告載入中...</h3>
             </div>
             <div class="modal-body">
-                <p>親愛的使用者您好，為了提供更穩定的服務，目前後端系統正在進行 API 架構升級。以下功能可能會出現短暫無法讀取或連線錯誤：</p>
-                <ul class="maintenance-list">
-                    <li><i class="fas fa-exclamation-triangle" style="color: #ff9800;"></i> <strong>天氣警特報</strong> (資料庫同步中)</li>
-                    <li><i class="fas fa-comment-alt" style="color: #2196f3;"></i> <strong>天氣報吼哩災</strong> (API 路由更新)</li>
-                    <li><i class="fas fa-satellite-dish" style="color: #4caf50;"></i> <strong>部分雷達回波圖</strong> (路徑相容性修復)</li>
+                <p id="modalDesc"></p>
+                <ul id="modalList" class="maintenance-list">
                 </ul>
-                <p class="modal-note">工程團隊正在全力修復中，預計稍後恢復正常。造成不便，敬請見諒。</p>
+                <p class="modal-note">感謝您的支持與耐心等待。</p>
             </div>
             <div class="modal-footer">
                 <button class="modal-btn" onclick="closeMaintenanceModal()">
