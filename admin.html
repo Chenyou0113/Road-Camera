@@ -138,6 +138,30 @@
                 <button class="invite-btn" onclick="generateInviteCode()">⚡ 生成新邀請碼</button>
                 <div class="status" id="inviteStatus"></div>
             </div>
+
+            <!-- === 新增：PIDS 跑馬燈控制台 === -->
+            <div class="card" style="margin-bottom: 20px; border-color: #e91e63;">
+                <h3 style="color: #e91e63;">📢 PIDS 跑馬燈控制台</h3>
+                
+                <label for="pidsMarqueeInput" style="display: block; margin-bottom: 8px; color: #aaa; font-size: 0.95rem;">輸入跑馬燈文字：</label>
+                <textarea id="pidsMarqueeInput" placeholder="輸入要顯示在火車站 PIDS 看板上的文字...&#10;支援 HTML 語法，例如：&lt;span style=&quot;color:red&quot;&gt;緊急通知&lt;/span&gt;" style="font-size: 16px;"></textarea>
+                
+                <p style="color: #888; font-size: 0.9em; margin-top: -10px; margin-bottom: 15px;">
+                    💡 提示：支援 HTML 語法，例如 <code style="background: #0f3460; padding: 2px 6px; border-radius: 3px;">&lt;span style="color:red"&gt;緊急&lt;/span&gt;</code>
+                </p>
+                
+                <button class="save-btn" style="background: linear-gradient(45deg, #e91e63, #c2185b);" onclick="updatePidsMarquee()">📤 發送更新指令</button>
+                <div class="status" id="pidsStatus"></div>
+
+                <div style="margin-top: 15px; padding: 12px; background: #0f3460; border-radius: 8px; font-size: 0.9rem; color: #aaa;">
+                    <p style="margin: 0 0 8px 0;">
+                        <strong>📍 目前設定內容：</strong>
+                    </p>
+                    <div id="pidsCurrentText" style="background: #000; padding: 10px; border-radius: 4px; color: #ffeb3b; font-family: monospace; min-height: 40px; max-height: 100px; overflow-y: auto;">
+                        載入中...
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -202,6 +226,9 @@
                 document.getElementById('ann_active').onchange = function() {
                     document.getElementById('ann_label').innerText = this.checked ? "狀態：開啟 (顯示中)" : "狀態：關閉";
                 };
+
+                // 3. 載入 PIDS 跑馬燈設定
+                loadPidsMarquee();
 
             } catch (e) {
                 console.error(e);
@@ -317,6 +344,74 @@
             navigator.clipboard.writeText(code).then(() => {
                 alert("✅ 邀請碼已複製！\n趕快貼給您的朋友吧！");
             });
+        }
+
+        // === 新增：PIDS 跑馬燈控制相關函數 ===
+        const PIDS_WORKER_URL = 'https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev';
+
+        // 載入 PIDS 跑馬燈目前設定
+        async function loadPidsMarquee() {
+            try {
+                const res = await fetch(`${PIDS_WORKER_URL}/api/pids/marquee`);
+                const data = await res.json();
+                
+                if (data.text) {
+                    document.getElementById('pidsMarqueeInput').value = data.text;
+                    document.getElementById('pidsCurrentText').innerHTML = data.text;
+                } else {
+                    document.getElementById('pidsCurrentText').innerText = "（未設定任何內容）";
+                }
+            } catch (e) {
+                console.error("PIDS 讀取失敗:", e);
+                document.getElementById('pidsCurrentText').innerText = "❌ 無法連線至 Worker，請稍後重試";
+            }
+        }
+
+        // 發送 PIDS 跑馬燈更新指令
+        async function updatePidsMarquee() {
+            const btn = event.target;
+            const input = document.getElementById('pidsMarqueeInput');
+            const statusEl = document.getElementById('pidsStatus');
+            const newText = input.value;
+
+            if (!newText.trim()) {
+                statusEl.innerText = "❌ 內容不能為空！";
+                statusEl.style.color = "#ff5252";
+                return;
+            }
+
+            // 鎖定按鈕
+            btn.disabled = true;
+            btn.innerText = "發送指令中...";
+            statusEl.innerText = "⏳ 發送中...";
+            statusEl.style.color = "#aaa";
+
+            try {
+                const res = await fetch(`${PIDS_WORKER_URL}/api/admin/update-pids`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: newText })
+                });
+
+                const result = await res.json();
+
+                if (res.ok && result.success) {
+                    statusEl.innerText = "✅ 指令發送成功！前端 PIDS 將在下次檢查時更新。";
+                    statusEl.style.color = "#4caf50";
+                    
+                    // 更新目前設定顯示
+                    document.getElementById('pidsCurrentText').innerHTML = newText;
+                } else {
+                    statusEl.innerText = "❌ 發送失敗：" + (result.error || "未知錯誤");
+                    statusEl.style.color = "#ff5252";
+                }
+            } catch (e) {
+                statusEl.innerText = "❌ 連線錯誤：" + e.message;
+                statusEl.style.color = "#ff5252";
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "📤 發送更新指令";
+            }
         }
 
         // 統一錯誤處理

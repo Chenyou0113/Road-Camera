@@ -462,6 +462,34 @@
         TRAIN_TYPE_DB.forEach(item => trainTypeMap.set(item.id, item.name));
 
         const stopsCache = {};
+
+        // ============ 跑馬燈智慧檢查機制 (Marquee Polling) ============
+        let currentDisplayText = "";
+
+        async function checkMarqueeUpdate() {
+            try {
+                // 呼叫 API 讀取最新設定
+                const res = await fetch(`${TRA_WORKER_URL}/api/pids/marquee`);
+                const data = await res.json();
+                const newText = data.text;
+
+                // 【關鍵邏輯】只有當「新抓到的文字」跟「目前顯示的文字」不一樣時，才更新 DOM
+                if (newText && newText !== currentDisplayText) {
+                    console.log("🔄 收到新指令，更新頂部跑馬燈內容...");
+                    
+                    const marqueeEl = document.getElementById('unifiedTopMarquee');
+                    if (marqueeEl) {
+                        marqueeEl.innerHTML = newText; // 更新 HTML
+                        currentDisplayText = newText;  // 更新紀錄
+                        
+                        // 重新初始化跑馬燈動畫
+                        initHeaderMarquee('unifiedTopMarquee');
+                    }
+                }
+            } catch (e) {
+                console.error("⚠️ 跑馬燈檢查失敗，保持目前顯示內容", e);
+            }
+        }
         
         // ============ 2. 核心邏輯函式 ============
         
@@ -561,6 +589,14 @@
             document.getElementById('unifiedStationSub').textContent = "TRA STATION";
             
             initHeaderMarquee('unifiedTopMarquee');
+
+            // 🔥 啟動跑馬燈檢查機制
+            // 1. 頁面載入時馬上檢查一次
+            checkMarqueeUpdate();
+            
+            // 2. 設定定時檢查 (每 30000 毫秒 = 30秒 檢查一次)
+            // 可依需求調整時間，例如 10000 (10秒) 或 60000 (1分鐘)
+            setInterval(checkMarqueeUpdate, 30000);
 
             if (stationID) {
                 updatePidsData(stationID);
