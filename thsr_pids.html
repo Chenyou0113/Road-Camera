@@ -3,424 +3,408 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>THSR Dual PIDS (High Fidelity)</title>
+    <title>THSR PIDS Professional</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <style>
-        /* --- 現代仿真風格配色 --- */
+        /* --- V3.0 專業版配色 (移除廉價光暈，強調對比) --- */
         :root {
             --bg-color: #000000;
-            --text-white: #ffffff;
+            --text-white: #FFFFFF;
+            --border-color: #333333;
+
+            /* 北上標準色：深紅標題 + 琥珀橘字體 */
+            --north-header-bg: #cc0000; 
+            --north-text: #ffaa00; 
+
+            /* 南下標準色：深綠標題 + 亮綠字體 */
+            --south-header-bg: #008000;
+            --south-text: #00ff00;
+
+            /* 狀態色 */
+            --status-ok: #ffff00; /* 黃色顯示準點 */
+            --status-delay: #ff0000;
             
-            /* 北上配色系統 (橘/紅) */
-            --north-header-bg: #D50000; /* 鮮紅 */
-            --north-text-color: #FFAA00; /* 亮橘 */
-            --north-glow: rgba(255, 170, 0, 0.6);
-
-            /* 南下配色系統 (綠) */
-            --south-header-bg: #009933; /* 標準綠 */
-            --south-text-color: #00FF00; /* 螢光綠 */
-            --south-glow: rgba(0, 255, 0, 0.6);
-
-            /* 通用狀態色 */
-            --status-yellow: #FFD700; /* 金黃色 */
-            --map-active-cyan: #00FFFF; /* 地圖燈號青色 */
-            --dim-gray: #333333;
-            --line-gray: #555555;
+            /* 停靠站地圖 */
+            --line-color: #555;
+            --dot-inactive: #333;
+            --dot-active-north: #ffaa00;
+            --dot-active-south: #00ff00;
         }
 
-        body {
+        body, html {
             background-color: var(--bg-color);
-            color: var(--text-white);
-            font-family: 'Roboto', 'Arial', 'Microsoft JhengHei', sans-serif;
             margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: 'Arial', 'Microsoft JhengHei', sans-serif;
             overflow: hidden;
+        }
+
+        #app {
             display: flex;
             flex-direction: column;
             height: 100vh;
         }
 
-        /* --- 版面配置 --- */
-        .split-container {
-            display: flex;
-            flex-direction: column;
-            flex-grow: 1;
-            height: 100%;
-        }
+        /* 上下半部容器 */
         .board-section {
-            flex: 1; /* 上下各 50% */
+            flex: 1;
             display: flex;
             flex-direction: column;
-            border-bottom: 3px solid #111;
-            overflow: hidden;
+            border-bottom: 2px solid var(--border-color);
+            position: relative;
         }
 
-        /* --- 標題列 --- */
+        /* 標題列 */
         .header {
-            padding: 0 20px;
-            height: 50px;
+            height: 55px;
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            color: #fff;
-            text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
-            font-weight: 900;
+            justify-content: space-between;
+            padding: 0 20px;
+            color: white;
+            font-weight: bold;
             font-size: 2rem;
-            letter-spacing: 1px;
+            text-transform: uppercase;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+            z-index: 10;
         }
         .header.north { background-color: var(--north-header-bg); }
         .header.south { background-color: var(--south-header-bg); }
         
-        .station-info { font-family: 'Consolas', monospace; font-size: 1.8rem; letter-spacing: 2px; }
+        .clock-area { font-family: 'Consolas', monospace; letter-spacing: 2px; }
 
-        /* --- 表格樣式 --- */
-        .table-wrapper {
-            flex-grow: 1;
-            display: flex;
-            flex-direction: column;
-            padding-top: 5px;
+        /* 表格區域 */
+        .table-container {
+            flex: 1;
+            overflow: hidden;
+            padding: 0;
         }
-        
+
         table {
             width: 100%;
             border-collapse: collapse;
             table-layout: fixed;
-            height: 100%;
         }
-        
+
         thead {
+            background-color: #1a1a1a;
+            color: #aaaaaa;
             height: 40px;
-            border-bottom: 1px solid #333;
-            background-color: #0a0a0a;
-        }
-        th {
-            color: #aaa;
             font-size: 1.1rem;
-            text-align: left;
-            padding-left: 15px;
-            font-weight: normal;
         }
         
-        /* 列表內容 */
+        th { text-align: left; padding: 0 10px; font-weight: normal; border-bottom: 1px solid #444; }
+        
+        tr { height: 16vh; } /* 自動分配高度 */
+        
         td {
-            padding-left: 15px;
+            padding: 0 10px;
             vertical-align: middle;
-            font-size: 1.8rem; /* 字體加大 */
+            font-size: 2rem; /* 數字大一點 */
             font-weight: bold;
-            white-space: nowrap;
-            overflow: hidden;
-            border-bottom: 1px solid #1a1a1a;
+            border-bottom: 1px solid #222;
         }
 
-        /* 欄位寬度微調 (參考照片) */
-        .th-no { width: 9%; } 
-        .th-dest { width: 10%; } 
-        .th-time { width: 10%; }
-        .th-plat { width: 7%; text-align: center; } 
-        .th-free { width: 14%; }
-        .th-status { width: 12%; } 
-        .th-map { width: 38%; } 
+        /* 欄位寬度設定 */
+        .w-train { width: 10%; font-family: 'Consolas', monospace; }
+        .w-dest  { width: 12%; }
+        .w-time  { width: 10%; font-family: 'Consolas', monospace; }
+        .w-plat  { width: 8%; text-align: center; }
+        .w-free  { width: 15%; font-size: 1.5rem; }
+        .w-status{ width: 12%; }
+        .w-map   { width: 33%; }
 
-        /* 字體顏色與特效 */
-        .col-train-no { color: #fff; font-family: 'Consolas', monospace; letter-spacing: 1px; }
-        .col-time { color: #fff; font-family: 'Consolas', monospace; letter-spacing: 1px; }
-        .col-plat { color: #fff; text-align: center; font-family: 'Consolas', monospace;}
-        .col-free { color: #fff; font-size: 1.4rem; }
+        /* 顏色邏輯 */
+        .north-row { color: var(--north-text); }
+        .south-row { color: var(--south-text); }
         
-        /* 狀態樣式 */
-        .status-ok { color: var(--status-yellow); font-size: 1.4rem; text-shadow: 0 0 5px rgba(255, 215, 0, 0.4); }
-        .status-delay { color: #ff3333; font-size: 1.4rem; animation: blink 1s infinite; }
-
-        /* --- 北上專用樣式 --- */
-        .north-section .col-dest {
-            color: var(--north-text-color);
-            font-size: 2rem;
-            text-shadow: 0 0 10px var(--north-glow); /* 橘色光暈 */
-        }
-
-        /* --- 南下專用樣式 --- */
-        .south-section .col-dest {
-            color: var(--south-text-color);
-            font-size: 2rem;
-            text-shadow: 0 0 10px var(--south-glow); /* 綠色光暈 */
-        }
-
-        /* --- 停靠站圖示 (仿 LED 點陣) --- */
+        .text-white { color: white; }
+        .status-ok { color: var(--status-ok) !important; font-size: 1.6rem; }
+        
+        /* 停靠站地圖優化 */
         .station-map {
             display: flex;
             align-items: center;
             justify-content: space-between;
             position: relative;
+            height: 60px;
             padding: 0 10px;
-            height: 100%;
         }
         .map-line {
             position: absolute;
-            top: 45%; 
+            top: 50%;
             left: 10px;
             right: 10px;
-            height: 2px;
-            background-color: var(--dim-gray);
+            height: 4px;
+            background-color: var(--line-color);
             z-index: 0;
+            transform: translateY(-50%);
         }
-        .dot-wrapper {
+        .station-dot {
             position: relative;
             z-index: 1;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background-color: #000;
+            border: 3px solid var(--dot-inactive);
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
-            width: 100%; 
-            height: 100%;
-        }
-        .dot {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            background-color: #000; /* 中心黑 */
-            border: 2px solid var(--dim-gray); /* 預設灰框 */
-            margin-bottom: 5px;
-            transition: all 0.3s;
-        }
-        /* 停靠點亮燈樣式 */
-        .dot.active {
-            background-color: #000;
-            border-color: var(--map-active-cyan);
-            box-shadow: 0 0 8px var(--map-active-cyan), inset 0 0 3px var(--map-active-cyan);
-            transform: scale(1.1);
-        }
-        .dot-name {
-            font-size: 0.7rem;
-            color: #555;
-            font-family: 'Arial', sans-serif;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-        .dot.active + .dot-name { 
-            color: #ddd; 
-            font-weight: bold; 
-            text-shadow: 0 0 3px #fff;
-        }
-
-        /* 跑馬燈 */
-        .marquee {
-            background-color: #111;
-            color: var(--north-text-color); /* 預設橘色 */
-            padding: 8px 0;
-            height: 35px;
-            font-size: 1.4rem;
-            white-space: nowrap;
-            overflow: hidden;
-            border-top: 2px solid #333;
-            font-family: 'Microsoft JhengHei', sans-serif;
-            display: flex;
-            align-items: center;
-        }
-        .marquee span {
-            display: inline-block;
-            padding-left: 100%;
-            animation: scroll 30s linear infinite;
         }
         
-        /* 警報時變紅 */
-        .marquee.alert {
-            background-color: #220000;
-            color: #ff3333;
-            border-top: 2px solid #ff0000;
+        /* 北上亮燈 */
+        .north-row .station-dot.active {
+            background-color: var(--dot-active-north);
+            border-color: #fff;
+            box-shadow: 0 0 10px var(--dot-active-north);
+        }
+        
+        /* 南下亮燈 */
+        .south-row .station-dot.active {
+            background-color: var(--dot-active-south);
+            border-color: #fff;
+            box-shadow: 0 0 10px var(--dot-active-south);
         }
 
-        @keyframes scroll { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
-        @keyframes blink { 50% { opacity: 0.5; } }
+        .station-code {
+            position: absolute;
+            top: 22px;
+            font-size: 0.8rem;
+            color: #666;
+            font-family: 'Arial', sans-serif;
+            font-weight: bold;
+        }
+        .station-dot.active .station-code { color: white; }
+
+        /* 跑馬燈 */
+        .marquee-footer {
+            height: 40px;
+            background-color: #111;
+            border-top: 2px solid #cc0000; /* 預設紅線 */
+            color: #ffcc00;
+            display: flex;
+            align-items: center;
+            overflow: hidden;
+            font-size: 1.5rem;
+            white-space: nowrap;
+        }
+        .marquee-content {
+            display: inline-block;
+            padding-left: 100%;
+            animation: marquee 25s linear infinite;
+        }
+        @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+
     </style>
 </head>
 <body>
-    <div id="app" class="split-container">
-        
-        <div class="board-section north-section">
-            <div class="header north">
-                <div>北上 Northbound</div>
-                <div class="station-info">{{ currentTime }}</div>
-            </div>
-            <div class="table-wrapper">
-                <table>
-                    <thead>
-                        <tr>
-                            <th class="th-no">車次 Train</th>
-                            <th class="th-dest">開往 Dest.</th>
-                            <th class="th-time">時間 Time</th>
-                            <th class="th-plat">月台 Plat.</th>
-                            <th class="th-free">自由座 Non-Reserved</th>
-                            <th class="th-status">行車資訊 Status</th>
-                            <th class="th-map">停靠站 Stopping Stations</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr v-for="train in northboundTrains" :key="train.train_no">
-                            <td class="col-train-no">{{ train.train_no }}</td>
-                            <td class="col-dest">{{ train.destination.zh }}</td>
-                            <td class="col-time">{{ train.departure_time }}</td>
-                            <td class="col-plat">{{ train.platform }}</td>
-                            <td class="col-free">Car {{ train.free_seating_cars }}</td>
-                            <td class="col-status"><span class="status-ok">準點 On Time</span></td>
-                            <td class="col-map">
-                                <div class="station-map">
-                                    <div class="map-line"></div>
-                                    <div v-for="st in allStationsReversed" :key="st.id" class="dot-wrapper">
-                                        <div class="dot" :class="{ 'active': train.stopping_stations.includes(st.id) }"></div>
-                                        <div class="dot-name">{{ st.code }}</div>
-                                    </div>
+
+<div id="app">
+    <div class="board-section">
+        <div class="header north">
+            <div>北上 NORTHBOUND</div>
+            <div class="clock-area">{{ currentTime }}</div>
+        </div>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th class="w-train">車次 Train</th>
+                        <th class="w-dest">開往 Dest.</th>
+                        <th class="w-time">時間 Time</th>
+                        <th class="w-plat">月台 Plat.</th>
+                        <th class="w-free">自由座 Non-Reserved</th>
+                        <th class="w-status">狀態 Status</th>
+                        <th class="w-map">停靠站 Stopping Stations</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="t in northboundList" :key="t.train_no" class="north-row">
+                        <td class="w-train text-white">{{ t.train_no }}</td>
+                        <td class="w-dest">{{ t.destination.zh }}</td>
+                        <td class="w-time text-white">{{ t.departure_time }}</td>
+                        <td class="w-plat text-white">{{ t.platform || '-' }}</td>
+                        <td class="w-free text-white">Car {{ t.free_seating_cars }}</td>
+                        <td class="w-status status-ok">準點 On Time</td>
+                        <td class="w-map">
+                            <div class="station-map">
+                                <div class="map-line"></div>
+                                <div v-for="s in stationsReversed" :key="s.id" 
+                                     class="station-dot" 
+                                     :class="{ 'active': t.stopping_stations.includes(s.id) }">
+                                     <span class="station-code">{{ s.code }}</span>
                                 </div>
-                            </td>
-                        </tr>
-                        <tr v-for="n in (4 - northboundTrains.length)" :key="'empty-north-' + n">
-                            <td colspan="7">&nbsp;</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
-
-        <div class="board-section south-section">
-            <div class="header south">
-                <div>南下 Southbound</div>
-                <div class="station-info">{{ currentStationName.zh }} {{ currentStationName.code }}</div>
-            </div>
-            <div class="table-wrapper">
-                <table>
-                    <thead>
-                        <tr>
-                            <th class="th-no">車次 Train</th>
-                            <th class="th-dest">開往 Dest.</th>
-                            <th class="th-time">時間 Time</th>
-                            <th class="th-plat">月台 Plat.</th>
-                            <th class="th-free">自由座 Non-Reserved</th>
-                            <th class="th-status">行車資訊 Status</th>
-                            <th class="th-map">停靠站 Stopping Stations</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr v-for="train in southboundTrains" :key="train.train_no">
-                            <td class="col-train-no">{{ train.train_no }}</td>
-                            <td class="col-dest">{{ train.destination.zh }}</td>
-                            <td class="col-time">{{ train.departure_time }}</td>
-                            <td class="col-plat">{{ train.platform }}</td>
-                            <td class="col-free">Car {{ train.free_seating_cars }}</td>
-                            <td class="col-status"><span class="status-ok">準點 On Time</span></td>
-                            <td class="col-map">
-                                <div class="station-map">
-                                    <div class="map-line"></div>
-                                    <div v-for="st in allStations" :key="st.id" class="dot-wrapper">
-                                        <div class="dot" :class="{ 'active': train.stopping_stations.includes(st.id) }"></div>
-                                        <div class="dot-name">{{ st.code }}</div>
-                                    </div>
-                                </div>
-                            </td>
-                        </tr>
-                        <tr v-for="n in (4 - southboundTrains.length)" :key="'empty-south-' + n">
-                            <td colspan="7">&nbsp;</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <div class="marquee" :class="{ 'alert': alerts.length > 0 }">
-            <span>
-                <span v-if="alerts.length > 0">
-                    <span v-for="alert in alerts" :key="alert.AlertID" style="margin-right: 150px;">
-                        ⚠ 【{{ alert.Title }}】{{ alert.Description }}
-                    </span>
-                </span>
-                <span v-else>
-                    {{ trainDetailMarquee }}
-                </span>
-            </span>
-        </div>
-
     </div>
 
-    <script>
-        const { createApp, ref, computed, onMounted } = Vue;
+    <div class="board-section">
+        <div class="header south">
+            <div>南下 SOUTHBOUND</div>
+            <div class="station-title">{{ currentStationInfo.zh }} {{ currentStationInfo.code }}</div>
+        </div>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th class="w-train">車次 Train</th>
+                        <th class="w-dest">開往 Dest.</th>
+                        <th class="w-time">時間 Time</th>
+                        <th class="w-plat">月台 Plat.</th>
+                        <th class="w-free">自由座 Non-Reserved</th>
+                        <th class="w-status">狀態 Status</th>
+                        <th class="w-map">停靠站 Stopping Stations</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="t in southboundList" :key="t.train_no" class="south-row">
+                        <td class="w-train text-white">{{ t.train_no }}</td>
+                        <td class="w-dest">{{ t.destination.zh }}</td>
+                        <td class="w-time text-white">{{ t.departure_time }}</td>
+                        <td class="w-plat text-white">{{ t.platform || '-' }}</td>
+                        <td class="w-free text-white">Car {{ t.free_seating_cars }}</td>
+                        <td class="w-status status-ok">準點 On Time</td>
+                        <td class="w-map">
+                            <div class="station-map">
+                                <div class="map-line"></div>
+                                <div v-for="s in stationsNormal" :key="s.id" 
+                                     class="station-dot" 
+                                     :class="{ 'active': t.stopping_stations.includes(s.id) }">
+                                     <span class="station-code">{{ s.code }}</span>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
 
-        createApp({
-            setup() {
-                // 這裡改成您的 Worker 網址
-                const API_URL = "https://thsr-proxy.xiaoyouwu5-fd3.workers.dev";
+    <div class="marquee-footer">
+        <div class="marquee-content">
+            {{ marqueeText }}
+        </div>
+    </div>
+</div>
+
+<script>
+    const { createApp, ref, computed, onMounted } = Vue;
+
+    createApp({
+        setup() {
+            // 設定您的 Worker API 地址
+            const API_URL = "https://thsr-proxy.xiaoyouwu5-fd3.workers.dev";
+            
+            const urlParams = new URLSearchParams(window.location.search);
+            const stationID = ref(urlParams.get('station') || "1000"); // 預設台北
+
+            const rawData = ref([]);
+            const currentTime = ref("");
+
+            // 站點定義
+            const stations = [
+                { id: "0990", name: "南港", code: "NAK" },
+                { id: "1000", name: "台北", code: "TPE" },
+                { id: "1010", name: "板橋", code: "BAC" },
+                { id: "1020", name: "桃園", code: "TAY" },
+                { id: "1030", name: "新竹", code: "HSC" },
+                { id: "1035", name: "苗栗", code: "MIL" },
+                { id: "1040", name: "台中", code: "TAC" },
+                { id: "1043", name: "彰化", code: "CHA" },
+                { id: "1047", name: "雲林", code: "YUL" },
+                { id: "1050", name: "嘉義", code: "CHY" },
+                { id: "1060", name: "台南", code: "TNN" },
+                { id: "1070", name: "左營", code: "ZUY" }
+            ];
+
+            const currentStationInfo = computed(() => {
+                const s = stations.find(x => x.id === stationID.value);
+                return s ? { zh: s.name, code: s.code } : { zh: "台北", code: "TPE" };
+            });
+
+            // 修正資料過濾邏輯：確保只有「未來時間」的車次
+            const futureTrains = computed(() => {
+                const now = new Date();
+                // 格式化為 HH:MM
+                const currentHm = now.getHours().toString().padStart(2,'0') + ":" + now.getMinutes().toString().padStart(2,'0');
                 
-                const urlParams = new URLSearchParams(window.location.search);
-                const stationID = ref(urlParams.get('station') || "1000"); 
+                return rawData.value.filter(t => t.departure_time >= currentHm);
+            });
 
-                const trains = ref([]);
-                const alerts = ref([]);
-                const currentTime = ref("");
+            // 🔥 核心修正：嚴格區分南下北上 🔥
+            // API 通常定義：Direction 0 = 南下, 1 = 北上
+            const southboundList = computed(() => {
+                return futureTrains.value
+                    .filter(t => t.direction === 0) 
+                    .slice(0, 4); // 只取前4班
+            });
 
-                const allStations = [
-                    { id: "0990", name: "南港", code: "NAK" }, { id: "1000", name: "台北", code: "TPE" },
-                    { id: "1010", name: "板橋", code: "BAC" }, { id: "1020", name: "桃園", code: "TAY" },
-                    { id: "1030", name: "新竹", code: "HSC" }, { id: "1035", name: "苗栗", code: "MIL" },
-                    { id: "1040", name: "台中", code: "TAC" }, { id: "1043", name: "彰化", code: "CHA" },
-                    { id: "1047", name: "雲林", code: "YUL" }, { id: "1050", name: "嘉義", code: "CHY" },
-                    { id: "1060", name: "台南", code: "TNN" }, { id: "1070", name: "左營", code: "ZUY" }
-                ];
-                
-                const stationNameMap = {};
-                allStations.forEach(s => stationNameMap[s.id] = s.name);
+            const northboundList = computed(() => {
+                return futureTrains.value
+                    .filter(t => t.direction === 1)
+                    .slice(0, 4); // 只取前4班
+            });
 
-                const allStationsReversed = [...allStations].reverse();
+            // 地圖顯示用的站點順序
+            const stationsNormal = stations; 
+            const stationsReversed = [...stations].reverse();
 
-                const southboundTrains = computed(() => trains.value.filter(t => t.direction === 0).slice(0, 4));
-                const northboundTrains = computed(() => trains.value.filter(t => t.direction === 1).slice(0, 4));
+            // 跑馬燈
+            const marqueeText = computed(() => {
+                if (northboundList.value.length === 0 && southboundList.value.length === 0) 
+                    return "目前無營運列車 / No Service Available";
+                return "歡迎搭乘台灣高鐵 Welcome to Taiwan High Speed Rail (Simulated PIDS System)";
+            });
 
-                const currentStationName = computed(() => {
-                    const st = allStations.find(s => s.id === stationID.value);
-                    return st ? { zh: st.name, code: st.code } : { zh: "", code: "" };
-                });
+            // 資料抓取
+            const fetchData = async () => {
+                try {
+                    const res = await fetch(`${API_URL}/?station=${stationID.value}`);
+                    const json = await res.json();
+                    
+                    // 修正 UNK 問題：確保 train_no 存在
+                    if (json.trains) {
+                        rawData.value = json.trains.map(t => ({
+                            ...t,
+                            train_no: t.train_no || t.TrainNo || "UNK", // 多重檢查
+                            direction: parseInt(t.direction) // 確保是數字
+                        }));
+                    }
+                } catch (e) {
+                    console.error("API Error:", e);
+                }
+            };
 
-                const trainDetailMarquee = computed(() => {
-                    const targetTrains = [...northboundTrains.value, ...southboundTrains.value];
-                    if (targetTrains.length === 0) return "歡迎搭乘台灣高鐵 Welcome to Taiwan High Speed Rail";
+            // 時鐘更新
+            setInterval(() => {
+                const now = new Date();
+                currentTime.value = now.toLocaleTimeString('en-US', { hour12: false });
+            }, 1000);
 
-                    return targetTrains.map(t => {
-                        const currentIndex = t.stopping_stations.indexOf(stationID.value);
-                        let futureStops = t.stopping_stations;
-                        if (currentIndex !== -1 && currentIndex < t.stopping_stations.length - 1) {
-                            futureStops = t.stopping_stations.slice(currentIndex + 1);
-                        }
-                        
-                        const stopsText = futureStops.map(id => stationNameMap[id]).join("、");
-                        return `第 ${t.train_no} 車次 ${t.departure_time} 開往 ${t.destination.zh}，沿途停靠：${stopsText}。`;
-                    }).join("          ");
-                });
+            // 定時更新資料
+            setInterval(fetchData, 30000);
+            
+            onMounted(() => {
+                fetchData();
+                const now = new Date();
+                currentTime.value = now.toLocaleTimeString('en-US', { hour12: false });
+            });
 
-                const fetchData = async () => {
-                    try {
-                        const res = await fetch(`${API_URL}/?station=${stationID.value}`);
-                        const data = await res.json();
-                        const now = new Date();
-                        const currentHm = now.getHours().toString().padStart(2,'0') + ":" + now.getMinutes().toString().padStart(2,'0');
-                        trains.value = data.trains.filter(t => t.departure_time >= currentHm);
-                        alerts.value = data.alerts || [];
-                    } catch (e) { console.error(e); }
-                };
+            return {
+                stationID, currentStationInfo, currentTime,
+                stationsNormal, stationsReversed,
+                northboundList, southboundList,
+                marqueeText
+            };
+        }
+    }).mount('#app');
+</script>
 
-                setInterval(() => {
-                    const now = new Date();
-                    currentTime.value = now.toLocaleTimeString('en-US', {hour12: false});
-                }, 1000);
-
-                setInterval(fetchData, 60000);
-
-                onMounted(() => {
-                    fetchData();
-                    const now = new Date();
-                    currentTime.value = now.toLocaleTimeString('en-US', {hour12: false});
-                });
-
-                return {
-                    stationID, northboundTrains, southboundTrains, alerts, currentTime,
-                    allStations, allStationsReversed, currentStationName, trainDetailMarquee
-                };
-            }
-        }).mount('#app');
-    </script>
 </body>
 </html>
