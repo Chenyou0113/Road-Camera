@@ -1220,6 +1220,10 @@
         // 🚨 警特報更新函式 (v5.0 精簡版：去頭去尾)
         // 格式：【標題 時間】核心內文 (~結束時間)
         // ==========================================
+        // ==========================================
+        // 🚨 警特報更新函式 (V6.0 強力解析版)
+        // 用途：修正首頁跑馬燈抓不到資料庫內容的問題
+        // ==========================================
         async function updateWeatherStatus() {
             const alertEl = document.getElementById('alertText');
             const alertUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev/api/weather/alert';
@@ -1228,77 +1232,91 @@
                 const alertRes = await fetch(alertUrl);
                 const alertData = await alertRes.json();
                 
+                console.log("🔥 [DEBUG] 原始警報資料:", alertData); // 請按 F12 看這裡印出什麼
+
                 let displayMessage = "";
-                const dataset = alertData.cwaopendata?.dataset;
-                
-                if (dataset) {
-                    const info = dataset.datasetInfo;
-                    const title = info?.datasetDescription;
-                    let content = dataset.contents?.content?.contentText;
+                let title = "";
+                let content = "";
+                let time = "";
 
-                    // --- 🔥 文字清洗邏輯 (重點在這裡) ---
-                    if (content) {
-                        // 1. 去除開頭的「一、概述：」 (包含冒號和空白)
-                        content = content.replace(/^一、概述[：:]\s*/, '');
+                // --- 解析邏輯 A: 處理 cwaopendata 格式 (資料庫目前的格式) ---
+                if (alertData.cwaopendata && alertData.cwaopendata.dataset) {
+                    const ds = alertData.cwaopendata.dataset;
+                    
+                    // 1. 抓標題 (例如: 大雨特報)
+                    if (ds.datasetInfo) {
+                        title = ds.datasetInfo.datasetDescription;
+                        time = ds.datasetInfo.issueTime; // 發布時間
+                    }
 
-                        // 2. 去除「二、注意事項...」之後的所有文字
-                        // 只要偵測到「二、」就從那裡切斷
-                        const splitIndex = content.indexOf('二、');
-                        if (splitIndex !== -1) {
-                            content = content.substring(0, splitIndex).trim();
+                    // 2. 抓內容 (這是最容易失敗的地方，我們多試幾個位置)
+                    if (ds.contents && ds.contents.content && ds.contents.content.contentText) {
+                        // 標準位置
+                        content = ds.contents.content.contentText;
+                    } else if (ds.parameterSet && ds.parameterSet.parameter) {
+                        // 備用位置：有時候內容藏在 parameter 裡
+                        const params = Array.isArray(ds.parameterSet.parameter) 
+                            ? ds.parameterSet.parameter 
+                            : [ds.parameterSet.parameter];
+                        
+                        // 嘗試找出 "警報內容" 或 "影響區域"
+                        const contentParam = params.find(p => p.parameterName === "警報內容" || p.parameterName === "contentText");
+                        if (contentParam) {
+                            content = contentParam.parameterValue;
+                        } else {
+                            // 如果真的都沒有，就把所有 value 串起來
+                            content = params.map(p => p.parameterValue).join(" ");
                         }
                     }
-
-                    // 3. 時間格式化
-                    const formatTime = (timeStr) => {
-                        if (!timeStr) return "";
-                        const d = new Date(timeStr);
-                        const mm = String(d.getMonth() + 1).padStart(2, '0');
-                        const dd = String(d.getDate()).padStart(2, '0');
-                        const hh = String(d.getHours()).padStart(2, '0');
-                        const min = String(d.getMinutes()).padStart(2, '0');
-                        return `${mm}/${dd} ${hh}:${min}`;
-                    };
-
-                    const issueTime = formatTime(info?.issueTime);
-                    const endTime = formatTime(info?.validTime?.endTime);
-
-                    // 4. 組合最終字串
-                    if (title && content && title !== "無理") {
-                        displayMessage = `【${title} ${issueTime}】${content} (~${endTime})`;
-                    }
-                    // (備用) 舊版 location 格式
-                    else if (dataset.location && dataset.location.length > 0) {
-                         const locationNames = dataset.location.map(l => l.locationName).join('、');
-                         const hazardTypes = [...new Set(dataset.location.flatMap(item => 
-                            item.hazardConditions?.hazards?.map(h => h.info?.name) || []
-                         ))].join('、');
-                         displayMessage = `【${hazardTypes}】影響區域：${locationNames}`;
-                    }
+                } 
+                // --- 解析邏輯 B: 處理 records 格式 (備用) ---
+                else if (alertData.records && alertData.records.record && alertData.records.record.length > 0) {
+                    const rec = alertData.records.record[0];
+                    title = rec.datasetDescription;
+                    content = rec.contents.content.contentText;
+                    time = rec.datasetInfo.issueTime;
                 }
 
-                // --- 顯示與動畫 ---
+                // --- 3. 組合顯示文字 ---
+                if (title && title !== "無理") {
+                    // 時間格式化 (取月/日 時:分)
+                    const timeStr = time ? time.substring(5, 16).replace('T', ' ') : '';
+                    
+                    // 內容清洗：去掉標題贅字，讓跑馬燈乾淨一點
+                    if (content) {
+                        content = content.replace(title + "：", "")
+                                         .replace(/^一、/, "")
+                                         .replace(/二、注意事項.*/, "") // 去掉後面的注意事項
+                                         .trim(); 
+                    }
+
+                    displayMessage = `【${title} ${timeStr}】${content}`;
+                }
+
+                // --- 4. 更新畫面 ---
                 if (displayMessage) {
                     if(alertEl) {
                         alertEl.textContent = displayMessage;
                         alertEl.classList.remove('no-warning-text');
                         
-                        // 重新計算跑馬燈寬度
-                        setTimeout(() => {
-                            startMarquee('warningContent');
-                        }, 100);
+                        // 確保跑馬燈動畫有在跑
+                        const wrapper = document.getElementById('warningContent');
+                        if (wrapper) {
+                            wrapper.classList.remove('running-animation');
+                            void wrapper.offsetWidth; // 重置動畫
+                            setTimeout(() => startMarquee('warningContent'), 100);
+                        }
                     }
                 } else {
                     if(alertEl) {
-                        alertEl.textContent = "目前全臺無發布氣象警特報";
+                        alertEl.textContent = "目前全臺無發布氣象警特報"; // 沒抓到標題時顯示這個
                         alertEl.classList.add('no-warning-text');
-                        document.getElementById('warningContent')?.classList.remove('running-animation');
                     }
                 }
 
             } catch (error) {
-                console.error("氣象資料載入失敗:", error);
-                if(alertEl) alertEl.textContent = "⚠️ 連線氣象署資料失敗";
+                console.error("警報解析失敗:", error);
+                if(alertEl) alertEl.textContent = "⚠️ 警報資料讀取異常";
             }
         }
 
