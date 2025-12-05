@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>THSR PIDS V6.1 (Modern UI)</title>
+    <title>THSR PIDS V6.2 (Chinese Map)</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     <style>
         /* === 現代化 UI 設計規範 === */
         :root {
             --bg-color: #000000;
-            --header-north-start: #8a0000;
-            --header-north-end: #b71c1c;
-            --header-south-start: #004d26;
+            --header-north-start: #00858a;
+            --header-north-end: #1cb7af;
+            --header-south-start: #1db66a;
             --header-south-end: #006030;
             
             --text-amber: #ffca28; /* 北上 LED 琥珀色 */
@@ -26,7 +26,7 @@
             margin: 0;
             padding: 0;
             height: 100vh;
-            font-family: 'Roboto', 'Arial', sans-serif;
+            font-family: 'Microsoft JhengHei', 'Roboto', 'Arial', sans-serif; /* 改用正黑體 */
             overflow: hidden;
             color: #fff;
         }
@@ -66,10 +66,9 @@
             font-weight: 700;
         }
 
-        /* === Grid 佈局 (精確對齊) === */
+        /* === Grid 佈局 === */
         .grid-row {
             display: grid;
-            /* 定義欄位比例：車次 | 目的地 | 時間 | 月台 | 自由座 | 狀態 | 停靠站 */
             grid-template-columns: 10% 12% 10% 8% 15% 12% 33%;
             align-items: center;
             padding-left: 20px;
@@ -102,7 +101,7 @@
 
         /* === 狀態顏色 === */
         .status-ok { color: #ffff00; } 
-        .status-delay { color: #ff0000; animation: blink 1s infinite; }
+        .status-delay { color: #00eeff; animation: blink 1s infinite; }
 
         /* === 北上專屬樣式 === */
         .north-section .col-dest { color: var(--text-amber); text-shadow: 0 0 10px rgba(255, 202, 40, 0.4); }
@@ -116,7 +115,7 @@
         .south-section .dot.active { background: var(--text-emerald); border-color: #fff; box-shadow: 0 0 8px var(--text-emerald); }
         .south-section .dot.active + .st-code { color: #fff; }
 
-        /* === 停靠站地圖 === */
+        /* === 停靠站地圖 (更新為中文適配) === */
         .map-wrapper {
             display: flex;
             align-items: center;
@@ -127,7 +126,7 @@
         }
         .map-line {
             position: absolute;
-            top: 50%; left: 0; right: 20px;
+            top: 45%; left: 0; right: 20px; /* 線條稍微往上提，留空間給中文 */
             height: 2px;
             background: #444;
             z-index: 0;
@@ -144,9 +143,16 @@
             border-radius: 50%;
             background: #000;
             border: 2px solid #555;
-            margin-bottom: 4px;
+            margin-bottom: 6px; /* 增加一點點間距 */
         }
-        .st-code { font-size: 0.8rem; color: #666; font-family: 'Consolas', monospace; font-weight: bold; }
+        /* 中文站名樣式 */
+        .st-code { 
+            font-size: 0.9rem; /* 字稍微大一點 */
+            color: #666; 
+            font-family: 'Microsoft JhengHei', sans-serif; 
+            font-weight: bold; 
+            white-space: nowrap; /* 防止換行 */
+        }
 
         @keyframes blink { 50% { opacity: 0.5; } }
         
@@ -192,7 +198,7 @@
                         <div class="map-line"></div>
                         <div v-for="s in stationsReversed" :key="s.id" class="station-node">
                             <div class="dot" :class="{ 'active': t.stops.includes(s.id) }"></div>
-                            <span class="st-code">{{ s.code }}</span>
+                            <span class="st-code">{{ s.name }}</span>
                         </div>
                     </div>
                 </div>
@@ -227,7 +233,7 @@
                         <div class="map-line"></div>
                         <div v-for="s in stationsNormal" :key="s.id" class="station-node">
                             <div class="dot" :class="{ 'active': t.stops.includes(s.id) }"></div>
-                            <span class="st-code">{{ s.code }}</span>
+                            <span class="st-code">{{ s.name }}</span>
                         </div>
                     </div>
                 </div>
@@ -235,7 +241,7 @@
         </div>
     </div>
     
-    <div class="footer">System Status: Online | THSR PIDS V6.1 | Data Source: {{ rawData.length > 0 ? 'Connected' : 'Connecting...' }}</div>
+    <div class="footer">System Status: Online | THSR PIDS V6.2 | Data Source: {{ rawData.length > 0 ? 'Connected' : 'Connecting...' }}</div>
 
 </div>
 
@@ -279,29 +285,23 @@
                 const nowTime = now.toLocaleTimeString('en-GB', { hour12: false }).substring(0, 5);
 
                 return rawData.value.map((t, idx) => {
-                    // 1. 強制讀取 JSON 中的 train_no (如果有底線)
-                    // 注意：如果您的資料庫裡就是 "UNK"，這裡顯示 "UNK" 是正常的
                     let tNo = t.train_no || t.TrainNo || "UNK";
-                    
-                    // 2. 強制讀取 departure_time
                     let tTime = t.departure_time || t.DepartureTime || "00:00";
                     if(tTime.length > 5) tTime = tTime.substring(0, 5);
 
-                    // 3. 讀取目的地
                     let destName = "未知";
-                    if (t.destination && t.destination.zh) destName = t.destination.zh; // 根據您的JSON
+                    if (t.destination && t.destination.zh) destName = t.destination.zh;
                     else if (t.DestinationStationName) destName = t.DestinationStationName.Zh_tw;
                     
-                    // 4. 方向判斷 (修正南下跑去北上的問題)
+                    // 方向判斷
                     let dir = -1; 
                     const destObj = stations.find(s => s.name === destName);
                     const curIdx = currentStationIdx.value;
 
                     if (destObj) {
-                        if (destObj.idx > curIdx) dir = 0; // 目的地在南方 -> 南下
-                        else if (destObj.idx < curIdx) dir = 1; // 目的地在北方 -> 北上
+                        if (destObj.idx > curIdx) dir = 0; // 南下
+                        else if (destObj.idx < curIdx) dir = 1; // 北上
                     } else {
-                        // 如果找不到目的地 (例外)，回退使用 API 的 direction
                         dir = t.direction !== undefined ? parseInt(t.direction) : 0;
                     }
 
@@ -312,11 +312,11 @@
                         dest: destName,
                         plat: t.platform || "1",
                         free: t.free_seating_cars || "10-12",
-                        stops: t.stopping_stations || [], // 您的 JSON 是 stopping_stations
+                        stops: t.stopping_stations || [],
                         dir: dir
                     };
                 })
-                .filter(t => t.time >= nowTime) // 過濾過期車次
+                .filter(t => t.time >= nowTime)
                 .sort((a, b) => a.time.localeCompare(b.time));
             });
 
@@ -328,7 +328,6 @@
                     const res = await fetch(`${API_URL}/?station=${stationID.value}`);
                     const json = await res.json();
                     
-                    // 根據您的截圖，JSON 直接是陣列
                     if(Array.isArray(json)) rawData.value = json;
                     else if(json.trains) rawData.value = json.trains;
                     
