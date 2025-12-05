@@ -1221,8 +1221,8 @@
         // 格式：【標題 時間】核心內文 (~結束時間)
         // ==========================================
         // ==========================================
-        // 🚨 警特報更新函式 (V7.0 診斷顯示版)
-        // 用途：直接把資料結構印在畫面上，找出為什麼沒跑馬燈
+        // 🚨 警特報更新函式 (V8.0 陣列相容版)
+        // 修正：解決 dataset 可能是陣列導致找不到標題的問題
         // ==========================================
         async function updateWeatherStatus() {
             const alertEl = document.getElementById('alertText');
@@ -1232,81 +1232,96 @@
                 const alertRes = await fetch(alertUrl);
                 const alertData = await alertRes.json();
                 
-                console.log("🔥 [DEBUG] 完整資料:", alertData); 
-
-                // --- 診斷開始 ---
-                let debugMsg = "";
-                
-                // 1. 檢查根節點
-                if (!alertData.cwaopendata) {
-                    alertEl.textContent = "❌ 錯誤：找不到 cwaopendata 節點";
-                    return;
-                }
-                
-                // 2. 檢查 dataset
-                const ds = alertData.cwaopendata.dataset;
-                if (!ds) {
-                    alertEl.textContent = "❌ 錯誤：找不到 dataset 節點";
-                    return;
-                }
-
-                // 3. 嘗試抓標題
-                let title = "無標題";
-                if (ds.datasetInfo && ds.datasetInfo.datasetDescription) {
-                    title = ds.datasetInfo.datasetDescription;
-                } else {
-                    debugMsg += "[缺標題]";
-                }
-
-                // 4. 嘗試抓時間
+                let displayMessage = "";
+                let title = "";
+                let content = "";
                 let time = "";
-                if (ds.datasetInfo && ds.datasetInfo.issueTime) {
-                    time = ds.datasetInfo.issueTime;
-                }
 
-                // 5. 嘗試抓內容 (這是最容易錯的地方)
-                let content = "無內容";
-                
-                // 路徑 A: contents.content.contentText
-                if (ds.contents && ds.contents.content && ds.contents.content.contentText) {
-                    content = ds.contents.content.contentText;
+                // 1. 處理 cwaopendata 格式
+                if (alertData.cwaopendata && alertData.cwaopendata.dataset) {
+                    
+                    // 🔥 關鍵修正：判斷 dataset 是陣列還是物件？
+                    let ds = alertData.cwaopendata.dataset;
+                    if (Array.isArray(ds)) {
+                        ds = ds[0]; // 如果是陣列，取第一筆
+                    }
+
+                    // 2. 抓標題
+                    if (ds.datasetInfo) {
+                        title = ds.datasetInfo.datasetDescription || "";
+                        time = ds.datasetInfo.issueTime || "";
+                    }
+
+                    // 3. 抓內容 (多路徑嘗試)
+                    if (ds.contents && ds.contents.content && ds.contents.content.contentText) {
+                        content = ds.contents.content.contentText;
+                    } else if (ds.parameterSet) {
+                        // 處理 parameterSet 也可能是陣列的情況
+                        let paramSet = ds.parameterSet;
+                        if (Array.isArray(paramSet)) paramSet = paramSet[0];
+
+                        if (paramSet && paramSet.parameter) {
+                            const params = Array.isArray(paramSet.parameter) 
+                                ? paramSet.parameter 
+                                : [paramSet.parameter];
+                            
+                            // 嘗試找內容
+                            const p = params.find(x => x.parameterName === "警報內容" || x.parameterName === "contentText");
+                            if (p) content = p.parameterValue;
+                            else {
+                                // 真的找不到，就把所有 parameterValue 串起來 (例如：花蓮縣、臺東縣)
+                                content = "影響區域：" + params.map(x => x.parameterValue).join("、");
+                            }
+                        }
+                    }
                 } 
-                // 路徑 B: parameterSet
-                else if (ds.parameterSet && ds.parameterSet.parameter) {
-                    const params = Array.isArray(ds.parameterSet.parameter) 
-                        ? ds.parameterSet.parameter 
-                        : [ds.parameterSet.parameter];
-                    
-                    // 找看看有沒有 "警報內容"
-                    const p = params.find(x => x.parameterName === "警報內容" || x.parameterName === "contentText");
-                    if (p) content = p.parameterValue;
-                    else content = "參數中找不到內文";
-                } else {
-                    debugMsg += "[找不到內容路徑]";
+                // 備用：處理 records 格式
+                else if (alertData.records && alertData.records.record && alertData.records.record.length > 0) {
+                    const rec = alertData.records.record[0];
+                    title = rec.datasetDescription;
+                    content = rec.contents.content.contentText;
+                    time = rec.datasetInfo.issueTime;
                 }
 
-                // --- 顯示結果 ---
-                if (debugMsg) {
-                    // 如果有缺東西，直接顯示錯誤給你看
-                    alertEl.textContent = `⚠️ 診斷模式：${debugMsg} (標題=${title})`;
-                    alertEl.style.color = "yellow";
-                } else {
-                    // 如果都抓到了，正常顯示
+                // --- 4. 組合與顯示 ---
+                if (title && title !== "無理") {
                     const timeStr = time ? time.substring(5, 16).replace('T', ' ') : '';
-                    // 清理文字
-                    content = content.replace(title + "：", "").replace(/^一、/, "").replace(/二、注意事項.*/, "").trim();
                     
-                    const finalMsg = `【${title} ${timeStr}】${content}`;
-                    alertEl.textContent = finalMsg;
-                    alertEl.classList.remove('no-warning-text');
+                    // 內容清洗
+                    if (content) {
+                        content = content.replace(title + "：", "")
+                                         .replace(/^一、/, "")
+                                         .replace(/二、注意事項.*/, "")
+                                         .trim();
+                    }
                     
-                    // 啟動動畫
-                    setTimeout(() => startMarquee('warningContent'), 100);
+                    displayMessage = `【${title} ${timeStr}】${content}`;
+                }
+
+                // --- 5. 更新 DOM ---
+                if (displayMessage) {
+                    if(alertEl) {
+                        alertEl.textContent = displayMessage;
+                        alertEl.classList.remove('no-warning-text');
+                        
+                        // 重啟跑馬燈動畫
+                        const wrapper = document.getElementById('warningContent');
+                        if (wrapper) {
+                            wrapper.classList.remove('running-animation');
+                            void wrapper.offsetWidth;
+                            setTimeout(() => startMarquee('warningContent'), 100);
+                        }
+                    }
+                } else {
+                    if(alertEl) {
+                        alertEl.textContent = "目前全臺無發布氣象警特報";
+                        alertEl.classList.add('no-warning-text');
+                    }
                 }
 
             } catch (error) {
-                console.error("診斷失敗:", error);
-                alertEl.textContent = `❌ 程式錯誤: ${error.message}`;
+                console.error("警報處理錯誤:", error);
+                if(alertEl) alertEl.textContent = "⚠️ 警報載入失敗";
             }
         }
 
