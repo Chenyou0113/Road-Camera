@@ -797,28 +797,50 @@
                 html += `<div class="direction-section"><div class="direction-header"><i class="fas fa-arrow-right"></i> ${data.title}</div>`;
                 data.trains.forEach(train => {
                     const timeText = formatTime(train.ScheduledDepartureTime);
-                    const delayStatus = getDelayStatus(train);
-                    const endStation = train.EndingStationName || '未知';
-                    const trainInfo = getTrainDisplayInfo(train);
+                    const delay = parseInt(train.DelayTime || 0);
                     const isCancelled = (String(train.TrainStatus) === '2' || train.TrainStatus === 2);
-                    const cardClass = isCancelled ? 'train-card train-cancelled-row' : 'train-card';
-                    let timeDisplay = timeText;
-                    if (train.IsTomorrow) timeDisplay += ' <span style="font-size:0.7em; color:#999;">(明日)</span>';
                     
-                    // 預計時間 - 僅有誤點且非停駛時顯示
-                    let expectedTimeHtml = '';
-                    const delayMins = parseInt(train.DelayTime || 0);
-                    if (delayMins > 0 && !isCancelled) {
-                        const expectedTime = getExpectedTime(timeText, delayMins);
-                        expectedTimeHtml = `<div class="expected-time">預計 ${expectedTime}</div>`;
+                    // 🔥 [修改] 手機版時間顯示邏輯：暴力放大版
+                    let timeHtml = '';
+
+                    if (isCancelled) {
+                        // 停駛：時間劃掉，紅字蓋章
+                        timeHtml = `
+                            <span style="text-decoration: line-through; color: #777;">${timeText}</span>
+                            <div class="schedule-label" style="color: #ff5252; font-weight: bold;">停駛</div>
+                        `;
+                    } else if (delay > 0) {
+                        // 誤點：舊時間變小劃掉，新時間放大發光
+                        const expectedTime = getExpectedTime(train.ScheduledDepartureTime, delay);
+                        timeHtml = `
+                            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1;">
+                                <span style="text-decoration: line-through; color: #888; font-size: 0.85rem;">${timeText}</span>
+                                <span style="color: #00e5ff; font-weight: 900; font-size: 1.4rem; text-shadow: 0 0 5px rgba(0, 229, 255, 0.4);">${expectedTime}</span>
+                            </div>
+                        `;
+                    } else {
+                        // 準點或明日班次
+                        let label = '表定';
+                        if (train.IsTomorrow) label = '(明日)';
+                        timeHtml = `
+                            <span style="font-size: 1.2rem; font-weight: 600;">${timeText}</span>
+                            <div class="schedule-label">${label}</div>
+                        `;
                     }
 
-                    html += `<div class="${cardClass}" style="cursor: pointer;" onclick="showTrainStops('${train.TrainNo}', '${currentStationID}', '${endStation}')">
+                    const rowClass = isCancelled ? 'train-card train-cancelled-row' : 'train-card';
+                    const endStation = train.EndingStationName || '未知';
+                    const trainInfo = getTrainDisplayInfo(train);
+                    const delayStatus = getDelayStatus(train);
+
+                    html += `<div class="${rowClass}" style="cursor: pointer;" onclick="showTrainStops('${train.TrainNo}', '${currentStationID}', '${endStation}')">
                             <div class="train-info">
                                 <span class="train-type-badge type-${trainInfo.class}">${trainInfo.name}</span>
                                 <div class="train-destination"><div class="train-no">${train.TrainNo} 次</div><div class="destination">往 ${endStation}</div></div>
                             </div>
-                            <div class="schedule-time">${timeDisplay}${expectedTimeHtml}<div class="schedule-label">表定</div></div>
+                            <div class="schedule-time">
+                                ${timeHtml}
+                            </div>
                             <div class="delay-status">${delayStatus}</div>
                         </div>`;
                 });
@@ -1029,9 +1051,11 @@
             // 4. 計算距離 (站數差)
             const gap = Math.abs(currentIdx - reportedIdx);
 
-            // 🔥 核心判斷：如果距離超過 10 站，視為異常 (資料重置/幽靈車)
-            if (gap > 10) {
-                console.warn(`[Liveboard防呆] 隱藏異常位置: ${nameStr} (距離本站 ${gap} 站)`);
+            // 🔥 [修改] 改為 50，徹底解決長途列車 (如雙溪->花蓮) 被誤認為幽靈車的問題
+            // 台鐵最長的區間車（如新竹-嘉義）大約 40-50 站
+            // 設置 50 可以涵蓋所有合法的列車運行情況
+            if (gap > 50) {
+                console.warn(`[Liveboard防呆] 隱藏異常位置: ${nameStr} (距離本站 ${gap} 站 - 超過閾值 50)`);
                 return false;
             }
 
