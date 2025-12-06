@@ -244,6 +244,8 @@
         .delay-badge { display: inline-block; padding: 6px 10px; border-radius: 6px; font-weight: bold; }
         .delay-ok { background-color: #E8F5E9; color: #2E7D32; }
         .delay-warn { background-color: #FFEBEE; color: #C62828; }
+        .status-cancelled { background-color: #212121; color: #FF5252; border: 1px solid #FF5252; }
+        .train-cancelled-row { opacity: 0.6; filter: grayscale(100%); background-color: #1a1a1a !important; }
         
         /* 底部跑馬燈 (全寬版) */
         .marquee-bar {
@@ -393,6 +395,14 @@
         body.dark-mode .news-desc { color: #d7ccc8; }
         /* 深色模式已內建在 .warning-alert 樣式中 */
         body.dark-mode .disclaimer-content span { color: #ff8a80 !important; } /* 紅色警示文字變亮紅 */
+        
+        /* 預計時間樣式 */
+        .expected-time {
+            font-size: 0.9rem;
+            color: #00e5ff;
+            font-weight: 600;
+            margin-top: 4px;
+        }
         
         /* 手機版適配 */
         @media (max-width: 768px) {
@@ -728,7 +738,7 @@
             let filteredTrains = trains;
             if (directionFilter !== '') filteredTrains = trains.filter(t => String(t.Direction) === directionFilter);
 
-            // 🔥 [修正版] 跨日排序邏輯 - 解決凌晨列車亂序問題
+            // 🔥 [修正版] 跨日排序邏輯 - 解決凌晨列車亂序問題 + 停駛列車處理
             filteredTrains.sort((a, b) => {
                 const getActualMinutes = (t) => {
                     // 1. 取得表定時間 (格式 HH:mm 或 HH:mm:ss)
@@ -746,8 +756,11 @@
                         mins += 1440; // 把今天的凌晨當作 "24:xx", "25:xx" 等
                     }
                     
-                    // 2. 加上誤點時間
-                    mins += parseInt(t.DelayTime || 0);
+                    // 2. 加上誤點時間（停駛列車不計算誤點）
+                    const isCancelled = (String(t.TrainStatus) === '2' || t.TrainStatus === 2);
+                    if (!isCancelled) {
+                        mins += parseInt(t.DelayTime || 0);
+                    }
 
                     // 3. 處理明日班次 (變成 48點+)
                     if (t.IsTomorrow) mins += 1440;
@@ -787,15 +800,25 @@
                     const delayStatus = getDelayStatus(train);
                     const endStation = train.EndingStationName || '未知';
                     const trainInfo = getTrainDisplayInfo(train);
+                    const isCancelled = (String(train.TrainStatus) === '2' || train.TrainStatus === 2);
+                    const cardClass = isCancelled ? 'train-card train-cancelled-row' : 'train-card';
                     let timeDisplay = timeText;
                     if (train.IsTomorrow) timeDisplay += ' <span style="font-size:0.7em; color:#999;">(明日)</span>';
+                    
+                    // 預計時間 - 僅有誤點且非停駛時顯示
+                    let expectedTimeHtml = '';
+                    const delayMins = parseInt(train.DelayTime || 0);
+                    if (delayMins > 0 && !isCancelled) {
+                        const expectedTime = getExpectedTime(timeText, delayMins);
+                        expectedTimeHtml = `<div class="expected-time">預計 ${expectedTime}</div>`;
+                    }
 
-                    html += `<div class="train-card" style="cursor: pointer;" onclick="showTrainStops('${train.TrainNo}', '${currentStationID}', '${endStation}')">
+                    html += `<div class="${cardClass}" style="cursor: pointer;" onclick="showTrainStops('${train.TrainNo}', '${currentStationID}', '${endStation}')">
                             <div class="train-info">
                                 <span class="train-type-badge type-${trainInfo.class}">${trainInfo.name}</span>
                                 <div class="train-destination"><div class="train-no">${train.TrainNo} 次</div><div class="destination">往 ${endStation}</div></div>
                             </div>
-                            <div class="schedule-time">${timeDisplay}<div class="schedule-label">表定</div></div>
+                            <div class="schedule-time">${timeDisplay}${expectedTimeHtml}<div class="schedule-label">表定</div></div>
                             <div class="delay-status">${delayStatus}</div>
                         </div>`;
                 });
@@ -831,6 +854,16 @@
             return { name, class: cssClass };
         }
 
+        // 計算預計時間
+        function getExpectedTime(timeStr, delayMins) {
+            if (!timeStr || delayMins === 0) return timeStr;
+            const [h, m] = timeStr.split(':').map(Number);
+            const totalMins = h * 60 + m + delayMins;
+            const newH = Math.floor(totalMins / 60) % 24;
+            const newM = totalMins % 60;
+            return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
+        }
+
         // 🔥 台/臺 字元正規化轉換 (將「台」轉換為「臺」，統一使用官方傳統字體)
         function normalizeTaiwanChar(text) {
             if (!text) return "";
@@ -841,7 +874,11 @@
         function formatTime(t) { return (t && t.length >= 5) ? t.substring(0, 5) : '--:--'; }
         
         function getDelayStatus(train) {
-            // 🔥 新增：優先判斷是否為明日班次
+            // 停駛狀態優先檢查
+            if (String(train.TrainStatus) === '2' || train.TrainStatus === 2) {
+                return '<span class="delay-badge status-cancelled"><i class="fas fa-ban"></i> 停駛</span>';
+            }
+            // 明日班次檢查
             if (train.IsTomorrow) {
                 return '<span class="delay-badge" style="background-color: #ECEFF1; color: #546E7A;"><i class="fas fa-hourglass-start"></i> 未發車</span>';
             }

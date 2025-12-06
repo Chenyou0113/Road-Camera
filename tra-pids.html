@@ -244,6 +244,8 @@
         .status-ontime { color: #ffffff !important; text-shadow: none; }
         .status-delay { color: #ff1744 !important; }
         .status-future { color: #ccc !important; font-style: italic; }
+        .status-cancelled { background-color: #212121; color: #FF5252; border: 1px solid #FF5252; padding: 2px 6px; border-radius: 3px; }
+        .train-cancelled-row { opacity: 0.6; filter: grayscale(100%); background-color: #1a1a1a !important; }
 
         /* 宣導圖片區 */
         .media-zone {
@@ -352,6 +354,14 @@
             
             .marquee-footer { height: 40px; }
             .marquee-footer .marquee-text { height: 40px; line-height: 40px; font-size: 1rem; }
+        }
+        
+        /* 預計時間樣式（PIDS 表格版本） */
+        .expected-time-pids {
+            font-size: 0.8rem;
+            color: #4fc3f7;
+            font-weight: 600;
+            display: block;
         }
     </style>
     <script src="assets/station-code-mapping.js"></script>
@@ -599,6 +609,16 @@
         setInterval(updateClock, 1000);
         updateClock();
 
+        // 計算預計時間
+        function getExpectedTime(timeStr, delayMins) {
+            if (!timeStr || delayMins === 0) return timeStr;
+            const [h, m] = timeStr.split(':').map(Number);
+            const totalMins = h * 60 + m + delayMins;
+            const newH = Math.floor(totalMins / 60) % 24;
+            const newM = totalMins % 60;
+            return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
+        }
+
         function formatTime(timeStr) {
             if (!timeStr) return '--:--';
             return timeStr.slice(0, 5);
@@ -673,7 +693,7 @@
                     return true;
                 });
 
-                // 🔥 [修正版] PIDS 跨日排序邏輯 - 解決凌晨列車亂序問題
+                // 🔥 [修正版] PIDS 跨日排序邏輯 - 解決凌晨列車亂序問題 + 停駛列車處理
                 trains.sort((a, b) => {
                     const getActualMinutes = (t) => {
                         // 1. 取得表定時間
@@ -691,8 +711,11 @@
                             mins += 1440;
                         }
                         
-                        // 2. 加上誤點時間
-                        mins += parseInt(t.DelayTime || t.Delay || 0);
+                        // 2. 加上誤點時間（停駛列車不計算誤點）
+                        const isCancelled = (String(t.TrainStatus) === '2' || t.TrainStatus === 2);
+                        if (!isCancelled) {
+                            mins += parseInt(t.DelayTime || t.Delay || 0);
+                        }
 
                         // 3. 明日班次權重更重
                         if (t.IsTomorrow) mins += 1440;
@@ -744,11 +767,15 @@
 
             const maxRows = 8;
             trains.forEach((train, index) => {
+                const isCancelled = (String(train.TrainStatus) === '2' || train.TrainStatus === 2);
                 const delay = parseInt(train.DelayTime || train.Delay || 0);
                 let delayText = '準點';
                 let statusClass = 'status-ontime';
 
-                if (train.IsTomorrow) {
+                if (isCancelled) {
+                    delayText = '停駛';
+                    statusClass = 'status-cancelled';
+                } else if (train.IsTomorrow) {
                     delayText = '未發車';
                     statusClass = 'status-future';
                 } 
@@ -760,14 +787,22 @@
                 const trainInfo = getTrainDisplayInfo(train);
                 const row = document.createElement('tr');
                 if (index === 0) row.classList.add('highlight-row');
+                if (isCancelled) row.classList.add('train-cancelled-row');
                 
                 const timeStr = formatTime(train.ScheduledDepartureTime || train.DepartureTime);
+                
+                // 預計時間 - 僅有誤點且非停駛時顯示
+                let expectedTimeDisplay = '';
+                if (delay > 0 && !isCancelled) {
+                    const expectedTime = getExpectedTime(timeStr, delay);
+                    expectedTimeDisplay = `<span class="expected-time-pids">(預計 ${expectedTime})</span>`;
+                }
 
                 row.innerHTML = `
                     <td style="color:#fff; font-family:Consolas;">${train.TrainNo}</td>
                     <td><span class="train-type-badge type-${trainInfo.class}">${trainInfo.name}</span></td>
                     <td style="color:#fff;">${train.EndingStationName}</td>
-                    <td style="color:#fff; font-family:Consolas;">${timeStr}</td>
+                    <td style="color:#fff; font-family:Consolas;">${timeStr}${expectedTimeDisplay}</td>
                     <td class="${statusClass}">${delayText}</td>
                 `;
                 tbody.appendChild(row);
@@ -809,57 +844,62 @@
                 textHTML = "目前無列車資訊";
             } else {
                 const train = trains[0];
+                const isCancelled = (String(train.TrainStatus) === '2' || train.TrainStatus === 2);
                 const trainNo = train.TrainNo;
                 const trainInfo = getTrainDisplayInfo(train);
                 const delayTime = parseInt(train.DelayTime || train.Delay || 0);
                 
-                let stopTimes = [];
-                let liveData = null;
-
-                try {
-                    const liveWorkerPromise = fetch(`${TRA_WORKER_URL}/api/live?trainNo=${trainNo}`).then(r=>r.json()).catch(()=>null);
-                    const schedulePromise = fetchTrainStops(trainNo);
-                    let liveRawData;
-                    [stopTimes, liveRawData] = await Promise.all([schedulePromise, liveWorkerPromise]);
-
-                    if (liveRawData) {
-                        if (liveRawData.TrainLiveBoards && liveRawData.TrainLiveBoards.length > 0) liveData = liveRawData.TrainLiveBoards[0];
-                        else if (Array.isArray(liveRawData) && liveRawData.length > 0) liveData = liveRawData[0];
-                        else if (liveRawData.StationName) liveData = liveRawData;
-                    }
-                    
-                    if (!liveData) {
-                        try {
-                            const tdxResp = await tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`);
-                            if (tdxResp?.TrainLiveBoards?.length > 0) liveData = tdxResp.TrainLiveBoards[0];
-                        } catch(e){}
-                    }
-                } catch (e) {}
-
-                textHTML += `<span style="color: #ffeb3b; font-weight:bold;">${trainNo} 次 ${trainInfo.name} 往 ${train.EndingStationName}</span> `;
-                textHTML += `<span style="margin: 0 15px; color: #555;">|</span> `;
-
-                let locationText = "";
-                if (liveData && liveData.StationName) {
-                    const lastStationName = liveData.StationName.Zh_tw || liveData.StationName;
-                    
-                    if (isLocationReasonable(currentStationID, lastStationName, stopTimes)) {
-                        let nextStopName = "";
-                        if (stopTimes && stopTimes.length > 0) {
-                            const passedIndex = stopTimes.findIndex(s => s.StationName.Zh_tw === lastStationName);
-                            if (passedIndex !== -1 && passedIndex < stopTimes.length - 1) nextStopName = stopTimes[passedIndex + 1].StationName.Zh_tw;
-                        }
-                        locationText = nextStopName ? `列車目前位置：${lastStationName} ➡ ${nextStopName}` : `列車目前位置：${lastStationName}`;
-                        const liveDelay = liveData.DelayTime ? parseInt(liveData.DelayTime) : 0;
-                        if (liveDelay > 0) locationText += ` (晚 ${liveDelay} 分)`;
-                    } else {
-                        locationText = "(訊號偵測中...)";
-                    }
+                // 如果列車停駛，提前返回警告訊息
+                if (isCancelled) {
+                    textHTML = `<span style="color: #ff5252; font-weight:bold; font-size: 1.1em;">🚫 ${trainNo} 次 往 ${train.EndingStationName} 本日停駛</span> <span style="margin: 0 15px; color: #555;">|</span> <span style="color: #ffeb3b;">請改搭其他班次列車</span>`;
                 } else {
-                    if (train.IsTomorrow) {
-                        locationText = "列車尚未發車 (明日班次)";
+                    let stopTimes = [];
+                    let liveData = null;
+
+                    try {
+                        const liveWorkerPromise = fetch(`${TRA_WORKER_URL}/api/live?trainNo=${trainNo}`).then(r=>r.json()).catch(()=>null);
+                        const schedulePromise = fetchTrainStops(trainNo);
+                        let liveRawData;
+                        [stopTimes, liveRawData] = await Promise.all([schedulePromise, liveWorkerPromise]);
+
+                        if (liveRawData) {
+                            if (liveRawData.TrainLiveBoards && liveRawData.TrainLiveBoards.length > 0) liveData = liveRawData.TrainLiveBoards[0];
+                            else if (Array.isArray(liveRawData) && liveRawData.length > 0) liveData = liveRawData[0];
+                            else if (liveRawData.StationName) liveData = liveRawData;
+                        }
+                        
+                        if (!liveData) {
+                            try {
+                                const tdxResp = await tdxApi.fetch(`/v3/Rail/TRA/TrainLiveBoard/TrainNo/${trainNo}?$format=JSON`);
+                                if (tdxResp?.TrainLiveBoards?.length > 0) liveData = tdxResp.TrainLiveBoards[0];
+                            } catch(e){}
+                        }
+                    } catch (e) {}
+
+                    textHTML += `<span style="color: #ffeb3b; font-weight:bold;">${trainNo} 次 ${trainInfo.name} 往 ${train.EndingStationName}</span> `;
+                    textHTML += `<span style="margin: 0 15px; color: #555;">|</span> `;
+
+                    let locationText = "";
+                    if (liveData && liveData.StationName) {
+                        const lastStationName = liveData.StationName.Zh_tw || liveData.StationName;
+                        
+                        if (isLocationReasonable(currentStationID, lastStationName, stopTimes)) {
+                            let nextStopName = "";
+                            if (stopTimes && stopTimes.length > 0) {
+                                const passedIndex = stopTimes.findIndex(s => s.StationName.Zh_tw === lastStationName);
+                                if (passedIndex !== -1 && passedIndex < stopTimes.length - 1) nextStopName = stopTimes[passedIndex + 1].StationName.Zh_tw;
+                            }
+                            locationText = nextStopName ? `列車目前位置：${lastStationName} ➡ ${nextStopName}` : `列車目前位置：${lastStationName}`;
+                            const liveDelay = liveData.DelayTime ? parseInt(liveData.DelayTime) : 0;
+                            if (liveDelay > 0) locationText += ` (晚 ${liveDelay} 分)`;
+                        } else {
+                            locationText = "(訊號偵測中...)";
+                        }
                     } else {
-                        let isStarted = true;
+                        if (train.IsTomorrow) {
+                            locationText = "列車尚未發車 (明日班次)";
+                        } else {
+                            let isStarted = true;
                         
                         if (stopTimes && stopTimes.length > 0) {
                             const originTime = stopTimes[0].DepartureTime || stopTimes[0].ArrivalTime;
@@ -904,6 +944,7 @@
                 if (['自強3000','普悠瑪','太魯閣'].includes(trainInfo.class)) {
                     textHTML += ` <span style="color: #ff5252; margin-left: 20px;">⚠ 本列次須持有車票始得搭乘</span>`;
                 }
+                } // 結束非停駛列車的 else 分支
             }
             
             el.innerHTML = textHTML;
