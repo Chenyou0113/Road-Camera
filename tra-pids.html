@@ -496,10 +496,6 @@
         // ============ 0. 設定：Cloudflare Worker ============
         const TRA_WORKER_URL = "https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev";
 
-        // 🔥 PIDS 顯示模式控制 (1:台鐵經典, 2:刪除線優先, 3:只顯示實際)
-        // 預設為模式 2 (刪除線優先，適合嚴重延誤)
-        let PIDS_MODE = 2; // 可手動切換測試 1, 2, 或 3
-
         // ============ 1. 全局配置與資料庫 ============
         const TRAIN_TYPE_DB = [
           { "id": "1100", "name": "自強", "code": "3" },
@@ -819,94 +815,56 @@
             
             destLabel.textContent = generateDirectionTitle(trains, dirName === '逆行' ? '北上' : '南下');
 
-            // 固定顯示 8 行
             const maxRows = 8;
-            
             trains.forEach((train, index) => {
                 const isCancelled = (String(train.TrainStatus) === '2' || train.TrainStatus === 2);
                 const delay = parseInt(train.DelayTime || train.Delay || 0);
-                
-                // 基礎狀態設定
                 let delayText = '準點';
                 let statusClass = 'status-ontime';
-                
-                // 時間字串準備
-                const timeStr = formatTime(train.ScheduledDepartureTime || train.DepartureTime);
-                const estTime = getExpectedTime(timeStr, delay);
-                
-                let timeDisplayHtml = ''; // 最終時間欄內容
-                let statusSuffix = ''; // 模式 3 專用，狀態欄的延誤備註
-                
-                // === A. 判斷特殊狀態 (停駛/未來車) ===
+
                 if (isCancelled) {
                     delayText = '停駛';
                     statusClass = 'status-cancelled';
-                    timeDisplayHtml = `<span class="normal-time" style="text-decoration: line-through; color: #888; font-family: Consolas;">${timeStr}</span>`;
                 } else if (train.IsTomorrow) {
                     delayText = '未發車';
                     statusClass = 'status-future';
-                    timeDisplayHtml = `<span class="normal-time" style="font-family: Consolas;">${timeStr}</span>`;
                 } 
                 else if (delay > 0) {
+                    delayText = `晚 ${delay} 分`;
                     statusClass = 'status-delay';
                 }
-                
-                // === B. 根據 PIDS_MODE 執行顯示切換 ===
-                if (!isCancelled && !train.IsTomorrow) {
-                    switch (PIDS_MODE) {
-                        case 1: // 模式 1: 台鐵經典 (表定時間 + 標註延誤多久)
-                            timeDisplayHtml = `<span class="normal-time" style="font-family: Consolas;">${timeStr}</span>`;
-                            if (delay > 0) {
-                                delayText = `晚 ${delay} 分`;
-                            }
-                            break;
 
-                        case 2: // 模式 2: 刪除線優先 (表定劃線 + 實際發車時間) - 您目前喜歡的版本
-                            if (delay > 0) {
-                                // 誤點時，舊時間劃線，新時間放大紅字
-                                timeDisplayHtml = `
-                                    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;">
-                                        <span class="original-time" style="text-decoration: line-through; color: #888; font-family: Consolas;">${timeStr}</span>
-                                        <span style="color: #ff5252; font-weight: 900; font-size: 2rem; line-height: 1; text-shadow: 0 0 10px rgba(255, 82, 82, 0.6); margin-top: 2px; font-family: Consolas;">
-                                            ${estTime}
-                                        </span>
-                                    </div>
-                                `;
-                                // 狀態欄維持顯示延誤分鐘數
-                                delayText = `晚 ${delay} 分`;
-                            } else {
-                                timeDisplayHtml = `<span class="normal-time" style="font-family: Consolas;">${timeStr}</span>`;
-                            }
-                            break;
-
-                        case 3: // 模式 3: 只標註實際發車時間 (標紅) + 備註標註延誤資訊
-                            if (delay > 0) {
-                                // 狀態欄只標註「延誤」，不寫多久
-                                delayText = `延誤`;
-                                statusSuffix = ` (晚 ${delay} 分)`;
-                                // 只顯示實際時間，並標紅
-                                timeDisplayHtml = `<span class="normal-time" style="font-size: 2rem; font-weight: 900; color: #ff5252; font-family: Consolas; text-shadow: 0 0 5px rgba(255, 82, 82, 0.6);">${estTime}</span>`;
-                            } else {
-                                timeDisplayHtml = `<span class="normal-time" style="font-family: Consolas;">${timeStr}</span>`;
-                            }
-                            break;
-                    }
-                }
-                
-                // === C. 渲染輸出 ===
                 const trainInfo = getTrainDisplayInfo(train);
                 const row = document.createElement('tr');
                 if (index === 0) row.classList.add('highlight-row');
                 if (isCancelled) row.classList.add('train-cancelled-row');
                 
+                const timeStr = formatTime(train.ScheduledDepartureTime || train.DepartureTime);
+                
+                // 🔥 [修改] 誤點顯示邏輯：左右並排，不影響高度
+                let timeDisplayHtml = `<span class="normal-time" style="font-family: Consolas;">${timeStr}</span>`;
+                
+                if (delay > 0 && !train.IsTomorrow && statusClass !== 'status-cancelled') {
+                    const estTime = getExpectedTime(timeStr, delay);
+                    // 使用 Flex 容器左右排列
+                    timeDisplayHtml = `
+                        <div class="time-delay-container">
+                            <span class="original-time" style="font-family: Consolas;">${timeStr}</span>
+                            <span class="expected-time" style="font-family: Consolas;">${estTime}</span>
+                        </div>
+                    `;
+                }
+
                 row.innerHTML = `
-                    <td style="color:#fff; font-family:Consolas; font-size: 1.5rem; font-weight: bold;">${train.TrainNo}</td>
+                    <td style="color:#fff; font-family:Consolas;">${train.TrainNo}</td>
                     <td><span class="train-type-badge type-${trainInfo.class}">${trainInfo.name}</span></td>
-                    <td style="color:#fff; font-size: 1.6rem; font-weight: bold;">${train.EndingStationName}</td>
+                    <td style="color:#fff;">${train.EndingStationName}</td>
+                    
                     <td style="color:#fff; vertical-align: middle;">
                         ${timeDisplayHtml}
                     </td>
-                    <td class="${statusClass}" style="font-size: 1.6rem; font-weight: bold;">${delayText}${statusSuffix}</td>
+                    
+                    <td class="${statusClass}">${delayText}</td>
                 `;
                 tbody.appendChild(row);
             });
