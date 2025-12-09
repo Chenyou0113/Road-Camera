@@ -88,8 +88,9 @@
                 <label><i class="fas fa-filter"></i> 預報類型</label>
                 <select id="typeSelect" onchange="changeDataset()">
                     <option value="F-C0032-001">🇹🇼 36 小時 (每12小時)</option>
+                    <option value="F-D0047-089">🕒 鄉鎮未來3天 (每3小時)</option>
+                    <option value="F-D0047-091">📆 鄉鎮未來1週 (每12小時)</option>
                     <option value="F-C0032-003">🗓️ 一周縣市 (每12小時)</option>
-                    <option value="F-D0047-091">🏡 鄉鎮詳細 (每3~12小時)</option>
                     <option value="F-C0032-007">🌏 全球都市 (每日)</option>
                 </select>
             </div>
@@ -137,18 +138,7 @@
                     throw new Error("此預報資料庫尚未同步 (空資料)");
                 }
 
-                // 🔥 詳細的結構診斷日誌
-                console.log(`📋 JSON 結構診斷 (${datasetId}):`, {
-                    hasCwaOpendata: !!json?.cwaopendata,
-                    hasCwaOpendata_Dataset: !!json?.cwaopendata?.Dataset,
-                    hasCwaOpendata_dataset: !!json?.cwaopendata?.dataset,
-                    hasCwaOpendata_Dataset_Locations: !!json?.cwaopendata?.Dataset?.Locations,
-                    hasRecords: !!json?.records,
-                    hasRecords_Locations: !!json?.records?.Locations,
-                    hasRecords_location: !!json?.records?.location,
-                });
-
-                // 🔥 呼叫暴力解析器
+                // 🔥 呼叫 V6.0 簡化解析器
                 const locations = findLocations(json);
                 
                 if (locations && locations.length > 0) {
@@ -158,8 +148,6 @@
                     renderCards();
                 } else {
                     console.error("❌ 結構解析失敗，原始資料:", json);
-                    console.error("🔍 完整的 cwaopendata 結構:", json?.cwaopendata);
-                    console.error("🔍 完整的 records 結構:", json?.records);
                     throw new Error("無法解析氣象資料結構 (請看 Console)");
                 }
             } catch (e) {
@@ -171,34 +159,27 @@
             }
         }
 
-        // 🔥 V5.0 暴力解析器：窮舉所有可能的路徑 (大小寫通用版)
+        // V6.0: 簡化版 4 路徑解析器
         function findLocations(json) {
-            // 🔥 統一大小寫處理：CWA API 大小寫不一致
-            
-            // 路徑 1: cwaopendata.Dataset.Locations.Location (陣列) - F-C0032-003
-            if (json?.cwaopendata?.Dataset?.Locations?.Location && Array.isArray(json.cwaopendata.Dataset.Locations.Location)) {
-                return json.cwaopendata.Dataset.Locations.Location;
+            // 路徑 1: F-C0032-001 (36小時) - File API 小寫
+            if (json?.cwaopendata?.dataset?.location) {
+                return json.cwaopendata.dataset.location;
             }
 
-            // 路徑 2: cwaopendata.dataset.location (File API 小寫版本) - F-C0032-001
-            if (json?.cwaopendata?.dataset?.location) return json.cwaopendata.dataset.location;
-
-            // 路徑 3: cwaopendata.dataset.locations.location
-            if (json?.cwaopendata?.dataset?.locations?.location) return json.cwaopendata.dataset.locations.location;
-
-            // 路徑 4: records.location (DataStore 標準格式)
-            if (json?.records?.location) return json.records.location;
-
-            // 路徑 5: records.Locations (大寫版 - F-D0047-091)
-            if (json?.records?.Locations) {
-                const locs = json.records.Locations;
-                if (Array.isArray(locs) && locs[0]?.location) return locs[0].location;
-                if (locs?.location) return locs.location;
-                if (locs?.Location && Array.isArray(locs.Location)) return locs.Location;
+            // 路徑 2: F-C0032-003 (7天縣市) - File API 大小寫混合
+            if (json?.cwaopendata?.dataset?.locations?.location) {
+                return json.cwaopendata.dataset.locations.location;
             }
 
-            // 路徑 6: records.locations.location (小寫版)
-            if (json?.records?.locations?.location) return json.records.locations.location;
+            // 路徑 3: DataStore 標準格式
+            if (json?.records?.location) {
+                return json.records.location;
+            }
+
+            // 路徑 4: F-D0047-089, F-D0047-091 (鄉鎮逐3小時/12小時) - 巢狀陣列
+            if (json?.records?.locations && Array.isArray(json.records.locations)) {
+                return json.records.locations[0]?.location || null;
+            }
 
             return null;
         }
@@ -238,9 +219,9 @@
 
             // 找出關鍵因子 (支援多種命名)
             const wx = getEl(elements, ['Wx', 'WeatherDescription']);
-            const minT = getEl(elements, ['MinT', 'MinTemperature']); 
-            const maxT = getEl(elements, ['MaxT', 'MaxTemperature']);
-            const pop = getEl(elements, ['PoP12h', 'PoP6h', 'PoP', 'ProbabilityOfPrecipitation']);
+            const minT = getEl(elements, ['MinT', 'MinTemperature', 'T']); 
+            const maxT = getEl(elements, ['MaxT', 'MaxTemperature', 'T']);
+            const pop = getEl(elements, ['PoP12h', 'PoP6h', 'PoP3h', 'PoP', 'ProbabilityOfPrecipitation']);
 
             if (!wx || !wx.time) {
                 container.innerHTML = '<div class="loading">此地點暫無詳細預報數據</div>';
@@ -254,9 +235,20 @@
                     if (startH >= 18 || startH < 6) continue; 
                 }
 
+                // 支援 dataTime (鄉鎮逐3小時用) 或 startTime
+                const startTime = time.startTime || time.dataTime;
+                
+                // 若無 endTime，自動計算為 startTime + 3 小時 (鄉鎮逐3小時)
+                let endTime = time.endTime;
+                if (!endTime && startTime) {
+                    const dt = new Date(startTime);
+                    dt.setHours(dt.getHours() + 3);
+                    endTime = dt.toISOString();
+                }
+
                 html += createCard(
-                    time.startTime, 
-                    time.endTime, 
+                    startTime, 
+                    endTime, 
                     getVal(wx, i), 
                     getVal(minT, i), 
                     getVal(maxT, i), 
