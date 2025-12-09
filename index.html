@@ -1225,25 +1225,24 @@
         // 修正：解決 dataset 可能是陣列導致找不到標題的問題
         // ==========================================
         // ==========================================
-        // 🚨 警特報更新函式 (V9.0 多重警報串接版)
-        // 修正：當同時有多個警報時，會全部串接顯示，不會只顯示第一筆
+        // 🚨 警特報更新函式 (V12.0 完整多重警報版)
+        // 放在 index.html 的 <script> 區塊內
         // ==========================================
         async function updateWeatherStatus() {
             const alertEl = document.getElementById('alertText');
+            // 請確認下方的 URL 是你的氣象 Worker 網址
             const alertUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev/api/weather/alert';
 
             try {
                 const alertRes = await fetch(alertUrl);
                 const alertData = await alertRes.json();
                 
-                let allAlerts = []; // 用來存所有處理好的警報文字
-
-                // 1. 統一將資料正規化成「陣列」，不管來源是 cwaopendata 還是 records
+                let allAlerts = []; 
                 let rawDataList = [];
 
+                // 1. 資料正規化：無論是一筆還是多筆，通通轉成陣列處理
                 if (alertData.cwaopendata && alertData.cwaopendata.dataset) {
                     const ds = alertData.cwaopendata.dataset;
-                    // 如果是陣列就直接用，如果是物件就包成陣列
                     rawDataList = Array.isArray(ds) ? ds : [ds];
                 } 
                 else if (alertData.records && alertData.records.record) {
@@ -1251,79 +1250,65 @@
                     rawDataList = Array.isArray(rec) ? rec : [rec];
                 }
 
-                // 2. 迴圈處理每一筆警報資料
+                // 2. 迴圈：處理每一則警報
                 rawDataList.forEach(item => {
                     let title = "";
                     let content = "";
                     let time = "";
 
-                    // --- 解析邏輯 (兼容兩種格式) ---
-                    // A. 嘗試從 datasetInfo 抓 (cwaopendata 格式)
+                    // 解析標題與時間
                     if (item.datasetInfo) {
                         title = item.datasetInfo.datasetDescription || "";
                         time = item.datasetInfo.issueTime || "";
-                    } 
-                    // B. 嘗試從 datasetDescription 抓 (records 格式)
-                    else if (item.datasetDescription) {
+                    } else if (item.datasetDescription) {
                         title = item.datasetDescription;
                     }
 
-                    // C. 嘗試抓取時間 (records 格式)
                     if (!time && item.datasetInfo && item.datasetInfo.issueTime) {
                         time = item.datasetInfo.issueTime;
                     }
 
-                    // D. 嘗試抓取內容
+                    // 解析內容
                     if (item.contents && item.contents.content && item.contents.content.contentText) {
                         content = item.contents.content.contentText;
-                    } 
-                    else if (item.parameterSet) {
-                        // 處理 parameterSet 可能是陣列的情況
+                    } else if (item.parameterSet) {
                         let paramSet = item.parameterSet;
                         if (Array.isArray(paramSet)) paramSet = paramSet[0];
-
                         if (paramSet && paramSet.parameter) {
-                            const params = Array.isArray(paramSet.parameter) 
-                                ? paramSet.parameter 
-                                : [paramSet.parameter];
-                            
-                            // 找 contentText 或 警報內容
+                            const params = Array.isArray(paramSet.parameter) ? paramSet.parameter : [paramSet.parameter];
                             const p = params.find(x => x.parameterName === "警報內容" || x.parameterName === "contentText");
                             if (p) content = p.parameterValue;
-                            else {
-                                // 找不到內文，就列出影響區域
-                                content = "影響區域：" + params.map(x => x.parameterValue).join("、");
-                            }
+                            else content = "影響區域：" + params.map(x => x.parameterValue).join("、");
                         }
                     }
 
-                    // --- 資料清洗與組合 ---
+                    // 3. 資料清洗與組合
                     if (title && title !== "無理") {
                         const timeStr = time ? time.substring(5, 16).replace('T', ' ') : '';
                         
-                        // 清洗多餘文字
                         if (content) {
-                            content = content.replace(title + "：", "")
-                                             .replace(/^一、/, "")
-                                             .replace(/二、注意事項.*/, "")
+                            // 🔥 關鍵修正：只去除格式字眼，保留完整文句
+                            content = content.replace(title + "：", "")  // 去掉重複的標題
+                                             .replace(/^一、/, "")      // 去掉開頭的 "一、"
+                                             .replace(/二、注意事項.*/, "") // 去掉結尾的注意事項
                                              .trim();
                         }
                         
-                        // 組合單一則警報字串
+                        // 格式：【標題 時間】內容
                         allAlerts.push(`【${title} ${timeStr}】${content}`);
                     }
                 });
 
-                // --- 3. 最終顯示 ---
+                // 4. 顯示結果
                 if (allAlerts.length > 0) {
-                    // 🔥 關鍵：用分隔符號將所有警報串起來
+                    // 用圖示分隔不同的警報
                     const finalDisplayString = allAlerts.join("   🔶   "); 
 
                     if(alertEl) {
                         alertEl.textContent = finalDisplayString;
                         alertEl.classList.remove('no-warning-text');
                         
-                        // 重啟跑馬燈動畫
+                        // 重啟跑馬燈動畫，確保文字長度改變後能正確跑動
                         const wrapper = document.getElementById('warningContent');
                         if (wrapper) {
                             wrapper.classList.remove('running-animation');
