@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>一周天氣預報 | 台灣即時監控</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="assets/dark-mode.css">
+    <link rel="stylesheet" href="assets/mobile-responsive.css">
+    <style>
+        body { font-family: 'Microsoft JhengHei', sans-serif; background: #f0f4f8; color: #333; }
+        body.dark-mode { background: #0f172a; color: #e0e0e0; }
+
+        .header { background: linear-gradient(135deg, #009688, #004d40); color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; }
+        .back-btn { color: white; text-decoration: none; background: rgba(255,255,255,0.2); padding: 8px 15px; border-radius: 20px; }
+
+        .container { max-width: 1200px; margin: 20px auto; padding: 0 15px; }
+
+        .select-wrapper { text-align: center; margin-bottom: 30px; }
+        select {
+            padding: 12px 20px; font-size: 1.1rem; border-radius: 30px; border: 2px solid #009688;
+            background: white; color: #333; outline: none; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        body.dark-mode select { background: #1e293b; color: white; border-color: #2dd4bf; }
+
+        /* 預報卡片網格 */
+        .forecast-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 15px;
+        }
+
+        .forecast-card {
+            background: white; border-radius: 15px; padding: 20px 10px; text-align: center;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.05); transition: transform 0.3s;
+            border-top: 5px solid #009688;
+        }
+        body.dark-mode .forecast-card { background: #1e293b; border-top-color: #2dd4bf; box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
+        .forecast-card:hover { transform: translateY(-5px); }
+
+        .date { font-size: 0.9rem; color: #666; margin-bottom: 5px; }
+        .day-name { font-size: 1.2rem; font-weight: bold; margin-bottom: 10px; color: #333; }
+        .weather-icon { font-size: 2.5rem; margin: 15px 0; color: #f9a825; }
+        .temp { font-size: 1.3rem; font-weight: bold; color: #009688; }
+        .rain { font-size: 0.9rem; color: #1976d2; margin-top: 5px; }
+        
+        body.dark-mode .date { color: #aaa; }
+        body.dark-mode .day-name { color: #fff; }
+        body.dark-mode .temp { color: #2dd4bf; }
+        body.dark-mode .rain { color: #64b5f6; }
+
+        .loading { text-align: center; padding: 50px; font-size: 1.2rem; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><i class="fas fa-calendar-alt"></i> 一周天氣預報</h1>
+        <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 回首頁</a>
+    </div>
+
+    <div class="container">
+        <div class="select-wrapper">
+            <select id="locationSelect" onchange="renderForecast()">
+                <option value="">載入縣市中...</option>
+            </select>
+        </div>
+
+        <div id="forecastContainer" class="forecast-grid">
+            <div class="loading"><i class="fas fa-spinner fa-spin"></i> 資料讀取中...</div>
+        </div>
+    </div>
+
+    <script>
+        const WORKER_URL = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev';
+        // F-D0047-091 是全台各縣市未來 7 天預報
+        const DATASET_ID = 'F-D0047-091';
+
+        let allWeatherData = [];
+
+        async function init() {
+            try {
+                const res = await fetch(`${WORKER_URL}?dataset=${DATASET_ID}`);
+                const json = await res.json();
+
+                // 解析 CWA 資料結構 (位置在 records.locations[0].location)
+                if (json.records && json.records.locations && json.records.locations[0].location) {
+                    allWeatherData = json.records.locations[0].location;
+                    populateSelect();
+                    // 預設選擇第一個 (通常是宜蘭或基隆，視 API 排序)
+                    // 我們可以預設選「臺北市」
+                    const defaultLoc = allWeatherData.find(l => l.locationName === '臺北市') || allWeatherData[0];
+                    document.getElementById('locationSelect').value = defaultLoc.locationName;
+                    renderForecast();
+                } else {
+                    throw new Error("資料格式錯誤");
+                }
+            } catch (e) {
+                console.error(e);
+                document.getElementById('forecastContainer').innerHTML = '<div class="loading">❌ 資料載入失敗，請稍後再試</div>';
+            }
+        }
+
+        function populateSelect() {
+            const select = document.getElementById('locationSelect');
+            select.innerHTML = '';
+            allWeatherData.forEach(loc => {
+                const option = document.createElement('option');
+                option.value = loc.locationName;
+                option.textContent = loc.locationName;
+                select.appendChild(option);
+            });
+        }
+
+        function renderForecast() {
+            const selectedName = document.getElementById('locationSelect').value;
+            const locationData = allWeatherData.find(l => l.locationName === selectedName);
+            const container = document.getElementById('forecastContainer');
+            
+            if (!locationData) return;
+
+            // 提取天氣因子
+            // Wx: 天氣現象, MinT: 最低溫, MaxT: 最高溫, PoP12h: 降雨機率
+            const getEl = (code) => locationData.weatherElement.find(e => e.elementName === code).time;
+
+            const wx = getEl('Wx');
+            const minT = getEl('MinT');
+            const maxT = getEl('MaxT');
+            const pop = getEl('PoP12h'); // 注意：PoP12h 只有前幾天有，後面可能沒有
+
+            let html = '';
+
+            // 7天預報，通常 API 會給出 14 個時段 (早/晚)
+            // 我們這裡每兩筆取一筆 (取白天時段，通常是 06:00 或 12:00 開始)
+            // 簡化邏輯：顯示未來 7 天的「白天」預報
+            
+            // 過濾出白天時段 (06:00 - 18:00) 或 (12:00 - 18:00)
+            // 簡單解法：每隔 2 個取一個，確保覆蓋每一天
+            
+            for (let i = 0; i < wx.length; i += 2) {
+                const startTime = new Date(wx[i].startTime);
+                const dayName = getDayName(startTime.getDay());
+                const dateStr = `${startTime.getMonth()+1}/${startTime.getDate()}`;
+                
+                const weatherText = wx[i].elementValue[0].value;
+                const weatherCode = parseInt(wx[i].elementValue[1].value);
+                const icon = getWeatherIcon(weatherCode);
+                
+                const low = minT[i] ? minT[i].elementValue[0].value : '--';
+                const high = maxT[i] ? maxT[i].elementValue[0].value : '--';
+                
+                // 降雨機率 (可能長度不一致，要做防呆)
+                let rainProb = '--';
+                if (pop && pop[i]) {
+                    rainProb = pop[i].elementValue[0].value;
+                    if(rainProb !== ' ') rainProb += '%';
+                    else rainProb = '無資料';
+                }
+
+                html += `
+                    <div class="forecast-card">
+                        <div class="date">${dateStr}</div>
+                        <div class="day-name">${dayName}</div>
+                        <div class="weather-icon">${icon}</div>
+                        <div style="font-size:0.9rem; margin-bottom:5px;">${weatherText}</div>
+                        <div class="temp">${low}° - ${high}°</div>
+                        <div class="rain"><i class="fas fa-umbrella"></i> ${rainProb}</div>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html;
+        }
+
+        function getDayName(dayIndex) {
+            const days = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+            return days[dayIndex];
+        }
+
+        function getWeatherIcon(code) {
+            // 簡易對應表
+            if (code === 1) return '<i class="fas fa-sun" style="color:orange"></i>'; // 晴天
+            if (code >= 2 && code <= 3) return '<i class="fas fa-cloud-sun" style="color:#f9a825"></i>'; // 多雲
+            if (code >= 4 && code <= 7) return '<i class="fas fa-cloud" style="color:#90a4ae"></i>'; // 陰天
+            if (code >= 8 && code <= 14) return '<i class="fas fa-cloud-showers-heavy" style="color:#42a5f5"></i>'; // 雨
+            if (code >= 15) return '<i class="fas fa-bolt" style="color:#ffeb3b"></i>'; // 雷雨
+            return '<i class="fas fa-cloud"></i>';
+        }
+
+        // 深色模式檢查
+        if(localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
+
+        // 啟動
+        init();
+    </script>
+</body>
+</html>

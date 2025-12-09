@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>即時衛星雲圖 | 台灣即時監控</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="assets/dark-mode.css">
+    <link rel="stylesheet" href="assets/mobile-responsive.css">
+    <style>
+        body { font-family: 'Microsoft JhengHei', sans-serif; background: #e3f2fd; color: #333; }
+        body.dark-mode { background: #121212; color: #e0e0e0; }
+        
+        .header { background: linear-gradient(135deg, #1e88e5, #1565c0); color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
+        .back-btn { color: white; text-decoration: none; background: rgba(255,255,255,0.2); padding: 8px 15px; border-radius: 20px; transition: 0.3s; }
+        .back-btn:hover { background: rgba(255,255,255,0.3); }
+
+        .container { max-width: 1000px; margin: 20px auto; padding: 0 15px; }
+
+        .controls-wrapper {
+            background: white; padding: 15px; border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1); margin-bottom: 20px;
+        }
+        body.dark-mode .controls-wrapper { background: #1e293b; }
+
+        .control-row { display: flex; gap: 15px; align-items: center; justify-content: center; flex-wrap: wrap; margin-bottom: 10px; }
+        .control-row:last-child { margin-bottom: 0; }
+
+        select {
+            padding: 8px 15px; border-radius: 20px; border: 2px solid #1e88e5;
+            font-size: 1rem; cursor: pointer; outline: none; background: white; color: #333;
+        }
+        body.dark-mode select { background: #333; color: white; border-color: #4fc3f7; }
+
+        .btn-mode {
+            padding: 8px 15px; border: none; border-radius: 20px; cursor: pointer;
+            background: #f0f0f0; color: #555; font-weight: bold; transition: all 0.3s;
+        }
+        .btn-mode.active { background: #1e88e5; color: white; }
+        .btn-mode:hover:not(.active) { background: #e3f2fd; }
+        
+        body.dark-mode .btn-mode { background: #333; color: #aaa; }
+        body.dark-mode .btn-mode.active { background: #4fc3f7; color: #000; }
+
+        .image-viewer {
+            position: relative; width: 100%; border-radius: 15px; overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3); background: #000; min-height: 500px;
+            display: flex; justify-content: center; align-items: center;
+        }
+        .image-viewer img { width: 100%; height: auto; display: block; object-fit: contain; }
+        
+        .loading-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; color: white; z-index: 10;
+        }
+        
+        .time-badge {
+            position: absolute; bottom: 20px; right: 20px;
+            background: rgba(0,0,0,0.6); color: #fff; padding: 5px 15px;
+            border-radius: 20px; font-family: Consolas, monospace; font-size: 1.1rem;
+            border: 1px solid rgba(255,255,255,0.3); backdrop-filter: blur(5px);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1><i class="fas fa-satellite"></i> 即時衛星雲圖</h1>
+        <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 回首頁</a>
+    </div>
+
+    <div class="container">
+        <div class="controls-wrapper">
+            <div class="control-row">
+                <label style="font-weight:bold;">範圍：</label>
+                <select id="areaSelect" onchange="updateImage()">
+                    <option value="TW">🇹🇼 臺灣</option>
+                    <option value="EA">🌏 東亞</option>
+                    <option value="GLOBAL">🌐 全球</option>
+                </select>
+            </div>
+            
+            <div class="control-row" id="typeButtons">
+                <button class="btn-mode active" data-type="IR_COLOR" onclick="setType('IR_COLOR')">紅外線彩色</button>
+                <button class="btn-mode" data-type="IR_BW" onclick="setType('IR_BW')">紅外線黑白</button>
+                <button class="btn-mode" data-type="MB" onclick="setType('MB')">色調強化</button>
+                <button class="btn-mode" data-type="VIS" onclick="setType('VIS')">可見光</button>
+            </div>
+        </div>
+
+        <div class="image-viewer">
+            <div id="loading" class="loading-overlay">
+                <i class="fas fa-spinner fa-spin fa-3x"></i>
+                <p style="margin-top: 15px;">衛星影像載入中...</p>
+            </div>
+            <img id="satImg" src="" alt="衛星雲圖" onload="hideLoading()" onerror="showError()">
+            <div class="time-badge" id="imgTime">--:--</div>
+        </div>
+        
+        <p style="text-align: center; color: #666; margin-top: 15px; font-size: 0.9rem;">
+            資料來源：交通部中央氣象署 (每 10 分鐘更新)
+        </p>
+    </div>
+
+    <script>
+        // === 氣象署 Open Data API (O-B系列) 代碼表 ===
+        // 格式：[區域]_[類型]
+        const DATASETS = {
+            // --- 紅外線彩色 ---
+            'GLOBAL_IR_COLOR': 'O-B0028-001',
+            'EA_IR_COLOR':     'O-B0028-002',
+            'TW_IR_COLOR':     'O-B0028-003',
+
+            // --- 紅外線黑白 ---
+            'GLOBAL_IR_BW':    'O-B0029-001',
+            'EA_IR_BW':        'O-B0029-002',
+            'TW_IR_BW':        'O-B0029-003',
+
+            // --- 色調強化 ---
+            'GLOBAL_MB':       'O-B0030-001',
+            'EA_MB':           'O-B0030-002',
+            'TW_MB':           'O-B0030-003',
+
+            // --- 可見光 ---
+            'GLOBAL_VIS':      'O-B0031-001',
+            'EA_VIS':          'O-B0031-002',
+            'TW_VIS':          'O-B0031-003'
+        };
+
+        const WORKER_URL = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev';
+        
+        let currentType = 'IR_COLOR'; // 預設：紅外線彩色
+
+        function setType(type) {
+            currentType = type;
+            document.querySelectorAll('.btn-mode').forEach(b => b.classList.remove('active'));
+            document.querySelector(`button[data-type="${type}"]`).classList.add('active');
+            updateImage();
+        }
+
+        async function updateImage() {
+            const area = document.getElementById('areaSelect').value;
+            const key = `${area}_${currentType}`;
+            const datasetId = DATASETS[key];
+
+            if (!datasetId) {
+                showError("此區域暫無影像資料");
+                return;
+            }
+
+            const loading = document.getElementById('loading');
+            const img = document.getElementById('satImg');
+            const timeLabel = document.getElementById('imgTime');
+            
+            loading.style.display = 'flex';
+            loading.innerHTML = '<i class="fas fa-spinner fa-spin fa-3x"></i><p>載入中...</p>';
+            
+            try {
+                // 呼叫 Worker (支援快取)
+                const res = await fetch(`${WORKER_URL}?dataset=${datasetId}`);
+                const data = await res.json();
+                
+                let imgUrl = "";
+                let obsTime = "";
+
+                if (data.cwaopendata && data.cwaopendata.dataset) {
+                    const ds = data.cwaopendata.dataset;
+                    
+                    if (ds.obsTime) obsTime = ds.obsTime;
+                    else if (ds.time && ds.time.obsTime) obsTime = ds.time.obsTime;
+
+                    if (ds.resource && ds.resource.uri) {
+                        imgUrl = ds.resource.uri;
+                    } else if (ds.resources && Array.isArray(ds.resources.resource)) {
+                        imgUrl = ds.resources.resource[0].uri;
+                    }
+                }
+
+                if (imgUrl) {
+                    img.src = imgUrl;
+                    if(obsTime) {
+                        const date = new Date(obsTime);
+                        timeLabel.textContent = date.toLocaleString('zh-TW', {
+                            hour12: false, month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit'
+                        });
+                    }
+                } else {
+                    throw new Error("找不到圖片連結");
+                }
+
+            } catch (e) {
+                console.error(e);
+                showError();
+            }
+        }
+
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        function showError(msg = "圖片載入失敗") {
+            const loading = document.getElementById('loading');
+            loading.innerHTML = `<i class="fas fa-exclamation-triangle fa-3x" style="color:#ff5252"></i><p>${msg}</p>`;
+        }
+
+        if(localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
+
+        updateImage();
+    </script>
+</body>
+</html>
