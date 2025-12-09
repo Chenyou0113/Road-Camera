@@ -135,7 +135,6 @@
                     throw new Error("此預報資料庫尚未同步，請稍後再試");
                 }
 
-                // 萬能解析器
                 const locations = findLocations(json);
                 
                 if (locations && locations.length > 0) {
@@ -143,7 +142,7 @@
                     populateSelect();
                     renderCards();
                 } else {
-                    console.error("❌ 結構解析失敗，原始資料:", json);
+                    console.error("❌ 結構解析失敗:", json);
                     throw new Error("無法解析氣象資料結構");
                 }
             } catch (e) {
@@ -155,21 +154,14 @@
             }
         }
 
-        // 🔥 V3.1 終極解析器：覆蓋所有已知結構
+        // 🔥 V4.0 解析器：統一處理 File API 結構
         function findLocations(json) {
-            // 1. F-C0032-001 (36小時)
-            if (json?.records?.location) return json.records.location;
-
-            // 2. F-C0032-003 (七天縣市) & F-C0032-005 (一週縣市)
-            if (json?.records?.locations?.[0]?.location) return json.records.locations[0].location;
-            
-            // 3. F-D0047-091 (鄉鎮預報) - 這是你 Log 報錯的地方
-            // 它的結構有時候是 records.locations[0].location
-            if (json?.records?.locations?.location) return json.records.locations.location;
-
-            // 4. F-C0032-007 (全球都市) - 這是 File API 格式
+            // F-C 系列 (全走 File API)
             if (json?.cwaopendata?.dataset?.location) return json.cwaopendata.dataset.location;
             if (json?.cwaopendata?.dataset?.locations?.location) return json.cwaopendata.dataset.locations.location;
+
+            // F-D0047-091 (鄉鎮預報，仍走 DataStore)
+            if (json?.records?.locations?.[0]?.location) return json.records.locations[0].location;
 
             return null;
         }
@@ -177,20 +169,16 @@
         function populateSelect() {
             const locSelect = document.getElementById('locationSelect');
             locSelect.innerHTML = '';
-            
             currentData.forEach((loc, index) => {
                 const option = document.createElement('option');
                 option.value = index;
                 option.textContent = loc.locationName;
                 locSelect.appendChild(option);
             });
-
-            // 預設選台北
             let defaultIdx = 0;
             const targetCity = '臺北市'; 
             const foundIdx = currentData.findIndex(l => l.locationName === targetCity);
             if (foundIdx !== -1) defaultIdx = foundIdx;
-
             locSelect.value = defaultIdx;
             locSelect.disabled = false;
         }
@@ -202,12 +190,10 @@
             const datasetType = document.getElementById('typeSelect').value;
 
             if (!location) return;
-
             let html = '';
             const elements = location.weatherElement;
             const isDailyMode = (datasetType === 'F-C0032-007'); 
 
-            // 找出關鍵因子 (支援多種命名)
             const wx = getEl(elements, ['Wx', 'WeatherDescription']);
             const minT = getEl(elements, ['MinT', 'MinTemperature']); 
             const maxT = getEl(elements, ['MaxT', 'MaxTemperature']);
@@ -220,30 +206,22 @@
 
             for(let i=0; i<wx.time.length; i++) {
                 const time = wx.time[i];
+                // 全球預報若有跨夜，過濾掉晚上
                 if (isDailyMode) {
                     const startH = new Date(time.startTime).getHours();
-                    // 全球預報通常給 06:00, 18:00，我們只顯示白天
                     if (startH >= 18 || startH < 6) continue; 
                 }
-
-                html += createCard(
-                    time.startTime, 
-                    time.endTime, 
-                    getVal(wx, i), 
-                    getVal(minT, i), 
-                    getVal(maxT, i), 
-                    pop ? getVal(pop, i) : null,
-                    isDailyMode
-                );
+                html += createCard(time.startTime, time.endTime, getVal(wx, i), getVal(minT, i), getVal(maxT, i), pop ? getVal(pop, i) : null, isDailyMode);
             }
             container.innerHTML = html;
+            const updateTime = new Date().toLocaleString('zh-TW');
+            document.getElementById('updateTime').innerHTML = `最後更新：${updateTime}`;
         }
 
         function createCard(startTimeStr, endTimeStr, weather, minT, maxT, pop, isDailyMode) {
             const start = new Date(startTimeStr);
             const dateStr = `${start.getMonth()+1}/${start.getDate()}`;
             const dayName = getDayName(start.getDay());
-            
             let icon = '<i class="fas fa-cloud"></i>';
             if (weather.includes('晴')) icon = '<i class="fas fa-sun" style="color:orange"></i>';
             if (weather.includes('多雲')) icon = '<i class="fas fa-cloud-sun" style="color:#f9a825"></i>';
@@ -253,7 +231,6 @@
             
             let timeDesc = dayName;
             let isNight = false;
-
             if (!isDailyMode && endTimeStr) {
                 const end = new Date(endTimeStr);
                 const h1 = start.getHours();
@@ -293,17 +270,11 @@
         function getVal(element, index) {
             if (!element || !element.time || !element.time[index]) return '--';
             const valObj = element.time[index].elementValue || element.time[index].parameter;
-            
-            // F-C0032-007 的結構比較特別，有時候是 parameterName
-            if (Array.isArray(valObj)) {
-                return valObj[0].value || valObj[0].parameterName;
-            }
+            if (Array.isArray(valObj)) return valObj[0].value || valObj[0].parameterName;
             return valObj?.parameterName || valObj?.value || '--';
         }
 
-        function getDayName(idx) {
-            return ['週日', '週一', '週二', '週三', '週四', '週五', '週六'][idx];
-        }
+        function getDayName(idx) { return ['週日', '週一', '週二', '週三', '週四', '週五', '週六'][idx]; }
 
         init();
     </script>
