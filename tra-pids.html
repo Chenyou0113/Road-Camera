@@ -836,72 +836,89 @@
             }
         }
 
-        // 🔥 全新邏輯：依據「目前所在車站」回傳固定的「鄰近大方向」
+        // ==========================================
+        // 🔥 V3.0 智慧標題邏輯：看車次決定方向，再顯示鄰近大站
+        // ==========================================
         function generateDirectionTitle(trains, defaultTitle) {
-            // 判斷方向：逆行 (1) = 南下，順行 (0) = 北上
-            const isCCW = defaultTitle.includes('逆行') || defaultTitle.includes('南下'); 
-            const dirCode = isCCW ? '1' : '0'; 
-            return getManualDirectionString(GLOBAL_STATION_ID, dirCode);
+            // 1. 如果沒有列車資料，顯示預設值
+            if (!trains || trains.length === 0) return defaultTitle;
+
+            // 2. 偷看第一班車和第二班車的終點站，來判斷這欄是往哪裡
+            // 我們定義兩個陣列，用來區分「北上/東行」與「南下/西行」的目的地
+            const northEastTargets = ["基隆", "七堵", "瑞芳", "宜蘭", "花蓮", "臺東", "蘇澳", "福隆", "南港", "松山", "臺北"];
+            const southWestTargets = ["桃園", "中壢", "新竹", "苗栗", "臺中", "彰化", "嘉義", "臺南", "高雄", "屏東", "潮州", "新左營", "樹林", "鶯歌", "板橋"];
+
+            let scoreNorth = 0;
+            let scoreSouth = 0;
+
+            // 檢查前 3 班車的終點站
+            trains.slice(0, 3).forEach(t => {
+                const dest = t.EndingStationName;
+                if (northEastTargets.some(k => dest.includes(k))) scoreNorth++;
+                if (southWestTargets.some(k => dest.includes(k))) scoreSouth++;
+            });
+
+            // 3. 判斷這欄的主要方向 (分數高的贏)
+            let isNorthBound = scoreNorth >= scoreSouth;
+
+            // 如果是樹林/板橋這種在新北的站，往臺北也算北上，往桃園算南下
+            // 這裡我們用一個簡單的地理分區來回傳「鄰近大站」
+            return getNearbyHubs(GLOBAL_STATION_ID, isNorthBound);
         }
 
-        // 🔥 地理位置對照表：輸入 車站ID 與 方向，回傳 鄰近大站
-        function getManualDirectionString(stationID, dir) {
-            if (!stationID) return "列車方向"; // 沒設 ID 時的預設值
-
+        // 📍 地理位置對照表：根據目前車站 ID 與 方向，回傳「鄰近」大站
+        function getNearbyHubs(stationID, isNorthBound) {
+            if (!stationID) return isNorthBound ? "往 北上/東行" : "往 南下/西行";
+            
             const id = parseInt(stationID);
-            
-            // === 1. 北部區間 (基隆 - 浮洲) 包括 臺北(1000) ===
-            // 範圍大約 0900 ~ 1030
-            if (id < 1040) {
-                if (dir === '1') return "開往：板橋、桃園"; // 逆行 (南下)
-                return "開往：松山、基隆";             // 順行 (北上)
-            }
 
-            // === 2. 桃竹苗區間 (樹林 - 香山) ===
-            // 範圍大約 1040 ~ 1240 (樹林=1040, 新竹=1210)
+            // === A. 北部區間 (基隆 - 新竹) 0900 ~ 1240 ===
+            // 包含：基隆, 七堵, 臺北(1000), 板橋, 樹林, 桃園, 中壢
             if (id < 1250) {
-                if (dir === '1') return "開往：新竹、臺中"; // 逆行
-                return "開往：板橋、臺北";             // 順行
+                if (isNorthBound) {
+                    // 往北：通常是往 台北、基隆、宜蘭
+                    // 如果在台北以南 (如桃園)，顯示「板橋、臺北」
+                    if (id > 1000) return "開往：板橋、臺北";
+                    // 如果在台北以北 (如汐止)，顯示「七堵、基隆」
+                    return "開往：南港、基隆";
+                } else {
+                    // 往南：通常是往 桃園、新竹
+                    // 如果在基隆/台北，顯示「板橋、桃園」
+                    if (id < 1020) return "開往：板橋、桃園";
+                    // 如果在桃園，顯示「中壢、新竹」
+                    return "開往：中壢、新竹";
+                }
             }
 
-            // === 3. 苗栗臺中區間 (崎頂 - 彰化) ===
-            // 範圍大約 1250 ~ 3360 (苗栗=3160, 臺中=3300, 彰化=3360)
-            if (id <= 3360) {
-                if (dir === '1') return "開往：彰化、嘉義"; // 逆行
-                return "開往：新竹、臺北";             // 順行
+            // === B. 中部區間 (竹南 - 彰化) 1250 ~ 3360 ===
+            // 包含：苗栗, 豐原, 臺中(3300), 新烏日
+            if (id >= 1250 && id <= 3360) {
+                if (isNorthBound) return "開往：新竹、臺北";
+                else return "開往：彰化、嘉義";
             }
 
-            // === 4. 雲嘉南區間 (花壇 - 岡山) ===
-            // 範圍大約 3370 ~ 4300 (嘉義=4080, 臺南=4220)
-            if (id < 4300) {
-                if (dir === '1') return "開往：臺南、高雄"; // 逆行
-                return "開往：彰化、臺中";             // 順行
+            // === C. 南部區間 (員林 - 屏東) 3370 ~ 5000+ ===
+            // 包含：嘉義, 臺南(4220), 新左營, 高雄(4400)
+            if (id > 3360 && id < 6000) {
+                if (isNorthBound) {
+                    if (id > 4220) return "開往：臺南、嘉義"; // 在高雄以南
+                    return "開往：彰化、臺中";
+                } else {
+                    if (id < 4400) return "開往：新左營、高雄"; // 在高雄以北
+                    return "開往：潮州、枋寮";
+                }
             }
 
-            // === 5. 高屏區間 (楠梓 - 枋山) ===
-            // 範圍大約 4300 ~ 5240 (高雄=4400, 屏東=5000)
-            if (id < 6000) {
-                if (dir === '1') return "開往：屏東、臺東"; // 逆行
-                return "開往：臺南、嘉義";             // 順行
+            // === D. 東部幹線 (宜蘭/花蓮/台東) ===
+            // 宜蘭(1820), 花蓮(6000), 臺東(7000)
+            // 東部比較單純，通常就是往兩頭的大站
+            if (id >= 6000 || (id >= 1800 && id < 2000)) {
+                if (isNorthBound) return "開往：宜蘭、臺北";
+                else return "開往：花蓮、臺東";
             }
 
-            // === 6. 宜蘭線/北迴 (暖暖 - 花蓮) ===
-            // 範圍 1810 ~ 1990 (宜蘭=1820, 羅東=1840)
-            if (id >= 1800 && id < 2000) {
-                if (dir === '1') return "開往：花蓮、臺東"; // 逆行
-                return "開往：瑞芳、臺北";             // 順行
-            }
-
-            // === 7. 花東線 (花蓮 - 臺東) ===
-            // 花蓮=6000, 臺東=7000
-            if (id >= 6000 && id <= 7100) {
-                // 花東線比較特殊：逆行是往臺東(南)，順行是往花蓮(北)
-                if (dir === '1') return "開往：臺東";
-                return "開往：宜蘭、臺北";
-            }
-            
-            // 預設回傳
-            return dir === '1' ? "開往：南下方向" : "開往：北上方向";
+            // 預設
+            return isNorthBound ? "開往：北上/東行" : "開往：南下/西行";
         }
 
         function renderScreen(dirCode, trains, dirName) {
