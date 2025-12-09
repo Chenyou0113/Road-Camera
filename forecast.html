@@ -110,8 +110,7 @@
         const WORKER_URL = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev';
         
         let currentData = null; 
-        let locationsList = []; 
-
+        
         async function init() {
             if(localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
             document.getElementById('typeSelect').value = 'F-C0032-001';
@@ -132,11 +131,11 @@
                 const res = await fetch(`${WORKER_URL}?dataset=${datasetId}`);
                 const json = await res.json();
                 
-                // 檢查是否為空
                 if (!json || Object.keys(json).length === 0) {
                     throw new Error("此預報資料庫尚未同步，請稍後再試");
                 }
 
+                // 萬能解析器
                 const locations = findLocations(json);
                 
                 if (locations && locations.length > 0) {
@@ -156,18 +155,19 @@
             }
         }
 
-        // 🔥 V3.0 強力解析器
+        // 🔥 V3.1 終極解析器：覆蓋所有已知結構
         function findLocations(json) {
-            // 1. F-C0032-001 (一般預報) -> records.location
+            // 1. F-C0032-001 (36小時)
             if (json?.records?.location) return json.records.location;
 
-            // 2. F-C0032-003, 005, 007 (縣市/全球) -> records.locations[0].location
+            // 2. F-C0032-003 (七天縣市) & F-C0032-005 (一週縣市)
             if (json?.records?.locations?.[0]?.location) return json.records.locations[0].location;
             
-            // 3. F-D0047-091 (鄉鎮預報) -> 結構可能不同，嘗試搜尋
+            // 3. F-D0047-091 (鄉鎮預報) - 這是你 Log 報錯的地方
+            // 它的結構有時候是 records.locations[0].location
             if (json?.records?.locations?.location) return json.records.locations.location;
 
-            // 4. File API 格式 (備用)
+            // 4. F-C0032-007 (全球都市) - 這是 File API 格式
             if (json?.cwaopendata?.dataset?.location) return json.cwaopendata.dataset.location;
             if (json?.cwaopendata?.dataset?.locations?.location) return json.cwaopendata.dataset.locations.location;
 
@@ -211,7 +211,7 @@
             const wx = getEl(elements, ['Wx', 'WeatherDescription']);
             const minT = getEl(elements, ['MinT', 'MinTemperature']); 
             const maxT = getEl(elements, ['MaxT', 'MaxTemperature']);
-            const pop = getEl(elements, ['PoP12h', 'PoP6h', 'PoP']);
+            const pop = getEl(elements, ['PoP12h', 'PoP6h', 'PoP', 'ProbabilityOfPrecipitation']);
 
             if (!wx || !wx.time) {
                 container.innerHTML = '<div class="loading">此地點暫無詳細預報數據</div>';
@@ -222,7 +222,8 @@
                 const time = wx.time[i];
                 if (isDailyMode) {
                     const startH = new Date(time.startTime).getHours();
-                    if (startH < 6 || startH >= 18) continue; 
+                    // 全球預報通常給 06:00, 18:00，我們只顯示白天
+                    if (startH >= 18 || startH < 6) continue; 
                 }
 
                 html += createCard(
@@ -282,7 +283,6 @@
 
         function getEl(elements, names) {
             if(!elements) return null;
-            // 嘗試匹配多種名稱
             for (const name of names) {
                 const found = elements.find(e => e.elementName === name);
                 if (found) return found;
@@ -293,7 +293,11 @@
         function getVal(element, index) {
             if (!element || !element.time || !element.time[index]) return '--';
             const valObj = element.time[index].elementValue || element.time[index].parameter;
-            if (Array.isArray(valObj)) return valObj[0].value || valObj[0].parameterName;
+            
+            // F-C0032-007 的結構比較特別，有時候是 parameterName
+            if (Array.isArray(valObj)) {
+                return valObj[0].value || valObj[0].parameterName;
+            }
             return valObj?.parameterName || valObj?.value || '--';
         }
 
