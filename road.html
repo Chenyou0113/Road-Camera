@@ -1413,8 +1413,10 @@
             });
         }
 
-        function openModal(index) {
-            const camera = filteredCameras[index];
+        // ==========================================
+        // 彈窗控制 (修正版：防止 undefined 錯誤 + 兼容大小寫)
+        // ==========================================
+        function openModal(cameraDataOrId) {
             const modal = document.getElementById('imageModal');
             const modalImg = document.getElementById('modalImage');
             const modalTitle = document.getElementById('modalTitle');
@@ -1422,39 +1424,99 @@
             const modalRoad = document.getElementById('modalRoad');
             const modalCoords = document.getElementById('modalCoords');
             
-            modalImg.src = camera.VideoImageUrl || camera.VideoStreamURL || '';
-            modalTitle.textContent = camera.RoadName || '省道監視器';
+            let camera;
+
+            // 1. 判斷傳入的是數字索引、字串 ID 還是直接物件
+            if (typeof cameraDataOrId === 'number') {
+                // 索引方式：從篩選資料中取
+                camera = filteredCameras[cameraDataOrId];
+            } else if (typeof cameraDataOrId === 'string') {
+                // 🔥 重點修正：搜尋時要從「原始完整資料 (originalData)」找，而不是「篩選後資料 (filteredCameras)」
+                // 如果 originalData 不存在，才找 filteredCameras
+                const sourceData = (typeof originalData !== 'undefined' && originalData.length > 0) ? originalData : filteredCameras;
+                camera = sourceData.find(c => c.CCTVID === cameraDataOrId || c.CCTVId === cameraDataOrId);
+            } else {
+                camera = cameraDataOrId; // 直接傳入物件
+            }
+
+            // 2. 🔥 防呆檢查：如果找不到資料，直接停止，避免報錯
+            if (!camera) {
+                console.error("❌ 錯誤：找不到監視器資料", cameraDataOrId);
+                return;
+            }
+
+            // 3. 🔥 屬性名稱兼容處理 (處理大小寫不一致)
+            // 優先讀取大寫版本，沒有才讀小寫版本
+            const streamUrl = camera.VideoStreamURL || camera.VideoStreamUrl || "";
+            const imageUrl = camera.VideoImageURL || camera.VideoImageUrl || "";
+            const displayUrl = imageUrl || streamUrl || '';
+            
+            // 座標兼容
+            const positionLat = camera.PositionLat || (camera.Position && camera.Position.PositionLat) || 0;
+            const positionLon = camera.PositionLon || (camera.Position && camera.Position.PositionLon) || 0;
+            
+            // 其他屬性
+            const roadName = camera.RoadName || '省道監視器';
+            const roadNumber = camera.RoadNumber || '未知路線';
+            const city = camera.City || getCityFromCoordinates(positionLon, positionLat, roadName);
+
+            // 4. 更新 UI
+            modalImg.src = displayUrl;
+            modalTitle.textContent = roadName;
+            
             const locationInfo = formatLocationInfo(camera);
             modalLocation.innerHTML = `<i class="fas fa-map-marker-alt"></i> <strong>位置：</strong>${locationInfo}`;
-            modalRoad.innerHTML = `<i class="fas fa-road"></i> <strong>路線：</strong>${camera.RoadNumber || '未知路線'} (${camera.City || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName)})`;
+            modalRoad.innerHTML = `<i class="fas fa-road"></i> <strong>路線：</strong>${roadNumber} (${city})`;
             
             let coordsHtml = '';
-            if (camera.PositionLat && camera.PositionLon) {
+            if (positionLat && positionLon) {
                 coordsHtml = `<i class="fas fa-crosshairs"></i> <strong>座標：</strong>
-                    <a href="https://www.google.com/maps?q=${camera.PositionLat},${camera.PositionLon}" 
+                    <a href="https://www.google.com/maps?q=${positionLat},${positionLon}" 
                        target="_blank" 
                        style="color: #FF9800; text-decoration: none;" 
                        title="在Google地圖中查看">
-                        ${camera.PositionLat.toFixed(6)}, ${camera.PositionLon.toFixed(6)}
+                        ${positionLat.toFixed(6)}, ${positionLon.toFixed(6)}
                         <i class="fas fa-external-link-alt" style="font-size: 0.8rem; margin-left: 3px;"></i>
                     </a>`;
             }
-            const imageUrl = camera.VideoImageUrl || camera.VideoStreamURL;
-            if (imageUrl) {
-                coordsHtml += `<br><i class="fas fa-external-link-alt"></i> <strong>原始影像：</strong><a href="${imageUrl}" target="_blank" style="color: #FF9800; text-decoration: none;">開啟原始影像連結</a>`;
+            if (displayUrl) {
+                coordsHtml += `<br><i class="fas fa-external-link-alt"></i> <strong>原始影像：</strong><a href="${displayUrl}" target="_blank" style="color: #FF9800; text-decoration: none;">開啟原始影像連結</a>`;
             }
             modalCoords.innerHTML = coordsHtml;
             
             modal.style.display = 'block';
             
             // 🔥 [新增] 發送真實統計數據到 D1 資料庫
-            const cameraId = camera.CCTVID || camera.CCTVId || `${camera.RoadName}-${camera.LocationMile || index}`;
-            const trackingName = camera.RoadName || '省道監視器';
-            const trackingLoc = camera.City || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName);
+            const cameraId = camera.CCTVID || camera.CCTVId || `${roadName}-${camera.LocationMile || index}`;
+            const trackingName = roadName;
+            const trackingLoc = city;
 
             if (typeof recordCameraView === 'function') {
                 recordCameraView(cameraId, trackingName, 'road');
             }
+        }
+
+        // ==========================================
+        // 防止 loading 函式未定義導致程式中斷
+        // ==========================================
+        if (typeof window.setLoadingProgress === 'undefined') {
+            window.setLoadingProgress = function(percent, text) { console.log(`[Loading] ${percent}% - ${text}`); };
+        }
+        if (typeof window.updateLoadingLabel === 'undefined') {
+            window.updateLoadingLabel = function(text) { console.log(`[Loading Label] ${text}`); };
+        }
+        if (typeof window.finishLoading === 'undefined') {
+            window.finishLoading = function() { console.log("[Loading] Finished"); };
+        }
+        if (typeof window.formatLocationInfo === 'undefined') {
+            window.formatLocationInfo = function(camera) { 
+                return camera.LocationDescription || '未知位置'; 
+            };
+        }
+        if (typeof window.getCityFromCoordinates === 'undefined') {
+            window.getCityFromCoordinates = function(lon, lat, roadName) { 
+                return '未知城市'; 
+            };
         }
 
         // 根據相機ID查找並打開詳細資訊
