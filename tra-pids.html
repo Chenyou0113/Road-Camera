@@ -837,88 +837,112 @@
         }
 
         // ==========================================
-        // 🔥 V3.0 智慧標題邏輯：看車次決定方向，再顯示鄰近大站
+        // 🔥 V5.0 東西部分流邏輯：解決花東線方向定義相反的問題
         // ==========================================
         function generateDirectionTitle(trains, defaultTitle) {
-            // 1. 如果沒有列車資料，顯示預設值
             if (!trains || trains.length === 0) return defaultTitle;
 
-            // 2. 偷看第一班車和第二班車的終點站，來判斷這欄是往哪裡
-            // 我們定義兩個陣列，用來區分「北上/東行」與「南下/西行」的目的地
-            const northEastTargets = ["基隆", "七堵", "瑞芳", "宜蘭", "花蓮", "臺東", "蘇澳", "福隆", "南港", "松山", "臺北"];
-            const southWestTargets = ["桃園", "中壢", "新竹", "苗栗", "臺中", "彰化", "嘉義", "臺南", "高雄", "屏東", "潮州", "新左營", "樹林", "鶯歌", "板橋"];
+            const currentStationID = parseInt(GLOBAL_STATION_ID || "1000");
+            const currentStationName = document.getElementById('unifiedStationName').textContent.replace('車站','');
+
+            // 判斷目前是否位於「東部幹線」 (宜蘭 1820 ~ 臺東 6000+)
+            // 宜蘭線、北迴線、臺東線大致範圍
+            const isEastCoast = (currentStationID >= 1800 && currentStationID <= 7000);
+
+            let northTargets = [];
+            let southTargets = [];
+
+            if (isEastCoast) {
+                // 🏔️【東部視角】(花蓮、臺東、宜蘭)
+                // 往北/上行：是去 台北、基隆、宜蘭、蘇澳
+                northTargets = ["臺北", "台北", "基隆", "七堵", "瑞芳", "宜蘭", "羅東", "蘇澳", "松山", "南港", "樹林", "和平"];
+                // 往南/下行：是去 台東、玉里、壽豐、鳳林、潮州、高雄
+                southTargets = ["臺東", "台東", "玉里", "壽豐", "鳳林", "光復", "瑞穗", "關山", "池上", "知本", "屏東", "高雄", "新左營", "潮州", "枋寮", "志學"];
+            } else {
+                // 🏙️【西部視角】(台北、台中、高雄)
+                // 往北/上行：是去 基隆、宜蘭、花蓮 (西部看花東是北/東向)
+                northTargets = ["基隆", "七堵", "瑞芳", "宜蘭", "花蓮", "臺東", "蘇澳", "福隆", "南港", "松山", "臺北", "板橋", "汐止"];
+                // 往南/下行：是去 新竹、台中、高雄
+                southTargets = ["桃園", "中壢", "新竹", "苗栗", "臺中", "彰化", "嘉義", "臺南", "高雄", "屏東", "潮州", "新左營", "鶯歌", "富岡", "北湖", "湖口"];
+            }
 
             let scoreNorth = 0;
             let scoreSouth = 0;
 
-            // 檢查前 3 班車的終點站
-            trains.slice(0, 3).forEach(t => {
+            trains.slice(0, 5).forEach(t => {
                 const dest = t.EndingStationName;
-                if (northEastTargets.some(k => dest.includes(k))) scoreNorth++;
-                if (southWestTargets.some(k => dest.includes(k))) scoreSouth++;
+                // 排除本站終點的干擾
+                if (dest === currentStationName) return;
+
+                if (northTargets.some(k => dest.includes(k))) scoreNorth++;
+                if (southTargets.some(k => dest.includes(k))) scoreSouth++;
             });
 
-            // 3. 判斷這欄的主要方向 (分數高的贏)
+            // 判斷結果
             let isNorthBound = scoreNorth >= scoreSouth;
 
-            // 如果是樹林/板橋這種在新北的站，往臺北也算北上，往桃園算南下
-            // 這裡我們用一個簡單的地理分區來回傳「鄰近大站」
-            return getNearbyHubs(GLOBAL_STATION_ID, isNorthBound);
+            // 保險機制：如果兩邊都沒分，依照預設文字猜測
+            if (scoreNorth === 0 && scoreSouth === 0) {
+                if (defaultTitle.includes("逆行") || defaultTitle.includes("Counter")) isNorthBound = true; // 東部逆行通常是北上(往台北)
+                else isNorthBound = false;
+            }
+
+            console.log(`[V5方向] ${isEastCoast?'東部':'西部'}視角 | 北分:${scoreNorth} 南分:${scoreSouth} | 判定往北? ${isNorthBound}`);
+
+            return getNearbyHubs(currentStationID, isNorthBound);
         }
 
-        // 📍 地理位置對照表：根據目前車站 ID 與 方向，回傳「鄰近」大站
+        // 📍 地理位置對照表 V5.0 (針對花蓮修正)
         function getNearbyHubs(stationID, isNorthBound) {
             if (!stationID) return isNorthBound ? "往 北上/東行" : "往 南下/西行";
             
             const id = parseInt(stationID);
 
-            // === A. 北部區間 (基隆 - 新竹) 0900 ~ 1240 ===
-            // 包含：基隆, 七堵, 臺北(1000), 板橋, 樹林, 桃園, 中壢
+            // === 1. 花蓮/臺東線 (東部幹線) ===
+            // 包含 宜蘭(1820) ~ 花蓮(6000) ~ 臺東(7000)
+            if (id >= 1800 && id <= 7200) {
+                if (isNorthBound) {
+                    // 往北：去台北、宜蘭
+                    if (id >= 6000) return "開往：宜蘭、臺北"; // 在花蓮/台東，往北是宜蘭
+                    return "開往：瑞芳、臺北";             // 在宜蘭，往北是瑞芳
+                } else {
+                    // 往南：去台東、花蓮
+                    if (id < 6000) return "開往：花蓮、臺東";  // 在宜蘭，往南是花蓮
+                    if (id < 7000) return "開往：玉里、臺東";  // 在花蓮，往南是台東
+                    return "開往：屏東、高雄";             // 在台東，往南是去高雄
+                }
+            }
+
+            // === 2. 樹林站專用 (ID 1040) ===
+            if (id === 1040) {
+                if (isNorthBound) return "開往：板橋、臺北";
+                return "開往：鶯歌、桃園";
+            }
+
+            // === 3. 北部區間 (基隆 - 新竹) ===
             if (id < 1250) {
                 if (isNorthBound) {
-                    // 往北：通常是往 台北、基隆、宜蘭
-                    // 如果在台北以南 (如桃園)，顯示「板橋、臺北」
-                    if (id > 1000) return "開往：板橋、臺北";
-                    // 如果在台北以北 (如汐止)，顯示「七堵、基隆」
+                    if (id >= 1020) return "開往：板橋、臺北";
                     return "開往：南港、基隆";
                 } else {
-                    // 往南：通常是往 桃園、新竹
-                    // 如果在基隆/台北，顯示「板橋、桃園」
-                    if (id < 1020) return "開往：板橋、桃園";
-                    // 如果在桃園，顯示「中壢、新竹」
+                    if (id <= 1000) return "開往：板橋、桃園";
                     return "開往：中壢、新竹";
                 }
             }
 
-            // === B. 中部區間 (竹南 - 彰化) 1250 ~ 3360 ===
-            // 包含：苗栗, 豐原, 臺中(3300), 新烏日
+            // === 4. 中部區間 (竹南 - 彰化) ===
             if (id >= 1250 && id <= 3360) {
                 if (isNorthBound) return "開往：新竹、臺北";
                 else return "開往：彰化、嘉義";
             }
 
-            // === C. 南部區間 (員林 - 屏東) 3370 ~ 5000+ ===
-            // 包含：嘉義, 臺南(4220), 新左營, 高雄(4400)
-            if (id > 3360 && id < 6000) {
-                if (isNorthBound) {
-                    if (id > 4220) return "開往：臺南、嘉義"; // 在高雄以南
-                    return "開往：彰化、臺中";
-                } else {
-                    if (id < 4400) return "開往：新左營、高雄"; // 在高雄以北
-                    return "開往：潮州、枋寮";
-                }
+            // === 5. 南部區間 (員林 - 屏東) ===
+            if (id > 3360) {
+                if (isNorthBound) return "開往：嘉義、臺中";
+                else return "開往：高雄、屏東";
             }
 
-            // === D. 東部幹線 (宜蘭/花蓮/台東) ===
-            // 宜蘭(1820), 花蓮(6000), 臺東(7000)
-            // 東部比較單純，通常就是往兩頭的大站
-            if (id >= 6000 || (id >= 1800 && id < 2000)) {
-                if (isNorthBound) return "開往：宜蘭、臺北";
-                else return "開往：花蓮、臺東";
-            }
-
-            // 預設
-            return isNorthBound ? "開往：北上/東行" : "開往：南下/西行";
+            return isNorthBound ? "開往：北上" : "開往：南下";
         }
 
         function renderScreen(dirCode, trains, dirName) {
