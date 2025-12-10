@@ -63,7 +63,6 @@
         .header-title { font-size: 1.25rem; font-weight: bold; display: flex; align-items: center; gap: 10px; }
         .header-right { display: flex; align-items: center; gap: 10px; }
 
-        /* PIDS 按鈕樣式 */
         .btn-pids {
             background: rgba(255,255,255,0.2);
             color: white;
@@ -148,12 +147,14 @@
             border-radius: 3px 3px 0 0;
         }
         body.dark-mode .tab-btn.active::after { background-color: #4fa3ff; }
+        
+        .tab-btn.disabled { display: none; } /* 自動隱藏 */
 
         /* === 雙欄佈局 === */
         .split-view {
             flex: 1;
             display: flex;
-            overflow: hidden; /* 讓內部自己捲動 */
+            overflow: hidden; 
         }
 
         .split-col {
@@ -213,6 +214,7 @@
         .flight-no { font-weight: bold; font-size: 0.95rem; color: #007bff; margin-right: 5px; }
         body.dark-mode .flight-no { color: #6db3ff; }
         .dest-cn { font-size: 1.1rem; font-weight: bold; color: var(--text-main); }
+        .dest-code { font-size: 0.8rem; color: var(--text-sub); margin-left: 5px; font-weight: bold; }
 
         .status-text { 
             font-size: 0.85rem; 
@@ -240,7 +242,7 @@
                 border-right: none;
                 border-bottom: 1px solid rgba(0,0,0,0.1);
             }
-            .flight-list { max-height: 50vh; } /* 限制高度讓兩個列表都能滑動 */
+            .flight-list { max-height: 50vh; } 
             .btn-pids span { display: none; }
         }
     </style>
@@ -255,7 +257,6 @@
             </div>
         </div>
         <div class="header-right">
-            <!-- 新增 PIDS 按鈕 -->
             <a href="airport-pids.html" target="_blank" class="btn-pids">
                 <i class="fas fa-tv"></i> <span>PIDS</span>
             </a>
@@ -266,10 +267,10 @@
     </div>
 
     <div class="control-panel">
-        <select class="airport-selector" id="airportSelect" onchange="fetchData()">
+        <select class="airport-selector" id="airportSelect" onchange="handleAirportChange()">
             <optgroup label="北部 North">
                 <option value="TSA" selected>臺北松山 TSA</option>
-                <option value="TPE">桃園國際 TPE</option> <!-- 補上桃園 -->
+                <option value="TPE">桃園國際 TPE</option>
             </optgroup>
             <optgroup label="中部 Central">
                 <option value="RMQ">臺中清泉崗 RMQ</option>
@@ -330,9 +331,11 @@
 
     <script>
         const WORKER_URL = "https://airport.xiaoyouwu5-fd3.workers.dev/"; 
-        
         let currentData = null;
-        let currentRouteType = 'DOMESTIC'; // 'DOMESTIC' or 'INTERNATIONAL'
+        let currentRouteType = 'DOMESTIC'; 
+
+        // 國際機場白名單
+        const INT_AIRPORTS = ['TPE', 'TSA', 'KHH', 'RMQ'];
 
         document.addEventListener('DOMContentLoaded', () => {
             const toggle = document.getElementById('themeToggle');
@@ -346,8 +349,29 @@
                 document.body.classList.add('dark-mode');
                 toggle.innerHTML = '<i class="fas fa-sun"></i>';
             }
-            fetchData();
+            handleAirportChange();
         });
+
+        // 智慧隱藏國際線按鈕
+        async function handleAirportChange() {
+            const airport = document.getElementById('airportSelect').value;
+            const tabInt = document.getElementById('tabInt');
+            const tabDom = document.getElementById('tabDom');
+
+            if (!INT_AIRPORTS.includes(airport)) {
+                tabInt.classList.add('disabled');
+                // 如果目前在國際線，強制切回國內線
+                if (currentRouteType === 'INTERNATIONAL') {
+                    currentRouteType = 'DOMESTIC';
+                    tabDom.classList.add('active');
+                    tabInt.classList.remove('active');
+                }
+            } else {
+                tabInt.classList.remove('disabled');
+            }
+
+            await fetchData();
+        }
 
         async function fetchData() {
             const airport = document.getElementById('airportSelect').value;
@@ -384,15 +408,26 @@
         function renderLists() {
             if (!currentData) return;
 
-            // 根據當前分頁 (國內/國際) 決定要顯示哪些資料
+            // 取得現在時間 (HH:mm)
+            const now = new Date();
+            const currentTime = now.toTimeString().substring(0, 5);
+
+            // 過濾邏輯：只顯示「現在時間之後」的班次，且最多 8 筆
+            const filterAndSlice = (list) => {
+                return (list || [])
+                    .filter(f => f.time >= currentTime) // 過濾已飛
+                    .sort((a, b) => a.time.localeCompare(b.time)) // 排序
+                    .slice(0, 8); // 取前8筆
+            };
+
             let dataDep = [], dataArr = [];
 
             if (currentRouteType === 'DOMESTIC') {
-                dataDep = currentData.DOMESTIC_DEPARTURES || [];
-                dataArr = currentData.DOMESTIC_ARRIVALS || [];
+                dataDep = filterAndSlice(currentData.DOMESTIC_DEPARTURES);
+                dataArr = filterAndSlice(currentData.DOMESTIC_ARRIVALS);
             } else {
-                dataDep = currentData.INTERNATIONAL_DEPARTURES || [];
-                dataArr = currentData.INTERNATIONAL_ARRIVALS || [];
+                dataDep = filterAndSlice(currentData.INTERNATIONAL_DEPARTURES);
+                dataArr = filterAndSlice(currentData.INTERNATIONAL_ARRIVALS);
             }
 
             renderContainer('listDep', dataDep);
@@ -402,21 +437,18 @@
         function renderContainer(containerId, flights) {
             const container = document.getElementById(containerId);
             if (flights.length === 0) {
-                container.innerHTML = `<div class="empty-msg">無航班資訊</div>`;
+                container.innerHTML = `<div class="empty-msg">近期無航班資訊</div>`;
                 return;
             }
 
-            // 排序
-            flights.sort((a, b) => a.time.localeCompare(b.time));
-
             let html = '';
             flights.forEach(f => {
-                // 目的地顯示
-                let destDisplay = f.dest;
-                if (f.dest.match(/[a-zA-Z]/) && f.dest.match(/[\u4e00-\u9fa5]/)) {
-                    // 只取中文或第一個詞，讓手機版比較乾淨
-                    destDisplay = f.dest.split(' ')[1] || f.dest.split(' ')[0]; 
-                }
+                // 目的地顯示：中文 + 三碼代號
+                let parts = f.dest.split(' ');
+                let cn = parts[1] || parts[0]; 
+                let code = "";
+                if (f.dest.match(/^[A-Z]{3}/)) code = f.dest.substring(0,3);
+                if (!cn.match(/[\u4e00-\u9fa5]/)) cn = f.dest;
 
                 // 時間顯示 (支援延誤)
                 let timeHtml = `<div class="time-main">${f.time}</div>`;
@@ -438,7 +470,8 @@
                         <span class="airline-tag">${f.airline}</span>
                         <div>
                             <span class="flight-no">${f.flight.split('-')[1] || f.flight}</span>
-                            <span class="dest-cn">${destDisplay}</span>
+                            <span class="dest-cn">${cn}</span>
+                            <span class="dest-code">${code}</span>
                         </div>
                     </div>
                     <div>
