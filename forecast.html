@@ -145,9 +145,9 @@
             <div class="input-group">
                 <label><i class="fas fa-layer-group"></i> 預報模式</label>
                 <select id="datasetSelect">
-                    <option value="F-C0032-001">🇹🇼 36 小時預報 (縣市)</option>
+                    <option value="F-D0047-091" selected>📆 未來一週預報 (鄉鎮)</option>
                     <option value="F-D0047-089">🕒 未來三天 (每3小時)</option>
-                    <option value="F-D0047-091">📆 未來一週預報 (鄉鎮)</option>
+                    <option value="F-C0032-001">🇹🇼 36 小時預報 (縣市)</option>
                     <option value="F-C0032-003">🗓️ 未來一週 (縣市)</option>
                     <option value="F-C0032-007">🌏 國際都市 (每日)</option>
                 </select>
@@ -169,21 +169,108 @@
     </div>
 
     <script>
+        const WORKER_URL = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev';
+        
+        let App = {};
+        
+        // ====================================================================
+        // 輔助函數
+        // ====================================================================
+
         /**
-         * WeatherApp: 負責整體邏輯控制
+         * 依據 Dataset ID 精確查找 ElementName
+         * 處理 F-D0047-091 的特殊命名 (最低溫度, 12小時降雨機率)
          */
-        const App = {
-            API_URL: 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev',
-            currentData: [],
+        function findEl(elements, candidates, datasetType) {
+            if(!elements) return null;
             
+            const isF_D0047 = datasetType.startsWith('F-D0047');
+
+            // 映射表：優先順序越高的名稱越靠前
+            const cwaMappings = {
+                F_D0047: {
+                    // F-D0047-091 (12h) & 089 (3h) 的中文名稱
+                    'MinT': ['最低溫度', 'MinTemperature', '溫度', 'Temperature'], 
+                    'MaxT': ['最高溫度', 'MaxTemperature', '溫度', 'Temperature'], 
+                    'Wx': ['天氣現象', 'Weather', '天氣預報綜合描述', 'WeatherDescription'],
+                    'PoP': ['12小時降雨機率', 'ProbabilityOfPrecipitation', '3小時降雨機率', '降水機率']
+                },
+                F_C0032: {
+                    // F-C0032 系列 (英文代碼)
+                    'MinT': ['MinT', 'MinTemperature', 'T'], 
+                    'MaxT': ['MaxT', 'MaxTemperature', 'T'], 
+                    'Wx': ['Wx', 'WeatherDescription'],
+                    'PoP': ['PoP12h', 'PoP6h', 'PoP3h', 'ProbabilityOfPrecipitation']
+                }
+            };
+
+            const currentMap = isF_D0047 ? cwaMappings.F_D0047 : cwaMappings.F_C0032;
+
+            for (const candidate of candidates) {
+                const checks = currentMap[candidate] || [candidate];
+                
+                for (const checkName of checks) {
+                     // 1. 嘗試完全匹配
+                     let found = elements.find(e => e.elementName === checkName);
+                     if (found) return found;
+                     
+                     // 2. 嘗試大小寫匹配 (針對英文代碼)
+                     if (checkName.match(/[a-zA-Z]/)) {
+                        found = elements.find(e => e.elementName === checkName.toUpperCase() || e.elementName === checkName.toLowerCase());
+                        if (found) return found;
+                     }
+                }
+            }
+            return null;
+        }
+
+        /**
+         * 修正 getValue: 增強對 F-D0047 複雜結構的解析，排除代碼值
+         */
+        function getValue(timeObj) {
+            if (!timeObj) return '--';
+            const val = timeObj.elementValue || timeObj.parameter;
+            
+            if (Array.isArray(val)) {
+                const firstObj = val[0];
+                if (typeof firstObj === 'object' && firstObj !== null) {
+                    // 1. 標準 CWA 格式
+                    if (firstObj.value) return firstObj.value;
+                    if (firstObj.parameterName) return firstObj.parameterName;
+                    
+                    // 2. F-D0047 格式: { "Temperature": "17", "Weather": "多雲", "WeatherCode": "04" }
+                    // 我們需要避開 "Code" 結尾的鍵，優先取文字描述
+                    for (const key in firstObj) {
+                        // 忽略 ID, Code, Unit 等非顯示用欄位
+                        if (firstObj[key] !== null && 
+                            !key.endsWith('Code') && 
+                            !key.endsWith('ID') &&
+                            !key.endsWith('Unit') &&
+                            !key.endsWith('Measures')) {
+                            return firstObj[key]; 
+                        }
+                    }
+                    // 如果真的只剩下 Code，則回傳第一個非 null
+                    for (const key in firstObj) {
+                        if (firstObj[key] !== null) return firstObj[key];
+                    }
+                }
+            }
+            
+            return val?.parameterName || val?.value || val?.parameterValue || '--';
+        }
+
+        // ====================================================================
+        // App Controller
+        // ====================================================================
+        
+        App = {
+            API_URL: WORKER_URL,
+            currentData: [],
+
             init() {
-                // 自動偵測並套用深色模式
                 if(localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
-                
-                // 綁定事件
                 this.bindEvents();
-                
-                // 初始載入
                 this.fetchData();
             },
 
@@ -197,7 +284,6 @@
                 const grid = document.getElementById('forecastGrid');
                 const locSelect = document.getElementById('locationSelect');
 
-                // UI Reset
                 grid.innerHTML = '<div class="status-msg"><i class="fas fa-spinner fa-spin"></i> 資料讀取中...</div>';
                 locSelect.innerHTML = '<option>載入中...</option>';
                 locSelect.disabled = true;
@@ -206,29 +292,18 @@
                     const response = await fetch(`${this.API_URL}?dataset=${datasetId}`);
                     const json = await response.json();
                     
-                    // --- V17.2 偵錯點 ---
                     if (!json || (typeof json === 'object' && Object.keys(json).length === 0)) {
-                        console.error("❌ Worker 回傳空 JSON:", json);
                         throw new Error("Worker 回傳數據為空 (API Key 或 D1 快取問題)");
                     }
-                    // ---------------------
-                    
-                    // 使用解析器處理原始資料
+
+                    // 使用解析器處理原始結構
                     this.currentData = DataParser.parse(json);
 
                     if (this.currentData.length === 0) {
-                        console.error("❌ DataParser 無法解析結構。原始 JSON 結構如下：", json);
-                        console.error("🔍 嘗試的解析路徑：", {
-                            "records.location": !!json?.records?.location,
-                            "records.locations (Array)": Array.isArray(json?.records?.locations),
-                            "records.locations[0].location": !!json?.records?.locations?.[0]?.location,
-                            "records.locations.location": !!json?.records?.locations?.location,
-                            "cwaopendata.dataset.location": !!json?.cwaopendata?.dataset?.location,
-                            "cwaopendata.dataset.locations.location": !!json?.cwaopendata?.dataset?.locations?.location,
-                        });
-                        throw new Error("資料庫回傳為空或是結構改變 (請檢查 Console)");
+                        console.error("無法解析結構", json);
+                        throw new Error("資料庫結構改變或無法解析");
                     }
-                    
+
                     console.log(`✅ 成功解析 ${this.currentData.length} 筆地點資料`);
                     this.populateLocations();
                     this.renderForecast();
@@ -241,20 +316,24 @@
             },
 
             populateLocations() {
-                const select = document.getElementById('locationSelect');
-                select.innerHTML = '';
+                const locSelect = document.getElementById('locationSelect');
+                locSelect.innerHTML = '';
                 
                 this.currentData.forEach((loc, index) => {
-                    const opt = document.createElement('option');
-                    opt.value = index;
-                    opt.textContent = loc.name;
-                    select.appendChild(opt);
+                    const option = document.createElement('option');
+                    option.value = index;
+                    option.textContent = loc.name;
+                    locSelect.appendChild(option);
                 });
 
-                // 嘗試預設選取 "臺北市" 或列表第一個
-                const defaultIdx = this.currentData.findIndex(l => l.name.includes('臺北')) || 0;
-                select.value = defaultIdx !== -1 ? defaultIdx : 0;
-                select.disabled = false;
+                // 嘗試預設選取台北或第一筆
+                let defaultIdx = 0;
+                const targetCity = '臺北市'; 
+                const foundIdx = this.currentData.findIndex(l => l.name.includes(targetCity));
+                if (foundIdx !== -1) defaultIdx = foundIdx;
+
+                locSelect.value = defaultIdx;
+                locSelect.disabled = false;
             },
 
             renderForecast() {
@@ -262,102 +341,132 @@
                 const location = this.currentData[index];
                 const grid = document.getElementById('forecastGrid');
                 const datasetType = document.getElementById('datasetSelect').value;
-                const isDaily = datasetType === 'F-C0032-007'; // 國際都市每日模式
-                const isHourlyTempMode = datasetType === 'F-D0047-089'; // 逐3小時溫度模式 (僅 089)
+                
+                const isDaily = (datasetType === 'F-C0032-007'); 
+                const isHourlyTempMode = (datasetType === 'F-D0047-089'); // 3小時預報只有瞬時溫度
 
-                if (!location) { 
+                if (!location || !location.rawElements) { 
                     grid.innerHTML = '<div class="status-msg">未選擇地點或資料遺失</div>';
                     return;
                 }
 
                 let html = '';
                 let renderedCardsCount = 0; 
-                
-                location.forecasts.forEach(item => {
-                    // 國際都市如果是每日模式，只顯示白天 (6:00 - 17:59)
-                    if (isDaily) {
-                        const h = new Date(item.startTime).getHours();
-                        if (h >= 18 || h < 6) return; // 略過夜間時段
-                    }
+                const elements = location.rawElements;
 
-                    // === F-D0047-089 修正邏輯：單一溫度轉為範圍 (僅針對 -089) ===
-                    let itemToRender = item;
-                    if (isHourlyTempMode) {
-                        // F-D0047-089 只有 '溫度' 一項，必須確保 MinT/MaxT 都使用該值
-                        if (item.minT === '--' || item.maxT === '--') {
-                            // 如果溫度數據缺失，跳過此時間點
-                            return;
-                        }
-                        // 將 MaxT 統一為 MinT (因為都是同一瞬時溫度)
-                        itemToRender = { ...item, maxT: item.minT };
-                    } else {
-                        // 對於 F-D0047-091 (一週) 和其他資料集，確保 MinT/MaxT 都有效
-                        if (item.minT === '--' || item.maxT === '--') {
-                            return;
-                        }
-                    }
+                // 找出關鍵因子
+                const wx = findEl(elements, ['Wx', 'WeatherDescription'], datasetType);
+                const minT = findEl(elements, ['MinT', 'MinTemperature', 'T'], datasetType); 
+                const maxT = findEl(elements, ['MaxT', 'MaxTemperature', 'T'], datasetType);
+                const pop = findEl(elements, ['PoP', '12小時降雨機率', '3小時降雨機率', 'ProbabilityOfPrecipitation'], datasetType);
 
-                    const card = this.createCardHTML(itemToRender);
-                    html += card;
-                    renderedCardsCount++; 
-                });
-                
-                // 檢查是否沒有任何卡片被渲染
-                if (renderedCardsCount === 0) {
-                    grid.innerHTML = '<div class="status-msg"><i class="fas fa-exclamation-triangle"></i> 此地點暫無詳細預報數據 (或當前模式過濾後無資料)</div>';
-                } else {
-                    grid.innerHTML = html;
+                // 核心元素檢查
+                if (!wx || !minT || !wx.time || wx.time.length === 0) {
+                     grid.innerHTML = '<div class="status-msg"><i class="fas fa-exclamation-triangle"></i> 此地點暫無詳細預報數據</div>';
+                     return;
                 }
+                
+                for(let i=0; i<wx.time.length; i++) {
+                    
+                    if (isDaily) {
+                        const startH = new Date(wx.time[i].startTime || wx.time[i].dataTime).getHours();
+                        if (startH >= 18 || startH < 6) continue;
+                    }
+                    
+                    const weatherDesc = getValue(wx.time[i]);
+                    let cardMinT = getValue(minT.time[i]);
+                    let cardMaxT = maxT ? getValue(maxT.time[i]) : cardMinT; 
+                    
+                    // F-D0047-089 修正邏輯
+                    if (isHourlyTempMode) {
+                        if (cardMinT === '--') continue;
+                        cardMaxT = cardMinT; 
+                    }
+                    
+                    if (cardMinT === '--') continue;
 
+                    const popVal = pop ? getValue(pop.time[i]) : null;
+
+                    html += this.createCardHTML(
+                        wx.time[i].startTime || wx.time[i].dataTime, 
+                        wx.time[i].endTime, 
+                        weatherDesc, 
+                        cardMinT, 
+                        cardMaxT, 
+                        popVal,
+                        isDaily
+                    );
+                    renderedCardsCount++;
+                }
+                
+                grid.innerHTML = html || '<div class="status-msg">查無符合條件的預報資料</div>';
                 document.getElementById('lastUpdate').textContent = `最後更新時間：${new Date().toLocaleString('zh-TW')}`;
             },
 
-            createCardHTML(item) {
-                const startTime = new Date(item.startTime);
-                const dateStr = `${startTime.getMonth() + 1}/${startTime.getDate()}`;
-                const dayName = ['週日','週一','週二','週三','週四','週五','週六'][startTime.getDay()];
+            createCardHTML(startTimeStr, endTimeStr, weather, minT, maxT, pop, isDailyMode) {
+                const start = new Date(startTimeStr);
+                const dateStr = `${start.getMonth()+1}/${start.getDate()}`;
+                const dayName = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'][start.getDay()];
                 
-                // 時間區段顯示邏輯
-                let timeDisplay = dayName;
+                let icon = '<i class="fas fa-cloud"></i>';
+                if (weather.includes('晴')) icon = '<i class="fas fa-sun" style="color:orange"></i>';
+                if (weather.includes('多雲')) icon = '<i class="fas fa-cloud-sun" style="color:#f9a825"></i>';
+                if (weather.includes('陰')) icon = '<i class="fas fa-cloud" style="color:#90a4ae"></i>';
+                if (weather.includes('雨')) icon = '<i class="fas fa-cloud-showers-heavy" style="color:#42a5f5"></i>';
+                if (weather.includes('雷')) icon = '<i class="fas fa-bolt" style="color:#ffeb3b"></i>';
+                
+                let timeDesc = dayName;
                 let isNight = false;
 
-                if (item.endTime) {
-                    const end = new Date(item.endTime);
-                    const startH = startTime.getHours();
-                    const endH = end.getHours();
+                if (!isDailyMode) {
+                    let h1 = start.getHours();
+                    let h2Str = "";
                     
-                    // 判斷是否為晚上 (18:00 ~ 06:00)
-                    if (startH >= 18 || startH < 6) isNight = true;
-
-                    // 如果不是整日預報，顯示時間區段
-                    timeDisplay = `${dayName} <span style="font-size:0.8em; font-weight:normal">${startH}時-${endH}時</span>`;
+                    if(endTimeStr) {
+                        const end = new Date(endTimeStr);
+                        const h2 = end.getHours();
+                        h2Str = ` - ${h2.toString().padStart(2,'0')}:00`;
+                        // 判斷是否為晚上 (18:00 以後或 06:00 以前)
+                        if (h1 >= 18 || h1 < 6) isNight = true;
+                    } else {
+                        // 瞬時資料
+                        if (h1 >= 18 || h1 < 6) isNight = true;
+                    }
+                    
+                    timeDesc = `${dayName}<br><span style="font-size:0.85em; font-weight:normal;">${h1.toString().padStart(2,'0')}:00${h2Str}</span>`;
                 }
 
-                const icon = WeatherIcon.get(item.weather);
-                const popDisplay = (item.pop && item.pop !== ' ') 
-                    ? `<div class="card-rain"><i class="fas fa-umbrella"></i> ${item.pop}%</div>` 
-                    : '<div style="height:24px"></div>'; // 佔位符保持對齐
+                let popHtml = '<div style="height:24px;"></div>';
+                // 檢查 PoP 是否為有效數字或字串
+                if (pop && pop !== ' ' && pop !== 'null' && pop !== '-' && pop !== '--') {
+                    popHtml = `<div class="card-rain"><i class="fas fa-umbrella"></i> ${pop}%</div>`;
+                }
+
+                let tempHtml = `<div class="card-temp">${minT}° - ${maxT}°</div>`;
+                if(minT === maxT) {
+                    tempHtml = `<div class="card-temp">${minT}°</div>`;
+                }
 
                 return `
                     <div class="card ${isNight ? 'is-night' : ''}">
                         <div>
                             <div class="card-date">${dateStr}</div>
-                            <div class="card-time">${timeDisplay}</div>
+                            <div class="card-time">${timeDesc}</div>
                             <div class="card-icon">${icon}</div>
-                            <div class="card-desc">${item.weather}</div>
+                            <div class="card-desc">${weather}</div>
                         </div>
                         <div>
-                            <div class="card-temp">${item.minT}° - ${item.maxT}°</div>
-                            ${popDisplay}
+                            ${tempHtml}
+                            ${popHtml}
                         </div>
                     </div>
                 `;
             }
         };
 
+
         /**
-         * DataParser: 負責將 CWA 氣象局混亂的 JSON 結構轉成統一格式
-         * V6.7 修正: 兼容 F-D0047-089/091 的中文 elementName 和單一溫度處理。
+         * DataParser: 結構解析器 (V7.2)
          */
         const DataParser = {
             parse(json) {
@@ -365,172 +474,51 @@
                 
                 // 1. 嘗試從 records 結構中解析 (Datastore API)
                 if (json?.records) {
-                    // Path 1a: Datastore 標準 (小寫 location)
                     if (json.records.location) {
+                        // 一般 CWA 結構
                         rawLocations = json.records.location;
                     }
-                    // Path 1b: F-D0047-xxx 鄉鎮預報 (大寫 L Locations/Location)
                     else if (json.records.Locations && Array.isArray(json.records.Locations)) {
+                        // F-D0047 結構: records.Locations[0].Location (注意大小寫)
                         const countyData = json.records.Locations[0];
                         if (countyData?.Location) {
-                            rawLocations = countyData.Location; // 獲取縣市列表
-                        }
-                    }
-                    // Path 1c: F-C0032-xxx 系列的巢狀結構 (小寫 locations/location)
-                    else if (json.records.locations) {
-                        if (Array.isArray(json.records.locations) && json.records.locations[0]?.location) {
-                             rawLocations = json.records.locations[0].location; 
-                        } 
-                        else if (json.records.locations.location) {
-                             rawLocations = json.records.locations.location;
+                            rawLocations = countyData.Location;
+                        } else if (countyData?.location) {
+                            rawLocations = countyData.location;
                         }
                     }
                 }
 
                 // 2. 嘗試從 cwaopendata 結構中解析 (File API)
-                const dataset = json?.cwaopendata?.dataset; 
-                if (!rawLocations && dataset) { 
-                    // Path 2a: File API - location 陣列直接在 dataset 下 (F-C0032-001)
+                if (!rawLocations && json?.cwaopendata?.dataset) { 
+                    const dataset = json.cwaopendata.dataset;
                     if (dataset.location) {
                         rawLocations = dataset.location;
                     }
-                    // Path 2b: File API - locations.location 巢狀結構 (F-C0032-007, F-C0032-003)
                     else if (dataset.locations?.location) {
                         rawLocations = dataset.locations.location;
                     }
                 }
                 
-                
                 if (!rawLocations) return [];
                 if (!Array.isArray(rawLocations)) rawLocations = [rawLocations];
 
-                // 3. 轉換每個地點 (處理數據)
+                // 3. 轉換每個地點
                 return rawLocations.map(loc => {
                     const name = loc.locationName || loc.LocationName; 
                     const elements = loc.weatherElement || loc.WeatherElement; 
                     
-                    if (!elements) return { name: name, forecasts: [] };
-
-                    // 找出需要的氣象因子 (findEl V6.7)
-                    // 注意：MinT/MaxT 在 F-D0047-089 中會映射到 "溫度"
-                    const wxEl = this.findEl(elements, ['Wx', 'WeatherDescription']);
-                    const minTEl = this.findEl(elements, ['MinT', 'MinTemperature', 'T']); 
-                    const maxTEl = this.findEl(elements, ['MaxT', 'MaxTemperature', 'T']);
-                    const popEl = this.findEl(elements, ['PoP3h', 'PoP12h', 'PoP', 'ProbabilityOfPrecipitation']); // PoP3h 優先
-
-                    // 整合時間序列
-                    const forecasts = wxEl?.time?.map((t, idx) => {
-                        return {
-                            startTime: t.startTime || t.dataTime, 
-                            endTime: t.endTime || this.addHours(t.startTime || t.dataTime, 3), 
-                            weather: this.getValue(t),
-                            minT: this.getValue(minTEl?.time?.[idx]),
-                            maxT: this.getValue(maxTEl?.time?.[idx]),
-                            pop: this.getValue(popEl?.time?.[idx])
-                        };
-                    }) || [];
-
                     return {
-                        name: name, 
-                        forecasts: forecasts
+                        name: name,
+                        rawElements: elements // 保留原始元素結構
                     };
                 });
-            },
-
-            /**
-             * 修正 findEl: 確保能找到 CWA API 常見的大寫或中文 elementName
-             * V6.8: 同時支援 F-D0047-089 (溫度) 和 F-D0047-091 (最高/最低溫度)
-             */
-            findEl(elements, candidates) {
-                if(!elements) return null;
-                
-                // 修正 F-D0047 系列的中文名稱對照表 (Key: 程式碼使用的簡寫)
-                const cwaMappings = {
-                    // F-D0047-091 (一週) 使用獨立的最高/最低溫度
-                    'MinT': ['最低溫度', 'MinTemperature', '溫度', 'T'], // 兼容 089(溫度), 091(最低溫度)
-                    'MaxT': ['最高溫度', 'MaxTemperature', '溫度', 'T'], // 兼容 089(溫度), 091(最高溫度)
-                    // F-D0047-089/091 天氣描述
-                    'Wx': ['天氣預報綜合描述', 'WeatherDescription', '天氣現象', 'Weather'],
-                    // 降雨機率
-                    'PoP3h': ['3小時降雨機率'], 
-                    'PoP12h': ['12小時降雨機率', 'ProbabilityOfPrecipitation'],
-                    'PoP': ['降水機率', 'ProbabilityOfPrecipitation']
-                };
-
-                for (const name of candidates) {
-                    const checks = cwaMappings[name] || [name];
-                    
-                    for (const checkName of checks) {
-                         // 1. 嘗試完全匹配 (中文或英文代碼)
-                         let found = elements.find(e => e.elementName === checkName);
-                         if (found) return found;
-                         
-                         // 2. 嘗試全大寫/小寫匹配 (針對英文代碼)
-                         if (checkName.match(/[a-zA-Z]/)) {
-                            found = elements.find(e => e.elementName === checkName.toUpperCase() || e.elementName === checkName.toLowerCase());
-                            if (found) return found;
-                         }
-                    }
-                }
-                return null;
-            },
-
-            /**
-             * 修正 getValue: 處理 F-D0047 複雜的 ElementValue 陣列結構 (單一鍵值)
-             */
-            getValue(timeObj) {
-                if (!timeObj) return '--';
-                const val = timeObj.elementValue || timeObj.parameter;
-                
-                if (Array.isArray(val)) {
-                    const firstObj = val[0];
-                    if (typeof firstObj === 'object' && firstObj !== null) {
-                        // 1. 嘗試標準 CWA 格式: {value: "20"} 或 {parameterName: "晴"}
-                        if (firstObj.value) return firstObj.value;
-                        if (firstObj.parameterName) return firstObj.parameterName;
-                        
-                        // 2. 嘗試 F-D0047 格式: { "Temperature": "17" } 或 { "Weather": "多雲" }
-                        for (const key in firstObj) {
-                            // 遍歷物件，返回第一個非 null 的值
-                            if (firstObj[key] !== null) {
-                                return firstObj[key]; 
-                            }
-                        }
-                    }
-                }
-                
-                // 處理單一物件格式 (非陣列)
-                return val?.parameterName || val?.value || val?.parameterValue || '--';
-            },
-
-            addHours(dateStr, h) {
-                if(!dateStr) return null;
-                const d = new Date(dateStr);
-                d.setHours(d.getHours() + h);
-                return d.toISOString();
-            }
-        };
-
-        /**
-         * WeatherIcon: 簡單的圖示對照
-         */
-        const WeatherIcon = {
-            get(desc) {
-                if (!desc) return '<i class="fas fa-question"></i>';
-                if (desc.includes('晴')) return '<i class="fas fa-sun" style="color:orange"></i>';
-                if (desc.includes('雷')) return '<i class="fas fa-bolt" style="color:#ffeb3b"></i>';
-                if (desc.includes('大雨') || desc.includes('豪雨')) return '<i class="fas fa-cloud-showers-heavy" style="color:#42a5f5"></i>';
-                if (desc.includes('雨')) return '<i class="fas fa-cloud-rain" style="color:#64b5f6"></i>';
-                if (desc.includes('雲')) return '<i class="fas fa-cloud" style="color:#90a4ae"></i>';
-                if (desc.includes('陰')) return '<i class="fas fa-cloud" style="color:#78909c"></i>';
-                if (desc.includes('雪')) return '<i class="fas fa-snowflake" style="color:#81d4fa"></i>';
-                return '<i class="fas fa-cloud"></i>';
             }
         };
 
         // 啟動程式
         App.init();
-
     </script>
+
 </body>
 </html>
