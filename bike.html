@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>公共自行車即時地圖</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body { 
+            font-family: "Microsoft JhengHei", Arial, sans-serif; 
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* 標題列 */
+        .header {
+            background: linear-gradient(135deg, #f6d365 0%, #fda085 100%); /* YouBike 橘黃色系 */
+            padding: 10px 15px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+
+        .header-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .back-btn {
+            color: #333;
+            text-decoration: none;
+            font-size: 1.2rem;
+        }
+
+        /* 控制列 */
+        .controls {
+            background: #fff;
+            padding: 10px;
+            display: flex;
+            gap: 10px;
+            border-bottom: 1px solid #ddd;
+            z-index: 999;
+        }
+
+        .city-select {
+            flex: 1;
+            padding: 8px;
+            font-size: 1rem;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            background: white;
+        }
+
+        .btn-locate {
+            padding: 8px 12px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        /* 地圖區域 */
+        #map {
+            flex: 1;
+            width: 100%;
+            height: 100%;
+            background: #e5e5e5;
+        }
+
+        /* 自定義 Popup 樣式 */
+        .bike-popup {
+            font-size: 1rem;
+            line-height: 1.6;
+        }
+        .bike-popup h3 {
+            margin: 0 0 5px 0;
+            color: #d35400;
+            font-size: 1.1rem;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+        }
+        .bike-stat {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+        .badge {
+            padding: 2px 8px;
+            border-radius: 10px;
+            color: white;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+        .badge-rent { background-color: #27ae60; }
+        .badge-return { background-color: #2980b9; }
+        .badge-empty { background-color: #c0392b; }
+
+        /* 載入遮罩 */
+        .loading-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            display: none; /* 預設隱藏 */
+        }
+        .loading-text { margin-top: 10px; color: #555; font-weight: bold; }
+
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div style="display:flex; align-items:center; gap:10px;">
+            <a href="javascript:history.back()" class="back-btn"><i class="fas fa-arrow-left"></i></a>
+            <div class="header-title"><i class="fas fa-bicycle"></i> 公共自行車地圖</div>
+        </div>
+        <div style="font-size:0.8rem; color:#555;">即時資料</div>
+    </div>
+
+    <div class="controls">
+        <select id="citySelect" class="city-select" onchange="changeCity()">
+            <option value="Taipei">臺北市 Taipei</option>
+            <option value="NewTaipei">新北市 NewTaipei</option>
+            <option value="Taoyuan">桃園市 Taoyuan</option>
+            <option value="Hsinchu">新竹市 Hsinchu</option>
+            <option value="HsinchuCounty">新竹縣 HsinchuCounty</option>
+            <option value="MiaoliCounty">苗栗縣 Miaoli</option>
+            <option value="Taichung" selected>臺中市 Taichung</option>
+            <option value="ChanghuaCounty">彰化縣 Changhua</option>
+            <option value="YunlinCounty">雲林縣 Yunlin</option>
+            <option value="Chiayi">嘉義市 Chiayi</option>
+            <option value="ChiayiCounty">嘉義縣 ChiayiCounty</option>
+            <option value="Tainan">臺南市 Tainan</option>
+            <option value="Kaohsiung">高雄市 Kaohsiung</option>
+            <option value="PingtungCounty">屏東縣 Pingtung</option>
+            <option value="TaitungCounty">臺東縣 Taitung</option>
+            <option value="KinmenCounty">金門縣 Kinmen</option>
+        </select>
+        <button class="btn-locate" onclick="locateUser()"><i class="fas fa-crosshairs"></i></button>
+    </div>
+
+    <div id="map"></div>
+
+    <div id="loading" class="loading-overlay">
+        <i class="fas fa-spinner fa-spin fa-3x" style="color: #f39c12;"></i>
+        <div class="loading-text">資料載入中...</div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // === 設定區 ===
+        // 請替換成您剛剛建立的 Bike Worker 網址
+        const API_URL = "https://bike-api.xiaoyouwu5-fd3.workers.dev/"; 
+
+        let map;
+        let markersLayer;
+        let allStations = [];
+
+        // 初始化地圖
+        function initMap() {
+            // 預設中心點 (台灣)
+            map = L.map('map').setView([24.1477, 120.6736], 13);
+
+            // 使用 OpenStreetMap 圖資 (免費)
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                maxZoom: 19
+            }).addTo(map);
+
+            // 建立標記圖層群組
+            markersLayer = L.layerGroup().addTo(map);
+
+            // 載入預設城市
+            changeCity();
+        }
+
+        // 切換城市
+        async function changeCity() {
+            const city = document.getElementById('citySelect').value;
+            showLoading(true);
+            
+            try {
+                const res = await fetch(`${API_URL}?city=${city}`);
+                const data = await res.json();
+                
+                allStations = data.stations || [];
+                renderMarkers();
+                
+                // 自動縮放地圖至站點範圍
+                if (allStations.length > 0) {
+                    const group = new L.featureGroup(markersLayer.getLayers());
+                    map.fitBounds(group.getBounds());
+                }
+
+            } catch (e) {
+                console.error(e);
+                alert("無法取得自行車資料");
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // 渲染標記
+        function renderMarkers() {
+            markersLayer.clearLayers();
+
+            allStations.forEach(st => {
+                // 決定圖標顏色
+                let iconColor = '#27ae60'; // 綠色 (充足)
+                if (st.status === 0) iconColor = '#7f8c8d'; // 暫停營運 (灰)
+                else if (st.rent === 0) iconColor = '#c0392b'; // 無車可借 (紅)
+                else if (st.rent < 3) iconColor = '#f39c12'; // 車少 (橘)
+
+                // 建立自定義 Icon (使用 CSS 畫圓點)
+                const customIcon = L.divIcon({
+                    className: 'custom-pin',
+                    html: `<div style="background-color:${iconColor}; width:14px; height:14px; border-radius:50%; border:2px solid white; box-shadow:0 2px 5px rgba(0,0,0,0.3);"></div>`,
+                    iconSize: [14, 14],
+                    iconAnchor: [7, 7]
+                });
+
+                const marker = L.marker([st.lat, st.lng], { icon: customIcon });
+
+                // Popup 內容
+                const popupContent = `
+                    <div class="bike-popup">
+                        <h3>${st.name}</h3>
+                        <div class="bike-stat">
+                            <span>可借車輛</span>
+                            <span class="badge ${st.rent > 0 ? 'badge-rent' : 'badge-empty'}">${st.rent}</span>
+                        </div>
+                        <div class="bike-stat">
+                            <span>可還空位</span>
+                            <span class="badge badge-return">${st.return}</span>
+                        </div>
+                        <div style="font-size:0.8rem; color:#666; margin-top:5px;">
+                            <i class="fas fa-map-marker-alt"></i> ${st.addr}<br>
+                            <i class="fas fa-info-circle"></i> ${st.status === 1 ? '營運中' : '暫停營運'}
+                        </div>
+                        <div style="margin-top:8px;">
+                            <a href="https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}" target="_blank" style="color:#2980b9; text-decoration:none;">
+                                <i class="fas fa-directions"></i> 導航
+                            </a>
+                        </div>
+                    </div>
+                `;
+
+                marker.bindPopup(popupContent);
+                markersLayer.addLayer(marker);
+            });
+        }
+
+        // 定位使用者
+        function locateUser() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(position => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    
+                    map.setView([lat, lng], 16);
+                    
+                    L.marker([lat, lng], {
+                        icon: L.divIcon({
+                            html: '<i class="fas fa-user-circle" style="font-size:24px; color:#2980b9; background:white; border-radius:50%;"></i>',
+                            iconSize: [24, 24],
+                            className: 'user-marker'
+                        })
+                    }).addTo(map).bindPopup("您的位置").openPopup();
+
+                }, () => {
+                    alert("無法取得您的位置");
+                });
+            } else {
+                alert("您的瀏覽器不支援定位");
+            }
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'flex' : 'none';
+        }
+
+        // 啟動
+        initMap();
+
+    </script>
+</body>
+</html>
