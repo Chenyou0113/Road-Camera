@@ -338,53 +338,68 @@
 
         /**
          * DataParser: 負責將 CWA 氣象局混亂的 JSON 結構轉成統一格式
-         * V6.4 修正: 增強 findEl 以支援多種大小寫變體 (Wx, wx, WX 等)
+         * V6.5 修正: 統一處理 Datastore/File API 的大小寫差異
          */
         const DataParser = {
             parse(json) {
                 let rawLocations = null;
-
-                // --- Datastore API 結構 ---
                 
-                // Path 1: DataStore 標準格式 (小寫 location)
-                if (json?.records?.location) {
-                    rawLocations = json.records.location;
-                }
-                
-                // Path 2: F-D0047-xxx 鄉鎮預報 (大寫 L Locations/Location)
-                else if (json?.records?.Locations && Array.isArray(json.records.Locations)) {
-                    rawLocations = json.records.Locations[0]?.Location;
-                }
-
-                // Path 3: F-C0032-xxx 系列的巢狀結構 (小寫 locations/location)
-                else if (json?.records?.locations) {
-                    if (Array.isArray(json.records.locations)) {
-                         rawLocations = json.records.locations[0]?.location; 
-                    } 
-                    else if (json.records.locations.location) {
-                         rawLocations = json.records.locations.location;
+                // 1. 嘗試從 records 結構中解析 (Datastore API)
+                if (json?.records) {
+                    // Path 1a: Datastore 標準 (小寫 location)
+                    if (json.records.location) {
+                        rawLocations = json.records.location;
+                    }
+                    // Path 1b: F-D0047-xxx 鄉鎮預報 (大寫 L Locations/Location)
+                    else if (json.records.Locations && Array.isArray(json.records.Locations)) {
+                        const countyData = json.records.Locations[0];
+                        if (countyData?.Location) {
+                            rawLocations = countyData.Location;
+                        }
+                    }
+                    // Path 1c: F-C0032-xxx 系列的巢狀結構 (小寫 locations/location)
+                    else if (json.records.locations) {
+                        if (Array.isArray(json.records.locations) && json.records.locations[0]?.location) {
+                             rawLocations = json.records.locations[0].location; 
+                        } 
+                        else if (json.records.locations.location) {
+                             rawLocations = json.records.locations.location;
+                        }
                     }
                 }
 
-                // --- File API 結構 (cwaopendata: {...}) ---
+                // 2. 嘗試從 cwaopendata 結構中解析 (File API)
                 const dataset = json?.cwaopendata?.dataset; 
-                if (dataset) {
-                    if (dataset.location) { 
-                        rawLocations = dataset.location; 
+                if (!rawLocations && dataset) { // 只有在 records 失敗時才檢查 File API 結構
+                    // Path 2a: File API - location 陣列直接在 dataset 下
+                    if (dataset.location) {
+                        rawLocations = dataset.location;
                     }
-                    else if (dataset.locations?.location) { 
-                        rawLocations = dataset.locations.location; 
+                    // Path 2b: File API - locations.location 巢狀結構
+                    else if (dataset.locations?.location) {
+                        rawLocations = dataset.locations.location;
                     }
                 }
+                
                 
                 if (!rawLocations) return [];
-                if (!Array.isArray(rawLocations)) rawLocations = [rawLocations];
+                
+                // 確保 rawLocations 是陣列
+                if (!Array.isArray(rawLocations)) {
+                    rawLocations = [rawLocations];
+                }
 
-                // 2. 轉換每個地點
+                // 3. 轉換每個地點 (處理數據)
                 return rawLocations.map(loc => {
+                    // 兼容 locationName / LocationName
+                    const name = loc.locationName || loc.LocationName; 
+                    // 兼容 weatherElement / WeatherElement
                     const elements = loc.weatherElement || loc.WeatherElement; 
                     
-                    // 找出需要的氣象因子 - 支援多種命名和大小寫
+                    if (!elements) return { name: name, forecasts: [] };
+
+                    // 找出需要的氣象因子 (findEl 會處理大小寫兼容)
+                    // F-D0047 系列的 elementName 為大寫 Wx, MinT, MaxT
                     const wxEl = this.findEl(elements, ['Wx', 'WeatherDescription']);
                     const minTEl = this.findEl(elements, ['MinT', 'MinTemperature', 'T']); 
                     const maxTEl = this.findEl(elements, ['MaxT', 'MaxTemperature', 'T']);
@@ -403,32 +418,22 @@
                     }) || [];
 
                     return {
-                        name: loc.locationName || loc.LocationName, 
+                        name: name, 
                         forecasts: forecasts
                     };
                 });
             },
 
-            // 強化版 findEl：支援完全匹配、大寫、小寫、下劃線變體
+            // 修正 findEl: 確保能找到 CWA API 常見的大寫或小寫 elementName
             findEl(elements, candidates) {
                 if(!elements) return null;
-                
                 for (const name of candidates) {
-                    // 1. 完全匹配 (Wx, MinT 等)
+                    // 嘗試完全匹配 (例如: Wx)
                     let found = elements.find(e => e.elementName === name);
                     if (found) return found;
 
-                    // 2. 全大寫匹配 (WX, MINT)
-                    found = elements.find(e => e.elementName === name.toUpperCase());
-                    if (found) return found;
-
-                    // 3. 全小寫匹配 (wx, mint)
-                    found = elements.find(e => e.elementName === name.toLowerCase());
-                    if (found) return found;
-
-                    // 4. 下劃線變體 (MIN_T, MAX_T 等 - 有些舊 API 用這種格式)
-                    const withUnderscore = name.replace(/([A-Z])/g, '_$1').toUpperCase().replace(/^_/, '');
-                    found = elements.find(e => e.elementName === withUnderscore);
+                    // 嘗試全大寫匹配 (例如: MINT) 或 全小寫匹配 (例如: mint)
+                    found = elements.find(e => e.elementName === name.toUpperCase() || e.elementName === name.toLowerCase());
                     if (found) return found;
                 }
                 return null;
