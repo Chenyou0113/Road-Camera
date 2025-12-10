@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modular Airport PIDS System</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style id="pids-styles">
+        /* --- 基礎設定 --- */
+        * { box-sizing: border-box; }
+        body { 
+            background-color: #1a1a1a; 
+            margin: 0; 
+            padding: 10px; 
+            font-family: "Microsoft JhengHei", "Heiti TC", Arial, sans-serif; 
+            display: flex; 
+            justify-content: center; 
+            align-items: flex-start;
+            min-height: 100vh; 
+            color: white; 
+        }
+        
+        #pids-container { 
+            display: flex; 
+            flex-wrap: wrap;
+            gap: 15px; 
+            width: 100%; 
+            max-width: 1920px;
+        }
+        
+        /* 單一看板樣式 */
+        .pids-screen { 
+            flex: 1;
+            min-width: 45%;
+            background: #000; 
+            box-shadow: 0 0 15px rgba(0,0,0,0.7); 
+            display: flex; 
+            flex-direction: column; 
+            height: 90vh;
+            border: 1px solid #333;
+        }
+
+        /* Header (標題欄) 通用樣式 */
+        .pids-header { 
+            height: 80px; 
+            display: flex; 
+            align-items: center; 
+            justify-content: space-between; 
+            padding: 0 30px; 
+            font-weight: bold; 
+            color: #fff;
+            flex-shrink: 0;
+        }
+        
+        .pids-header-title { 
+            font-size: 1.8rem; 
+            display: flex; 
+            align-items: center; 
+            gap: 15px; 
+        }
+        
+        .header-icon { 
+            font-size: 2.2rem; 
+        }
+        
+        .pids-clock { 
+            font-size: 2.5rem; 
+            font-family: Arial, sans-serif;
+            font-weight: bold;
+        }
+
+        /* 黃色主題 (離港/Departures) */
+        .theme-yellow .pids-header { 
+            background: linear-gradient(to bottom, #ffc107, #ffb300); 
+            border-bottom: 3px solid #e0a800; 
+        }
+        
+        /* 藍色主題 (到港/Arrivals) */
+        .theme-blue .pids-header { 
+            background: linear-gradient(to bottom, #007bff, #0069d9); 
+            border-bottom: 3px solid #0056b3; 
+        }
+
+        /* 綠色主題 (國際) */
+        .theme-green .pids-header { 
+            background: linear-gradient(to bottom, #28a745, #218838); 
+            border-bottom: 3px solid #1e7e34; 
+        }
+
+        /* 表格容器 */
+        .table-container {
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: hidden;
+            padding: 5px 0;
+            scrollbar-width: thin;
+            scrollbar-color: #555 #1a1a1a;
+        }
+        
+        .table-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .table-container::-webkit-scrollbar-track {
+            background: #1a1a1a;
+        }
+        
+        .table-container::-webkit-scrollbar-thumb {
+            background: #555;
+            border-radius: 4px;
+        }
+
+        /* 表格樣式 */
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            font-size: 1.5rem;
+            table-layout: fixed;
+        }
+        
+        thead tr { 
+            border-bottom: 2px solid #555; 
+            height: 50px;
+            position: sticky;
+            top: 0;
+            background-color: #0a0a0a;
+        }
+
+        thead th { 
+            font-size: 0.95rem; 
+            color: #ddd; 
+            font-weight: normal; 
+            text-align: left; 
+            padding: 8px 10px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        thead th span { 
+            display: block; 
+            font-size: 0.75rem; 
+            color: #aaa;
+            font-weight: normal;
+        }
+
+        tbody tr { 
+            height: 70px;
+            border-bottom: 1px solid #222; 
+        }
+
+        tbody tr:hover {
+            background-color: #1a1a1a;
+        }
+
+        td { 
+            padding: 10px; 
+            vertical-align: middle;
+            word-break: break-word;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* 目的地雙語樣式 */
+        .dest-cn { 
+            display: block;
+            font-size: 1.3rem;
+            font-weight: bold;
+            margin-bottom: 3px;
+        }
+        
+        .dest-en { 
+            display: block;
+            font-size: 0.9rem; 
+            color: #bbb; 
+            font-family: Arial, sans-serif;
+        }
+
+        /* 狀態標籤樣式 */
+        .status-badge { 
+            display: inline-block; 
+            padding: 6px 12px; 
+            border-radius: 5px; 
+            font-size: 0.9rem;
+            min-width: 110px;
+            text-align: center; 
+            font-weight: bold;
+            white-space: nowrap;
+        }
+
+        .status-departed,
+        .status-arrived { 
+            background-color: #28a745; 
+            color: #fff; 
+        }
+
+        .status-delayed { 
+            background-color: #dc3545; 
+            color: #fff; 
+        }
+
+        .status-early { 
+            background-color: #fd7e14; 
+            color: #fff; 
+        }
+
+        .status-boarding { 
+            background-color: #ffc107; 
+            color: #000;
+            animation: blink 1s infinite;
+            font-weight: bold;
+        }
+
+        .status-ontime { 
+            background-color: transparent; 
+            color: #fff; 
+        }
+
+        @keyframes blink { 
+            0%, 100% { opacity: 1; } 
+            50% { opacity: 0.5; } 
+        }
+
+        /* 底部跑馬燈 */
+        .pids-footer { 
+            height: 50px; 
+            background-color: #222; 
+            border-top: 2px solid #444; 
+            display: flex; 
+            align-items: center; 
+            padding: 0 20px; 
+            font-size: 1.1rem; 
+            white-space: nowrap; 
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+        
+        .marquee { 
+            animation: marquee 20s linear infinite; 
+        }
+
+        @keyframes marquee { 
+            0% { transform: translateX(100%); } 
+            100% { transform: translateX(-100%); } 
+        }
+
+        /* 響應式設計 */
+        @media (max-width: 1600px) {
+            .pids-screen {
+                min-width: 48%;
+                height: 85vh;
+            }
+        }
+
+        @media (max-width: 1200px) {
+            .pids-screen {
+                min-width: 100%;
+                height: 80vh;
+            }
+            
+            #pids-container {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="pids-container">
+        <!-- 看板將通過 JavaScript 插入到這裡 -->
+    </div>
+
+    <script>
+        // ===== 航班數據集 =====
+        const FlightData = {
+            DOMESTIC_DEPARTURES: [
+                { flight: "B7-8605", dest: "澎湖 Penghu", time: "09:30", gate: "12", est: "09:30", status: "準時 On Time", type: "ontime" },
+                { flight: "B7-8809", dest: "金門 Kinmen", time: "09:40", gate: "12", est: "09:40", status: "準時 On Time", type: "ontime" },
+                { flight: "AE-395", dest: "台東 Taitung", time: "10:00", gate: "10", est: "10:00", status: "正在登機 Boarding", type: "boarding" },
+                { flight: "CX-888", dest: "花蓮 Hualien", time: "10:30", gate: "15", est: "11:00", status: "延誤 Delayed", type: "delayed" },
+                { flight: "BR-505", dest: "綠島 Ludao", time: "11:00", gate: "11", est: "11:00", status: "準時 On Time", type: "ontime" },
+                { flight: "B7-8751", dest: "南竿 Nangan", time: "11:30", gate: "13", est: "11:30", status: "準時 On Time", type: "ontime" },
+            ],
+            DOMESTIC_ARRIVALS: [
+                { flight: "B7-8602", dest: "澎湖 Penghu", time: "09:00", gate: "-", est: "08:52", status: "已到 Arrived", type: "arrived" },
+                { flight: "B7-8782", dest: "北竿 Beigan", time: "09:05", gate: "-", est: "09:00", status: "已到 Arrived", type: "arrived" },
+                { flight: "AE-392", dest: "台東 Taitung", time: "09:20", gate: "-", est: "09:20", status: "準時 On Time", type: "ontime" },
+                { flight: "B7-8972", dest: "花蓮 Hualien", time: "09:30", gate: "-", est: "09:20", status: "提早 Early", type: "early" },
+                { flight: "CX-825", dest: "綠島 Ludao", time: "10:15", gate: "-", est: "10:10", status: "準時 On Time", type: "ontime" },
+            ],
+            INTERNATIONAL_DEPARTURES: [
+                { airline: "CX", flight: "CX-450", dest: "香港 Hong Kong", time: "11:00", gate: "A03", est: "11:00", status: "正在登機 Boarding", type: "boarding" },
+                { airline: "BR", flight: "BR-102", dest: "東京 Tokyo (NRT)", time: "11:45", gate: "B08", est: "11:45", status: "準時 On Time", type: "ontime" },
+                { airline: "SQ", flight: "SQ-879", dest: "新加坡 Singapore", time: "12:30", gate: "C12", est: "13:00", status: "延誤 Delayed", type: "delayed" },
+                { airline: "JL", flight: "JL-805", dest: "大阪 Osaka (KIX)", time: "13:00", gate: "A08", est: "13:00", status: "準時 On Time", type: "ontime" },
+            ],
+            INTERNATIONAL_ARRIVALS: [
+                { airline: "OZ", flight: "OZ-711", dest: "首爾 Seoul (ICN)", time: "10:00", gate: "-", est: "09:55", status: "已到 Arrived", type: "arrived" },
+                { airline: "CI", flight: "CI-701", dest: "馬尼拉 Manila", time: "10:30", gate: "-", est: "10:30", status: "準時 On Time", type: "ontime" },
+                { airline: "JL", flight: "JL-801", dest: "大阪 Osaka (KIX)", time: "11:20", gate: "-", est: "11:10", status: "提早 Early", type: "early" },
+                { airline: "NH", flight: "NH-812", dest: "東京 Tokyo (HND)", time: "12:00", gate: "-", est: "11:55", status: "準時 On Time", type: "ontime" },
+            ]
+        };
+
+        /**
+         * 根據看板類型返回欄位配置
+         * @param {string} type - 'D_DEP' (國內離站), 'D_ARR' (國內到站), 'I_DEP' (國際離站), 'I_ARR' (國際到站)
+         */
+        function getColumns(type) {
+            const isDeparture = type.includes('DEP');
+            const isInternational = type.includes('I_');
+
+            let columns = [];
+
+            if (isInternational) {
+                columns.push({ header: "航空公司", sub: "Airline", dataKey: "airline", width: "10%" });
+            }
+
+            columns.push({ header: "班次", sub: "Flight", dataKey: "flight", width: isInternational ? "12%" : "15%" });
+            
+            if (isDeparture) {
+                columns.push({ header: "目的地", sub: "To", dataKey: "dest", width: "30%" });
+                columns.push({ header: "表定時間", sub: "STD", dataKey: "time", width: "10%" });
+                columns.push({ header: "登機門", sub: "Gate", dataKey: "gate", width: "8%" });
+                columns.push({ header: "改時", sub: "EST", dataKey: "est", width: "10%" });
+            } else {
+                columns.push({ header: "起飛地", sub: "From", dataKey: "dest", width: "30%" });
+                columns.push({ header: "表定時間", sub: "STA", dataKey: "time", width: "10%" });
+                columns.push({ header: "改時", sub: "EST", dataKey: "est", width: "10%" });
+            }
+
+            columns.push({ header: "狀態", sub: "Status", dataKey: "status", width: "20%" });
+
+            return columns;
+        }
+
+        /**
+         * 渲染單個 PIDS 看板
+         */
+        function renderPIDS(titleCn, titleEn, theme, icon, data, dataType, marqueeText) {
+            const columns = getColumns(dataType);
+            const screenDiv = document.createElement('div');
+            screenDiv.className = `pids-screen theme-${theme}`;
+            const screenId = `screen-${Date.now()}-${Math.random()}`;
+            screenDiv.id = screenId;
+
+            // 1. Header
+            const headerHtml = `
+                <div class="pids-header">
+                    <div class="pids-header-title">
+                        <span class="header-icon">${icon}</span>
+                        <div>${titleCn}<br><span style="font-size: 0.8em;">${titleEn}</span></div>
+                    </div>
+                    <div class="pids-clock" id="clock-${screenId}">--:--</div>
+                </div>
+            `;
+
+            // 2. Table Header
+            let tableHeaderHtml = '<thead><tr>';
+            columns.forEach(col => {
+                tableHeaderHtml += `<th style="width: ${col.width}; text-align: left;">${col.header}<span>${col.sub}</span></th>`;
+            });
+            tableHeaderHtml += '</tr></thead>';
+
+            // 3. Table Body
+            let tableBodyHtml = '<tbody>';
+            data.forEach(flight => {
+                tableBodyHtml += '<tr>';
+                columns.forEach(col => {
+                    let cellData = flight[col.dataKey] || "-";
+                    let cellHtml = '';
+
+                    if (col.dataKey === 'status') {
+                        cellHtml = `<span class="status-badge status-${flight.type}">${cellData}</span>`;
+                    } else if (col.dataKey === 'dest') {
+                        const parts = cellData.split(' ');
+                        const cn = parts[0];
+                        const en = parts.slice(1).join(' ');
+                        cellHtml = `<span class="dest-cn">${cn}</span><span class="dest-en">${en}</span>`;
+                    } else if (col.dataKey === 'airline') {
+                        cellHtml = `<div style="text-align: center; font-weight: bold; font-size: 1.1em;">${cellData}</div>`;
+                    } else {
+                        cellHtml = `<div style="text-align: ${col.dataKey === 'gate' || col.dataKey === 'time' || col.dataKey === 'est' ? 'center' : 'left'};">${cellData}</div>`;
+                    }
+
+                    tableBodyHtml += `<td>${cellHtml}</td>`;
+                });
+                tableBodyHtml += '</tr>';
+            });
+            tableBodyHtml += '</tbody>';
+
+            // 4. Footer
+            const footerHtml = `
+                <div class="pids-footer">
+                    <div class="marquee">${marqueeText}</div>
+                </div>
+            `;
+
+            screenDiv.innerHTML = `
+                ${headerHtml}
+                <div class="table-container">
+                    <table>${tableHeaderHtml}${tableBodyHtml}</table>
+                </div>
+                ${footerHtml}
+            `;
+
+            document.getElementById('pids-container').appendChild(screenDiv);
+
+            // 啟動時鐘
+            function updateClock() {
+                const now = new Date();
+                const timeString = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+                const clockEl = document.getElementById(`clock-${screenId}`);
+                if (clockEl) clockEl.innerText = timeString;
+            }
+            setInterval(updateClock, 1000);
+            updateClock();
+        }
+
+        // ===== 機場配置 =====
+        const AirportConfig = 'INTERNATIONAL'; // 改為 'DOMESTIC' 或 'INTERNATIONAL'
+
+        const container = document.getElementById('pids-container');
+        container.innerHTML = '';
+
+        if (AirportConfig === 'DOMESTIC') {
+            // 普通機場配置 (例如松山 TSA)
+            renderPIDS(
+                "國內線到站", "Domestic Arrivals",
+                'blue', '🛬',
+                FlightData.DOMESTIC_ARRIVALS, 'D_ARR',
+                '歡迎光臨，祝您旅途愉快。Welcome to airport, have a safe journey.'
+            );
+            renderPIDS(
+                "國內線離站", "Domestic Departures",
+                'yellow', '🛫',
+                FlightData.DOMESTIC_DEPARTURES, 'D_DEP',
+                '祝您飛行愉快，感謝您的搭乘。 Thank you for flying, have a pleasant flight.'
+            );
+        } else if (AirportConfig === 'INTERNATIONAL') {
+            // 國際機場配置 (例如桃園 TPE)
+            renderPIDS(
+                "國內線到站", "Domestic Arrivals",
+                'blue', '🛬',
+                FlightData.DOMESTIC_ARRIVALS, 'D_ARR',
+                '歡迎光臨，祝您旅途愉快。Welcome to airport, have a safe journey.'
+            );
+            renderPIDS(
+                "國內線離站", "Domestic Departures",
+                'yellow', '🛫',
+                FlightData.DOMESTIC_DEPARTURES, 'D_DEP',
+                '祝您飛行愉快，感謝您的搭乘。 Thank you for flying, have a pleasant flight.'
+            );
+            renderPIDS(
+                "國際線到站", "International Arrivals",
+                'green', '🛬',
+                FlightData.INTERNATIONAL_ARRIVALS, 'I_ARR',
+                '歡迎來台灣，祝您旅途愉快。Welcome to Taiwan, have a safe journey.'
+            );
+            renderPIDS(
+                "國際線離站", "International Departures",
+                'green', '🛫',
+                FlightData.INTERNATIONAL_DEPARTURES, 'I_DEP',
+                '祝您飛行愉快，感謝您的搭乘。 Thank you for flying, have a pleasant flight.'
+            );
+        }
+    </script>
+</body>
+</html>

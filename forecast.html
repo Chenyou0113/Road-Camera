@@ -338,7 +338,7 @@
 
         /**
          * DataParser: 負責將 CWA 氣象局混亂的 JSON 結構轉成統一格式
-         * V6.5 修正: 統一處理 Datastore/File API 的大小寫差異
+         * V6.6 修正: 兼容 F-D0047 的中文 elementName 和複雜 ElementValue 結構，並優化所有解析路徑。
          */
         const DataParser = {
             parse(json) {
@@ -354,7 +354,7 @@
                     else if (json.records.Locations && Array.isArray(json.records.Locations)) {
                         const countyData = json.records.Locations[0];
                         if (countyData?.Location) {
-                            rawLocations = countyData.Location;
+                            rawLocations = countyData.Location; // 獲取縣市列表
                         }
                     }
                     // Path 1c: F-C0032-xxx 系列的巢狀結構 (小寫 locations/location)
@@ -371,11 +371,11 @@
                 // 2. 嘗試從 cwaopendata 結構中解析 (File API)
                 const dataset = json?.cwaopendata?.dataset; 
                 if (!rawLocations && dataset) { // 只有在 records 失敗時才檢查 File API 結構
-                    // Path 2a: File API - location 陣列直接在 dataset 下
+                    // Path 2a: File API - location 陣列直接在 dataset 下 (例如 F-C0032-001)
                     if (dataset.location) {
                         rawLocations = dataset.location;
                     }
-                    // Path 2b: File API - locations.location 巢狀結構
+                    // Path 2b: File API - locations.location 巢狀結構 (例如 F-C0032-007, F-C0032-003)
                     else if (dataset.locations?.location) {
                         rawLocations = dataset.locations.location;
                     }
@@ -398,8 +398,7 @@
                     
                     if (!elements) return { name: name, forecasts: [] };
 
-                    // 找出需要的氣象因子 (findEl 會處理大小寫兼容)
-                    // F-D0047 系列的 elementName 為大寫 Wx, MinT, MaxT
+                    // 找出需要的氣象因子 (findEl 會處理大小寫兼容和中文翻譯)
                     const wxEl = this.findEl(elements, ['Wx', 'WeatherDescription']);
                     const minTEl = this.findEl(elements, ['MinT', 'MinTemperature', 'T']); 
                     const maxTEl = this.findEl(elements, ['MaxT', 'MaxTemperature', 'T']);
@@ -424,28 +423,59 @@
                 });
             },
 
-            // 修正 findEl: 確保能找到 CWA API 常見的大寫或小寫 elementName
+            /**
+             * 修正 findEl: 確保能找到 CWA API 常見的大寫或中文 elementName
+             */
             findEl(elements, candidates) {
                 if(!elements) return null;
+                
+                // F-D0047 系列的中文名稱對照表 (Key: 程式碼使用的簡寫)
+                const chineseNames = {
+                    'MinT': ['最低溫度', 'MinTemperature'],
+                    'MaxT': ['最高溫度', 'MaxTemperature'],
+                    'Wx': ['天氣', '天氣現象', 'WeatherDescription'],
+                    'PoP12h': ['降水機率', 'ProbabilityOfPrecipitation']
+                };
+
                 for (const name of candidates) {
-                    // 嘗試完全匹配 (例如: Wx)
-                    let found = elements.find(e => e.elementName === name);
+                    // 1. 嘗試英文/代碼名稱 (標準 CWA)
+                    let found = elements.find(e => e.elementName === name || e.elementName === name.toUpperCase() || e.elementName === name.toLowerCase());
                     if (found) return found;
 
-                    // 嘗試全大寫匹配 (例如: MINT) 或 全小寫匹配 (例如: mint)
-                    found = elements.find(e => e.elementName === name.toUpperCase() || e.elementName === name.toLowerCase());
-                    if (found) return found;
+                    // 2. 嘗試中文名稱 (針對 F-D0047 系列)
+                    const checks = chineseNames[name] || [];
+                    for (const chName of checks) {
+                         found = elements.find(e => e.elementName === chName);
+                         if (found) return found;
+                    }
                 }
                 return null;
             },
 
+            /**
+             * 修正 getValue: 處理 F-D0047 複雜的 ElementValue 陣列結構
+             */
             getValue(timeObj) {
                 if (!timeObj) return '--';
                 const val = timeObj.elementValue || timeObj.parameter;
                 
                 if (Array.isArray(val)) {
-                    return val[0].value || val[0].parameterName;
+                    // 標準 CWA 格式: [{value: "20", measure: "C"}]
+                    if (val[0]?.value) return val[0].value;
+                    if (val[0]?.parameterName) return val[0].parameterName;
+                    
+                    // F-D0047 格式: [{ "MaxTemperature": "17" }] 或 [{ "MinTemperature": "16" }]
+                    const firstObj = val[0];
+                    if (typeof firstObj === 'object' && firstObj !== null) {
+                        for (const key in firstObj) {
+                            if (key && firstObj[key] !== null) {
+                                return firstObj[key]; // 返回第一個找到的值
+                            }
+                        }
+                    }
+
                 }
+                // 處理單一物件格式
                 return val?.parameterName || val?.value || val?.parameterValue || '--';
             },
 
