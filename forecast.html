@@ -29,16 +29,17 @@
         .input-group { flex: 1; min-width: 200px; }
         select { width: 100%; padding: 10px; border-radius: 6px; font-size: 16px; margin-top: 5px; }
         .forecast-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 15px; }
-        .card { background: var(--bg-card); padding: 15px; border-radius: 12px; box-shadow: var(--shadow); text-align: center; position: relative; overflow: hidden; }
+        .card { background: var(--bg-card); padding: 15px; border-radius: 12px; box-shadow: var(--shadow); text-align: center; position: relative; overflow: hidden; animation: fadeIn 0.5s ease; }
         .card::before { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 4px; background: var(--primary); }
-        .card.is-night::before { background: #475569; } /* 夜晚標示 */
+        .card.is-night::before { background: #475569; }
         .card-date { font-size: 0.85rem; color: var(--text-sub); }
-        .card-time { font-weight: bold; margin-bottom: 10px; display: block; }
+        .card-time { font-weight: bold; margin-bottom: 10px; display: block; font-size: 0.95rem; }
         .card-temp { font-size: 1.5rem; font-weight: bold; color: var(--primary); margin: 10px 0; }
-        .card-desc { font-size: 0.9rem; color: var(--text-sub); margin-bottom: 5px; min-height: 2.4em; }
+        .card-desc { font-size: 0.9rem; color: var(--text-sub); margin-bottom: 5px; min-height: 2.4em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;}
         .card-rain { font-size: 0.85rem; color: #3b82f6; display: flex; align-items: center; justify-content: center; gap: 5px; }
         .status-msg { grid-column: 1/-1; text-align: center; padding: 40px; color: var(--text-sub); }
         .back-btn { color: white; text-decoration: none; background: rgba(255,255,255,0.2); padding: 5px 15px; border-radius: 20px; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
 <body>
@@ -53,8 +54,8 @@
             <div class="input-group">
                 <label>預報模式</label>
                 <select id="datasetSelect">
-                    <option value="F-D0047-091" selected>📆 未來一週 (鄉鎮 12h)</option>
-                    <option value="F-D0047-089">🕒 未來三天 (每3小時)</option>
+                    <option value="F-D0047-089" selected>🕒 未來三天 (每3小時)</option>
+                    <option value="F-D0047-091">📆 未來一週 (鄉鎮 12h)</option>
                     <option value="F-C0032-001">🇹🇼 36 小時 (縣市)</option>
                 </select>
             </div>
@@ -71,7 +72,6 @@
     </div>
 
     <script>
-        // 您的 Worker URL
         const WORKER_URL = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev';
 
         const App = {
@@ -79,10 +79,8 @@
             
             init() {
                 if(localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
-                
                 document.getElementById('datasetSelect').addEventListener('change', () => this.fetchData());
                 document.getElementById('locationSelect').addEventListener('change', () => this.render());
-                
                 this.fetchData();
             },
 
@@ -97,15 +95,10 @@
                 try {
                     const res = await fetch(`${WORKER_URL}?dataset=${dataset}`);
                     const json = await res.json();
-
-                    // 呼叫解析器
                     this.currentData = DataParser.parse(json);
 
-                    if (this.currentData.length === 0) {
-                        throw new Error("解析後無資料，請檢查 API 回傳");
-                    }
+                    if (this.currentData.length === 0) throw new Error("無資料，請檢查 API 回傳");
 
-                    // 填入地點選單
                     locSelect.innerHTML = '';
                     this.currentData.forEach((loc, idx) => {
                         const opt = document.createElement('option');
@@ -114,11 +107,10 @@
                         locSelect.appendChild(opt);
                     });
 
-                    // 預設選台北或第一個
+                    // 預設選取台北或列表第一個
                     let defIdx = this.currentData.findIndex(l => l.name.includes('臺北') || l.name.includes('台北'));
                     locSelect.value = (defIdx !== -1) ? defIdx : 0;
                     locSelect.disabled = false;
-
                     this.render();
 
                 } catch (e) {
@@ -134,67 +126,74 @@
 
                 if (!loc) return;
 
-                // 1. 查找關鍵元素 (針對 F-D0047-091 的中文名稱)
-                // 這裡一定要包含 JSON 裡出現過的中文 key
+                // *** 修正重點：擴大搜尋範圍 ***
+                // 3小時預報只有 '溫度' (Temperature)，沒有 '最低溫度'
+                // 所以要把 '溫度', 'Temperature' 加入搜尋列表
                 const wx = this.findEl(loc.elements, ['天氣現象', 'Wx', 'WeatherDescription', 'Weather']);
-                const minT = this.findEl(loc.elements, ['最低溫度', 'MinT', 'MinTemperature']);
-                const maxT = this.findEl(loc.elements, ['最高溫度', 'MaxT', 'MaxTemperature']);
-                const pop = this.findEl(loc.elements, ['12小時降雨機率', '3小時降雨機率', 'PoP', 'ProbabilityOfPrecipitation']);
+                const minT = this.findEl(loc.elements, ['最低溫度', 'MinT', 'MinTemperature', '溫度', 'Temperature', 'T']);
+                const maxT = this.findEl(loc.elements, ['最高溫度', 'MaxT', 'MaxTemperature', '溫度', 'Temperature', 'T']);
+                const pop = this.findEl(loc.elements, ['12小時降雨機率', '3小時降雨機率', 'PoP', 'ProbabilityOfPrecipitation', '降水機率']);
 
-                // 2. 檢查資料完整性 (關鍵修正：改用 normalized 'time' 屬性)
                 if (!wx || !wx.time || wx.time.length === 0) {
-                    console.log("Debug Info:", { wx, minT, maxT });
-                    grid.innerHTML = '<div class="status-msg">此地點無對應的天氣預報資料 (欄位對應失敗)</div>';
+                    grid.innerHTML = '<div class="status-msg">此地點無對應的天氣預報資料</div>';
                     return;
                 }
 
                 let html = '';
-                // 3. 產生卡片
+                let count = 0;
+
                 for (let i = 0; i < wx.time.length; i++) {
                     const timeObj = wx.time[i];
                     const startTime = timeObj.startTime || timeObj.dataTime;
                     const endTime = timeObj.endTime;
                     
                     const weatherText = this.getValue(timeObj);
-                    const tMin = minT ? this.getValue(minT.time[i]) : '--';
-                    const tMax = maxT ? this.getValue(maxT.time[i]) : tMin;
+                    let tMin = minT ? this.getValue(minT.time[i]) : '--';
+                    let tMax = maxT ? this.getValue(maxT.time[i]) : tMin;
                     const rain = pop ? this.getValue(pop.time[i]) : '--';
 
-                    if (tMin === '--' && tMax === '--') continue;
+                    // 修正：如果 MaxT 沒抓到，就用 MinT 的值 (針對3小時單一溫度)
+                    if(tMax === '--' && tMin !== '--') tMax = tMin;
+                    if(tMin === '--' && tMax !== '--') tMin = tMax;
+
+                    // 只要有溫度資料就顯示，不再因為沒有區間而跳過
+                    if (tMin === '--') continue;
 
                     html += this.buildCard(startTime, endTime, weatherText, tMin, tMax, rain);
+                    count++;
                 }
                 
-                grid.innerHTML = html;
+                if(count === 0) {
+                     grid.innerHTML = '<div class="status-msg">有抓到地點，但數值解析為空 (請檢查 Console)</div>';
+                } else {
+                     grid.innerHTML = html;
+                }
+                
                 document.getElementById('lastUpdate').innerText = '最後更新: ' + new Date().toLocaleTimeString();
             },
 
-            // 輔助查找函數
             findEl(list, names) {
                 if (!list) return null;
                 for (const name of names) {
-                    const found = list.find(e => e.elementName === name);
+                    // 同時比對中文名稱與英文名稱 (不分大小寫)
+                    const found = list.find(e => e.elementName === name || e.elementName.toLowerCase() === name.toLowerCase());
                     if (found) return found;
                 }
                 return null;
             },
 
-            // 輔助取值函數 (過濾掉 Description, Code, Unit 等雜訊)
             getValue(timeBlock) {
                 if (!timeBlock) return '--';
-                // 優先處理 ElementValue (F-D0047)
                 if (timeBlock.elementValue && timeBlock.elementValue[0]) {
                     const obj = timeBlock.elementValue[0];
                     for (const key in obj) {
-                        // 排除不是數值的欄位
+                        // 忽略代碼，只取數值或描述
                         if (!key.endsWith('Code') && !key.endsWith('Unit') && !key.endsWith('Measures')) {
                             return obj[key];
                         }
                     }
-                    // 如果只剩 Code，只好回傳 Code (當作備案)
-                    return Object.values(obj)[0];
+                    return Object.values(obj)[0]; // 萬一都沒抓到，回傳第一個
                 }
-                // 處理 Parameter (F-C0032)
                 if (timeBlock.parameter) return timeBlock.parameter.parameterName;
                 return '--';
             },
@@ -207,26 +206,33 @@
                 
                 let timeStr = day;
                 let isNight = false;
+                const h1 = new Date(start).getHours();
 
-                // 判斷是否為晚上預報
                 if (end) {
-                    const h1 = new Date(start).getHours();
                     const h2 = new Date(end).getHours();
                     timeStr += ` <span style="font-size:0.8em">${h1}~${h2}時</span>`;
                     if (h1 >= 18 || h1 < 6) isNight = true;
+                } else {
+                    // 每3小時預報通常沒有 EndTime，只有 DataTime
+                    timeStr += ` <span style="font-size:0.8em">${h1}:00</span>`;
+                    if (h1 >= 18 || h1 < 6) isNight = true;
                 }
 
-                // 簡單圖示對應
                 let icon = '<i class="fas fa-cloud"></i>';
                 if (weather.includes('晴')) icon = '<i class="fas fa-sun" style="color:orange"></i>';
                 if (weather.includes('雨')) icon = '<i class="fas fa-umbrella" style="color:#60a5fa"></i>';
                 
-                // 降雨顯示
                 let rainHtml = '';
                 if (rain && rain !== '--' && rain !== ' ') {
                     rainHtml = `<div class="card-rain"><i class="fas fa-tint"></i> ${rain}%</div>`;
                 } else {
-                    rainHtml = `<div class="card-rain" style="opacity:0;">-</div>`;
+                    rainHtml = `<div class="card-rain" style="visibility:hidden">-</div>`;
+                }
+
+                // 如果溫度相同 (3小時預報)，只顯示一個數字
+                let tempHtml = `<div class="card-temp">${min}° - ${max}°</div>`;
+                if(min == max) {
+                    tempHtml = `<div class="card-temp">${min}°</div>`;
                 }
 
                 return `
@@ -235,64 +241,46 @@
                     <span class="card-time">${timeStr}</span>
                     <div class="card-icon">${icon}</div>
                     <div class="card-desc">${weather}</div>
-                    <div class="card-temp">${min}° - ${max}°</div>
+                    ${tempHtml}
                     ${rainHtml}
                 </div>
                 `;
             }
         };
 
-        // ==========================================
-        // 核心解析器 (資料結構正規化)
-        // ==========================================
         const DataParser = {
             parse(json) {
                 let rawList = [];
-
-                // 1. 嘗試從 API 回傳結構抓取 Locations
+                // 處理各種 API 結構差異
                 if (json?.records?.Locations) {
-                    // F-D0047 結構: records.Locations[0].Location
-                    const locationData = json.records.Locations[0].Location || json.records.Locations[0].location;
-                    if (locationData) rawList = locationData;
-                } 
-                else if (json?.records?.location) {
-                    // F-C0032 結構
+                    const data = json.records.Locations[0];
+                    rawList = data.Location || data.location;
+                } else if (json?.records?.location) {
                     rawList = json.records.location;
-                }
-                else if (json?.cwaopendata?.dataset?.location) {
-                    // OpenData 結構
+                } else if (json?.cwaopendata?.dataset?.location) {
                     rawList = json.cwaopendata.dataset.location;
                 }
 
                 if (!Array.isArray(rawList)) return [];
 
-                // 2. 資料清洗與正規化 (解決大小寫問題 Time vs time)
                 return rawList.map(item => {
-                    // 抓取名稱
                     const name = item.locationName || item.LocationName;
-                    
-                    // 抓取並正規化 WeatherElement
                     let rawEls = item.weatherElement || item.WeatherElement || [];
                     
-                    // *** 關鍵修正 ***
-                    // 遍歷所有天氣因子，強制把 Time 屬性複製一份變成 time (小寫)
-                    // 這樣後面的程式碼用 .time 就能讀取，不用管它是大寫還是小寫
+                    // 強制正規化：將 Time/ElementValue 大小寫統一轉為小寫 key
                     const normEls = rawEls.map(el => {
                         return {
                             elementName: el.elementName || el.ElementName,
-                            // 如果有 Time 就用 Time，沒有就找 time，並統一存成 time
                             time: (el.Time || el.time || []).map(t => ({
                                 startTime: t.StartTime || t.startTime,
                                 endTime: t.EndTime || t.endTime,
                                 dataTime: t.DataTime || t.dataTime,
-                                // 統一 ElementValue / parameter
                                 elementValue: t.ElementValue || t.elementValue,
                                 parameter: t.Parameter || t.parameter
                             }))
                         };
                     });
-
-                    return { name: name, elements: normEls };
+                    return { name: name, rawElements: normEls }; // 注意這裡改回 rawElements 配合 render
                 });
             }
         };
