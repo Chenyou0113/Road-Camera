@@ -3,25 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>公共自行車即時地圖</title>
-    <!-- Leaflet CSS -->
+    <title>YouBike 2.0 / 2.0E 即時地圖</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
         body { 
-            font-family: "Microsoft JhengHei", Arial, sans-serif; 
+            font-family: -apple-system, BlinkMacSystemFont, "Microsoft JhengHei", "Segoe UI", Roboto, sans-serif;
             height: 100vh;
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            background-color: #f5f5f5;
         }
 
-        /* 標題列 */
         .header {
-            background: linear-gradient(135deg, #f6d365 0%, #fda085 100%); /* YouBike 橘黃色系 */
-            padding: 10px 15px;
+            background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+            padding: 12px 15px;
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -29,98 +28,83 @@
             z-index: 1000;
         }
 
-        .header-title {
-            font-size: 1.2rem;
-            font-weight: bold;
-            color: #333;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
+        .header-title { font-size: 1.2rem; font-weight: bold; color: #333; display: flex; align-items: center; gap: 8px; }
+        .back-btn { color: #333; text-decoration: none; font-size: 1.2rem; }
 
-        .back-btn {
-            color: #333;
-            text-decoration: none;
-            font-size: 1.2rem;
+        .view-toggle {
+            background: rgba(255,255,255,0.3); border: 1px solid rgba(0,0,0,0.1); border-radius: 20px; display: flex; padding: 2px;
         }
+        .toggle-btn {
+            border: none; background: transparent; padding: 5px 12px; border-radius: 15px; cursor: pointer;
+            font-size: 0.9rem; font-weight: bold; color: #555; transition: all 0.2s;
+        }
+        .toggle-btn.active { background: white; color: #d35400; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
 
-        /* 控制列 */
         .controls {
-            background: #fff;
-            padding: 10px;
-            display: flex;
-            gap: 10px;
-            border-bottom: 1px solid #ddd;
-            z-index: 999;
+            background: #fff; padding: 10px; display: flex; gap: 10px; border-bottom: 1px solid #ddd; z-index: 999;
+        }
+        .city-select { flex: 1; padding: 10px; font-size: 1rem; border: 1px solid #ddd; border-radius: 8px; background: white; outline: none; }
+        .search-input { flex: 1.5; padding: 10px; font-size: 1rem; border: 1px solid #ddd; border-radius: 8px; outline: none; display: none; }
+
+        .content-container { flex: 1; position: relative; overflow: hidden; }
+        #map { width: 100%; height: 100%; background: #e5e5e5; z-index: 1; }
+        #list-view { width: 100%; height: 100%; overflow-y: auto; background: #f5f5f5; padding: 10px; display: none; z-index: 2; }
+
+        /* 卡片樣式 */
+        .station-card {
+            background: white; border-radius: 10px; padding: 15px; margin-bottom: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-left: 5px solid #ccc; cursor: pointer;
+        }
+        .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+        .st-name { font-size: 1.1rem; font-weight: bold; color: #333; }
+        .st-addr { font-size: 0.85rem; color: #666; margin-top: 4px; }
+
+        .st-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 5px;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #eee;
         }
 
-        .city-select {
-            flex: 1;
-            padding: 8px;
-            font-size: 1rem;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            background: white;
-        }
+        .stat-item { text-align: center; }
+        .stat-val { font-size: 1.3rem; font-weight: 800; line-height: 1.2; }
+        .stat-label { font-size: 0.75rem; color: #888; margin-top: 2px;}
 
-        .btn-locate {
-            padding: 8px 12px;
-            background: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
+        /* 自定義顏色 */
+        .color-gen { color: #f39c12; }
+        .color-elec { color: #8e44ad; }
+        .color-return { color: #2980b9; }
 
-        /* 地圖區域 */
-        #map {
-            flex: 1;
-            width: 100%;
-            height: 100%;
-            background: #e5e5e5;
-        }
+        /* 標籤樣式 */
+        .bike-badge { display: inline-flex; align-items: center; gap: 3px; font-weight: bold; }
+        
+        /* 狀態邊框 */
+        .status-ok { border-left-color: #27ae60; }
+        .status-warn { border-left-color: #f39c12; }
+        .status-empty { border-left-color: #c0392b; }
+        .status-stop { border-left-color: #7f8c8d; }
+        
+        /* 特別標示：有電輔車時 */
+        .has-elec { background: linear-gradient(to right, #fff, #fbf0ff); }
 
-        /* 自定義 Popup 樣式 */
-        .bike-popup {
-            font-size: 1rem;
-            line-height: 1.6;
-        }
-        .bike-popup h3 {
-            margin: 0 0 5px 0;
-            color: #d35400;
-            font-size: 1.1rem;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 5px;
-        }
-        .bike-stat {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 5px;
-        }
-        .badge {
-            padding: 2px 8px;
-            border-radius: 10px;
-            color: white;
-            font-weight: bold;
-            font-size: 0.9rem;
-        }
-        .badge-rent { background-color: #27ae60; }
-        .badge-return { background-color: #2980b9; }
-        .badge-empty { background-color: #c0392b; }
-
-        /* 載入遮罩 */
         .loading-overlay {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(255,255,255,0.8);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            z-index: 2000;
-            display: none; /* 預設隱藏 */
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.8); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; z-index: 2000; display: none;
         }
-        .loading-text { margin-top: 10px; color: #555; font-weight: bold; }
+        
+        .floating-btn {
+            position: fixed; bottom: 20px; right: 20px; background: #2980b9; color: white;
+            width: 50px; height: 50px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3); cursor: pointer; z-index: 1500; border: none;
+        }
+        
+        /* Popup 樣式優化 */
+        .popup-row { display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;}
+        .popup-label { color: #666; font-size: 0.9rem; }
+        .popup-val { font-weight: bold; font-size: 1.1rem; }
 
     </style>
 </head>
@@ -129,70 +113,97 @@
     <div class="header">
         <div style="display:flex; align-items:center; gap:10px;">
             <a href="javascript:history.back()" class="back-btn"><i class="fas fa-arrow-left"></i></a>
-            <div class="header-title"><i class="fas fa-bicycle"></i> 公共自行車地圖</div>
+            <div class="header-title"><i class="fas fa-bicycle"></i> YouBike 2.0/2.0E</div>
         </div>
-        <div style="font-size:0.8rem; color:#555;">即時資料</div>
+        
+        <div class="view-toggle">
+            <button class="toggle-btn active" id="btnMap" onclick="switchView('map')">地圖</button>
+            <button class="toggle-btn" id="btnList" onclick="switchView('list')">列表</button>
+        </div>
     </div>
 
     <div class="controls">
         <select id="citySelect" class="city-select" onchange="changeCity()">
-            <option value="Taipei">臺北市 Taipei</option>
-            <option value="NewTaipei">新北市 NewTaipei</option>
-            <option value="Taoyuan">桃園市 Taoyuan</option>
-            <option value="Hsinchu">新竹市 Hsinchu</option>
-            <option value="HsinchuCounty">新竹縣 HsinchuCounty</option>
-            <option value="MiaoliCounty">苗栗縣 Miaoli</option>
-            <option value="Taichung" selected>臺中市 Taichung</option>
-            <option value="ChanghuaCounty">彰化縣 Changhua</option>
-            <option value="YunlinCounty">雲林縣 Yunlin</option>
-            <option value="Chiayi">嘉義市 Chiayi</option>
-            <option value="ChiayiCounty">嘉義縣 ChiayiCounty</option>
-            <option value="Tainan">臺南市 Tainan</option>
-            <option value="Kaohsiung">高雄市 Kaohsiung</option>
-            <option value="PingtungCounty">屏東縣 Pingtung</option>
-            <option value="TaitungCounty">臺東縣 Taitung</option>
-            <option value="KinmenCounty">金門縣 Kinmen</option>
+            <option value="Taipei">臺北市</option>
+            <option value="NewTaipei">新北市</option>
+            <option value="Taoyuan">桃園市</option>
+            <option value="Hsinchu">新竹市</option>
+            <option value="HsinchuCounty">新竹縣</option>
+            <option value="MiaoliCounty">苗栗縣</option>
+            <option value="Taichung" selected>臺中市</option>
+            <option value="ChanghuaCounty">彰化縣</option>
+            <option value="YunlinCounty">雲林縣</option>
+            <option value="Chiayi">嘉義市</option>
+            <option value="ChiayiCounty">嘉義縣</option>
+            <option value="Tainan">臺南市</option>
+            <option value="Kaohsiung">高雄市</option>
+            <option value="PingtungCounty">屏東縣</option>
+            <option value="TaitungCounty">臺東縣</option>
+            <option value="KinmenCounty">金門縣</option>
         </select>
-        <button class="btn-locate" onclick="locateUser()"><i class="fas fa-crosshairs"></i></button>
+        <input type="text" id="searchInput" class="search-input" placeholder="搜尋站點..." oninput="filterList()">
     </div>
 
-    <div id="map"></div>
+    <div class="content-container">
+        <div id="map"></div>
+        <div id="list-view"></div>
+    </div>
+
+    <button class="floating-btn" id="locateBtn" onclick="locateUser()"><i class="fas fa-crosshairs"></i></button>
 
     <div id="loading" class="loading-overlay">
         <i class="fas fa-spinner fa-spin fa-3x" style="color: #f39c12;"></i>
-        <div class="loading-text">資料載入中...</div>
+        <div style="margin-top:10px; color:#666; font-weight:bold;">資料更新中...</div>
     </div>
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // === 設定區 ===
-        // 請替換成您剛剛建立的 Bike Worker 網址
         const API_URL = "https://bike-api.xiaoyouwu5-fd3.workers.dev/"; 
 
         let map;
         let markersLayer;
         let allStations = [];
+        let currentView = 'map';
 
-        // 初始化地圖
         function initMap() {
-            // 預設中心點 (台灣)
             map = L.map('map').setView([24.1477, 120.6736], 13);
-
-            // 使用 OpenStreetMap 圖資 (免費)
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                attribution: '&copy; OpenStreetMap',
                 maxZoom: 19
             }).addTo(map);
-
-            // 建立標記圖層群組
             markersLayer = L.layerGroup().addTo(map);
-
-            // 載入預設城市
             changeCity();
         }
 
-        // 切換城市
+        function switchView(view) {
+            currentView = view;
+            const mapDiv = document.getElementById('map');
+            const listDiv = document.getElementById('list-view');
+            const searchInput = document.getElementById('searchInput');
+            const locateBtn = document.getElementById('locateBtn');
+            const btnMap = document.getElementById('btnMap');
+            const btnList = document.getElementById('btnList');
+
+            if (view === 'map') {
+                mapDiv.style.display = 'block';
+                listDiv.style.display = 'none';
+                searchInput.style.display = 'none';
+                locateBtn.style.display = 'flex';
+                btnMap.classList.add('active');
+                btnList.classList.remove('active');
+                map.invalidateSize();
+            } else {
+                mapDiv.style.display = 'none';
+                listDiv.style.display = 'block';
+                searchInput.style.display = 'block';
+                locateBtn.style.display = 'none';
+                btnMap.classList.remove('active');
+                btnList.classList.add('active');
+                renderList(allStations); 
+            }
+        }
+
         async function changeCity() {
             const city = document.getElementById('citySelect').value;
             showLoading(true);
@@ -200,66 +211,65 @@
             try {
                 const res = await fetch(`${API_URL}?city=${city}`);
                 const data = await res.json();
-                
                 allStations = data.stations || [];
-                renderMarkers();
                 
-                // 自動縮放地圖至站點範圍
-                if (allStations.length > 0) {
-                    const group = new L.featureGroup(markersLayer.getLayers());
+                renderMarkers();
+                if (currentView === 'list') renderList(allStations);
+                
+                if (allStations.length > 0 && currentView === 'map') {
+                    const sample = allStations.slice(0, 50);
+                    const group = L.featureGroup(sample.map(s => L.marker([s.lat, s.lng])));
                     map.fitBounds(group.getBounds());
                 }
 
             } catch (e) {
                 console.error(e);
-                alert("無法取得自行車資料");
+                alert("資料讀取失敗");
             } finally {
                 showLoading(false);
             }
         }
 
-        // 渲染標記
         function renderMarkers() {
             markersLayer.clearLayers();
-
             allStations.forEach(st => {
-                // 決定圖標顏色
-                let iconColor = '#27ae60'; // 綠色 (充足)
-                if (st.status === 0) iconColor = '#7f8c8d'; // 暫停營運 (灰)
-                else if (st.rent === 0) iconColor = '#c0392b'; // 無車可借 (紅)
-                else if (st.rent < 3) iconColor = '#f39c12'; // 車少 (橘)
+                let color = '#27ae60';
+                if (st.rent_elec > 0) color = '#8e44ad';
+                else if (st.status === 0) color = '#7f8c8d';
+                else if (st.rent === 0) color = '#c0392b';
+                else if (st.rent < 3) color = '#f39c12';
 
-                // 建立自定義 Icon (使用 CSS 畫圓點)
-                const customIcon = L.divIcon({
+                const icon = L.divIcon({
                     className: 'custom-pin',
-                    html: `<div style="background-color:${iconColor}; width:14px; height:14px; border-radius:50%; border:2px solid white; box-shadow:0 2px 5px rgba(0,0,0,0.3);"></div>`,
-                    iconSize: [14, 14],
-                    iconAnchor: [7, 7]
+                    html: `<div style="background:${color}; width:14px; height:14px; border-radius:50%; border:2px solid white; box-shadow:0 2px 5px rgba(0,0,0,0.3);"></div>`,
+                    iconSize: [14, 14]
                 });
 
-                const marker = L.marker([st.lat, st.lng], { icon: customIcon });
-
-                // Popup 內容
+                const marker = L.marker([st.lat, st.lng], { icon: icon });
+                
                 const popupContent = `
-                    <div class="bike-popup">
-                        <h3>${st.name}</h3>
-                        <div class="bike-stat">
-                            <span>可借車輛</span>
-                            <span class="badge ${st.rent > 0 ? 'badge-rent' : 'badge-empty'}">${st.rent}</span>
+                    <div style="font-size:1rem; width:200px;">
+                        <h3 style="margin:0 0 8px 0; color:#d35400; border-bottom:1px solid #eee; padding-bottom:5px;">${st.name}</h3>
+                        
+                        <div class="popup-row">
+                            <span class="popup-label"><i class="fas fa-bicycle" style="color:#f39c12;"></i> 一般車 2.0</span>
+                            <span class="popup-val color-gen">${st.rent_gen}</span>
                         </div>
-                        <div class="bike-stat">
-                            <span>可還空位</span>
-                            <span class="badge badge-return">${st.return}</span>
+                        <div class="popup-row">
+                            <span class="popup-label"><i class="fas fa-bolt" style="color:#8e44ad;"></i> 電輔車 2.0E</span>
+                            <span class="popup-val color-elec">${st.rent_elec}</span>
                         </div>
-                        <div style="font-size:0.8rem; color:#666; margin-top:5px;">
-                            <i class="fas fa-map-marker-alt"></i> ${st.addr}<br>
-                            <i class="fas fa-info-circle"></i> ${st.status === 1 ? '營運中' : '暫停營運'}
+                        <div class="popup-row" style="border-top:1px dashed #eee; padding-top:5px;">
+                            <span class="popup-label">可還空位</span>
+                            <span class="popup-val color-return">${st.return}</span>
                         </div>
-                        <div style="margin-top:8px;">
-                            <a href="https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}" target="_blank" style="color:#2980b9; text-decoration:none;">
-                                <i class="fas fa-directions"></i> 導航
-                            </a>
+
+                        <div style="font-size:0.8rem; color:#666; margin-top:8px;">
+                            <i class="fas fa-map-marker-alt"></i> ${st.addr}
                         </div>
+                        <a href="https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}" target="_blank" style="display:block; margin-top:8px; text-decoration:none; color:#2980b9; text-align:center; border:1px solid #2980b9; border-radius:4px; padding:4px;">
+                            <i class="fas fa-location-arrow"></i> Google 導航
+                        </a>
                     </div>
                 `;
 
@@ -268,28 +278,81 @@
             });
         }
 
-        // 定位使用者
+        function renderList(stations) {
+            const container = document.getElementById('list-view');
+            
+            if (stations.length === 0) {
+                container.innerHTML = '<div style="text-align:center; padding:30px; color:#999;">查無站點資料</div>';
+                return;
+            }
+
+            let html = '';
+            stations.forEach(st => {
+                let statusClass = 'status-ok';
+                let bgClass = (st.rent_elec > 0) ? 'has-elec' : '';
+                
+                if (st.status === 0) statusClass = 'status-stop'; 
+                else if (st.rent === 0) statusClass = 'status-empty'; 
+                else if (st.rent < 3) statusClass = 'status-warn'; 
+
+                html += `
+                <div class="station-card ${statusClass} ${bgClass}" onclick="focusStation(${st.lat}, ${st.lng})">
+                    <div class="card-header">
+                        <div>
+                            <div class="st-name">${st.name}</div>
+                            <div class="st-addr"><i class="fas fa-map-marker-alt"></i> ${st.addr}</div>
+                        </div>
+                        <a href="https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}" target="_blank" style="color:#2980b9; font-size:1.4rem;">
+                            <i class="fas fa-directions"></i>
+                        </a>
+                    </div>
+                    <div class="st-stats">
+                        <div class="stat-item">
+                            <div class="stat-val color-gen">${st.rent_gen}</div>
+                            <div class="stat-label">一般車 2.0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-val color-elec">${st.rent_elec}</div>
+                            <div class="stat-label">電輔車 2.0E</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-val color-return">${st.return}</div>
+                            <div class="stat-label">空位</div>
+                        </div>
+                    </div>
+                </div>
+                `;
+            });
+            container.innerHTML = html;
+        }
+
+        function filterList() {
+            const keyword = document.getElementById('searchInput').value.toLowerCase();
+            const filtered = allStations.filter(st => st.name.toLowerCase().includes(keyword));
+            renderList(filtered);
+        }
+
+        function focusStation(lat, lng) {
+            switchView('map');
+            map.setView([lat, lng], 18);
+            markersLayer.eachLayer(layer => {
+                const ll = layer.getLatLng();
+                if (ll.lat === lat && ll.lng === lng) {
+                    layer.openPopup();
+                }
+            });
+        }
+
         function locateUser() {
             if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(position => {
-                    const lat = position.coords.latitude;
-                    const lng = position.coords.longitude;
-                    
+                navigator.geolocation.getCurrentPosition(p => {
+                    const lat = p.coords.latitude;
+                    const lng = p.coords.longitude;
                     map.setView([lat, lng], 16);
-                    
-                    L.marker([lat, lng], {
-                        icon: L.divIcon({
-                            html: '<i class="fas fa-user-circle" style="font-size:24px; color:#2980b9; background:white; border-radius:50%;"></i>',
-                            iconSize: [24, 24],
-                            className: 'user-marker'
-                        })
-                    }).addTo(map).bindPopup("您的位置").openPopup();
-
-                }, () => {
-                    alert("無法取得您的位置");
+                    L.marker([lat, lng]).addTo(map).bindPopup("您的位置").openPopup();
                 });
             } else {
-                alert("您的瀏覽器不支援定位");
+                alert("無法取得位置");
             }
         }
 
@@ -297,9 +360,7 @@
             document.getElementById('loading').style.display = show ? 'flex' : 'none';
         }
 
-        // 啟動
         initMap();
-
     </script>
 </body>
 </html>
