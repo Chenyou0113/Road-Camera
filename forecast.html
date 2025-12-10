@@ -338,58 +338,77 @@
 
         /**
          * DataParser: 負責將 CWA 氣象局混亂的 JSON 結構轉成統一格式
-         * Output: [{ name: "台北市", forecasts: [{ startTime, endTime, weather, minT, maxT, pop }] }]
+         * 修正 V6.2: 增加對 F-D0047-xxx 大寫屬性的支援 (Locations/Location)
          */
         const DataParser = {
             parse(json) {
                 // 1. 找出 Locations 陣列在哪一層
                 let rawLocations = null;
                 
-                // 優先檢查標準 DataStore 結構
+                // 嘗試的路徑列表 (用於偵錯)
+                const attemptedPaths = {};
+
+                // Path 1: DataStore 標準格式 (小寫 location)
                 if (json?.records?.location) {
                     rawLocations = json.records.location;
-                } 
-                // 檢查 F-D0047 系列的巢狀結構
+                    attemptedPaths['records.location'] = true;
+                }
+                
+                // Path 2: F-D0047-xxx 鄉鎮預報 (大寫 L Locations/Location) - 這是導致錯誤的主要原因
+                else if (json?.records?.Locations && Array.isArray(json.records.Locations)) {
+                    rawLocations = json.records.Locations[0]?.Location; // 大寫 L
+                    attemptedPaths['records.Locations[0].Location'] = true;
+                }
+
+                // Path 3: F-C0032-xxx 系列的巢狀結構 (小寫 locations/location)
                 else if (json?.records?.locations) {
-                    // 檢查 records.locations 是否是陣列，並取出第一個 location 陣列
                     if (Array.isArray(json.records.locations)) {
-                         rawLocations = json.records.locations[0]?.location;
+                         // F-D0047-xxx (如果 API 回傳是小寫)
+                         rawLocations = json.records.locations[0]?.location; 
+                         attemptedPaths['records.locations[0].location'] = true;
                     } 
-                    // 有些 Datastore API 會直接把 location 陣列放在 locations 屬性下 (例如 F-C0032-003)
                     else if (json.records.locations.location) {
+                         // F-C0032-003/007 (縣市/全球)
                          rawLocations = json.records.locations.location;
+                         attemptedPaths['records.locations.location'] = true;
                     }
                 }
-                // 檢查 File API 結構 (cwaopendata)
+
+                // Path 4: File API 結構 (cwaopendata)
                 else if (json?.cwaopendata?.dataset?.location) {
                     rawLocations = json.cwaopendata.dataset.location;
+                    attemptedPaths['cwaopendata.dataset.location'] = true;
                 }
                 else if (json?.cwaopendata?.dataset?.locations?.location) {
                     rawLocations = json.cwaopendata.dataset.locations.location;
+                    attemptedPaths['cwaopendata.dataset.locations.location'] = true;
                 }
                 
+                // 偵錯輸出 (用於追蹤哪個路徑成功，或為什麼失敗)
+                // console.log("🔍 嘗試的解析路徑：", attemptedPaths);
+
                 if (!rawLocations) return [];
                 
-                // 確保 rawLocations 是陣列，如果 API 只回傳單一地點，它可能是物件
+                // 確保 rawLocations 是陣列 (有些 API 回傳單一地點時會是物件)
                 if (!Array.isArray(rawLocations)) {
                     rawLocations = [rawLocations];
                 }
 
                 // 2. 轉換每個地點
                 return rawLocations.map(loc => {
-                    const elements = loc.weatherElement;
+                    const elements = loc.weatherElement || loc.WeatherElement; // 兼容大小寫
                     
                     // 找出需要的氣象因子 (支援多種命名)
                     const wxEl = this.findEl(elements, ['Wx', 'WeatherDescription']);
-                    const minTEl = this.findEl(elements, ['MinT', 'MinTemperature', 'T']); // T 用於單一溫度
+                    const minTEl = this.findEl(elements, ['MinT', 'MinTemperature', 'T']); 
                     const maxTEl = this.findEl(elements, ['MaxT', 'MaxTemperature', 'T']);
                     const popEl = this.findEl(elements, ['PoP12h', 'PoP6h', 'PoP3h', 'PoP', 'ProbabilityOfPrecipitation']);
 
-                    // 整合時間序列 (以 Wx 為基準)
+                    // 整合時間序列
                     const forecasts = wxEl?.time?.map((t, idx) => {
                         return {
-                            startTime: t.startTime || t.dataTime, // dataTime 是鄉鎮逐3小時用的
-                            endTime: t.endTime || this.addHours(t.startTime || t.dataTime, 3), // 若無結束時間，預設+3hr
+                            startTime: t.startTime || t.dataTime, 
+                            endTime: t.endTime || this.addHours(t.startTime || t.dataTime, 3), 
                             weather: this.getValue(t),
                             minT: this.getValue(minTEl?.time?.[idx]),
                             maxT: this.getValue(maxTEl?.time?.[idx]),
@@ -398,21 +417,29 @@
                     }) || [];
 
                     return {
-                        name: loc.locationName,
+                        name: loc.locationName || loc.LocationName, // 兼容大小寫
                         forecasts: forecasts
                     };
                 });
             },
 
+            // 保持 findEl, getValue, addHours 不變
             findEl(elements, candidates) {
-                return elements?.find(e => candidates.includes(e.elementName));
+                if(!elements) return null;
+                for (const name of candidates) {
+                    const found = elements.find(e => e.elementName === name || e.elementName === name.toLowerCase());
+                    if (found) return found;
+                }
+                return null;
             },
 
             getValue(timeObj) {
                 if (!timeObj) return '--';
                 const val = timeObj.elementValue || timeObj.parameter;
-                // 處理陣列 [{value: "20", measure: "C"}] 或 物件 {parameterName: "晴"}
-                if (Array.isArray(val)) return val[0].value || val[0].parameterName;
+                
+                if (Array.isArray(val)) {
+                    return val[0].value || val[0].parameterName;
+                }
                 return val?.parameterName || val?.value || val?.parameterValue || '--';
             },
 
