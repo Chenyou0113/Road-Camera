@@ -338,67 +338,53 @@
 
         /**
          * DataParser: 負責將 CWA 氣象局混亂的 JSON 結構轉成統一格式
-         * 修正 V6.2: 增加對 F-D0047-xxx 大寫屬性的支援 (Locations/Location)
+         * V6.4 修正: 增強 findEl 以支援多種大小寫變體 (Wx, wx, WX 等)
          */
         const DataParser = {
             parse(json) {
-                // 1. 找出 Locations 陣列在哪一層
                 let rawLocations = null;
-                
-                // 嘗試的路徑列表 (用於偵錯)
-                const attemptedPaths = {};
 
+                // --- Datastore API 結構 ---
+                
                 // Path 1: DataStore 標準格式 (小寫 location)
                 if (json?.records?.location) {
                     rawLocations = json.records.location;
-                    attemptedPaths['records.location'] = true;
                 }
                 
-                // Path 2: F-D0047-xxx 鄉鎮預報 (大寫 L Locations/Location) - 這是導致錯誤的主要原因
+                // Path 2: F-D0047-xxx 鄉鎮預報 (大寫 L Locations/Location)
                 else if (json?.records?.Locations && Array.isArray(json.records.Locations)) {
-                    rawLocations = json.records.Locations[0]?.Location; // 大寫 L
-                    attemptedPaths['records.Locations[0].Location'] = true;
+                    rawLocations = json.records.Locations[0]?.Location;
                 }
 
                 // Path 3: F-C0032-xxx 系列的巢狀結構 (小寫 locations/location)
                 else if (json?.records?.locations) {
                     if (Array.isArray(json.records.locations)) {
-                         // F-D0047-xxx (如果 API 回傳是小寫)
                          rawLocations = json.records.locations[0]?.location; 
-                         attemptedPaths['records.locations[0].location'] = true;
                     } 
                     else if (json.records.locations.location) {
-                         // F-C0032-003/007 (縣市/全球)
                          rawLocations = json.records.locations.location;
-                         attemptedPaths['records.locations.location'] = true;
                     }
                 }
 
-                // Path 4: File API 結構 (cwaopendata)
-                else if (json?.cwaopendata?.dataset?.location) {
-                    rawLocations = json.cwaopendata.dataset.location;
-                    attemptedPaths['cwaopendata.dataset.location'] = true;
-                }
-                else if (json?.cwaopendata?.dataset?.locations?.location) {
-                    rawLocations = json.cwaopendata.dataset.locations.location;
-                    attemptedPaths['cwaopendata.dataset.locations.location'] = true;
+                // --- File API 結構 (cwaopendata: {...}) ---
+                const dataset = json?.cwaopendata?.dataset; 
+                if (dataset) {
+                    if (dataset.location) { 
+                        rawLocations = dataset.location; 
+                    }
+                    else if (dataset.locations?.location) { 
+                        rawLocations = dataset.locations.location; 
+                    }
                 }
                 
-                // 偵錯輸出 (用於追蹤哪個路徑成功，或為什麼失敗)
-                // console.log("🔍 嘗試的解析路徑：", attemptedPaths);
-
                 if (!rawLocations) return [];
-                
-                // 確保 rawLocations 是陣列 (有些 API 回傳單一地點時會是物件)
-                if (!Array.isArray(rawLocations)) {
-                    rawLocations = [rawLocations];
-                }
+                if (!Array.isArray(rawLocations)) rawLocations = [rawLocations];
 
                 // 2. 轉換每個地點
                 return rawLocations.map(loc => {
-                    const elements = loc.weatherElement || loc.WeatherElement; // 兼容大小寫
+                    const elements = loc.weatherElement || loc.WeatherElement; 
                     
-                    // 找出需要的氣象因子 (支援多種命名)
+                    // 找出需要的氣象因子 - 支援多種命名和大小寫
                     const wxEl = this.findEl(elements, ['Wx', 'WeatherDescription']);
                     const minTEl = this.findEl(elements, ['MinT', 'MinTemperature', 'T']); 
                     const maxTEl = this.findEl(elements, ['MaxT', 'MaxTemperature', 'T']);
@@ -417,17 +403,32 @@
                     }) || [];
 
                     return {
-                        name: loc.locationName || loc.LocationName, // 兼容大小寫
+                        name: loc.locationName || loc.LocationName, 
                         forecasts: forecasts
                     };
                 });
             },
 
-            // 保持 findEl, getValue, addHours 不變
+            // 強化版 findEl：支援完全匹配、大寫、小寫、下劃線變體
             findEl(elements, candidates) {
                 if(!elements) return null;
+                
                 for (const name of candidates) {
-                    const found = elements.find(e => e.elementName === name || e.elementName === name.toLowerCase());
+                    // 1. 完全匹配 (Wx, MinT 等)
+                    let found = elements.find(e => e.elementName === name);
+                    if (found) return found;
+
+                    // 2. 全大寫匹配 (WX, MINT)
+                    found = elements.find(e => e.elementName === name.toUpperCase());
+                    if (found) return found;
+
+                    // 3. 全小寫匹配 (wx, mint)
+                    found = elements.find(e => e.elementName === name.toLowerCase());
+                    if (found) return found;
+
+                    // 4. 下劃線變體 (MIN_T, MAX_T 等 - 有些舊 API 用這種格式)
+                    const withUnderscore = name.replace(/([A-Z])/g, '_$1').toUpperCase().replace(/^_/, '');
+                    found = elements.find(e => e.elementName === withUnderscore);
                     if (found) return found;
                 }
                 return null;
