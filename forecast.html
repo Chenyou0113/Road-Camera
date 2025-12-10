@@ -206,11 +206,30 @@
                     const response = await fetch(`${this.API_URL}?dataset=${datasetId}`);
                     const json = await response.json();
                     
+                    // --- V17.2 偵錯點 ---
+                    if (!json || (typeof json === 'object' && Object.keys(json).length === 0)) {
+                        console.error("❌ Worker 回傳空 JSON:", json);
+                        throw new Error("Worker 回傳數據為空 (API Key 或 D1 快取問題)");
+                    }
+                    // ---------------------
+                    
                     // 使用解析器處理原始資料
                     this.currentData = DataParser.parse(json);
 
-                    if (this.currentData.length === 0) throw new Error("資料庫回傳為空或是結構改變");
-
+                    if (this.currentData.length === 0) {
+                        console.error("❌ DataParser 無法解析結構。原始 JSON 結構如下：", json);
+                        console.error("🔍 嘗試的解析路徑：", {
+                            "records.location": !!json?.records?.location,
+                            "records.locations (Array)": Array.isArray(json?.records?.locations),
+                            "records.locations[0].location": !!json?.records?.locations?.[0]?.location,
+                            "records.locations.location": !!json?.records?.locations?.location,
+                            "cwaopendata.dataset.location": !!json?.cwaopendata?.dataset?.location,
+                            "cwaopendata.dataset.locations.location": !!json?.cwaopendata?.dataset?.locations?.location,
+                        });
+                        throw new Error("資料庫回傳為空或是結構改變 (請檢查 Console)");
+                    }
+                    
+                    console.log(`✅ 成功解析 ${this.currentData.length} 筆地點資料`);
                     this.populateLocations();
                     this.renderForecast();
 
@@ -325,12 +344,36 @@
             parse(json) {
                 // 1. 找出 Locations 陣列在哪一層
                 let rawLocations = null;
-                if (json?.cwaopendata?.dataset?.location) rawLocations = json.cwaopendata.dataset.location;
-                else if (json?.cwaopendata?.dataset?.locations?.location) rawLocations = json.cwaopendata.dataset.locations.location;
-                else if (json?.records?.location) rawLocations = json.records.location;
-                else if (json?.records?.locations?.[0]?.location) rawLocations = json.records.locations[0].location;
-
+                
+                // 優先檢查標準 DataStore 結構
+                if (json?.records?.location) {
+                    rawLocations = json.records.location;
+                } 
+                // 檢查 F-D0047 系列的巢狀結構
+                else if (json?.records?.locations) {
+                    // 檢查 records.locations 是否是陣列，並取出第一個 location 陣列
+                    if (Array.isArray(json.records.locations)) {
+                         rawLocations = json.records.locations[0]?.location;
+                    } 
+                    // 有些 Datastore API 會直接把 location 陣列放在 locations 屬性下 (例如 F-C0032-003)
+                    else if (json.records.locations.location) {
+                         rawLocations = json.records.locations.location;
+                    }
+                }
+                // 檢查 File API 結構 (cwaopendata)
+                else if (json?.cwaopendata?.dataset?.location) {
+                    rawLocations = json.cwaopendata.dataset.location;
+                }
+                else if (json?.cwaopendata?.dataset?.locations?.location) {
+                    rawLocations = json.cwaopendata.dataset.locations.location;
+                }
+                
                 if (!rawLocations) return [];
+                
+                // 確保 rawLocations 是陣列，如果 API 只回傳單一地點，它可能是物件
+                if (!Array.isArray(rawLocations)) {
+                    rawLocations = [rawLocations];
+                }
 
                 // 2. 轉換每個地點
                 return rawLocations.map(loc => {
