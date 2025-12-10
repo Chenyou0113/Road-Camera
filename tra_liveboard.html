@@ -735,82 +735,94 @@
             document.getElementById('stationTitle').innerHTML = `${currentStationName} 即時看板 <a href="${pidsLink}" target="_blank" class="pids-btn"><i class="fas fa-desktop"></i> 開啟 PIDS 模擬</a>`;
             document.getElementById('stationInfo').textContent = `車站代碼：${currentStationID}`;
             
-            let filteredTrains = trains;
-            if (directionFilter !== '') filteredTrains = trains.filter(t => String(t.Direction) === directionFilter);
+            // --- 🔥 前端排序與篩選邏輯 (V6.0 終極修正版) ---
+            
+            const now = new Date();
+            const currentH = now.getHours();
+            const currentM = now.getMinutes();
+            const nowTotalMinutes = (currentH * 60) + currentM;
 
-            // 🔥 [修正版] 跨日排序邏輯 - 解決凌晨列車亂序問題 + 停駛列車處理
-            filteredTrains.sort((a, b) => {
-                const getActualMinutes = (t) => {
-                    // 1. 取得表定時間 (格式 HH:mm 或 HH:mm:ss)
-                    const timeStr = t.ScheduledDepartureTime || t.DepartureTime || "00:00";
-                    const [h, m] = timeStr.split(':').map(Number);
-                    let mins = h * 60 + m;
-                    
-                    // 取得當前小時，判斷是否為凌晨時段
-                    const currentHour = new Date().getHours();
-                    
-                    // 🔥 關鍵修正：如果在凌晨 (0~6點) 查詢，且這班車是 00:00~09:00 的早班車
-                    // 把它視為「24點+」，讓它排在「昨天的23點」之後
-                    // 這樣才能避免昨天的末班車被今天的首班車蓋住
-                    if (currentHour < 6 && h < 9) {
-                        mins += 1440; // 把今天的凌晨當作 "24:xx", "25:xx" 等
-                    }
-                    
-                    // 2. 加上誤點時間（停駛列車不計算誤點）
-                    const isCancelled = (String(t.TrainStatus) === '2' || t.TrainStatus === 2);
-                    if (!isCancelled) {
-                        mins += parseInt(t.DelayTime || 0);
-                    }
+            const finalFilteredTrains = [];
+            const seenTrains = new Set();
+            
+            // 🔥 處理和過濾邏輯：計算絕對時間，並過濾出相關班次
+            trains.forEach(t => {
+                if (seenTrains.has(t.TrainNo)) return;
+                seenTrains.add(t.TrainNo);
 
-                    // 3. 處理明日班次 (變成 48點+)
-                    if (t.IsTomorrow) mins += 1440;
+                const timeStr = t.ScheduledDepartureTime || t.DepartureTime || "00:00";
+                const [h, m] = timeStr.split(':').map(Number);
+                
+                // 計算表定分鐘數 (相對今天的 00:00)
+                let schedMinutes = h * 60 + m;
+                
+                // Worker 已經標記了 IsTomorrow，但我們需要考慮誤點時間
+                const isTomorrow = t.IsTomorrow;
+                const delay = parseInt(t.DelayTime || 0);
+                const isCancelled = (String(t.TrainStatus) === '2' || t.TrainStatus === 2);
 
-                    return mins;
-                };
-                return getActualMinutes(a) - getActualMinutes(b);
+                // 計算絕對時間 (加上 Day Offset)
+                let absMinutes = schedMinutes + (isTomorrow ? 1440 : 0);
+                
+                // 加上誤點時間（停駛列車除外）
+                const estimatedMinutes = isCancelled ? absMinutes : (absMinutes + delay);
+
+                // 🔥 篩選：只顯示預計時間在「現在」之後的車，或停駛列車也要顯示
+                const isRelevant = estimatedMinutes >= nowTotalMinutes || isCancelled;
+
+                if (isRelevant) {
+                    finalFilteredTrains.push({
+                        ...t,
+                        _sortKey: estimatedMinutes, // 新的排序鍵（已含誤點）
+                        IsTomorrow: (estimatedMinutes >= 1440) // 重新確認是否跨日
+                    });
+                }
             });
-            // 🔥 [結束] 排序邏輯
-
+            
+            // 🔥 排序：依照 _sortKey 排序 (確保跨日凌晨車排在最後)
+            finalFilteredTrains.sort((a, b) => a._sortKey - b._sortKey);
+            
+            // --- 分組與切片 ---
             const grouped = {
                 '0': { title: '順行 (南下/西行)', trains: [] },
                 '1': { title: '逆行 (北上/東上)', trains: [] }
             };
 
-            // 🔥 新增：用來記錄已經顯示過的車次號碼，防止重複
-            const seenTrains = new Set();
-
-            filteredTrains.forEach(train => {
-                // 🔥 防呆檢查：如果這個車次已經出現過，就跳過
-                if (seenTrains.has(train.TrainNo)) {
-                    return;
-                }
-                // 加入紀錄，表示這台車已經處理過了
-                seenTrains.add(train.TrainNo);
-
+            finalFilteredTrains.forEach(train => {
                 const dir = String(train.Direction);
-                if (grouped[dir]) grouped[dir].trains.push(train);
+                if (grouped[dir]) {
+                    // 🔥 前端切片：只取前 8 筆顯示
+                    if (grouped[dir].trains.length < 8) {
+                        grouped[dir].trains.push(train);
+                    }
+                }
             });
+            
+            // --- 渲染部分 ---
+            let displayGroups = [];
+            if (directionFilter === '') {
+                displayGroups = Object.entries(grouped);
+            } else {
+                if (grouped[directionFilter]) {
+                    displayGroups.push([directionFilter, grouped[directionFilter]]);
+                }
+            }
 
             let html = '';
-            Object.entries(grouped).forEach(([dir, data]) => {
+            displayGroups.forEach(([dir, data]) => {
                 if (data.trains.length === 0) return;
                 html += `<div class="direction-section"><div class="direction-header"><i class="fas fa-arrow-right"></i> ${data.title}</div>`;
+                
                 data.trains.forEach(train => {
                     const timeText = formatTime(train.ScheduledDepartureTime);
                     const delay = parseInt(train.DelayTime || 0);
                     const isCancelled = (String(train.TrainStatus) === '2' || train.TrainStatus === 2);
                     
-                    // 🔥 [修改] 手機版時間顯示邏輯：暴力放大版
                     let timeHtml = '';
 
                     if (isCancelled) {
-                        // 停駛：時間劃掉，紅字蓋章
-                        timeHtml = `
-                            <span style="text-decoration: line-through; color: #777;">${timeText}</span>
-                            <div class="schedule-label" style="color: #ff5252; font-weight: bold;">停駛</div>
-                        `;
+                        timeHtml = `<span style="text-decoration: line-through; color: #777;">${timeText}</span><div class="schedule-label" style="color: #ff5252; font-weight: bold;">停駛</div>`;
                     } else if (delay > 0) {
-                        // 誤點：舊時間變小劃掉，新時間放大發光
                         const expectedTime = getExpectedTime(train.ScheduledDepartureTime, delay);
                         timeHtml = `
                             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1;">
@@ -819,7 +831,6 @@
                             </div>
                         `;
                     } else {
-                        // 準點或明日班次
                         let label = '表定';
                         if (train.IsTomorrow) label = '(明日)';
                         timeHtml = `
