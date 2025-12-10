@@ -261,7 +261,9 @@
                 const index = document.getElementById('locationSelect').value;
                 const location = this.currentData[index];
                 const grid = document.getElementById('forecastGrid');
-                const isDaily = document.getElementById('datasetSelect').value === 'F-C0032-007';
+                const datasetType = document.getElementById('datasetSelect').value;
+                const isDaily = datasetType === 'F-C0032-007'; // 國際都市每日模式
+                const isHourlyTempMode = datasetType === 'F-D0047-089'; // 逐3小時溫度模式 (僅 089)
 
                 if (!location) { 
                     grid.innerHTML = '<div class="status-msg">未選擇地點或資料遺失</div>';
@@ -269,7 +271,7 @@
                 }
 
                 let html = '';
-                let renderedCardsCount = 0; // 新增計數器
+                let renderedCardsCount = 0; 
                 
                 location.forecasts.forEach(item => {
                     // 國際都市如果是每日模式，只顯示白天 (6:00 - 17:59)
@@ -278,9 +280,26 @@
                         if (h >= 18 || h < 6) return; // 略過夜間時段
                     }
 
-                    const card = this.createCardHTML(item);
+                    // === F-D0047-089 修正邏輯：單一溫度轉為範圍 (僅針對 -089) ===
+                    let itemToRender = item;
+                    if (isHourlyTempMode) {
+                        // F-D0047-089 只有 '溫度' 一項，必須確保 MinT/MaxT 都使用該值
+                        if (item.minT === '--' || item.maxT === '--') {
+                            // 如果溫度數據缺失，跳過此時間點
+                            return;
+                        }
+                        // 將 MaxT 統一為 MinT (因為都是同一瞬時溫度)
+                        itemToRender = { ...item, maxT: item.minT };
+                    } else {
+                        // 對於 F-D0047-091 (一週) 和其他資料集，確保 MinT/MaxT 都有效
+                        if (item.minT === '--' || item.maxT === '--') {
+                            return;
+                        }
+                    }
+
+                    const card = this.createCardHTML(itemToRender);
                     html += card;
-                    renderedCardsCount++; // 成功加入卡片則計數
+                    renderedCardsCount++; 
                 });
                 
                 // 檢查是否沒有任何卡片被渲染
@@ -420,15 +439,19 @@
 
             /**
              * 修正 findEl: 確保能找到 CWA API 常見的大寫或中文 elementName
+             * V6.8: 同時支援 F-D0047-089 (溫度) 和 F-D0047-091 (最高/最低溫度)
              */
             findEl(elements, candidates) {
                 if(!elements) return null;
                 
-                // F-D0047 系列的中文名稱對照表 (Key: 程式碼使用的簡寫)
+                // 修正 F-D0047 系列的中文名稱對照表 (Key: 程式碼使用的簡寫)
                 const cwaMappings = {
-                    'MinT': ['溫度', 'MinTemperature', '最低溫度', 'T'], 
-                    'MaxT': ['溫度', 'MaxTemperature', '最高溫度', 'T'], 
+                    // F-D0047-091 (一週) 使用獨立的最高/最低溫度
+                    'MinT': ['最低溫度', 'MinTemperature', '溫度', 'T'], // 兼容 089(溫度), 091(最低溫度)
+                    'MaxT': ['最高溫度', 'MaxTemperature', '溫度', 'T'], // 兼容 089(溫度), 091(最高溫度)
+                    // F-D0047-089/091 天氣描述
                     'Wx': ['天氣預報綜合描述', 'WeatherDescription', '天氣現象', 'Weather'],
+                    // 降雨機率
                     'PoP3h': ['3小時降雨機率'], 
                     'PoP12h': ['12小時降雨機率', 'ProbabilityOfPrecipitation'],
                     'PoP': ['降水機率', 'ProbabilityOfPrecipitation']
@@ -437,13 +460,12 @@
                 for (const name of candidates) {
                     const checks = cwaMappings[name] || [name];
                     
-                    // 檢查英文/中文/大小寫
                     for (const checkName of checks) {
-                         // 嘗試完全匹配 (中文或英文代碼)
+                         // 1. 嘗試完全匹配 (中文或英文代碼)
                          let found = elements.find(e => e.elementName === checkName);
                          if (found) return found;
                          
-                         // 嘗試全大寫/小寫匹配 (針對英文代碼)
+                         // 2. 嘗試全大寫/小寫匹配 (針對英文代碼)
                          if (checkName.match(/[a-zA-Z]/)) {
                             found = elements.find(e => e.elementName === checkName.toUpperCase() || e.elementName === checkName.toLowerCase());
                             if (found) return found;
