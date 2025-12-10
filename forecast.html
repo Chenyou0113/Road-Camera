@@ -338,7 +338,7 @@
 
         /**
          * DataParser: 負責將 CWA 氣象局混亂的 JSON 結構轉成統一格式
-         * V6.6 修正: 兼容 F-D0047 的中文 elementName 和複雜 ElementValue 結構，並優化所有解析路徑。
+         * V6.7 修正: 兼容 F-D0047-089/091 的中文 elementName 和單一溫度處理。
          */
         const DataParser = {
             parse(json) {
@@ -370,12 +370,12 @@
 
                 // 2. 嘗試從 cwaopendata 結構中解析 (File API)
                 const dataset = json?.cwaopendata?.dataset; 
-                if (!rawLocations && dataset) { // 只有在 records 失敗時才檢查 File API 結構
-                    // Path 2a: File API - location 陣列直接在 dataset 下 (例如 F-C0032-001)
+                if (!rawLocations && dataset) { 
+                    // Path 2a: File API - location 陣列直接在 dataset 下 (F-C0032-001)
                     if (dataset.location) {
                         rawLocations = dataset.location;
                     }
-                    // Path 2b: File API - locations.location 巢狀結構 (例如 F-C0032-007, F-C0032-003)
+                    // Path 2b: File API - locations.location 巢狀結構 (F-C0032-007, F-C0032-003)
                     else if (dataset.locations?.location) {
                         rawLocations = dataset.locations.location;
                     }
@@ -383,26 +383,21 @@
                 
                 
                 if (!rawLocations) return [];
-                
-                // 確保 rawLocations 是陣列
-                if (!Array.isArray(rawLocations)) {
-                    rawLocations = [rawLocations];
-                }
+                if (!Array.isArray(rawLocations)) rawLocations = [rawLocations];
 
                 // 3. 轉換每個地點 (處理數據)
                 return rawLocations.map(loc => {
-                    // 兼容 locationName / LocationName
                     const name = loc.locationName || loc.LocationName; 
-                    // 兼容 weatherElement / WeatherElement
                     const elements = loc.weatherElement || loc.WeatherElement; 
                     
                     if (!elements) return { name: name, forecasts: [] };
 
-                    // 找出需要的氣象因子 (findEl 會處理大小寫兼容和中文翻譯)
+                    // 找出需要的氣象因子 (findEl V6.7)
+                    // 注意：MinT/MaxT 在 F-D0047-089 中會映射到 "溫度"
                     const wxEl = this.findEl(elements, ['Wx', 'WeatherDescription']);
                     const minTEl = this.findEl(elements, ['MinT', 'MinTemperature', 'T']); 
                     const maxTEl = this.findEl(elements, ['MaxT', 'MaxTemperature', 'T']);
-                    const popEl = this.findEl(elements, ['PoP12h', 'PoP6h', 'PoP3h', 'PoP', 'ProbabilityOfPrecipitation']);
+                    const popEl = this.findEl(elements, ['PoP3h', 'PoP12h', 'PoP', 'ProbabilityOfPrecipitation']); // PoP3h 優先
 
                     // 整合時間序列
                     const forecasts = wxEl?.time?.map((t, idx) => {
@@ -430,52 +425,59 @@
                 if(!elements) return null;
                 
                 // F-D0047 系列的中文名稱對照表 (Key: 程式碼使用的簡寫)
-                const chineseNames = {
-                    'MinT': ['最低溫度', 'MinTemperature'],
-                    'MaxT': ['最高溫度', 'MaxTemperature'],
-                    'Wx': ['天氣', '天氣現象', 'WeatherDescription'],
-                    'PoP12h': ['降水機率', 'ProbabilityOfPrecipitation']
+                const cwaMappings = {
+                    'MinT': ['溫度', 'MinTemperature', '最低溫度', 'T'], 
+                    'MaxT': ['溫度', 'MaxTemperature', '最高溫度', 'T'], 
+                    'Wx': ['天氣預報綜合描述', 'WeatherDescription', '天氣現象', 'Weather'],
+                    'PoP3h': ['3小時降雨機率'], 
+                    'PoP12h': ['12小時降雨機率', 'ProbabilityOfPrecipitation'],
+                    'PoP': ['降水機率', 'ProbabilityOfPrecipitation']
                 };
 
                 for (const name of candidates) {
-                    // 1. 嘗試英文/代碼名稱 (標準 CWA)
-                    let found = elements.find(e => e.elementName === name || e.elementName === name.toUpperCase() || e.elementName === name.toLowerCase());
-                    if (found) return found;
-
-                    // 2. 嘗試中文名稱 (針對 F-D0047 系列)
-                    const checks = chineseNames[name] || [];
-                    for (const chName of checks) {
-                         found = elements.find(e => e.elementName === chName);
+                    const checks = cwaMappings[name] || [name];
+                    
+                    // 檢查英文/中文/大小寫
+                    for (const checkName of checks) {
+                         // 嘗試完全匹配 (中文或英文代碼)
+                         let found = elements.find(e => e.elementName === checkName);
                          if (found) return found;
+                         
+                         // 嘗試全大寫/小寫匹配 (針對英文代碼)
+                         if (checkName.match(/[a-zA-Z]/)) {
+                            found = elements.find(e => e.elementName === checkName.toUpperCase() || e.elementName === checkName.toLowerCase());
+                            if (found) return found;
+                         }
                     }
                 }
                 return null;
             },
 
             /**
-             * 修正 getValue: 處理 F-D0047 複雜的 ElementValue 陣列結構
+             * 修正 getValue: 處理 F-D0047 複雜的 ElementValue 陣列結構 (單一鍵值)
              */
             getValue(timeObj) {
                 if (!timeObj) return '--';
                 const val = timeObj.elementValue || timeObj.parameter;
                 
                 if (Array.isArray(val)) {
-                    // 標準 CWA 格式: [{value: "20", measure: "C"}]
-                    if (val[0]?.value) return val[0].value;
-                    if (val[0]?.parameterName) return val[0].parameterName;
-                    
-                    // F-D0047 格式: [{ "MaxTemperature": "17" }] 或 [{ "MinTemperature": "16" }]
                     const firstObj = val[0];
                     if (typeof firstObj === 'object' && firstObj !== null) {
+                        // 1. 嘗試標準 CWA 格式: {value: "20"} 或 {parameterName: "晴"}
+                        if (firstObj.value) return firstObj.value;
+                        if (firstObj.parameterName) return firstObj.parameterName;
+                        
+                        // 2. 嘗試 F-D0047 格式: { "Temperature": "17" } 或 { "Weather": "多雲" }
                         for (const key in firstObj) {
-                            if (key && firstObj[key] !== null) {
-                                return firstObj[key]; // 返回第一個找到的值
+                            // 遍歷物件，返回第一個非 null 的值
+                            if (firstObj[key] !== null) {
+                                return firstObj[key]; 
                             }
                         }
                     }
-
                 }
-                // 處理單一物件格式
+                
+                // 處理單一物件格式 (非陣列)
                 return val?.parameterName || val?.value || val?.parameterValue || '--';
             },
 
