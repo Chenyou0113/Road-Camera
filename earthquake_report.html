@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>顯著有感地震報告</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root { --main-red: #cc0000; --main-bg: #f8f8f8; --card-bg: #ffffff; --text-dark: #333; }
+        body { font-family: 'Microsoft JhengHei', sans-serif; background-color: var(--main-bg); color: var(--text-dark); padding-bottom: 50px; }
+        .header { background: linear-gradient(135deg, #cc0000 0%, #a30000 100%); color: white; padding: 15px 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.3); }
+        .header-content { display: flex; align-items: center; justify-content: space-between; max-width: 1200px; margin: 0 auto; }
+        .header-title { font-size: 1.4rem; font-weight: bold; }
+        .back-btn { color: white; text-decoration: none; margin-right: 15px; cursor: pointer; }
+        .container { max-width: 1200px; margin: 20px auto; padding: 0 20px; }
+        .report-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 25px; }
+        .report-card { background: var(--card-bg); border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); overflow: hidden; }
+        .card-header { background-color: var(--main-red); color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; }
+        .card-header h3 { margin: 0; font-size: 1.2rem; }
+        .magnitude { font-size: 2.2rem; font-weight: 800; }
+        .card-body { padding: 20px; }
+        .info-row { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 0.95rem; }
+        .label { color: #666; }
+        .value { font-weight: 600; }
+        .link-btn { display: inline-block; padding: 8px 15px; background: #007bff; color: white; border-radius: 8px; text-decoration: none; font-size: 0.9rem; margin-top: 15px; }
+        .no-data { text-align: center; padding: 50px; color: #888; }
+        .map-container { margin-top: 15px; border-top: 1px solid #eee; padding-top: 15px; }
+        .map-container img { width: 100%; height: auto; border-radius: 8px; border: 1px solid #ccc; margin-top: 10px; }
+        .intensity-list { list-style: none; padding: 0; margin-top: 10px; }
+        .intensity-list li { padding: 8px 0; border-bottom: 1px dashed #eee; font-size: 0.9rem; display: flex; justify-content: space-between; }
+        .city-name { font-weight: bold; }
+        .intensity-container h4 { margin: 10px 0 5px 0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <span class="back-btn" onclick="window.history.back()"><i class="fas fa-arrow-left"></i></span>
+            <div class="header-title"><i class="fas fa-house-damage"></i> 顯著有感地震報告</div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="reports-grid" class="report-grid">
+            <div class="no-data" style="grid-column: 1 / -1;">
+                <i class="fas fa-spinner fa-spin fa-2x"></i>
+                <p style="margin-top: 10px;">載入最近地震報告...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const WORKER_URL = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev';
+        const REPORT_TYPE = 'E-A0015-001';
+
+        document.addEventListener('DOMContentLoaded', fetchReports);
+
+        async function fetchReports() {
+            const grid = document.getElementById('reports-grid');
+            grid.innerHTML = '<div class="no-data" style="grid-column: 1 / -1;"><i class="fas fa-spinner fa-spin fa-2x"></i><p style="margin-top: 10px;">載入中...</p></div>';
+
+            try {
+                const response = await fetch(`${WORKER_URL}/api/report?type=${REPORT_TYPE}`);
+                const reports = await response.json();
+
+                if (!reports || reports.length === 0) {
+                    grid.innerHTML = '<div class="no-data" style="grid-column: 1 / -1;"><i class="fas fa-exclamation-circle fa-2x"></i><p style="margin-top: 10px;">目前無顯著有感地震報告</p></div>';
+                    return;
+                }
+
+                grid.innerHTML = '';
+                reports.slice(0, 10).forEach(report => renderCard(report, true));
+
+            } catch (error) {
+                console.error("Fetch Error:", error);
+                grid.innerHTML = '<div class="no-data" style="grid-column: 1 / -1; color: red;"><i class="fas fa-times-circle fa-2x"></i><p style="margin-top: 10px;">載入失敗，請檢查 Worker</p></div>';
+            }
+        }
+        
+        async function fetchMapAndIntensity(reportID, cardElement, isSignificant) {
+            const mapDataPromise = fetch(`${WORKER_URL}?dataset=E-A0015-003`).then(r => r.json()).catch(() => ({}));
+            const intensityDataPromise = fetch(`${WORKER_URL}?dataset=E-A0015-005`).then(r => r.json()).catch(() => ({}));
+
+            const [mapData, intensityData] = await Promise.all([mapDataPromise, intensityDataPromise]);
+            
+            const mapContainer = cardElement.querySelector('.map-container');
+            const intensityContainer = cardElement.querySelector('.intensity-container');
+            
+            let isoshakeUrl = mapData.cwaopendata?.dataset?.resource?.uri;
+            if (isoshakeUrl) {
+                mapContainer.innerHTML += `
+                    <h4><i class="fas fa-map"></i> 等震圖</h4>
+                    <img src="${isoshakeUrl}" alt="等震圖">
+                `;
+            } else {
+                 mapContainer.innerHTML += `<p style="color:#aaa;">無等震圖資料</p>`;
+            }
+
+            let intensityList = [];
+            
+            if (intensityData.records?.Intensity?.County) {
+                 intensityList = intensityData.records.Intensity.County.map(c => ({
+                     city: c.CountyName,
+                     maxIntensity: c.IntensityValue
+                 }));
+            }
+            
+            if (intensityList.length > 0) {
+                let listHtml = '<h4><i class="fas fa-wave-square"></i> 縣市最大震度</h4><ul class="intensity-list">';
+                intensityList.sort((a, b) => b.maxIntensity - a.maxIntensity).forEach(item => {
+                    listHtml += `<li><span class="city-name">${item.city}</span><span>${item.maxIntensity} 級</span></li>`;
+                });
+                listHtml += '</ul>';
+                intensityContainer.innerHTML = listHtml;
+            } else {
+                 intensityContainer.innerHTML = `<p style="color:#aaa;">無震度觀測資料</p>`;
+            }
+        }
+
+        function renderCard(report, isSignificant) {
+            const grid = document.getElementById('reports-grid');
+            const card = document.createElement('div');
+            card.className = 'report-card';
+
+            const mag = parseFloat(report.Magnitude).toFixed(1);
+            const time = new Date(report.Time).toLocaleString('zh-TW');
+
+            card.innerHTML = `
+                <div class="card-header">
+                    <h3 title="${report.ReportID}">M ${mag}</h3>
+                    <div><i class="fas fa-hashtag"></i> ${report.ReportID}</div>
+                </div>
+                <div class="card-body">
+                    <div class="info-row">
+                        <span class="label">發生時間</span>
+                        <span class="value">${time}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">震央位置</span>
+                        <span class="value">${report.Location}</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">深度</span>
+                        <span class="value">${report.Depth} 公里</span>
+                    </div>
+                    
+                    <a href="${report.ReportURL}" target="_blank" class="link-btn">
+                        <i class="fas fa-external-link-alt"></i> 報告網址
+                    </a>
+
+                    ${isSignificant ? `<div class="map-container"></div>` : ''}
+                    
+                    <div class="intensity-container" style="margin-top: 15px;">
+                       ${isSignificant ? `<i class="fas fa-spinner fa-spin"></i> 載入震度資訊...` : ''}
+                    </div>
+                </div>
+            `;
+            grid.appendChild(card);
+            
+            if (isSignificant) {
+                fetchMapAndIntensity(report.ReportID, card, isSignificant);
+            }
+        }
+
+        function formatDate(dateStr) {
+            if(!dateStr) return '--';
+            try {
+                const date = new Date(dateStr);
+                return date.toLocaleString('zh-TW', {
+                    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+                });
+            } catch(e) { return dateStr; }
+        }
+    </script>
+</body>
+</html>

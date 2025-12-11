@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>海嘯與地震監測中心</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root { --main-blue: #007bff; --main-bg: #f8f8f8; --card-bg: #ffffff; --text-dark: #333; }
+        body { font-family: 'Microsoft JhengHei', sans-serif; background-color: var(--main-bg); color: var(--text-dark); padding-bottom: 50px; }
+        .header { background: linear-gradient(135deg, #007bff 0%, #0056b3 100%); color: white; padding: 15px 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.3); }
+        .header-content { display: flex; align-items: center; justify-content: space-between; max-width: 1200px; margin: 0 auto; }
+        .header-title { font-size: 1.4rem; font-weight: bold; }
+        .back-btn { color: white; text-decoration: none; margin-right: 15px; cursor: pointer; }
+        .container { max-width: 1200px; margin: 20px auto; padding: 0 20px; }
+
+        /* 跑馬燈樣式 */
+        .earthquake-marquee {
+            background: #2c3e50; color: white; padding: 15px; border-radius: 10px; margin-bottom: 25px;
+            display: flex; align-items: center; overflow: hidden; position: relative; height: 70px;
+        }
+        .marquee-icon { font-size: 2.5rem; color: #ffeb3b; margin-right: 15px; flex-shrink: 0; }
+        .marquee-wrapper { flex: 1; overflow: hidden; height: 100%; position: relative; }
+        .marquee-content { position: absolute; white-space: nowrap; font-size: 1.1rem; font-weight: bold; line-height: 70px; animation: marquee 30s linear infinite; }
+        
+        .tsunami-card { background: var(--card-bg); border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.1); margin-bottom: 25px; }
+        .tsunami-header { background-color: #f39c12; color: white; padding: 15px 20px; font-size: 1.3rem; font-weight: bold; }
+        .tsunami-body { padding: 20px; }
+        .tsunami-alert-item { border-left: 5px solid #d35400; padding: 12px 15px; margin-bottom: 12px; background: #fff3e0; border-radius: 5px; }
+        .tsunami-alert-status { font-weight: bold; margin-bottom: 5px; }
+        .tsunami-alert-content { font-size: 0.95rem; color: #333; }
+        .tsunami-alert-time { font-size: 0.85rem; color: #666; margin-top: 5px; }
+        .no-data { text-align: center; padding: 50px; color: #888; }
+        
+        @keyframes marquee { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <span class="back-btn" onclick="window.history.back()"><i class="fas fa-arrow-left"></i></span>
+            <div class="header-title"><i class="fas fa-water"></i> 海嘯與地震監測中心</div>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- 最近一次地震報告跑馬燈 -->
+        <div class="earthquake-marquee">
+            <div class="marquee-icon"><i class="fas fa-house-damage"></i></div>
+            <div class="marquee-wrapper">
+                <div id="latest-earthquake-marquee" class="marquee-content">
+                    載入中...
+                </div>
+            </div>
+        </div>
+
+        <!-- 海嘯報告查詢 -->
+        <div class="tsunami-card">
+            <div class="tsunami-header">
+                <i class="fas fa-bell"></i> 海嘯警報資訊
+            </div>
+            <div class="tsunami-body" id="tsunami-alerts-container">
+                <div class="no-data">
+                    <i class="fas fa-spinner fa-spin fa-2x"></i>
+                    <p style="margin-top: 10px;">載入海嘯報告...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const WORKER_URL = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev';
+
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchLatestEarthquake();
+            fetchTsunamiAlerts();
+        });
+
+        // 載入最近一次地震報告 (用於跑馬燈)
+        async function fetchLatestEarthquake() {
+            const marquee = document.getElementById('latest-earthquake-marquee');
+            
+            try {
+                // 嘗試從 Worker 抓取最新地震報告
+                const response = await fetch(`${WORKER_URL}/api/report?type=E-A0015-001&top=1`);
+                const reports = await response.json();
+                
+                if (!reports || reports.length === 0) {
+                    marquee.innerHTML = '無最近有感地震報告';
+                    marquee.style.animation = 'none';
+                    return;
+                }
+
+                const latest = reports[0];
+                const mag = parseFloat(latest.Magnitude).toFixed(1);
+                const time = new Date(latest.Time).toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                
+                const marqueeText = `
+                    🚨 ${time} 發生地震 | 規模 M${mag} | 震央：${latest.Location} | 深度：${latest.Depth}公里。 [最新一次地震報告] 請注意自身安全。
+                `;
+
+                marquee.innerHTML = marqueeText;
+
+            } catch (error) {
+                console.error("Earthquake Marquee Fetch Error:", error);
+                marquee.innerHTML = '⚠️ 地震報告連線失敗。';
+                marquee.style.animation = 'none';
+            }
+        }
+
+        // 載入海嘯警報
+        async function fetchTsunamiAlerts() {
+            const container = document.getElementById('tsunami-alerts-container');
+            
+            try {
+                const response = await fetch(`${WORKER_URL}/api/alerts/tsunami`);
+                const alerts = await response.json();
+
+                if (!alerts || alerts.length === 0) {
+                    container.innerHTML = '<div class="no-data"><i class="fas fa-check-circle fa-2x" style="color:#27ae60;"></i><p style="margin-top: 10px;">目前無發布海嘯警報</p></div>';
+                    return;
+                }
+
+                let html = '';
+                alerts.forEach(alert => {
+                    const statusColor = alert.Status && alert.Status.includes('解除') ? '#27ae60' : '#c0392b';
+                    const statusText = alert.Status || '未知狀態';
+                    const contentText = alert.Content || '無內容';
+                    const timeText = alert.ReportTime ? new Date(alert.ReportTime).toLocaleString('zh-TW') : '--';
+                    
+                    html += `
+                        <div class="tsunami-alert-item" style="border-left-color: ${statusColor}">
+                            <div class="tsunami-alert-status" style="color: ${statusColor}">${statusText}</div>
+                            <div class="tsunami-alert-content">${contentText}</div>
+                            <div class="tsunami-alert-time">發布時間：${timeText}</div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+
+            } catch (error) {
+                console.error("Tsunami Fetch Error:", error);
+                container.innerHTML = '<div class="no-data" style="color: red;"><i class="fas fa-exclamation-triangle fa-2x"></i><p style="margin-top: 10px;">海嘯資訊載入失敗</p></div>';
+            }
+        }
+        
+    </script>
+</body>
+</html>
