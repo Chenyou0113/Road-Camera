@@ -177,7 +177,6 @@
 
         async function fetchChartData(chart) {
             try {
-                // 透過 Worker 請求資料 (Worker 會從 D1 快取中提取 JSON)
                 const url = `${API_BASE_URL}?dataset=${chart.code}`;
                 const response = await fetch(url);
                 
@@ -185,13 +184,35 @@
                 
                 const json = await response.json();
                 
-                const dataset = json.cwaopendata?.dataset;
-                if (!dataset || !dataset.resource) throw new Error("Invalid Data Structure");
-
-                // Worker 已經幫我們統一了圖片 URL
-                const imageUrl = dataset.resource.uri || dataset.resource.ProductURL;
+                let imageUrl = null;
+                let obsTime = null;
                 
-                const obsTime = dataset.obsTime || dataset.resource.published || new Date().toLocaleString();
+                // 🔥 核心修正邏輯：處理 Worker 的兩種回傳格式
+                
+                // 嘗試格式 A: Worker 已經處理並統一格式 (Cache Hit)
+                if (json.cwaopendata?.dataset?.resource) {
+                    const dataset = json.cwaopendata.dataset;
+                    imageUrl = dataset.resource.uri || dataset.resource.ProductURL;
+                    obsTime = dataset.obsTime || dataset.resource.published;
+
+                // 嘗試格式 B: Worker 剛從 CWA 抓取回傳的原始格式 (Cache Miss)
+                } else if (json.cwaopendata?.resources) {
+                    const resources = json.cwaopendata.resources;
+                    if (resources.resource?.uri) {
+                        // CWA 檔案 API 原始結構
+                        imageUrl = resources.resource.uri;
+                        obsTime = resources.resource.published || new Date().toLocaleString();
+                    } else if (Array.isArray(resources) && resources[0]?.resource?.uri) {
+                        // 有時 resources 是一個陣列
+                        imageUrl = resources[0].resource.uri;
+                        obsTime = resources[0].resource.published || new Date().toLocaleString();
+                    }
+                }
+                
+                if (!imageUrl) {
+                    // 如果還是找不到，可能被 Worker 擋掉了或格式完全錯誤
+                    throw new Error("Could not extract Image URL from JSON.");
+                }
 
                 return {
                     ...chart,
