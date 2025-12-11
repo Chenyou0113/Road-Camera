@@ -6,7 +6,7 @@
     <title>天氣圖與累積雨量圖</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        /* === 基礎樣式 (深藍色主題) === */
+        /* === 基礎樣式 (使用深藍色主題) === */
         :root { 
             --bg-gradient-start: #004c8c; 
             --bg-gradient-end: #002c5f; 
@@ -14,6 +14,7 @@
             --text-primary: #333333; 
             --text-secondary: #666666; 
             --border-color: #e0e0e0;
+            --modal-bg: #ffffff; 
         }
         body { 
             font-family: 'Segoe UI', sans-serif; 
@@ -33,7 +34,6 @@
         .header-title { display: flex; align-items: center; gap: 15px; }
         .header-title h1 { font-size: 24px; font-weight: bold; margin: 0; }
         .back-button { background-color: rgba(255, 255, 255, 0.2); color: white; text-decoration: none; padding: 8px 16px; border-radius: 20px; font-size: 14px; border: 1px solid rgba(255,255,255,0.3); transition: all 0.3s; }
-        .back-button:hover { background-color: rgba(255, 255, 255, 0.3); }
         .main-container { max-width: 1200px; margin: 20px auto; padding: 0 20px; }
         
         /* 圖表網格 */
@@ -69,41 +69,45 @@
             display: flex; 
             align-items: center; 
             justify-content: center; 
+            cursor: pointer;
         }
         .chart-image { 
             width: 100%; 
             height: 100%; 
             object-fit: contain;
             transition: opacity 0.3s ease; 
-            cursor: zoom-in;
             opacity: 0;
         }
         .loading-spinner { position: absolute; font-size: 32px; color: #1976D2; }
         .update-time { font-size: 12px; color: var(--text-secondary); margin-top: 10px; text-align: center; }
         
-        /* 刷新按鈕樣式 */
-        .refresh-btn { 
-            background: #00bcd4; 
-            color: white; 
-            padding: 10px 20px; 
-            border: none; 
-            border-radius: 20px; 
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: bold;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            transition: all 0.3s;
-        }
-        .refresh-btn:hover { background: #0097a7; transform: scale(1.05); }
-        .refresh-btn:active { transform: scale(0.95); }
+        /* Modal 樣式 */
+        .modal { display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.85); justify-content: center; align-items: center; padding: 20px; }
+        .modal.active { display: flex; }
+        .modal-content { background-color: var(--modal-bg); border-radius: 12px; max-width: 90%; width: 900px; max-height: 90vh; overflow-y: auto; position: relative; }
+        .modal-header { padding: 15px 20px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
+        .close-btn { background: none; border: none; font-size: 24px; color: var(--text-secondary); cursor: pointer; }
+        .modal-body { padding: 20px; text-align: center; }
+        .modal-image { width: 100%; height: auto; border-radius: 8px; }
         
-        /* 響應式調整 */
+        /* PDF/External File 樣式 */
+        .external-file-placeholder {
+            height: 250px;
+            background: #e0f7fa; 
+            border: 3px dashed #00bcd4;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            border-radius: 8px;
+            color: #00bcd4;
+            text-align: center;
+        }
+        .external-file-placeholder i { font-size: 3rem; margin-bottom: 10px; }
+        .external-file-placeholder p { font-weight: bold; margin-top: 5px; }
+
         @media (max-width: 768px) { 
             .chart-grid { grid-template-columns: 1fr; } 
-            .header-content { flex-direction: column; align-items: flex-start; gap: 10px; }
-            .back-button { width: 100%; text-align: center; }
         }
     </style>
 </head>
@@ -124,7 +128,7 @@
     <div class="main-container">
 
         <div style="margin: 20px 0;">
-            <button class="refresh-btn" onclick="refreshCharts()">
+            <button style="background:#00bcd4; color:white; padding:10px 20px; border:none; border-radius:20px; cursor:pointer;" onclick="refreshCharts()">
                 <i class="fas fa-sync-alt"></i> 重新載入所有圖資
             </button>
         </div>
@@ -133,22 +137,31 @@
             <!-- 圖表將由 JS 插入 -->
         </div>
     </div>
+    
+    <!-- Modal 彈窗結構 -->
+    <div class="modal" id="chartModal" onclick="if(event.target === this) closeModal()">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modalTitle">圖資放大預覽</h3>
+                <button class="close-btn" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="modalContentBody">
+                    <!-- 圖片或 PDF 嵌入將在這裡 -->
+                </div>
+                <p id="modalInfo" class="update-time" style="text-align: center; font-size: 1rem; margin-top: 15px;"></p>
+            </div>
+        </div>
+    </div>
 
     <script>
-        // ★ Worker 網址
         const API_BASE_URL = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev';
 
-        // ★ 定義所有圖表
         const CHART_DEFINITIONS = [
-            // 累積雨量圖 (30分鐘更新)
-            { code: 'O-A0040-002', name: '小間距累積雨量圖', icon: 'fas fa-cloud-showers-heavy', group: 'Rainfall' },
-            { code: 'O-A0040-001', name: '大間距累積雨量圖', icon: 'fas fa-cloud-rain', group: 'Rainfall' },
-            
-            // 天氣圖 (6小時更新)
+            { code: 'O-A0040-002', name: '小間距日累積雨量圖', icon: 'fas fa-cloud-showers-heavy', group: 'Rainfall' },
+            { code: 'O-A0040-001', name: '大間距日累積雨量圖', icon: 'fas fa-cloud-rain', group: 'Rainfall' },
             { code: 'F-C0035-001', name: '地面天氣圖', icon: 'fas fa-globe-asia', group: 'Charts' },
             { code: 'F-C0035-003', name: '最新天氣圖', icon: 'fas fa-map-marked-alt', group: 'Charts' },
-            
-            // 溫度分布圖 (1小時更新)
             { code: 'O-A0038-001', name: '溫度分布圖', icon: 'fas fa-temperature-high', group: 'Charts' }
         ];
         
@@ -164,7 +177,6 @@
 
                 container.innerHTML = '';
                 
-                // 渲染所有圖表
                 results.forEach(data => {
                     renderChartCard(data);
                 });
@@ -184,40 +196,21 @@
                 
                 const json = await response.json();
                 
-                let imageUrl = null;
-                let obsTime = null;
-                
-                // 🔥 核心修正邏輯：處理 Worker 的兩種回傳格式
-                
-                // 嘗試格式 A: Worker 已經處理並統一格式 (Cache Hit)
-                if (json.cwaopendata?.dataset?.resource) {
-                    const dataset = json.cwaopendata.dataset;
-                    imageUrl = dataset.resource.uri || dataset.resource.ProductURL;
-                    obsTime = dataset.obsTime || dataset.resource.published;
+                const dataset = json.cwaopendata?.dataset;
+                if (!dataset || !dataset.resource) throw new Error("Invalid Data Structure");
 
-                // 嘗試格式 B: Worker 剛從 CWA 抓取回傳的原始格式 (Cache Miss)
-                } else if (json.cwaopendata?.resources) {
-                    const resources = json.cwaopendata.resources;
-                    if (resources.resource?.uri) {
-                        // CWA 檔案 API 原始結構
-                        imageUrl = resources.resource.uri;
-                        obsTime = resources.resource.published || new Date().toLocaleString();
-                    } else if (Array.isArray(resources) && resources[0]?.resource?.uri) {
-                        // 有時 resources 是一個陣列
-                        imageUrl = resources[0].resource.uri;
-                        obsTime = resources[0].resource.published || new Date().toLocaleString();
-                    }
-                }
-                
-                if (!imageUrl) {
-                    // 如果還是找不到，可能被 Worker 擋掉了或格式完全錯誤
-                    throw new Error("Could not extract Image URL from JSON.");
-                }
+                const imageUrl = dataset.resource.uri || dataset.resource.ProductURL;
+                const isPDF = dataset.resource.isPDF || (imageUrl && imageUrl.toLowerCase().endsWith('.pdf'));
+
+                const obsTime = dataset.obsTime || dataset.resource.published || new Date().toLocaleString();
+
+                if (!imageUrl) throw new Error("Could not extract Image URL");
 
                 return {
                     ...chart,
                     imageUrl: imageUrl,
-                    time: obsTime
+                    time: obsTime,
+                    isPDF: isPDF
                 };
 
             } catch (error) {
@@ -237,6 +230,8 @@
             
             let contentHtml = '';
             
+            const clickHandler = data.isPDF ? `window.open('${data.imageUrl}', '_blank')` : `openModal('${data.name}', '${data.imageUrl}', '${data.time}', false)`;
+            
             if (data.error || !data.imageUrl) {
                 contentHtml = `
                     <div class="chart-image-container" style="background: #ffebee;">
@@ -245,9 +240,16 @@
                             暫無資料
                         </div>
                     </div>`;
+            } else if (data.isPDF) {
+                contentHtml = `
+                    <div class="chart-image-container external-file-placeholder" onclick="${clickHandler}">
+                        <i class="fas fa-file-pdf"></i>
+                        <p>點擊開啟 PDF 檔案</p>
+                        <p style="font-size:0.8em;">(檔案將在新視窗中開啟)</p>
+                    </div>`;
             } else {
                 contentHtml = `
-                    <div class="chart-image-container" onclick="window.open('${data.imageUrl}', '_blank')" title="點擊放大">
+                    <div class="chart-image-container" onclick="${clickHandler}">
                         <i class="fas fa-spinner fa-spin loading-spinner"></i>
                         <img src="${data.imageUrl}" class="chart-image" alt="${data.name}" 
                              onload="this.style.opacity=1; this.previousElementSibling.style.display='none';" 
@@ -259,6 +261,7 @@
                 <div class="card-header">
                     <h3 title="${data.code}">
                         <i class="${data.icon}"></i> ${data.name}
+                        ${data.isPDF ? '<span style="font-size:0.8rem; background:red; padding:3px 6px; border-radius:4px; margin-left:5px;">PDF</span>' : ''}
                     </h3>
                 </div>
                 <div class="card-body">
@@ -272,19 +275,49 @@
             container.appendChild(card);
         }
 
+        function openModal(title, url, time, isPDF = false) {
+            const modal = document.getElementById('chartModal');
+            document.getElementById('modalTitle').textContent = title;
+            document.getElementById('modalInfo').innerHTML = `觀測時間：${formatDate(time)}`;
+            const contentBody = document.getElementById('modalContentBody');
+            contentBody.innerHTML = '';
+
+            if (isPDF) {
+                contentBody.innerHTML = `
+                    <div class="external-file-placeholder" style="height: 300px;">
+                        <i class="fas fa-exclamation-circle" style="color: #f39c12;"></i>
+                        <p>無法在此處預覽 PDF 檔案</p>
+                        <button onclick="window.open('${url}', '_blank')" style="margin-top: 15px; padding: 10px 20px; border: none; border-radius: 20px; background: #1976D2; color: white; cursor: pointer;">
+                            <i class="fas fa-external-link-alt"></i> 點擊開啟新視窗
+                        </button>
+                    </div>`;
+            } else {
+                const img = document.createElement('img');
+                img.className = 'modal-image';
+                img.src = url;
+                img.alt = title;
+                contentBody.appendChild(img);
+            }
+
+            modal.classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('chartModal').classList.remove('active');
+            document.getElementById('modalContentBody').innerHTML = '';
+        }
+
         function formatDate(dateStr) {
             if (!dateStr || dateStr === 'N/A' || dateStr.includes('解析錯誤')) return '--';
             
             try {
                 let cleanStr = String(dateStr).trim();
 
-                // 處理 CWA 檔案 API 可能回傳的中文格式，例如: "2025/12/11 下午6:28:42"
-                cleanStr = cleanStr.replace(/(\/)/g, '-');      // 替換 /
-                cleanStr = cleanStr.replace(' 上午', 'T');      // 移除 "上午"
-                cleanStr = cleanStr.replace(' 下午', 'T');      // 移除 "下午"
-                cleanStr = cleanStr.replace(' ', 'T');          // 將日期與時間之間的第一個空格替換為 T
+                cleanStr = cleanStr.replace(/(\/)/g, '-');
+                cleanStr = cleanStr.replace(' 上午', 'T');
+                cleanStr = cleanStr.replace(' 下午', 'T');
+                cleanStr = cleanStr.replace(' ', 'T');
 
-                // 確保時區資訊存在 (如果沒有，加上台灣時區 +08:00)
                 if (!cleanStr.includes('Z') && !cleanStr.includes('+') && !cleanStr.includes('-') && cleanStr.length > 10) {
                      cleanStr += '+08:00'; 
                 }
