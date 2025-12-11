@@ -247,31 +247,50 @@
             if (!dateStr || dateStr === 'N/A') return '--';
             
             try {
-                // 1. 正規化：將空格替換為 'T'，並處理時區
-                // 範例輸入: 2025-12-10 16:43:03.000+08:00
-                // 替換成: 2025-12-10T16:43:03.000+08:00
-                let cleanStr = dateStr.replace(' ', 'T');
+                let cleanStr = String(dateStr).trim();
 
-                // 2. 如果沒有時區資訊 (例如只回傳 2025-12-10T16:43:03)，則強制加上台灣時區
+                // 1. 處理 CWA 檔案 API 可能回傳的奇怪格式，例如: "2025/12/11 下午6:28:42"
+                cleanStr = cleanStr.replace(/(\/)/g, '-');      // 將 / 換成 - (標準化日期)
+                cleanStr = cleanStr.replace(' 上午', 'T');      // 移除 "上午"
+                cleanStr = cleanStr.replace(' 下午', 'T');      // 移除 "下午"
+
+                // 嘗試將時間轉換為 24 小時制 (如果有T但小時是 1~12)
+                const matchTime = cleanStr.match(/(\d{4}-\d{2}-\d{2})T(\d{1,2}:\d{2}:\d{2})/);
+                if (matchTime) {
+                    let [datePart, timePart] = [matchTime[1], matchTime[2]];
+                    let [h, m, s] = timePart.split(':').map(Number);
+
+                    // 如果是下午時段，且小時數在 1~11 之間，需要轉換為 24 小時制
+                    // (這是一個額外的防呆，因為 Worker 不該傳出這個格式，但我們在前端防禦)
+                    if (dateStr.includes('下午') && h < 12) {
+                        h += 12;
+                        timePart = `${h}:${m}:${s}`;
+                        cleanStr = `${datePart}T${timePart}`;
+                    }
+                }
+                
+                // 2. 確保時區資訊存在 (如果沒有，加上台灣時區 +08:00)
                 if (!cleanStr.includes('Z') && !cleanStr.includes('+') && !cleanStr.includes('-') && cleanStr.length > 10) {
                      cleanStr += '+08:00'; 
                 }
-
-                const date = new Date(cleanStr);
                 
-                // 3. 檢查是否仍然是 Invalid Date
+                // 3. 使用標準的 ISO 字串解析
+                const date = new Date(cleanStr);
+
+                // 4. 檢查是否仍然是 Invalid Date
                 if (isNaN(date.getTime())) {
                     console.warn("Date parsing failed for:", dateStr, "Cleaned:", cleanStr);
-                    return dateStr;
+                    // 為了避免再次觸發錯誤，返回一個簡單的提示
+                    return '解析錯誤'; 
                 }
 
-                // 4. 格式化輸出
+                // 5. 格式化輸出
                 return date.toLocaleString('zh-TW', {
                     month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
                 });
             } catch(e) { 
-                console.error("Final date format error:", e);
-                return dateStr; 
+                console.error("Final date format error (Critical):", e);
+                return '解析失敗'; 
             }
         }
 
