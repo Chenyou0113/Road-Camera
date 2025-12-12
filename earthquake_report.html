@@ -30,6 +30,26 @@
         .intensity-list li { padding: 8px 0; border-bottom: 1px dashed #eee; font-size: 0.9rem; display: flex; justify-content: space-between; }
         .city-name { font-weight: bold; }
         .intensity-container h4 { margin: 10px 0 5px 0; }
+        
+        .sync-btn {
+            padding: 10px 20px;
+            background: #27ae60;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-bottom: 20px;
+            font-size: 1rem;
+        }
+        .info-box {
+            background: #fff8e1;
+            padding: 15px;
+            border-left: 5px solid #ff9800;
+            border-radius: 8px;
+            color: #b35900;
+            font-size: 0.9rem;
+            margin-bottom: 15px;
+        }
     </style>
 </head>
 <body>
@@ -41,6 +61,9 @@
     </div>
 
     <div class="container">
+        <button class="sync-btn" id="manualSyncBtn" onclick="manualSyncAndFetch()">
+            <i class="fas fa-sync-alt"></i> 手動同步報告 (無資料時點擊)
+        </button>
         <div id="reports-grid" class="report-grid">
             <div class="no-data" style="grid-column: 1 / -1;">
                 <i class="fas fa-spinner fa-spin fa-2x"></i>
@@ -51,33 +74,85 @@
 
     <script>
         const WORKER_URL = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev';
-        const REPORT_TYPE = 'E-A0015-001';
+        const TYPE_SIGNIFICANT = 'E-A0015-001'; // 顯著有感
+        const TYPE_MICRO = 'E-A0016-001';       // 小區域有感
 
         document.addEventListener('DOMContentLoaded', fetchReports);
+
+        // 外部強制同步，並重新查詢
+        async function manualSyncAndFetch() {
+            const grid = document.getElementById('reports-grid');
+            const btn = document.getElementById('manualSyncBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 正在同步 D1...';
+
+            grid.innerHTML = '<div class="no-data" style="grid-column: 1 / -1;"><i class="fas fa-spinner fa-spin fa-2x"></i><p style="margin-top: 10px;">資料同步中，請稍候...</p></div>';
+
+            try {
+                // 呼叫 Worker 的手動同步路由
+                const syncResponse = await fetch(`${WORKER_URL}/api/sync/reports`);
+                if (!syncResponse.ok) {
+                    throw new Error('同步失敗，請檢查 Worker Logs！');
+                }
+                
+                await fetchReports(); // 重新查詢
+                btn.innerHTML = '<i class="fas fa-check-circle"></i> 同步成功！';
+
+            } catch (e) {
+                console.error("Manual Sync Failed:", e);
+                alert('同步失敗：請檢查 Worker Logs。');
+            } finally {
+                btn.disabled = false;
+                setTimeout(() => { btn.innerHTML = '<i class="fas fa-sync-alt"></i> 手動同步報告 (無資料時點擊)'; }, 2000);
+            }
+        }
+
 
         async function fetchReports() {
             const grid = document.getElementById('reports-grid');
             grid.innerHTML = '<div class="no-data" style="grid-column: 1 / -1;"><i class="fas fa-spinner fa-spin fa-2x"></i><p style="margin-top: 10px;">載入中...</p></div>';
 
             try {
-                const response = await fetch(`${WORKER_URL}/api/report?type=${REPORT_TYPE}`);
-                const reports = await response.json();
+                // 1. 嘗試查詢顯著有感報告
+                let reports = await fetchReportData(TYPE_SIGNIFICANT);
 
-                if (!reports || reports.length === 0) {
-                    grid.innerHTML = '<div class="no-data" style="grid-column: 1 / -1;"><i class="fas fa-exclamation-circle fa-2x"></i><p style="margin-top: 10px;">目前無顯著有感地震報告</p></div>';
-                    return;
+                if (reports.length === 0) {
+                    // 2. 如果顯著有感為空，則降級查詢小區域有感報告
+                    reports = await fetchReportData(TYPE_MICRO);
+                    
+                    if (reports.length > 0) {
+                        // 顯示警告並渲染小區域報告
+                        renderInfoBox(grid, '目前無達「顯著有感」規模的地震，以下為最近的「小區域有感」地震報告 (藍色邊框)。');
+                        
+                        grid.innerHTML = '';
+                        reports.slice(0, 10).forEach(report => renderCard(report, false));
+                        return;
+                    }
                 }
-
-                grid.innerHTML = '';
-                reports.slice(0, 10).forEach(report => renderCard(report, true));
+                
+                // 3. 渲染顯著有感報告
+                if (reports.length > 0) {
+                    grid.innerHTML = '';
+                    reports.slice(0, 10).forEach(report => renderCard(report, true));
+                } else {
+                    grid.innerHTML = '<div class="no-data" style="grid-column: 1 / -1;"><i class="fas fa-exclamation-circle fa-2x"></i><p style="margin-top: 10px;">D1 資料庫中查無任何報告</p></div>';
+                }
 
             } catch (error) {
                 console.error("Fetch Error:", error);
-                grid.innerHTML = '<div class="no-data" style="grid-column: 1 / -1; color: red;"><i class="fas fa-times-circle fa-2x"></i><p style="margin-top: 10px;">載入失敗，請檢查 Worker</p></div>';
+                grid.innerHTML = '<div class="no-data" style="grid-column: 1 / -1; color: red;"><i class="fas fa-times-circle fa-2x"></i><p style="margin-top: 10px;">載入失敗，請檢查 Worker 連線</p></div>';
             }
         }
         
-        async function fetchMapAndIntensity(reportID, cardElement, isSignificant) {
+        async function fetchReportData(reportType) {
+             const response = await fetch(`${WORKER_URL}/api/report?type=${reportType}`);
+             if (!response.ok) throw new Error(`API returned ${response.status}`);
+             return response.json();
+        }
+
+        async function fetchMapAndIntensity(reportID, cardElement) {
+            // 抓取靜態圖 (等震圖 E-A0015-003) 和震度資料 (E-A0015-005)
+            // 由於 worker 已經同步這些檔案到 D1 Cache，我們直接查 Cache
             const mapDataPromise = fetch(`${WORKER_URL}?dataset=E-A0015-003`).then(r => r.json()).catch(() => ({}));
             const intensityDataPromise = fetch(`${WORKER_URL}?dataset=E-A0015-005`).then(r => r.json()).catch(() => ({}));
 
@@ -86,16 +161,18 @@
             const mapContainer = cardElement.querySelector('.map-container');
             const intensityContainer = cardElement.querySelector('.intensity-container');
             
+            // 1. 處理等震圖 (E-A0015-003)
             let isoshakeUrl = mapData.cwaopendata?.dataset?.resource?.uri;
             if (isoshakeUrl) {
-                mapContainer.innerHTML += `
+                mapContainer.innerHTML = `
                     <h4><i class="fas fa-map"></i> 等震圖</h4>
                     <img src="${isoshakeUrl}" alt="等震圖">
                 `;
             } else {
-                 mapContainer.innerHTML += `<p style="color:#aaa;">無等震圖資料</p>`;
+                 mapContainer.innerHTML = `<h4><i class="fas fa-map"></i> 等震圖</h4><p style="color:#aaa;">無等震圖資料</p>`;
             }
 
+            // 2. 處理縣市震度 (E-A0015-005)
             let intensityList = [];
             
             if (intensityData.records?.Intensity?.County) {
@@ -113,24 +190,43 @@
                 listHtml += '</ul>';
                 intensityContainer.innerHTML = listHtml;
             } else {
-                 intensityContainer.innerHTML = `<p style="color:#aaa;">無震度觀測資料</p>`;
+                 intensityContainer.innerHTML = `<h4><i class="fas fa-wave-square"></i> 縣市最大震度</h4><p style="color:#aaa;">無震度觀測資料</p>`;
             }
+        }
+
+        function renderInfoBox(gridElement, message) {
+            const infoBox = document.createElement('div');
+            infoBox.className = 'info-box';
+            infoBox.style.gridColumn = '1 / -1'; // 跨越整個網格
+            infoBox.innerHTML = `<i class="fas fa-info-circle"></i> ${message}`;
+            gridElement.prepend(infoBox); // 放在最前面
         }
 
         function renderCard(report, isSignificant) {
             const grid = document.getElementById('reports-grid');
             const card = document.createElement('div');
             card.className = 'report-card';
+            
+            const headerColor = isSignificant ? 'var(--main-red)' : '#3f51b5';
+            const magColor = isSignificant ? 'var(--main-red)' : '#3f51b5';
 
             const mag = parseFloat(report.Magnitude).toFixed(1);
+            // 由於 Worker 已經將時間標準化，這裡可以直接解析
             const time = new Date(report.Time).toLocaleString('zh-TW');
 
+            card.style.borderLeftColor = headerColor;
+            
             card.innerHTML = `
-                <div class="card-header">
-                    <h3 title="${report.ReportID}">M ${mag}</h3>
+                <div class="card-header" style="background-color: ${headerColor};">
+                    <h3 title="${report.ReportID}">${isSignificant ? '顯著' : '小區域'}</h3>
                     <div><i class="fas fa-hashtag"></i> ${report.ReportID}</div>
                 </div>
                 <div class="card-body">
+                    <div class="title-row">
+                        <span class="magnitude" style="color: ${magColor};">M ${mag}</span>
+                        <span style="font-size:0.9rem; color:#666;">${isSignificant ? '顯著有感' : '小區域報告'}</span>
+                    </div>
+
                     <div class="info-row">
                         <span class="label">發生時間</span>
                         <span class="value">${time}</span>
@@ -148,28 +244,19 @@
                         <i class="fas fa-external-link-alt"></i> 報告網址
                     </a>
 
-                    ${isSignificant ? `<div class="map-container"></div>` : ''}
+                    <div class="map-container">
+                       ${isSignificant ? `<i class="fas fa-spinner fa-spin"></i> 載入等震圖...` : ''}
+                    </div>
                     
                     <div class="intensity-container" style="margin-top: 15px;">
-                       ${isSignificant ? `<i class="fas fa-spinner fa-spin"></i> 載入震度資訊...` : ''}
+                       <i class="fas fa-spinner fa-spin"></i> 載入震度資訊...
                     </div>
                 </div>
             `;
             grid.appendChild(card);
             
-            if (isSignificant) {
-                fetchMapAndIntensity(report.ReportID, card, isSignificant);
-            }
-        }
-
-        function formatDate(dateStr) {
-            if(!dateStr) return '--';
-            try {
-                const date = new Date(dateStr);
-                return date.toLocaleString('zh-TW', {
-                    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
-                });
-            } catch(e) { return dateStr; }
+            // 兩種報告都需要抓取其對應的圖片/震度數據
+            fetchMapAndIntensity(report.ReportID, card);
         }
     </script>
 </body>
