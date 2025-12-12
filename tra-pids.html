@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>台鐵 PIDS (V5.3 最終穩定版)</title>
+    <title>台鐵 PIDS (V5.4 最終修復版)</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -201,7 +201,7 @@
         };
         const stopsCache = {};
 
-        // 🔥 恢復：英文站名更新
+        // 🔥 恢復：英文站名更新 (確保定義在全局作用域)
         function updateEnglishStationName(stationID) {
             const enElement = document.getElementById('station-en');
             if (enElement && typeof stationDataMap !== 'undefined' && stationDataMap[stationID]) {
@@ -217,6 +217,7 @@
             let name = TRAIN_TYPES[t.TrainTypeID] || t.TrainTypeName?.Zh_tw || '列車';
             let cls = '其他';
             
+            // 顏色與名稱正規化
             if(name.includes('新自強')||name.includes('3000')) { name='新自強'; cls='自強3000'; }
             else if(name.includes('普悠瑪')) { cls='普悠瑪'; }
             else if(name.includes('太魯閣')) { cls='太魯閣'; }
@@ -331,8 +332,7 @@
                 });
                 d.sort((a,b) => a._sort - b._sort);
 
-                let t1 = d.filter(t=>String(t.Direction)==='1');
-                let t0 = d.filter(t=>String(t.Direction)==='0');
+                let t1 = d.filter(t=>t.Direction==1), t0 = d.filter(t=>t.Direction==0);
 
                 renderTable('1', t1); renderTable('0', t0);
                 await updateMarquee('marquee1', t1); 
@@ -371,8 +371,8 @@
                 tr.innerHTML = `
                     <td style="font-family:Consolas">${t.TrainNo}</td>
                     <td><span class="train-type-badge type-${info.cls}">${info.name}</span></td>
-                    <td>${timeHtml}</td>
                     <td>${dest}</td>
+                    <td>${timeHtml}</td>
                     <td class="platform-text">${plat}</td>
                     <td class="${cls}">${status}</td>
                 `;
@@ -403,16 +403,12 @@
             // 嘗試取得即時位置 (Live Data)
             let liveData = null;
             try {
-                // 1. 嘗試從 Worker Live API 獲取
                 const liveWorkerPromise = fetch(`${TRA_WORKER_URL}/api/live?trainNo=${t.TrainNo}`).then(r=>r.json()).catch(()=>null);
                 liveData = await liveWorkerPromise;
 
                 if (liveData?.TrainLiveBoards?.length > 0) liveData = liveData.TrainLiveBoards[0];
-                else if (liveData?.StationName) liveData = liveData; // 如果直接回傳物件
+                else if (liveData?.StationName) liveData = liveData;
                 else liveData = null;
-
-                // 2. 如果 Worker Live API 沒資料，可以考慮直接打 TDX (但 Worker 環境不建議多打 API)
-                // 這裡暫時依賴 Worker D1 的快取資料
 
             } catch (e) { console.error("Error fetching live data", e); }
 
@@ -422,7 +418,7 @@
                 const lastStationName = liveData.StationName.Zh_tw || liveData.StationName;
                 liveDelay = liveData.DelayTime ? parseInt(liveData.DelayTime) : 0;
                 
-                let stops = await fetchStops(t.TrainNo);
+                let stops = await fetchTrainStops(t.TrainNo);
                 let nextStopName = "";
                 if (stops && stops.length > 0) {
                     const passedIndex = stops.findIndex(s => s.StationName.Zh_tw === lastStationName);
@@ -435,15 +431,14 @@
                 if (liveDelay > 0) locationText += ` (晚 ${liveDelay} 分)`;
                 
             } else {
-                // 沒有即時位置
                 locationText = (t.IsTomorrow) ? "列車尚未發車" : "列車訊號偵測中";
             }
             
             msg += `<span style="color:#4fc3f7">${locationText}</span>`;
             msg += `<span style="margin:0 15px;color:#555">|</span>`;
 
+
             // 預計抵達/開車時間
-            let stops = await fetchStops(t.TrainNo);
             const tableTime = t.ScheduledDepartureTime || t.DepartureTime || "00:00";
             const predictedTime = getExpectedTime(tableTime, delay);
             const timeColor = delay > 0 ? '#ff5252' : '#ffffff';
@@ -451,6 +446,7 @@
             msg += `本站預計：<span style="color:${timeColor};font-weight:bold;font-size:1.1em">${predictedTime} 抵達 (${delay > 0 ? `晚 ${delay} 分` : '準點'})</span>`;
 
             // 沿途停靠
+            let stops = await fetchTrainStops(t.TrainNo);
             if(stops && stops.length>0) {
                 let idx = stops.findIndex(s => String(s.StationID) === GLOBAL_STATION_ID);
                 if(idx !== -1) {
@@ -461,7 +457,7 @@
             }
             
             el.innerHTML = msg;
-            startMarquee(elId); // 重啟動畫
+            startMarquee(elId);
         }
 
         async function checkTopMarquee() {
@@ -469,7 +465,6 @@
                 let r = await fetch(`${TRA_WORKER_URL}/api/pids/marquee`);
                 let d = await r.json();
                 let el = document.getElementById('unifiedTopMarquee');
-                // 只有當有新內容或目前是預設/舊內容時才更新，並重跑動畫
                 if (d.text && el.innerHTML !== d.text) { 
                     el.innerHTML = d.text; 
                     startMarquee('unifiedTopMarquee'); 
@@ -482,10 +477,10 @@
             GLOBAL_STATION_ID = p.get('station');
             let name = p.get('name')||'臺鐵';
             
-            // 恢復：頂部英文站名更新
-            updateEnglishStationName(GLOBAL_STATION_ID);
-            
             document.getElementById('unifiedStationName').innerText = name.replace(/車站$|站$/,'')+'車站';
+            
+            // 🔥 確保在 DOMContentLoaded 時呼叫英文站名更新 (作用域已正確定義在全局)
+            updateEnglishStationName(GLOBAL_STATION_ID);
             
             updateClock();
             updateMediaAssets();
