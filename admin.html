@@ -222,6 +222,22 @@
                     <div class="status" id="pidsStatus"></div>
                 </div>
 
+                <!-- 🔥 新增：多媒體設定卡片 -->
+                <div class="card" style="border-top: 4px solid #2196f3;">
+                    <h3 style="color: #2196f3;"><i class="fas fa-photo-video"></i> PIDS 多媒體素材</h3>
+                    
+                    <span style="color:#aaa; display:block; margin-bottom:10px; font-size:0.9rem;">📸 輪播圖片網址 (一行一張，支援 JPG/PNG)</span>
+                    <textarea id="pidsImagesInput" style="height: 150px;" placeholder="https://example.com/img1.jpg&#10;https://example.com/img2.jpg"></textarea>
+                    
+                    <span style="color:#aaa; display:block; margin-bottom:10px; margin-top:10px; font-size:0.9rem;">🎥 影片網址 (YouTube 連結或 ID)</span>
+                    <input type="text" id="pidsVideoInput" placeholder="https://www.youtube.com/watch?v=XXXXXX">
+                    
+                    <button class="btn-media" onclick="savePidsAssets()" style="background: linear-gradient(135deg, #2196f3, #1565c0); color:white; margin-top:10px;">
+                        <i class="fas fa-cloud-upload-alt"></i> 儲存多媒體設定
+                    </button>
+                    <div class="status" id="pidsAssetsStatus"></div>
+                </div>
+
             </div>
 
             <div class="grid-col-side">
@@ -470,6 +486,54 @@
             }
         }
 
+        // 🔥 === PIDS 多媒體控制 ===
+        async function loadPidsAssets() {
+            try {
+                const res = await fetch(`${PIDS_WORKER_URL}/api/pids/assets`);
+                const data = await res.json();
+                if (data.images && Array.isArray(data.images)) {
+                    document.getElementById('pidsImagesInput').value = data.images.join('\n');
+                }
+                if (data.video) {
+                    document.getElementById('pidsVideoInput').value = data.video;
+                }
+            } catch (e) {
+                console.warn("無法載入多媒體資源:", e);
+            }
+        }
+
+        async function savePidsAssets() {
+            const btn = event.target;
+            const images = document.getElementById('pidsImagesInput').value.split('\n').map(s=>s.trim()).filter(s=>s);
+            const video = document.getElementById('pidsVideoInput').value.trim();
+            const statusEl = document.getElementById('pidsAssetsStatus');
+
+            btn.disabled = true;
+            statusEl.innerText = "⏳ 儲存中...";
+            statusEl.style.color = "#aaa";
+            
+            try {
+                const res = await fetch(`${PIDS_WORKER_URL}/api/admin/update-assets`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ images, video })
+                });
+                const result = await res.json();
+                if (res.ok && result.success) {
+                    statusEl.innerText = "✅ 多媒體設定已儲存！PIDS 將於下次刷新時顯示新素材。";
+                    statusEl.style.color = "#4caf50";
+                } else {
+                    statusEl.innerText = "❌ 儲存失敗：" + (result.error || "未知錯誤");
+                    statusEl.style.color = "#ff5252";
+                }
+            } catch (e) {
+                statusEl.innerText = "❌ 連線錯誤：" + e.message;
+                statusEl.style.color = "#ff5252";
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
         function handleError(el, error) {
             el.innerText = "❌ 失敗：" + (error || "未知錯誤");
             el.style.color = "#ff5252";
@@ -483,6 +547,8 @@
         }
 
         checkAuth();
+        loadPidsMarquee();
+        loadPidsAssets();
     </script>
 </body>
 </html>
