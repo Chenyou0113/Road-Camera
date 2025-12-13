@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>台鐵 PIDS (V5.4.2 最終跑馬燈修復)</title>
+    <title>台鐵 PIDS (V5.6 最終穩定版)</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -54,12 +54,12 @@
 
         /* 表格設定 */
         .train-table { width: 100%; border-collapse: collapse; text-align: center; font-size: 1.6rem; font-weight: bold; table-layout: fixed; }
-        .train-table th { padding: 8px; color: #fff; border-bottom: 2px solid #fff; height: 40px; font-size: 1.3rem; }
+        .train-table th { padding: 8px; color: #fff; border-bottom: 2px solid #fff; height: 45px; font-size: 1.3rem; }
         .train-table tbody tr { height: 16.66%; border-bottom: 1px solid #333; }
         .train-table td { padding: 0 5px; vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-        .marquee-footer { background: #212121; color: #ffeb3b; height: 40px; position: relative; overflow: hidden; border-top: 3px solid #ff9800; flex-shrink: 0; }
-        .marquee-footer .marquee-text { position: absolute; white-space: nowrap; left: 100%; height: 40px; line-height: 40px; font-size: 1.3rem; font-weight: bold; }
+        .marquee-footer { background: #212121; color: #ffeb3b; height: 50px; position: relative; overflow: hidden; border-top: 3px solid #ff9800; flex-shrink: 0; }
+        .marquee-footer .marquee-text { position: absolute; white-space: nowrap; left: 100%; height: 50px; line-height: 50px; font-size: 1.4rem; font-weight: bold; }
 
         /* Media Section */
         .media-section { height: 220px; display: flex; gap: 10px; flex-shrink: 0; }
@@ -92,7 +92,7 @@
         .platform-text { color: #FFD700; font-family: Consolas; font-weight: bold; font-size: 1.8rem; }
         .highlight-row { background-color: rgba(255, 255, 255, 0.15) !important; border: 2px solid #ffeb3b !important; }
 
-        @keyframes blink { from { opacity: 1; } to { opacity: 0.6; } }
+        @keyframes dynamic-marquee { from { transform: translateX(var(--start-pos)); } to { transform: translateX(var(--end-pos)); } }
         
         @media (max-width: 900px) {
             /* RWD 保持不變 */
@@ -182,8 +182,9 @@
     <script>
         const TRA_WORKER_URL = "https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev";
         let GLOBAL_STATION_ID = "";
-        const MAX_ROWS = 6;
+        const MAX_ROWS = 6; // 6班車
 
+        // 車種對應與顏色邏輯
         const TRAIN_TYPES = { 
             "1100":"自強", "1101":"太魯閣", "1102":"自強", "1103":"自強", "1107":"普悠瑪", 
             "1108":"自強", "110B":"新自強", "110G":"新自強", "110H":"新自強", "110K":"新自強", "110M":"新自強",
@@ -192,6 +193,7 @@
         };
         const stopsCache = {};
 
+        // 1. 恢復：英文站名更新
         function updateEnglishStationName(stationID) {
             const enElement = document.getElementById('station-en');
             if (enElement && typeof stationDataMap !== 'undefined' && stationDataMap[stationID]) {
@@ -203,10 +205,12 @@
             }
         }
         
+        // 2. 修復：車種名稱與顏色
         function getInfo(t) {
             let name = TRAIN_TYPES[t.TrainTypeID] || t.TrainTypeName?.Zh_tw || '列車';
             let cls = '其他';
             
+            // 顏色與名稱正規化
             if(name.includes('新自強') || name.includes('3000')) { name='新自強'; cls='自強3000'; }
             else if(name.includes('普悠瑪')) { cls='普悠瑪'; }
             else if(name.includes('太魯閣')) { cls='太魯閣'; }
@@ -215,7 +219,8 @@
             else if(name.includes('區間快')) { cls='區間快'; }
             else if(name.includes('區間')) { cls='區間'; }
             else if(name === '列車') { 
-                 cls = '區間';
+                 // 確保當 API 只回傳 "列車" 時，能套用預設顏色
+                 cls = '區間'; 
             }
             
             return { name, cls };
@@ -247,6 +252,7 @@
         }
         setInterval(updateClock, 1000);
 
+        // Media Assets
         async function updateMediaAssets() {
             try {
                 const res = await fetch(`${TRA_WORKER_URL}/api/pids/assets`);
@@ -304,7 +310,7 @@
             }
         }
 
-        // 🔥 修復：使用 transition 而非 CSS keyframes
+        // 🔥 Marquee Animation (使用 transition + 循環)
         function startMarquee(id) {
             const el = document.getElementById(id);
             if(!el) return;
@@ -318,7 +324,8 @@
             const w = el.scrollWidth;
             const cw = container.clientWidth;
             
-            const dur = Math.max(10, (w + cw) * 0.012);
+            // 依長度動態調整速度 (每秒約 80px)
+            const dur = Math.max(8, (w + cw) * 0.012); 
 
             const animate = () => {
                 el.style.transition = `left ${dur}s linear`;
@@ -331,28 +338,34 @@
                 requestAnimationFrame(animate); 
             };
 
+            // 設置循環
             el.ontransitionend = reset;
+
+            // 第一次啟動
             requestAnimationFrame(animate);
         }
 
+        // PIDS Data
         async function updatePids(id) {
             try {
                 let r = await fetch(`${TRA_WORKER_URL}/api/liveboard/station?station=${id}`);
                 let d = await r.json();
                 
+                // Sort
                 d.forEach(t => {
                     let [h,m] = (t.ScheduledDepartureTime||"00:00").split(':').map(Number);
                     t._sort = (h*60+m) + (t.IsTomorrow?1440:0) + (parseInt(t.DelayTime||0));
                 });
                 d.sort((a,b) => a._sort - b._sort);
 
-                let t1 = d.filter(t=>t.Direction==1), t0 = d.filter(t=>t.Direction==0);
+                let t1 = d.filter(t=>String(t.Direction)==='1');
+                let t0 = d.filter(t=>String(t.Direction)==='0');
 
                 renderTable('1', t1); renderTable('0', t0);
                 await updateMarquee('marquee1', t1); 
                 await updateMarquee('marquee0', t0);
 
-            } catch(e) { renderTable('1',[]); renderTable('0',[]); }
+            } catch(e) { renderTable('1',[],''); renderTable('0',[],''); }
         }
 
         function renderTable(dir, list) {
@@ -378,7 +391,7 @@
                 }
 
                 let dest = t.EndingStationName + (t.TripLine==1?' (山)':(t.TripLine==2?' (海)':''));
-                let plat = t.Platform || "";
+                let plat = t.Platform || "-"; // API 可能沒有 Platform 欄位，顯示 -
 
                 let tr = document.createElement('tr');
                 if(i===0) tr.classList.add('highlight-row');
@@ -395,6 +408,7 @@
             for(let i=Math.min(list.length, MAX_ROWS); i<MAX_ROWS; i++) tb.innerHTML+='<tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
         }
 
+        // 底部跑馬燈：恢復所有即時資訊
         async function updateMarquee(elId, list) {
             const el = document.getElementById(elId);
             if(!list || list.length===0) { el.innerHTML = "目前無列車資訊"; startMarquee(elId); return; }
@@ -413,6 +427,7 @@
             let msg = `<span style="color:#ffeb3b;font-weight:bold">${t.TrainNo} 次 ${info.name} 往 ${t.EndingStationName}</span>`;
             msg += `<span style="margin:0 15px;color:#555">|</span>`;
             
+            // 1. 即時位置 (Live Data)
             let liveData = null;
             try {
                 const liveWorkerPromise = fetch(`${TRA_WORKER_URL}/api/live?trainNo=${t.TrainNo}`).then(r=>r.json()).catch(()=>null);
@@ -448,12 +463,15 @@
             msg += `<span style="color:#4fc3f7">${locationText}</span>`;
             msg += `<span style="margin:0 15px;color:#555">|</span>`;
 
+
+            // 2. 預計抵達/開車時間
             const tableTime = t.ScheduledDepartureTime || t.DepartureTime || "00:00";
             const predictedTime = getExpectedTime(tableTime, delay);
             const timeColor = delay > 0 ? '#ff5252' : '#ffffff';
             
             msg += `本站預計：<span style="color:${timeColor};font-weight:bold;font-size:1.1em">${predictedTime} 抵達 (${delay > 0 ? `晚 ${delay} 分` : '準點'})</span>`;
 
+            // 3. 沿途停靠
             let stops = await fetchTrainStops(t.TrainNo);
             if(stops && stops.length>0) {
                 let idx = stops.findIndex(s => String(s.StationID) === GLOBAL_STATION_ID);
