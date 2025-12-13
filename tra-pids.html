@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>台鐵 PIDS (V5.7 最終穩定版 - 無月台)</title>
+    <title>台鐵 PIDS (V5.8 最終排版修復)</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -96,8 +96,26 @@
 
         @keyframes dynamic-marquee { from { transform: translateX(var(--start-pos)); } to { transform: translateX(var(--end-pos)); } }
         
+        /* 手機版/小螢幕排版修正 */
         @media (max-width: 900px) {
-            /* RWD 保持不變 */
+            body { height: auto !important; overflow-y: auto !important; padding: 5px; gap: 5px; }
+            
+            /* 強制上下堆疊 */
+            .pids-section { flex-direction: column; display: flex; height: auto; }
+            .pids-column { margin-bottom: 10px; flex: none; }
+            
+            .media-section { flex-direction: column; height: auto; }
+            .media-box { height: 200px; margin-bottom: 5px; }
+            
+            /* 表格文字調整 */
+            .train-table th, .train-table td { padding: 4px 2px; font-size: 0.8rem; }
+            .train-table th { height: 30px; }
+            .train-table tbody tr { height: 45px; }
+            .train-type-badge { font-size: 0.9rem; min-width: 70px; }
+            
+            .unified-header { height: 60px; padding: 0 10px; }
+            .station-name { font-size: 1.8rem; }
+            .station-sub { font-size: 0.8rem; }
         }
     </style>
     <script src="assets/station-code-mapping.js"></script>
@@ -134,9 +152,9 @@
                         <tr>
                             <th style="width:15%">車次</th>
                             <th style="width:18%">車種</th>
-                            <th style="width:25%">開往</th>
-                            <th style="width:22%">時間</th>
-                            <th style="width:20%">狀態</th>
+                            <th style="width:30%">開往</th>
+                            <th style="width:20%">時間</th>
+                            <th style="width:17%">狀態</th>
                         </tr>
                     </thead>
                     <tbody id="body1"></tbody>
@@ -153,9 +171,9 @@
                         <tr>
                             <th style="width:15%">車次</th>
                             <th style="width:18%">車種</th>
-                            <th style="width:25%">開往</th>
-                            <th style="width:22%">時間</th>
-                            <th style="width:20%">狀態</th>
+                            <th style="width:30%">開往</th>
+                            <th style="width:20%">時間</th>
+                            <th style="width:17%">狀態</th>
                         </tr>
                     </thead>
                     <tbody id="body0"></tbody>
@@ -182,9 +200,8 @@
     <script>
         const TRA_WORKER_URL = "https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev";
         let GLOBAL_STATION_ID = "";
-        const MAX_ROWS = 6; // 6班車
+        const MAX_ROWS = 6;
 
-        // 車種對應與顏色邏輯
         const TRAIN_TYPES = { 
             "1100":"自強", "1101":"太魯閣", "1102":"自強", "1103":"自強", "1107":"普悠瑪", 
             "1108":"自強", "110B":"新自強", "110G":"新自強", "110H":"新自強", "110K":"新自強", "110M":"新自強",
@@ -193,7 +210,6 @@
         };
         const stopsCache = {};
 
-        // 1. 恢復：英文站名更新
         function updateEnglishStationName(stationID) {
             const enElement = document.getElementById('station-en');
             if (enElement && typeof stationDataMap !== 'undefined' && stationDataMap[stationID]) {
@@ -205,12 +221,10 @@
             }
         }
         
-        // 2. 修復：車種名稱與顏色
         function getInfo(t) {
             let name = TRAIN_TYPES[t.TrainTypeID] || t.TrainTypeName?.Zh_tw || '列車';
             let cls = '其他';
             
-            // 顏色與名稱正規化
             if(name.includes('新自強') || name.includes('3000')) { name='新自強'; cls='自強3000'; }
             else if(name.includes('普悠瑪')) { cls='普悠瑪'; }
             else if(name.includes('太魯閣')) { cls='太魯閣'; }
@@ -218,9 +232,7 @@
             else if(name.includes('莒光')) { cls='莒光'; }
             else if(name.includes('區間快')) { cls='區間快'; }
             else if(name.includes('區間')) { cls='區間'; }
-            else if(name === '列車') { 
-                 cls = '區間'; // 預設給個顏色
-            }
+            else if(name === '列車') { cls = '區間'; }
             
             return { name, cls };
         }
@@ -251,7 +263,6 @@
         }
         setInterval(updateClock, 1000);
 
-        // Media Assets
         async function updateMediaAssets() {
             try {
                 const res = await fetch(`${TRA_WORKER_URL}/api/pids/assets`);
@@ -309,7 +320,6 @@
             }
         }
 
-        // Marquee Animation
         function startMarquee(id) {
             const el = document.getElementById(id);
             if(!el) return;
@@ -320,7 +330,6 @@
             
             const w = el.scrollWidth;
             const cw = container.clientWidth;
-            
             const dur = Math.max(8, (w + cw) * 0.012); 
 
             const animate = () => {
@@ -338,13 +347,11 @@
             requestAnimationFrame(animate);
         }
 
-        // PIDS Data
         async function updatePids(id) {
             try {
                 let r = await fetch(`${TRA_WORKER_URL}/api/liveboard/station?station=${id}`);
                 let d = await r.json();
                 
-                // Sort
                 d.forEach(t => {
                     let [h,m] = (t.ScheduledDepartureTime||"00:00").split(':').map(Number);
                     t._sort = (h*60+m) + (t.IsTomorrow?1440:0) + (parseInt(t.DelayTime||0));
@@ -357,7 +364,7 @@
                 await updateMarquee('marquee1', t1); 
                 await updateMarquee('marquee0', t0);
 
-            } catch(e) { renderTable('1',[],''); renderTable('0',[],''); }
+            } catch(e) { renderTable('1',[]); renderTable('0',[]); }
         }
 
         function renderTable(dir, list) {
@@ -382,7 +389,6 @@
                     timeHtml = `<div class="time-delay-container"><span class="original-time">${timeStr}</span><span class="expected-time">${newT}</span></div>`;
                 }
 
-                // 目的地處理
                 let dest = t.EndingStationName;
                 if(t.TripLine==1) dest+=' (山)';
                 else if(t.TripLine==2) dest+=' (海)';
@@ -401,7 +407,6 @@
             for(let i=Math.min(list.length, MAX_ROWS); i<MAX_ROWS; i++) tb.innerHTML+='<tr><td></td><td></td><td></td><td></td><td></td></tr>';
         }
 
-        // 底部跑馬燈：恢復所有即時資訊
         async function updateMarquee(elId, list) {
             const el = document.getElementById(elId);
             if(!list || list.length===0) { el.innerHTML = "目前無列車資訊"; startMarquee(elId); return; }
@@ -420,7 +425,6 @@
             let msg = `<span style="color:#ffeb3b;font-weight:bold">${t.TrainNo} 次 ${info.name} 往 ${t.EndingStationName}</span>`;
             msg += `<span style="margin:0 15px;color:#555">|</span>`;
             
-            // 1. 即時位置 (Live Data)
             let liveData = null;
             try {
                 const liveWorkerPromise = fetch(`${TRA_WORKER_URL}/api/live?trainNo=${t.TrainNo}`).then(r=>r.json()).catch(()=>null);
@@ -456,15 +460,12 @@
             msg += `<span style="color:#4fc3f7">${locationText}</span>`;
             msg += `<span style="margin:0 15px;color:#555">|</span>`;
 
-
-            // 2. 預計抵達/開車時間
             const tableTime = t.ScheduledDepartureTime || t.DepartureTime || "00:00";
             const predictedTime = getExpectedTime(tableTime, delay);
             const timeColor = delay > 0 ? '#ff5252' : '#ffffff';
             
             msg += `本站預計：<span style="color:${timeColor};font-weight:bold;font-size:1.1em">${predictedTime} 抵達 (${delay > 0 ? `晚 ${delay} 分` : '準點'})</span>`;
 
-            // 3. 沿途停靠
             let stops = await fetchTrainStops(t.TrainNo);
             if(stops && stops.length>0) {
                 let idx = stops.findIndex(s => String(s.StationID) === GLOBAL_STATION_ID);
