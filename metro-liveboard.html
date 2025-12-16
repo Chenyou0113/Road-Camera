@@ -1170,30 +1170,51 @@
         }
 
         // ★ 新增：獲取首末班車時刻表資料
+        // ★ 優化版：獲取首末班車時刻表 (防止並發重複請求)
         async function getFirstLastTimetable(systemCode) {
-            try {
-                // 檢查快取是否有效
-                if (firstLastTimetableCache[systemCode] && firstLastTimetableCache[systemCode].expiry > Date.now()) {
-                    console.log(`📋 使用快取的首末班車時刻表: ${systemCode}`);
-                    return firstLastTimetableCache[systemCode].data;
-                }
-
-                console.log(`📡 正在下載首末班車時刻表: ${systemCode}`);
-                const endpoint = `/v2/Rail/Metro/FirstLastTimetable/${systemCode}?$format=JSON`;
-                const data = await tdxApi.fetch(endpoint);
-                
-                // 快取資料
-                firstLastTimetableCache[systemCode] = {
-                    data: Array.isArray(data) ? data : [],
-                    expiry: Date.now() + FIRST_LAST_TIMETABLE_TTL
-                };
-                
-                console.log(`✅ 已取得首末班車時刻表: ${systemCode} (${firstLastTimetableCache[systemCode].data.length} 條路線)`);
+            // 1. 檢查是否有有效快取
+            if (firstLastTimetableCache[systemCode] && firstLastTimetableCache[systemCode].expiry > Date.now()) {
+                // console.log(`📋 使用快取的首末班車時刻表: ${systemCode}`); // 減少 Log 雜訊
                 return firstLastTimetableCache[systemCode].data;
-            } catch (error) {
-                console.warn(`⚠️ 無法取得首末班車時刻表 ${systemCode}:`, error);
-                return [];
             }
+
+            // 2. ✨ 關鍵修正：檢查是否有「正在進行中」的請求
+            // 如果已經有請求在跑，直接回傳那個 Promise，不要發新請求
+            if (firstLastTimetableCache[systemCode] && firstLastTimetableCache[systemCode].promise) {
+                return firstLastTimetableCache[systemCode].promise;
+            }
+
+            // 3. 發起新請求並儲存 Promise
+            const fetchPromise = (async () => {
+                try {
+                    console.log(`📡 下載首末班車時刻表: ${systemCode}`);
+                    const endpoint = `/v2/Rail/Metro/FirstLastTimetable/${systemCode}?$format=JSON`;
+                    const data = await tdxApi.fetch(endpoint);
+                    
+                    // 請求成功，寫入資料快取
+                    firstLastTimetableCache[systemCode] = {
+                        data: Array.isArray(data) ? data : [],
+                        expiry: Date.now() + FIRST_LAST_TIMETABLE_TTL,
+                        promise: null // 清除 Promise 標記
+                    };
+                    
+                    console.log(`✅ 已取得首末班車時刻表: ${systemCode} (${firstLastTimetableCache[systemCode].data.length} 條路線)`);
+                    return firstLastTimetableCache[systemCode].data;
+                } catch (error) {
+                    console.warn(`⚠️ 無法取得首末班車時刻表 ${systemCode}:`, error);
+                    // 失敗時清除快取，讓下次可以重試
+                    if (firstLastTimetableCache[systemCode]) {
+                        firstLastTimetableCache[systemCode].promise = null;
+                    }
+                    return [];
+                }
+            })();
+
+            // 初始化快取物件並儲存 Promise
+            if (!firstLastTimetableCache[systemCode]) firstLastTimetableCache[systemCode] = {};
+            firstLastTimetableCache[systemCode].promise = fetchPromise;
+
+            return fetchPromise;
         }
 
         // ★ 新增：判斷列車是否已超過末班車時間
@@ -1758,6 +1779,9 @@
                 updateUpdateTime();
                 updateTrainStats(finalDisplayRows);
                 
+                // 轉乘資訊顯示邏輯
+                // 注：針對 TYMC A8 等同線轉乘站，API 容易 404（正常現象），
+                // 原因是 TDX StationTransfer API 主要用於跨線/跨系統轉乘查詢
                 if (!allStationsMode && currentStationId) {
                     displayTransferInfo(currentStationId, currentSystem);
                 }
