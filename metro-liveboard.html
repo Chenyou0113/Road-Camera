@@ -1098,6 +1098,9 @@
     <script src="assets/navbar.js"></script>
     <script src="assets/dark-mode.js"></script>
     <script>
+        // 🔹 設定你的 Worker 網址
+        const WORKER_URL = 'https://metro-api-worker.xiaoyouwu5-fd3.workers.dev';
+
         const metroSystems = {
             TRTC: { name: '台北捷運', code: 'TRTC' },
             KRTC: { name: '高雄捷運', code: 'KRTC' },
@@ -1169,55 +1172,23 @@
             updateMarquee();
         }
 
-        // ★ 新增：獲取首末班車時刻表資料
-        // ★ 優化版：獲取首末班車時刻表 (防止並發重複請求)
+        // ✅ 修改 1: 改用 Worker 取得首末班車 (讀取 D1)
         async function getFirstLastTimetable(systemCode) {
-            // 1. 檢查是否有有效快取
-            if (firstLastTimetableCache[systemCode] && firstLastTimetableCache[systemCode].expiry > Date.now()) {
-                // console.log(`📋 使用快取的首末班車時刻表: ${systemCode}`); // 減少 Log 雜訊
-                return firstLastTimetableCache[systemCode].data;
+            if (firstLastTimetableCache[systemCode]) return firstLastTimetableCache[systemCode];
+
+            try {
+                // 指向你的 Worker
+                const response = await fetch(`${WORKER_URL}/api/timetable?system=${systemCode}`);
+                const data = await response.json();
+                
+                firstLastTimetableCache[systemCode] = Array.isArray(data) ? data : [];
+                return firstLastTimetableCache[systemCode];
+            } catch (error) {
+                console.warn(`⚠️ 無法取得首末班車時刻表 ${systemCode}:`, error);
+                return [];
             }
-
-            // 2. ✨ 關鍵修正：檢查是否有「正在進行中」的請求
-            // 如果已經有請求在跑，直接回傳那個 Promise，不要發新請求
-            if (firstLastTimetableCache[systemCode] && firstLastTimetableCache[systemCode].promise) {
-                return firstLastTimetableCache[systemCode].promise;
-            }
-
-            // 3. 發起新請求並儲存 Promise
-            const fetchPromise = (async () => {
-                try {
-                    console.log(`📡 下載首末班車時刻表: ${systemCode}`);
-                    const endpoint = `/v2/Rail/Metro/FirstLastTimetable/${systemCode}?$format=JSON`;
-                    const data = await tdxApi.fetch(endpoint);
-                    
-                    // 請求成功，寫入資料快取
-                    firstLastTimetableCache[systemCode] = {
-                        data: Array.isArray(data) ? data : [],
-                        expiry: Date.now() + FIRST_LAST_TIMETABLE_TTL,
-                        promise: null // 清除 Promise 標記
-                    };
-                    
-                    console.log(`✅ 已取得首末班車時刻表: ${systemCode} (${firstLastTimetableCache[systemCode].data.length} 條路線)`);
-                    return firstLastTimetableCache[systemCode].data;
-                } catch (error) {
-                    console.warn(`⚠️ 無法取得首末班車時刻表 ${systemCode}:`, error);
-                    // 失敗時清除快取，讓下次可以重試
-                    if (firstLastTimetableCache[systemCode]) {
-                        firstLastTimetableCache[systemCode].promise = null;
-                    }
-                    return [];
-                }
-            })();
-
-            // 初始化快取物件並儲存 Promise
-            if (!firstLastTimetableCache[systemCode]) firstLastTimetableCache[systemCode] = {};
-            firstLastTimetableCache[systemCode].promise = fetchPromise;
-
-            return fetchPromise;
         }
 
-        // ★ 新增：判斷列車是否已超過末班車時間
         async function checkIfPassedLastTrain(lineID, systemCode, currentTime = new Date()) {
             try {
                 const timetables = await getFirstLastTimetable(systemCode);
@@ -1270,100 +1241,72 @@
 
         // ★ 新增：取得路線末班車時間顯示文字
         // 載入系統資料 (強固版：確保路線名稱一定會被補上)
+        // ✅ 修改 2: 改用 Worker 取得車站列表 (讀取 D1)
         async function loadSystemData(systemCode) {
             const lineSelect = document.getElementById('lineSelect');
             const stationSelect = document.getElementById('stationSelect');
             
-            // 初始化 UI
             lineSelect.innerHTML = '<option value="">載入中...</option>';
             stationSelect.innerHTML = '<option value="">請先選擇路線</option>';
             document.getElementById('stationCount').textContent = '-';
             
             let rawData = [];
 
-            // 1. 嘗試從快取讀取
-            if (stationDataCache[systemCode] && stationDataCache[systemCode].length > 0) {
+            if (stationDataCache[systemCode]) {
                 rawData = stationDataCache[systemCode];
             } else {
-                // 2. 如果快取沒有，才從 API 抓
                 try {
-                    // 限制請求頻率
-                    const now = Date.now();
-                    if (now - lastApiRequest < 1000) {
-                        await new Promise(r => setTimeout(r, 1000));
-                    }
-                    lastApiRequest = Date.now();
-
-                    const stationEndpoint = `/v2/Rail/Metro/Station/${systemCode}?$format=JSON&$top=1000`;
-                    console.log(`📡 下載車站資料: ${systemCode}`);
-                    const apiResponse = await tdxApi.fetch(stationEndpoint);
+                    console.log(`📡 從 Worker 下載車站資料: ${systemCode}`);
+                    // 指向你的 Worker
+                    const response = await fetch(`${WORKER_URL}/api/stations?system=${systemCode}`);
                     
-                    if (Array.isArray(apiResponse) && apiResponse.length > 0) {
-                        rawData = apiResponse;
-                    } else {
-                        throw new Error("API 回傳空資料");
-                    }
+                    if (!response.ok) throw new Error('Worker 回傳錯誤');
+                    rawData = await response.json();
+                    
+                    if (!Array.isArray(rawData)) throw new Error("資料格式錯誤");
                 } catch (error) {
                     console.error(`載入${systemCode}失敗:`, error);
-                    lineSelect.innerHTML = '<option value="">載入失敗 (請重試)</option>';
-                    delete stationDataCache[systemCode]; // 清除壞快取
+                    lineSelect.innerHTML = '<option value="">載入失敗</option>';
                     return;
                 }
             }
 
-            // ★ 3. 資料修補 (Patching) - 每次都檢查，確保 LineName 存在
-            // 這段邏輯確保即使是舊快取，也會被這裡修好
+            // 資料修補 (保持不變)
             const patchedData = rawData.map(item => {
                 let lineName = item.LineName?.Zh_tw;
                 const sID = item.StationID || '';
                 const lID = item.LineID || '';
 
-                // 只有當名稱不存在或未知時才修補
                 if (!lineName || lineName === '未知') {
-                    // 1. 台北捷運 & 桃園捷運 (比對代碼)
                     const lineCodeMap = {
                         'BL': '板南線', 'BR': '文湖線', 'R': '淡水信義線',
                         'G': '松山新店線', 'O': '中和新蘆線', 'Y': '環狀線',
                         'A': '機場線'
                     };
-                    
-                    // 先看 LineID
                     for (const code in lineCodeMap) {
                         if (lID === code) { lineName = lineCodeMap[code]; break; }
                     }
-                    // 再看 StationID 前綴 (例如 BL01)
                     if (!lineName) {
                         for (const code in lineCodeMap) {
                             if (sID.startsWith(code)) { lineName = lineCodeMap[code]; break; }
                         }
                     }
                 }
-
-                // 2. 高雄捷運 (強制修補)
                 if (systemCode === 'KRTC') {
                     if (sID.startsWith('R')) lineName = '紅線';
                     if (sID.startsWith('O')) lineName = '橘線';
                 }
-                
-                // 3. 高雄輕軌
-                if (systemCode === 'KLRT') {
-                    lineName = '高雄輕軌';
-                }
+                if (systemCode === 'KLRT') lineName = '高雄輕軌';
 
-                // 寫回物件
                 if (lineName) {
                     if (!item.LineName) item.LineName = {};
                     item.LineName.Zh_tw = lineName;
                 }
-                
                 return item;
             });
 
-            // 4. 更新全域變數與快取
             allStationData = patchedData;
-            stationDataCache[systemCode] = patchedData; // 更新為修好的資料
-
-            // 5. 渲染 (這時候一定會有路線了)
+            stationDataCache[systemCode] = patchedData;
             renderLineSelect(allStationData, systemCode);
         }
 
@@ -1476,17 +1419,11 @@
         }
 
         // 查詢看板 (終極穩定版：一次拉取全系統資料，確保不漏接)
+        // ✅ 修改 3: 改用 Worker 查詢看板 (KV 快取)
         async function queryLiveboard() {
-            // ✅ 節流控制 (避免快速連發請求)
             const now = Date.now();
-            if (typeof window.lastApiCall === 'undefined') {
-                window.lastApiCall = 0;
-            }
-            
-            if (now - window.lastApiCall < 2000) {
-                console.warn('⏱️ 請求太頻繁，請稍候');
-                return;
-            }
+            if (typeof window.lastApiCall === 'undefined') window.lastApiCall = 0;
+            if (now - window.lastApiCall < 1000) return; // 稍微放寬限制，因為 Worker 很快
             window.lastApiCall = now;
 
             const stationSelect = document.getElementById('stationSelect');
@@ -1496,18 +1433,13 @@
                 return;
             }
 
-            // 只在手動查詢時顯示載入中 (自動刷新不顯示)
             const isAutoRefresh = (arguments.callee.isAutoRefresh === true);
             if (!isAutoRefresh) {
-                const tableBody = document.getElementById('trainTableBody');
-                tableBody.innerHTML = `
-                    <tr>
-                        <td colspan="7" style="text-align: center; padding: 40px;">
-                            <i class="fas fa-spinner fa-spin" style="font-size: 2rem; color: #00bcd4;"></i>
-                            <p style="margin-top: 10px; color: #666;">正在更新即時資訊...</p>
-                        </td>
-                    </tr>
-                `;
+                document.getElementById('trainTableBody').innerHTML = `
+                    <tr><td colspan="7" style="text-align: center; padding: 40px;">
+                        <i class="fas fa-spinner fa-spin" style="font-size: 2rem; color: #00bcd4;"></i>
+                        <p style="margin-top: 10px; color: #666;">正在更新即時資訊...</p>
+                    </td></tr>`;
             }
 
             if (allStationsMode) {
@@ -1518,51 +1450,45 @@
                 currentStationName = stationSelect.options[stationSelect.selectedIndex].text;
             }
 
-            // 策略：不再猜測 LineID，直接抓取該系統所有列車資料 (Top 3000 確保抓完)
-            // 這樣可以避免 API 篩選機制的各種潛在問題 (如 LineID 不符、單站無資料回傳空陣列等)
-            const endpoint = `/v2/Rail/Metro/LiveBoard/${currentSystem}?$format=JSON&$top=3000`;
+            // 判斷 API 類型
+            let type = 'LiveBoard';
+            if (currentSystem === 'KLRT') type = 'LivePosition';
+
+            // 指向 Worker
+            const endpoint = `${WORKER_URL}/api/liveboard?system=${currentSystem}&type=${type}`;
 
             try {
-                console.log(`🔍 全系統查詢: ${currentSystem}, URL: ${endpoint}`);
-                const newData = await tdxApi.fetch(endpoint);
+                console.log(`🔍 查詢 Worker: ${endpoint}`);
+                const response = await fetch(endpoint);
+                if (!response.ok) throw new Error('API 請求失敗');
                 
-                // ✅ 驗證 API 回應有效性 (關鍵防護)
-                if (!newData) {
-                    throw new Error('API 回應為空');
+                const newData = await response.json();
+                
+                // 相容性處理：如果 Worker 回傳的是包在物件裡的陣列 (例如 LivePositions)
+                if (newData.LivePositions) {
+                    currentLiveboardData = newData.LivePositions;
+                } else {
+                    currentLiveboardData = newData || [];
                 }
-                if (!Array.isArray(newData)) {
-                    throw new Error(`API 回應不是陣列: ${typeof newData}`);
-                }
                 
-                console.log(`✅ API 回應總筆數: ${newData.length}`);
-                currentLiveboardData = newData;
-                
-                // 顯示資料
+                console.log(`✅ Worker 回應資料筆數: ${currentLiveboardData.length}`);
                 displayLiveboard();
 
             } catch (error) {
                 console.error("查詢失敗:", error);
-                const tableBody = document.getElementById('trainTableBody');
-                tableBody.innerHTML = `
-                    <tr>
-                        <td colspan="7" class="no-data">
-                            <i class="fas fa-exclamation-triangle" style="color: #ff9800;"></i>
-                            <p>讀取資料失敗，請檢查網路或稍後再試</p>
-                            <p style="font-size:0.8rem; color:#999">${error.message}</p>
-                        </td>
-                    </tr>
-                `;
+                document.getElementById('trainTableBody').innerHTML = `
+                    <tr><td colspan="7" class="no-data">
+                        <i class="fas fa-exclamation-triangle" style="color: #ff9800;"></i>
+                        <p>讀取資料失敗，請稍後再試</p>
+                    </td></tr>`;
             }
             
-            // 重設自動刷新 (30秒)
-            if (window.autoRefreshInterval) {
-                clearInterval(window.autoRefreshInterval);
-            }
+            if (window.autoRefreshInterval) clearInterval(window.autoRefreshInterval);
             window.autoRefreshInterval = setInterval(() => {
                 const autoFunc = queryLiveboard.bind(null);
                 autoFunc.isAutoRefresh = true;
                 autoFunc();
-            }, 30000);
+            }, 30000); // 30秒更新一次 (Worker 有 15秒快取，所以這樣很剛好)
         }
 
         // 輔助函式：計算到站時刻 (輸入秒數，回傳 HH:mm)
@@ -1815,44 +1741,22 @@
          * 獲取車站轉乘資訊 (修正版)
          * 使用 TDX API: /v2/Rail/Metro/StationTransfer/{OperatorID}/{StationID}
          */
+        // ✅ 修改 4: 改用 Worker 取得轉乘資訊 (讀取 D1，不會 404)
         async function getTransferInfo(stationID, systemCode) {
-            // 快取鑰匙
             const cacheKey = `${systemCode}_${stationID}`;
-            
-            // 檢查快取是否仍有效
-            if (stationTransferCache[cacheKey]) {
-                const cached = stationTransferCache[cacheKey];
-                if (Date.now() - cached.timestamp < STATION_TRANSFER_TTL) {
-                    console.log(`📦 使用快取的轉乘資訊: ${cacheKey}`);
-                    return cached.data;
-                }
-            }
+            if (stationTransferCache[cacheKey]) return stationTransferCache[cacheKey];
             
             try {
-                console.log(`🔍 正在獲取轉乘資訊: ${systemCode}/${stationID}`);
-                const endpoint = `/v2/Rail/Metro/StationTransfer/${systemCode}/${stationID}?$format=JSON`;
-                const data = await tdxApi.fetch(endpoint);
+                // 指向 Worker
+                const response = await fetch(`${WORKER_URL}/api/transfer?system=${systemCode}&station=${stationID}`);
+                const data = await response.json();
                 
-                // 儲存到快取
-                stationTransferCache[cacheKey] = {
-                    data: data,
-                    timestamp: Date.now()
-                };
-                
+                stationTransferCache[cacheKey] = data; // Worker 若無資料會回傳 []，這裡直接存
                 return data;
             } catch (error) {
-                // ✅ 改善錯誤處理：404 代表無轉乘資訊，不用警告
-                if (error.message && error.message.includes('404')) {
-                    console.log(`ℹ️ 該車站無轉乘資訊或不支援查詢 (${cacheKey})`);
-                    // 快取空結果，避免重複請求
-                    stationTransferCache[cacheKey] = {
-                        data: [],
-                        timestamp: Date.now()
-                    };
-                } else {
-                    console.warn(`⚠️ 無法獲取轉乘資訊 ${cacheKey}:`, error.message);
-                }
                 return [];
+            }
+        }
             }
         }
 
@@ -1968,34 +1872,15 @@
             }
         }
 
-        // 載入捷運系統公告 (穩定版：改為依序載入，避免瞬間 429)
+        // 載入捷運系統公告 (改為使用 Worker)
         async function loadMetroNews() {
             const systems = ['KRTC', 'TYMC', 'KLRT'];
             
-            if (typeof tdxApi === 'undefined') {
-                systems.forEach(sys => {
-                    const el = document.getElementById(`newsContainer-${sys}`);
-                    if(el) el.innerHTML = '<p class="no-data">無法載入營運通阻（API 未就緒）</p>';
-                });
-                return;
-            }
-            
-            // ★ 改用 Alert API (營運通阻)，使用 for...of 迴圈 + await 排隊執行
+            // ★ 改用 Worker 取得營運通阻
             for (const systemCode of systems) {
                 try {
-                    // 每次請求前暫停 300ms，給 API 喘息空間
-                    await new Promise(r => setTimeout(r, 300));
-
-                    // ★ 改為 Alert API 端點
-                    const endpoint = `/v2/Rail/Metro/Alert/${systemCode}?$format=JSON&$top=5&$orderby=PublishTime%20desc`;
-                    const apiResponse = await tdxApi.fetch(endpoint);
-                    
-                    let alertData = [];
-                    if (apiResponse && apiResponse.Alerts && Array.isArray(apiResponse.Alerts)) {
-                        alertData = apiResponse.Alerts;
-                    } else if (Array.isArray(apiResponse)) {
-                        alertData = apiResponse;
-                    }
+                    const response = await fetch(`${WORKER_URL}/api/liveboard?system=${systemCode}&type=Alert`);
+                    const alertData = await response.json();
                     
                     const container = document.getElementById(`newsContainer-${systemCode}`);
                     if (!container) continue;
@@ -2007,7 +1892,6 @@
                     
                     let html = '';
                     alertData.slice(0, 5).forEach((alert) => {
-                        // ★ 改為使用 Alert 資料欄位
                         const updateTime = alert.UpdateTime ? new Date(alert.UpdateTime).toLocaleString('zh-TW', {
                             month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
                         }) : '未知時間';
@@ -2066,7 +1950,7 @@
 
         // ============ ✨ 新增：智慧跑馬燈控制邏輯 ============
 
-        // 1. 載入營運通阻 (Alert)
+        // 1. 載入營運通阻 (Alert) - 改用 Worker
         async function loadMetroAlerts() {
             try {
                 // 預設訊息
@@ -2074,16 +1958,11 @@
                 
                 // 如果有選定系統，嘗試抓取真實公告
                 if (currentSystem) {
-                    const endpoint = `/v2/Rail/Metro/Alert/${currentSystem}?$format=JSON`;
-                    const data = await tdxApi.fetch(endpoint);
-                    
-                    // 解析資料結構
-                    let alertData = [];
-                    if (data && data.Alerts) alertData = data.Alerts;
-                    else if (Array.isArray(data)) alertData = data;
+                    const response = await fetch(`${WORKER_URL}/api/liveboard?system=${currentSystem}&type=Alert`);
+                    const alertData = await response.json();
 
-                    if (alertData.length > 0) {
-                        alerts = alertData.map(a => `【${a.Title}】${a.Description}`);
+                    if (alertData && alertData.length > 0) {
+                        alerts = alertData.map(a => `【${a.Title || a.AlertTitle}】${a.Description}`);
                     }
                 }
                 
