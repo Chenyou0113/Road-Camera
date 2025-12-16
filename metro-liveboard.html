@@ -225,6 +225,48 @@
         .status-badge.no-service { background: #f44336; color: white; }
         .status-badge.closed { background: #666; color: white; }
         
+        /* === ✨ 新增：車種標籤樣式 (針對桃捷) === */
+        .train-type-badge {
+            display: inline-block;
+            padding: 2px 8px; /* 稍微加寬一點 */
+            border-radius: 12px; /* 改圓一點比較可愛 */
+            font-size: 0.75rem;
+            margin-left: 6px;
+            vertical-align: middle;
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        /* 直達車：淡粉色 (因為背景淡，字體改深色比較清楚) */
+        .type-express { 
+            background-color: #ffc1e3; /* 淡粉色 */
+            color: #c2185b;           /* 深粉紅字 */
+            border: 1px solid #f8bbd0;
+        }
+        
+        /* 普通車：藍色 */
+        .type-commuter { 
+            background-color: #1976d2; /* 鮮明藍 */
+            color: white;
+        }
+        
+        /* 其他/加班車：灰色 */
+        .type-other { 
+            background-color: #757575; 
+            color: white;
+        }
+
+        /* 深色模式微調 */
+        body.dark-mode .type-express { 
+            background-color: #f48fb1; /* 深色模式下稍微深一點的粉紅 */
+            color: #880e4f; 
+            border-color: #f06292;
+        }
+        body.dark-mode .type-commuter { 
+            background-color: #42a5f5; 
+            color: #0d47a1;
+        }
+        
         .direction-badge {
             display: inline-flex;
             align-items: center;
@@ -1502,7 +1544,19 @@
             }, 30000);
         }
 
-        // 顯示看板 (增強除錯訊息版)
+        // 輔助函式：將秒數轉換為 HH:mm 格式
+        function formatArrivalTime(seconds) {
+            const now = new Date();
+            // 當前時間 + 預估秒數
+            const arrival = new Date(now.getTime() + seconds * 1000);
+            return arrival.toLocaleTimeString('zh-TW', { 
+                hour: '2-digit', 
+                minute: '2-digit', 
+                hour12: false 
+            });
+        }
+
+        // 顯示看板 (顯示最近4班：雙向各2班 + 顯示時刻 HH:mm)
         function displayLiveboard() {
             const container = document.getElementById('liveboardContainer');
             const systemNameEl = document.getElementById('systemName');
@@ -1515,25 +1569,19 @@
             
             let stationTrains = [];
             
+            // 取得原始資料
             if (allStationsMode) {
                 stationTrains = currentLiveboardData;
             } else {
-                // 在本地端進行篩選，比對 StationID
                 stationTrains = currentLiveboardData.filter(item => item.StationID === currentStationId);
             }
             
-            console.log(`📊 篩選後車站 ${currentStationId} 資料筆數: ${stationTrains.length}`);
-
-            // 如果沒有資料，顯示詳細狀態
+            // 無資料處理
             if (stationTrains.length === 0) {
                 const totalInSystem = currentLiveboardData.length;
-                let extraMsg = '';
-                
-                if (totalInSystem === 0) {
-                    extraMsg = '(API 回傳 0 筆資料，可能是系統收班或維護中)';
-                } else {
-                    extraMsg = `(系統內有 ${totalInSystem} 筆其他車站資料，但此站無更新)`;
-                }
+                let extraMsg = totalInSystem === 0 ? 
+                    '(API 回傳 0 筆資料，可能是系統收班或維護中)' : 
+                    `(系統內有 ${totalInSystem} 筆其他車站資料，但此站無更新)`;
 
                 tableBody.innerHTML = `
                     <tr>
@@ -1541,8 +1589,7 @@
                             <i class="fas fa-subway" style="color: #e0e0e0;"></i>
                             <p>目前該車站沒有即時列車資訊</p>
                             <p style="font-size: 0.85rem; margin-top: 10px; color:#999;">
-                                StationID: ${currentStationId}<br>
-                                ${extraMsg}
+                                StationID: ${currentStationId}<br>${extraMsg}
                             </p>
                         </td>
                     </tr>
@@ -1551,41 +1598,47 @@
                 return;
             }
 
-            // --- 以下為資料處理與 HTML 生成邏輯 ---
-            let trainRows = [];
+            // --- 1. 解析所有列車資料 ---
+            let allParsedTrains = [];
             stationTrains.forEach(item => {
-                // 🔍 調試：印出 API 回應結構 (前 3 筆)
-                if (trainRows.length < 3) {
-                    console.log(`🔍 API 回應項目:`, item);
-                    console.log(`   EstimateTime: ${item.EstimateTime}, Estimates: ${JSON.stringify(item.Estimates?.slice(0, 1))}`);
-                }
-                
-                // ★ 單位轉換函式：將秒轉換成分鐘
-
-                
-                // 1. 處理 Estimates 陣列
                 const estimates = item.Estimates || item.estimates || item.NextBuses || item.Buses || [];
+                
                 if (Array.isArray(estimates) && estimates.length > 0) {
                     estimates.forEach(estimate => {
                         const directionText = estimate.TripHeadSign || estimate.Direction || '';
                         const destName = estimate.DestinationStationName?.Zh_tw || estimate.DestinationStationName || '未知';
                         
-                        trainRows.push({
+                        // 取得方向代碼 (0或1)，如果沒有就用終點站名分組
+                        // TDX Metro 通常有 Direction (0:去程, 1:返程)
+                        const dirCode = estimate.Direction !== undefined ? estimate.Direction : destName;
+
+                        // 取得車種 (針對桃捷)
+                        let trainTypeName = estimate.TrainTypeName?.Zh_tw; 
+                        if (!trainTypeName && currentSystem === 'TYMC') {
+                            const typeCode = parseInt(estimate.TrainType, 10);
+                            if (typeCode === 1 || estimate.TrainType === '1') trainTypeName = '普通車';
+                            if (typeCode === 2 || estimate.TrainType === '2') trainTypeName = '直達車';
+                        }
+
+                        allParsedTrains.push({
                             stationName: item.StationName?.Zh_tw || currentStationName,
                             lineName: item.LineName?.Zh_tw || item.LineID,
                             lineID: item.LineID || '',
                             tripHeadSign: directionText,
                             destinationName: destName,
-                            estimateTime: estimate.EstimateTime || 0,
+                            estimateTime: estimate.EstimateTime || 0, // 秒
                             serviceStatus: 0,
-                            isPassedLastTrain: false // ★ 預設為 false，在異步檢查後更新
+                            trainType: trainTypeName,
+                            directionCode: dirCode, // 用於分組
+                            isPassedLastTrain: false
                         });
                     });
                 } 
-                // 2. 處理扁平結構 (KLRT 等)
-                else if (item.EstimateTime !== undefined || item.DestinationStationName) {
-                     const destName = item.DestinationStationName?.Zh_tw || item.DestinationStationName || item.TripHeadSign || '未知';
-                     trainRows.push({
+                // 處理無 Estimates 的結構 (如輕軌有時會直接給)
+                else if (item.EstimateTime !== undefined) {
+                     // 略... (輕軌邏輯維持簡單)
+                     const destName = item.DestinationStationName?.Zh_tw || '未知';
+                     allParsedTrains.push({
                         stationName: item.StationName?.Zh_tw || currentStationName,
                         lineName: item.LineName?.Zh_tw || item.LineID,
                         lineID: item.LineID || '',
@@ -1593,46 +1646,88 @@
                         destinationName: destName,
                         estimateTime: item.EstimateTime || 0,
                         serviceStatus: item.ServiceStatus,
-                        isPassedLastTrain: false // ★ 預設為 false，在異步檢查後更新
+                        trainType: null,
+                        directionCode: item.Direction || destName,
+                        isPassedLastTrain: false
                     });
                 }
             });
-            
-            // 排序
-            trainRows.sort((a, b) => a.estimateTime - b.estimateTime);
 
-            // 生成 HTML (只顯示剩餘分鐘版)
+            // --- 2. 篩選邏輯：雙向各取最近 2 班 ---
+            
+            // 先將所有車依照時間排序
+            allParsedTrains.sort((a, b) => a.estimateTime - b.estimateTime);
+
+            // 依方向分組
+            const groups = {};
+            allParsedTrains.forEach(train => {
+                const key = train.directionCode;
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(train);
+            });
+
+            // 從每一組取出前 2 班，合併後再依時間排序
+            let finalDisplayRows = [];
+            Object.values(groups).forEach(groupTrains => {
+                // 取出該方向最近的 2 班
+                finalDisplayRows = finalDisplayRows.concat(groupTrains.slice(0, 2));
+            });
+
+            // 最後顯示時，再次依照時間排序 (讓時間近的在最上面，不分方向)
+            finalDisplayRows.sort((a, b) => a.estimateTime - b.estimateTime);
+
+
+            // --- 3. HTML 生成 ---
             (async () => {
-                const rows = await Promise.all(trainRows.map(async (train) => {
+                const rows = await Promise.all(finalDisplayRows.map(async (train) => {
                     const lineColor = lineColors[train.lineID] || '#666';
-                    let timeDisplay;
-                    const minutes = train.estimateTime;
                     
-                    // ★ 核心修改：只顯示分鐘數
-                    if (minutes === undefined || minutes === null) {
-                        timeDisplay = `<span style="color: #999; font-size: 1.1rem;">-</span>`;
-                    } else if (minutes <= 1) {
-                        // 0 或 1 分鐘 -> 進站中 (紅色閃爍)
-                        timeDisplay = `<span style="color: #d32f2f; font-weight: bold; font-size: 1rem; animation: blink 1s infinite alternate;">● 進站中</span>`;
-                    } else {
-                        // 大於 1 分鐘 -> 數字 + 分
-                        timeDisplay = `<span style="font-size: 1.2rem; font-weight: bold; color: var(--text-primary, #333);">${minutes}</span> <span style="font-size: 0.9rem; color: #666;">分</span>`;
+                    // 車種標籤 (粉色/藍色)
+                    let trainTypeBadge = '';
+                    if (train.trainType) {
+                        let typeClass = 'type-other';
+                        let typeName = train.trainType;
+                        if (typeName.includes('直達')) typeClass = 'type-express';
+                        else if (typeName.includes('普通')) typeClass = 'type-commuter';
+                        
+                        if (currentSystem === 'TYMC' || (typeName !== '普通車' && typeName !== '未知')) {
+                             trainTypeBadge = `<span class="train-type-badge ${typeClass}">${typeName}</span>`;
+                        }
                     }
 
-                    // 檢查末班車 (如果已過營運時間，覆蓋上面的顯示)
-                    let statusClass = 'waiting';
-                    let statusText = '行駛中';
+                    // ✨ 時間顯示邏輯修改：顯示 HH:mm
+                    let timeDisplay;
+                    const seconds = train.estimateTime;
+                    const arrivalTimeStr = formatArrivalTime(seconds); // 轉成 14:30 格式
                     
+                    // 狀態文字
+                    let statusClass = 'waiting';
+                    let statusText = '準點'; // 或 行駛中
+
+                    if (seconds === undefined || seconds === null) {
+                        timeDisplay = `<span style="color: #999;">-</span>`;
+                    } else if (seconds <= 30) { 
+                        // 30秒內：進站中 (優先顯示狀態)
+                        timeDisplay = `<span style="color: #d32f2f; font-weight: bold; font-size: 1.1rem; animation: blink 1s infinite alternate;">● 進站中</span>`;
+                        statusClass = 'arriving';
+                        statusText = '進站中';
+                    } else if (seconds <= 90) {
+                        // 1分半內：即將進站
+                         timeDisplay = `<span style="color: #f57f17; font-weight: bold; font-size: 1.1rem;">即將進站</span>`;
+                         statusClass = 'arriving';
+                         statusText = '即將進站';
+                    } else {
+                        // 一般情況：顯示時刻 (14:35)
+                        timeDisplay = `<span style="font-size: 1.3rem; font-weight: bold; color: var(--text-primary, #333); letter-spacing: 1px;">${arrivalTimeStr}</span>`;
+                    }
+
+                    // 末班車檢查
                     if (train.isPassedLastTrain) {
                         statusClass = 'closed';
                         statusText = '已收班';
                         timeDisplay = `<span style="color: #999; font-size: 0.9rem;">已過末班</span>`;
-                    } else if (minutes <= 1) {
-                        statusClass = 'arriving';
-                        statusText = '即將到站';
                     }
 
-                    // 非同步檢查末班車 (避免阻塞渲染)
                     try {
                         const isPassed = await checkIfPassedLastTrain(train.lineID, currentSystem);
                         if (isPassed) {
@@ -1645,7 +1740,10 @@
                     return `
                         <tr>
                             <td>${train.stationName}</td>
-                            <td><span class="line-badge" style="background: ${lineColor};">${train.lineName}</span></td>
+                            <td>
+                                <span class="line-badge" style="background: ${lineColor};">${train.lineName}</span>
+                                ${trainTypeBadge}
+                            </td>
                             <td><span class="direction-badge"><i class="fas fa-arrow-right"></i> ${train.tripHeadSign}</span></td>
                             <td>${train.destinationName}</td>
                             <td>${timeDisplay}</td>
@@ -1655,9 +1753,15 @@
                     `;
                 }));
 
-                tableBody.innerHTML = rows.join('');
+                // 如果完全沒有符合的車次 (篩選後變空)
+                if (rows.length === 0) {
+                     tableBody.innerHTML = `<tr><td colspan="7" class="no-data"><p>目前無即時發車資訊</p></td></tr>`;
+                } else {
+                    tableBody.innerHTML = rows.join('');
+                }
+                
                 updateUpdateTime();
-                updateTrainStats(trainRows);
+                updateTrainStats(finalDisplayRows); // 更新統計數字為篩選後的數量
                 
                 if (!allStationsMode && currentStationId) {
                     displayTransferInfo(currentStationId, currentSystem);
