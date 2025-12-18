@@ -18,8 +18,8 @@ class TrainLiveboardTransformer {
         '1': { name: '普通自強', badge: '自', color: '#E81B23', bgColor: '#FFE5E8' },
         '2': { name: '普通自強', badge: '自', color: '#E81B23', bgColor: '#FFE5E8' },
         '3': { name: '普通自強', badge: '自', color: '#E81B23', bgColor: '#FFE5E8' },
-        // 自強3000（代碼 8 為備用）
-        '8': { name: '自強3000', badge: '3K', color: '#FF0000', bgColor: '#FFE5E5' },
+        // 新自強（代碼 8 為備用）
+        '8': { name: '新自強', badge: '3K', color: '#FF0000', bgColor: '#FFE5E5' },
         // 其他車種
         '4': { name: '莒光', badge: '莒', color: '#FFC72C', bgColor: '#FFFAE5' },
         '5': { name: '莒光', badge: '莒', color: '#FFC72C', bgColor: '#FFFAE5' },

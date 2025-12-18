@@ -166,7 +166,7 @@ class TrainLiveboardManager {
         
         const typeMap = {
             // 自強系列 - 分開標示
-            '110G': { name: '自強3000', class: 'tze-chiang-3000', icon: 'fas fa-lightning-bolt', badge: '3K' },
+            '110G': { name: '新自強', class: 'tze-chiang-3000', icon: 'fas fa-lightning-bolt', badge: '3K' },
             '1109': { name: '普通自強', class: 'tze-chiang-normal', icon: 'fas fa-bolt', badge: '自' },
             '1108': { name: '普通自強', class: 'tze-chiang-normal', icon: 'fas fa-bolt', badge: '自' },
             // 其他車種
@@ -181,8 +181,8 @@ class TrainLiveboardManager {
         }
         
         // 備用：根據名稱判斷
-        if (typeName.includes('自強3000') || typeName.includes('3000')) {
-            return { name: '自強3000', class: 'tze-chiang-3000', icon: 'fas fa-lightning-bolt', badge: '3K' };
+        if (typeName.includes('新自強') || typeName.includes('3000')) {
+            return { name: '新自強', class: 'tze-chiang-3000', icon: 'fas fa-lightning-bolt', badge: '3K' };
         }
         if (typeName.includes('自強')) {
             return { name: '普通自強', class: 'tze-chiang-normal', icon: 'fas fa-bolt', badge: '自' };
