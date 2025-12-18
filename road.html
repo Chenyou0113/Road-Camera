@@ -551,38 +551,40 @@
         async function loadCameras() {
             const container = document.getElementById('cameras-container');
             const API_URL = "https://taiwan-traffic-cctv.xiaoyouwu5-fd3.workers.dev/api/cameras?type=provincial";
-            
+            const PROXY_BASE = "https://taiwan-traffic-cctv.xiaoyouwu5-fd3.workers.dev/api/proxy?url=";
+
             try {
-                window.startLoading({ labelText: '讀取省道資料 (D1)...' });
-                
+                window.startLoading({ labelText: '載入省道影像...' });
                 const response = await fetch(API_URL);
                 const data = await response.json();
-                
-                allCameras = data.map(c => ({
-                    CCTVID: c.id,
-                    RoadName: c.road_name,
-                    RoadNumber: c.road_name,
-                    LocationMile: c.location_mile,
-                    LocationDescription: c.description || c.location_info,
-                    PositionLat: c.lat,
-                    PositionLon: c.lng,
-                    City: c.city,
-                    VideoImageURL: c.image_url,
-                    VideoStreamURL: c.stream_url,
-                    RoadDirection: c.direction,
-                    source: 'worker-d1'
-                }));
+
+                allCameras = data.map(c => {
+                    // 省道有些由公路局提供，有些由高公局提供，統一檢查是否需代理
+                    const finalImageUrl = (c.image_url.includes('freeway.gov.tw') || c.image_url.includes('thb.gov.tw'))
+                        ? PROXY_BASE + encodeURIComponent(c.image_url) 
+                        : c.image_url;
+
+                    return {
+                        CCTVID: c.id,
+                        RoadName: c.road_name,
+                        RoadNumber: c.road_name,
+                        LocationMile: c.location_mile,
+                        PositionLat: c.lat,
+                        PositionLon: c.lng,
+                        VideoImageURL: finalImageUrl,
+                        RoadDirection: c.direction,
+                        source: 'd1-worker'
+                    };
+                });
 
                 filteredCameras = allCameras;
                 populateFilters();
                 updateStats();
                 displayCameras(allCameras);
-                
                 setTimeout(() => initializeMap(), 500);
                 window.finishLoading();
             } catch (error) {
-                console.error('無法載入資料:', error);
-                container.innerHTML = `<div class="loading">省道資料載入失敗</div>`;
+                container.innerHTML = `<div class="loading">載入失敗</div>`;
                 window.finishLoading();
             }
         }
