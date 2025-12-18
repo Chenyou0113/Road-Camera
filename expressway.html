@@ -513,31 +513,42 @@
 
         async function loadCameras() {
             const container = document.getElementById('cameras-container');
+            // 指向快速公路 API
             const API_URL = "https://taiwan-traffic-cctv.xiaoyouwu5-fd3.workers.dev/api/cameras?type=expressway";
             
             try {
-                window.startLoading({ labelText: '連線中...' });
+                window.startLoading({ labelText: '連線至快速道路即時串流...' });
+                
                 const response = await fetch(API_URL);
                 const data = await response.json();
+                
+                if (!Array.isArray(data)) {
+                    throw new Error(data.error || "資料格式錯誤");
+                }
 
                 allCameras = data.map(c => ({
                     CCTVID: c.id,
                     RoadName: c.road_name,
+                    RoadNumber: c.road_name,
                     LocationMile: c.location_mile,
                     PositionLat: c.lat,
                     PositionLon: c.lng,
+                    // 🔥 重要：將 Worker 的 display_url (即時串流) 映射給前端範本
                     VideoImageURL: c.display_url, 
+                    VideoImageUrl: c.display_url, 
                     source: 'worker-live'
                 }));
 
                 filteredCameras = allCameras;
                 populateFilters();
                 updateStats();
-                displayCameras(allCameras);
+                displayCameras(allCameras); // 執行後會生成包含 data-src 的 <img>
+                
                 setTimeout(() => initializeMap(), 500);
                 window.finishLoading();
             } catch (error) {
-                container.innerHTML = `<div class="loading">載入失敗</div>`;
+                console.error('載入失敗:', error);
+                container.innerHTML = `<div class="loading" style="color:red;">載入失敗: ${error.message}</div>`;
                 window.finishLoading();
             }
         }
@@ -913,13 +924,20 @@
 
         function loadImageWithDelay(img) {
             currentLoadingCount++;
-            
             setTimeout(() => {
                 const container = img.closest('.camera-image');
                 const loadingPlaceholder = container?.querySelector('.image-loading-placeholder');
                 const overlay = container?.querySelector('.image-overlay');
-                const src = img.dataset.src;
                 
+                // 這裡的 src 已經是 Worker 產生的完整 Proxy 網址了
+                let imageUrl = img.dataset.src;
+                
+                if (!imageUrl) {
+                    currentLoadingCount--;
+                    processImageQueue();
+                    return;
+                }
+
                 img.onload = function() {
                     if (loadingPlaceholder) loadingPlaceholder.style.display = 'none';
                     if (overlay) overlay.style.display = 'flex';
@@ -927,15 +945,18 @@
                     currentLoadingCount--;
                     processImageQueue();
                 };
-                
+
                 img.onerror = function() {
-                    this.parentNode.innerHTML = `<div class="error-box">連線超時</div>`;
+                    // 失敗時顯示提示，不要再重試，防止無效流量
+                    this.parentNode.innerHTML = `<div style="color:#999;font-size:0.8rem;">影像暫時無法連線</div>`;
                     currentLoadingCount--;
                     processImageQueue();
                 };
+
+                // 🔥 直接賦值，不要在前端判斷是否包含 freeway，Worker 已經處理好了
+                img.src = imageUrl;
                 
-                img.src = src;
-            }, LOAD_DELAY);
+            }, LOAD_DELAY); // 保持延遲以防過載
         }
 
         function updatePagination() {
