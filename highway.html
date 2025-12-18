@@ -496,12 +496,15 @@
                 const response = await fetch(API_URL);
                 const data = await response.json();
 
+                if (!Array.isArray(data)) throw new Error("資料格式錯誤");
+
                 allCameras = data.map(c => ({
                     CCTVID: c.id,
                     RoadName: c.road_name,
                     LocationMile: c.location_mile,
                     PositionLat: c.lat,
                     PositionLon: c.lng,
+                    // 🔥 這裡一定要對應 display_url，這是 Worker 代理過的即時串流網址
                     VideoImageURL: c.display_url, 
                     source: 'worker-live'
                 }));
@@ -513,6 +516,7 @@
                 setTimeout(() => initializeMap(), 500);
                 window.finishLoading();
             } catch (error) {
+                console.error('載入失敗:', error);
                 container.innerHTML = `<div class="loading">載入失敗</div>`;
                 window.finishLoading();
             }
@@ -888,39 +892,6 @@
 
                 img.src = src; 
             }, 800);
-        }
-                    
-                    currentLoadingCount--;
-                    processImageQueue();
-                };
-
-                // 直接使用 data-src 中儲存的完整 VideoStreamURL
-                let imageUrl = src;
-                
-                if (!imageUrl) {
-                    console.warn('⚠️ 缺少影像網址');
-                    currentLoadingCount--;
-                    processImageQueue();
-                    return;
-                }
-                
-                // 確保使用 HTTPS 和正確的伺服器
-                if (imageUrl.includes('freeway.gov.tw')) {
-                    imageUrl = imageUrl.replace(/^http:/, 'https:')
-                                      .replace('cctv.freeway.gov.tw', 'cctvn.freeway.gov.tw')
-                                      .replace('cctvs.freeway.gov.tw', 'cctvn.freeway.gov.tw');
-                    
-                    // 加上時間戳記避免快取
-                    imageUrl = `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
-                    
-                    // 使用 corsproxy.io 代理 (解決 HTTP/2 Protocol Error)
-                    img.src = `https://corsproxy.io/?${encodeURIComponent(imageUrl)}`;
-                    console.log(`🖼️ 載入: ${imageUrl.substring(0, 60)}...`);
-                } else {
-                    // 非高公局來源，直接使用
-                    img.src = imageUrl;
-                }
-            }, LOAD_DELAY);
         }
 
         function updatePagination() {

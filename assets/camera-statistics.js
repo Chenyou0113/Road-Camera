@@ -27,7 +27,7 @@ async function recordCameraView(cameraId, locationName, type = 'unknown') {
             type: type
         };
 
-        const response = await fetch('/api/view-camera', {
+        const response = await fetch('https://taiwan-traffic-cctv.xiaoyouwu5-fd3.workers.dev/api/view-camera', {
             method: 'POST',
             headers: { 
                 'Content-Type': 'application/json'
@@ -76,7 +76,7 @@ async function recordCameraViews(cameras) {
  */
 async function getTopCameras(limit = 10) {
     try {
-        const response = await fetch(`/api/get-top-cameras?limit=${Math.min(limit, 100)}`);
+        const response = await fetch(`https://taiwan-traffic-cctv.xiaoyouwu5-fd3.workers.dev/api/get-top-cameras?limit=${Math.min(limit, 100)}`);
         
         if (!response.ok) {
             console.warn(`⚠️ 取得排行榜失敗 (HTTP ${response.status})`);
