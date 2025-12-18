@@ -403,51 +403,6 @@
         let itemsPerPage = 12;  // 優化：減少每頁顯示數量以提升初始加載速度
         let totalPages = 1;
         
-        // 快速道路列表
-        const EXPRESSWAYS = [
-            '台61', '台62', '台63', '台64', '台65', '台66', '台68', 
-            '台72', '台74', '台76', '台78', '台82', '台84', '台86', '台88'
-        ];
-        
-        // 從路段資訊中提取快速道路路線編號
-        function extractExpresswayNumber(camera) {
-            const roadName = camera.RoadName || '';
-            const locationDesc = camera.LocationDescription || '';
-            const roadSection = typeof camera.RoadSection === 'string' ? camera.RoadSection : '';
-            const allText = `${roadName} ${locationDesc} ${roadSection}`;
-            
-            // 匹配台61、台62等快速道路格式 - 支援多種格式
-            for (const expressway of EXPRESSWAYS) {
-                const number = expressway.slice(1); // 取得數字部分
-                const patterns = [
-                    new RegExp(`[台臺](${number})線?`, 'gi'),           // 台61線 或 台61
-                    new RegExp(`台灣省道(${number})線?`, 'gi'),         // 台灣省道61線
-                    new RegExp(`快速道路(${number})線?`, 'gi'),         // 快速道路61線
-                    new RegExp(`快速公路(${number})線?`, 'gi'),         // 快速公路61線
-                    new RegExp(`省道快速公路(${number})線?`, 'gi'),     // 省道快速公路61線
-                ];
-                
-                for (const pattern of patterns) {
-                    if (pattern.test(allText)) {
-                        return `${expressway}線`;
-                    }
-                }
-            }
-            
-            // 特殊處理一些別名
-            if (allText.includes('西濱') || allText.includes('西部濱海')) {
-                return '台61線';
-            }
-            if (allText.includes('中投')) {
-                return '台63線';
-            }
-            if (allText.includes('萬里瑞濱')) {
-                return '台62線';
-            }
-            
-            return '';
-        }
-        
         // 將英文方向轉換為中文，分為東向、西向、南向、北向
         function convertDirectionToChinese(direction) {
             if (!direction || typeof direction !== 'string') {
@@ -529,12 +484,6 @@
             return locationParts.length > 0 ? locationParts.join(' ') : '未提供位置資訊';
         }
 
-        // 判斷是否為快速道路
-        function isExpressway(camera) {
-            const expresswayNumber = extractExpresswayNumber(camera);
-            return expresswayNumber !== '';
-        }
-        
         // 切換資訊面板顯示/隱藏
         function toggleInfoPanel() {
             const content = document.getElementById('infoContent');
@@ -564,171 +513,39 @@
 
         async function loadCameras() {
             const container = document.getElementById('cameras-container');
-            container.innerHTML = '';
-            
-            let allCamerasFromSources = [];
+            const API_URL = "https://taiwan-traffic-cctv.xiaoyouwu5-fd3.workers.dev/api/cameras?type=expressway";
             
             try {
-                console.log('正在載入快速道路監視器資料...');
+                window.startLoading({ labelText: '讀取快速道路影像...' });
                 
-                // 檢查 TDX API 是否可用
-                if (typeof tdxApi === 'undefined') {
-                    throw new Error('TDX API 未初始化');
-                }
+                const response = await fetch(API_URL);
+                const data = await response.json();
                 
-                container.innerHTML = `
-                    <div class="loading">
-                        <i class="fas fa-spinner fa-spin"></i> 正在載入快速道路監視器資料...<br>
-                        <small style="margin-top: 10px; display: block;">從 TDX 平台載入全國公路監視器並篩選快速道路...</small>
-                    </div>
-                `;
+                allCameras = data.map(c => ({
+                    CCTVID: c.id,
+                    RoadName: c.road_name,
+                    RoadNumber: c.road_name,
+                    LocationDescription: c.location_info,
+                    PositionLat: c.lat,
+                    PositionLon: c.lng,
+                    City: c.city,
+                    VideoImageURL: c.image_url,
+                    VideoStreamURL: c.stream_url,
+                    source: 'worker'
+                }));
+
+                filteredCameras = allCameras;
+                populateFilters();
+                updateStats();
+                displayCameras(allCameras);
                 
-                // 嘗試多個 TDX 端點載入快速道路監視器資料
-                let response = null;
-                let usedEndpoint = '';
-                
-                const endpoints = [
-                    '/v2/Road/Traffic/CCTV/Highway?$format=JSON',
-                    '/v2/Road/Traffic/CCTV/Road?$format=JSON',
-                    '/v2/Road/Traffic/LiveVideo/Highway?$format=JSON'
-                ];
-                
-                for (const endpoint of endpoints) {
-                    try {
-                        console.log(`📍 嘗試端點: ${endpoint}`);
-                        response = await tdxApi.fetchCCTV(endpoint);
-                        usedEndpoint = endpoint;
-                        console.log(`✅ 成功連接端點: ${endpoint}`);
-                        break;
-                    } catch (error) {
-                        console.warn(`❌ 端點失敗: ${endpoint} - ${error.message}`);
-                        continue;
-                    }
-                }
-                
-                if (!response) {
-                    throw new Error('所有 API 端點都無法連接');
-                }
-                
-                let cameras = [];
-                if (Array.isArray(response)) {
-                    cameras = response;
-                } else if (response && response.CCTVs && Array.isArray(response.CCTVs)) {
-                    cameras = response.CCTVs;
-                } else if (response && response.data && Array.isArray(response.data)) {
-                    cameras = response.data;
-                } else {
-                    console.warn('未預期的回應格式:', response);
-                    cameras = [];
-                }
-                
-                console.log(`📊 TDX 原始資料 (${usedEndpoint}): ${cameras.length} 筆`);
-                
-                if (cameras.length > 0) {
-                    console.log('🔍 開始篩選快速道路監視器...');
-                    
-                    // 篩選出快速道路監視器
-                    allCamerasFromSources = cameras
-                        .filter(camera => {
-                            const isExpwy = isExpressway(camera);
-                            if (isExpwy) {
-                                console.log(`✅ 找到快速道路: ${camera.RoadName || 'Unknown'} - ${extractExpresswayNumber(camera)}`);
-                            }
-                            return isExpwy;
-                        })
-                        .map(camera => {
-                            const expresswayNumber = extractExpresswayNumber(camera);
-                            return {...camera, source: 'tdx', RoadNumber: expresswayNumber};
-                        });
-                    
-                    console.log(`🛣️ 篩選結果: ${allCamerasFromSources.length} 個快速道路監視器`);
-                }
-                
+                setTimeout(() => initializeMap(), 500);
+                window.finishLoading();
             } catch (error) {
-                console.error('載入快速道路監視器資料失敗:', error);
-                console.error('錯誤詳細資訊:', {
-                    message: error.message,
-                    stack: error.stack,
-                    tdxApiAvailable: typeof tdxApi !== 'undefined',
-                    configAvailable: typeof TDX_CONFIG !== 'undefined'
-                });
-                
-                container.innerHTML = `
-                    <div class="loading">
-                        <i class="fas fa-exclamation-triangle"></i><br>
-                        載入失敗: ${error.message}<br>
-                        <small style="color: #666; margin-top: 10px; display: block;">
-                            請檢查網路連線和 TDX API 服務狀態
-                        </small><br>
-                        <button onclick="loadCameras()" style="padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer;">
-                            <i class="fas fa-refresh"></i> 重新載入
-                        </button>
-                    </div>
-                `;
-                return;
+                console.error('無法載入資料:', error);
+                container.innerHTML = `<div class="loading">載入失敗</div>`;
+                window.finishLoading();
             }
-            
-            console.log(`📊 快速道路監視器: ${allCamerasFromSources.length} 筆`);
-            
-            if (allCamerasFromSources.length === 0) {
-                // 顯示一些原始數據樣本以幫助調試
-                if (cameras.length > 0) {
-                    console.log('📋 原始資料樣本 (前3筆):');
-                    cameras.slice(0, 3).forEach((camera, index) => {
-                        console.log(`樣本 ${index + 1}:`, {
-                            RoadName: camera.RoadName,
-                            LocationDescription: camera.LocationDescription,
-                            RoadSection: camera.RoadSection,
-                            CCTVID: camera.CCTVID
-                        });
-                    });
-                }
-                
-                container.innerHTML = `
-                    <div class="loading">
-                        <i class="fas fa-info-circle"></i><br>
-                        目前沒有找到快速道路監視器資料<br>
-                        <small style="color: #666; margin-top: 10px; display: block;">
-                            已載入 ${cameras.length} 筆監視器資料，但未找到快速道路<br>
-                            請檢查瀏覽器控制台查看詳細資訊
-                        </small><br>
-                        <button onclick="loadCameras()" style="padding: 10px 20px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer;">
-                            <i class="fas fa-refresh"></i> 重新載入
-                        </button>
-                    </div>
-                `;
-                return;
-            }
-            
-            // 處理監視器資料，並標準化方向資訊
-            allCameras = allCamerasFromSources.map(camera => ({
-                ...camera,
-                City: getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName),
-                DirectionChinese: camera.RoadDirection ? convertDirectionToChinese(camera.RoadDirection) : '未標示'
-            }));
-            
-            filteredCameras = allCameras;
-            populateFilters();
-            updateStats();
-            displayCameras(allCameras);
-            
-            // 延遲初始化地圖，確保 Leaflet 已完全加載
-            setTimeout(() => {
-                console.log('檢查 Leaflet 加載狀態...');
-                if (typeof L !== 'undefined') {
-                    console.log('✅ Leaflet 已就位，現在初始化地圖');
-                    initializeMap();
-                } else {
-                    console.error('❌ Leaflet 仍未加載，嘗試重新加載...');
-                    setTimeout(() => {
-                        if (typeof L !== 'undefined') {
-                            initializeMap();
-                        } else {
-                            console.error('❌ Leaflet 加載失敗！');
-                        }
-                    }, 1000);
-                }
-            }, 500);
         }
 
         // 地圖管理器

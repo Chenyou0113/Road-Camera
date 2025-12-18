@@ -13,6 +13,16 @@
 //    - 【警告】絕不要將含有真實密鑰的版本推送到 GitHub！
 //    - 提交前務必刪除或註釋掉密鑰
 
+// Cloudflare Worker + D1 資料庫設定
+const CONFIG = {
+    // 你的 Cloudflare Worker 網址
+    // 請替換為實際的 Worker 地址
+    API_BASE: "https://taiwan-traffic-cctv.你的帳號.workers.dev/api/cameras",
+    
+    // Image Proxy 路由（用於解決 HTTP/2 錯誤）
+    PROXY_BASE: "https://taiwan-traffic-cctv.你的帳號.workers.dev/api/proxy"
+};
+
 const TDX_CONFIG = {
     // 開發環境臨時密鑰（本機開發用）
     // 【提交 GitHub 前務必清空這些值】

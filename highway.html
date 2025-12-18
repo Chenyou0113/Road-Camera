@@ -450,47 +450,6 @@
             return '未提供位置資訊';
         }
 
-        // 國道列表
-        const highwayS = [
-            '台61', '台62', '台63', '台64', '台65', '台66', '台68', 
-            '台72', '台74', '台76', '台78', '台82', '台84', '台86', '台88'
-        ];
-        
-        // 從路段資訊中提取國道路線編號
-        function extracthighwayNumber(camera) {
-            const roadName = camera.RoadName || '';
-            const locationDesc = camera.LocationDescription || '';
-            const roadSection = typeof camera.RoadSection === 'string' ? camera.RoadSection : '';
-            const allText = `${roadName} ${locationDesc} ${roadSection}`;
-            
-            // 匹配台61、台62等國道格式
-            for (const highway of highwayS) {
-                const pattern = new RegExp(`[台臺](${highway.slice(1)})線?`, 'g');
-                if (pattern.test(allText)) {
-                    return `${highway}線`;
-                }
-            }
-            
-            // 特殊處理一些別名
-            if (allText.includes('西濱') || allText.includes('西部濱海')) {
-                return '國道1號';
-            }
-            if (allText.includes('中投')) {
-                return '台63線';
-            }
-            if (allText.includes('萬里瑞濱')) {
-                return '台62線';
-            }
-            
-            return '';
-        }
-        
-        // 判斷是否為國道
-        function ishighway(camera) {
-            const highwayNumber = extracthighwayNumber(camera);
-            return highwayNumber !== '';
-        }
-        
         // 切換資訊面板顯示/隱藏
         function toggleInfoPanel() {
             const content = document.getElementById('infoContent');
@@ -530,143 +489,39 @@
 
         async function loadCameras() {
             const container = document.getElementById('cameras-container');
-            container.innerHTML = '';
-            
-            // 確保進度條函數可用
-            ensureProgressFunctions();
-            
-            // 更新進度 - 減少頻率
-            window.setLoadingProgress(25);
-            window.updateLoadingLabel('連接後端 API...');
-            
-            let allCamerasFromSources = [];
+            const API_URL = "https://taiwan-traffic-cctv.xiaoyouwu5-fd3.workers.dev/api/cameras?type=highway";
             
             try {
-                console.log('正在載入國道監視器資料...');
+                window.startLoading({ labelText: '讀取國道監視器...' });
                 
-                container.innerHTML = `
-                    <div class="loading">
-                        <i class="fas fa-spinner fa-spin"></i> 正在載入國道監視器資料...<br>
-                        <small style="margin-top: 10px; display: block;">從後端代理安全地載入全國國道監視器...</small>
-                    </div>
-                `;
+                const response = await fetch(API_URL);
+                const data = await response.json();
                 
-                // 延遲進度更新以減少頻繁調用
-                setTimeout(() => {
-                    window.setLoadingProgress(50);
-                    window.updateLoadingLabel('載入國道監視器資料...');
-                }, 100);
+                allCameras = data.map(c => ({
+                    CCTVID: c.id,
+                    RoadName: c.road_name,
+                    RoadNumber: c.road_name,
+                    LocationDescription: c.location_info,
+                    PositionLat: c.lat,
+                    PositionLon: c.lng,
+                    City: c.city,
+                    VideoImageURL: c.image_url,
+                    VideoStreamURL: c.stream_url,
+                    source: 'worker'
+                }));
+
+                filteredCameras = allCameras;
+                populateFilters();
+                updateStats();
+                displayCameras(allCameras);
                 
-                // 【新方式】使用後端代理 API 而不是直接呼叫 TDX
-                // 優點：
-                // - API 密鑰安全（只在伺服器端）
-                // - CDN 自動快取 60 秒
-                // - 解決 CORS 問題
-                // - 節省 API 額度
-                console.log('📡 從後端代理載入 Freeway 監視器資料...');
-                
-                // ✨ 修改：將上限提高到 3500，確保抓取所有國道監視器
-                const response = await tdxApi.fetchCCTVData('Freeway', 3500);
-                
-                // 更新進度
-                window.setLoadingProgress(75);
-                window.updateLoadingLabel('處理監視器資料...');
-                
-                let cameras = [];
-                if (Array.isArray(response)) {
-                    cameras = response;
-                } else if (response && response.CCTVs && Array.isArray(response.CCTVs)) {
-                    cameras = response.CCTVs;
-                } else if (response && response.data && Array.isArray(response.data)) {
-                    cameras = response.data;
-                } else {
-                    console.warn('未預期的回應格式:', response);
-                    cameras = [];
-                }
-                
-                console.log(`📊 TDX Freeway 原始資料: ${cameras.length} 筆`);
-                
-                if (cameras.length > 0) {
-                    // Freeway API 直接返回國道資料，不需篩選
-                    allCamerasFromSources = cameras.map(camera => ({
-                        ...camera, 
-                        source: 'tdx',
-                        RoadNumber: camera.RoadName || '未知國道'
-                    }));
-                }
-                
+                setTimeout(() => initializeMap(), 500);
+                window.finishLoading();
             } catch (error) {
-                console.error('載入國道監視器資料失敗:', error);
+                console.error('無法載入資料:', error);
+                container.innerHTML = `<div class="loading">載入失敗: ${error.message}</div>`;
                 window.finishLoading();
-                container.innerHTML = `
-                    <div class="loading">
-                        <i class="fas fa-exclamation-triangle"></i><br>
-                        載入失敗: ${error.message}<br><br>
-                        <button onclick="loadCameras()" style="padding: 10px 20px; background: #1e40af; color: white; border: none; border-radius: 5px; cursor: pointer;">
-                            <i class="fas fa-refresh"></i> 重新載入
-                        </button>
-                    </div>
-                `;
-                return;
             }
-            
-            console.log(`📊 國道監視器: ${allCamerasFromSources.length} 筆`);
-            
-            // 調試: 檢查第一筆資料的影像欄位
-            if (allCamerasFromSources.length > 0) {
-                const firstCamera = allCamerasFromSources[0];
-                console.log('🔍 第一筆監視器資料:');
-                console.log('  - VideoImageUrl:', firstCamera.VideoImageUrl);
-                console.log('  - VideoImageURL:', firstCamera.VideoImageURL);
-                console.log('  - VideoStreamURL:', firstCamera.VideoStreamURL);
-                console.log('  - PictureURL:', firstCamera.PictureURL);
-                console.log('  - 所有欄位:', Object.keys(firstCamera));
-            }
-            
-            // 最終進度更新
-            window.setLoadingProgress(100);
-            window.updateLoadingLabel('載入監視器影像...');
-            
-            if (allCamerasFromSources.length === 0) {
-                window.finishLoading();
-                container.innerHTML = '<div class="loading">目前沒有可用的國道監視器資料</div>';
-                return;
-            }
-            
-            // 處理監視器資料
-            allCameras = allCamerasFromSources.map(camera => ({
-                ...camera,
-                City: getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName)
-            }));
-            
-            filteredCameras = allCameras;
-            populateFilters();
-            updateStats();
-            displayCameras(allCameras);
-            
-            // 延遲初始化地圖，確保 Leaflet 已完全加載
-            setTimeout(() => {
-                console.log('檢查 Leaflet 加載狀態...');
-                if (typeof L !== 'undefined') {
-                    console.log('✅ Leaflet 已就位，現在初始化地圖');
-                    initializeMap();
-                } else {
-                    console.error('❌ Leaflet 仍未加載，嘗試重新加載...');
-                    // 重新檢查
-                    setTimeout(() => {
-                        if (typeof L !== 'undefined') {
-                            initializeMap();
-                        } else {
-                            console.error('❌ Leaflet 加載失敗！');
-                        }
-                    }, 1000);
-                }
-            }, 500);
-            
-            // 完成載入進度
-            setTimeout(() => {
-                window.finishLoading();
-            }, 200);
         }
 
         function populateFilters() {
