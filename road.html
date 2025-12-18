@@ -553,20 +553,16 @@
             const API_URL = "https://taiwan-traffic-cctv.xiaoyouwu5-fd3.workers.dev/api/cameras?type=provincial";
             
             try {
-                window.startLoading({ labelText: '讀取省道即時監控...' });
+                window.startLoading({ labelText: '連線中...' });
                 const response = await fetch(API_URL);
                 const data = await response.json();
-                
-                if (!Array.isArray(data)) throw new Error(data.error || "資料格式錯誤");
 
                 allCameras = data.map(c => ({
                     CCTVID: c.id,
                     RoadName: c.road_name,
-                    RoadNumber: c.road_name,
                     LocationMile: c.location_mile,
                     PositionLat: c.lat,
                     PositionLon: c.lng,
-                    VideoImageUrl: c.display_url, 
                     VideoImageURL: c.display_url, 
                     source: 'worker-live'
                 }));
@@ -578,7 +574,7 @@
                 setTimeout(() => initializeMap(), 500);
                 window.finishLoading();
             } catch (error) {
-                container.innerHTML = `<div class="loading" style="color:red;">省道連線失敗</div>`;
+                container.innerHTML = `<div class="loading">載入失敗</div>`;
                 window.finishLoading();
             }
         }
@@ -1126,49 +1122,23 @@
                 const container = img.closest('.camera-image');
                 const loadingPlaceholder = container?.querySelector('.image-loading-placeholder');
                 const overlay = container?.querySelector('.image-overlay');
+                const src = img.dataset.src;
                 
                 img.onload = function() {
-                    handleImageLoad(this);
                     if (loadingPlaceholder) loadingPlaceholder.style.display = 'none';
                     if (overlay) overlay.style.display = 'flex';
                     this.style.display = 'block';
-                    
                     currentLoadingCount--;
                     processImageQueue();
                 };
                 
                 img.onerror = function() {
-                    handleImageError(this, this.dataset.src);
+                    this.parentNode.innerHTML = `<div class="error-box">連線超時</div>`;
                     currentLoadingCount--;
                     processImageQueue();
                 };
                 
-                // [修正] 直接使用 data-src 中儲存的完整 VideoStreamURL
-                let imageUrl = img.dataset.src;
-                
-                if (!imageUrl) {
-                    console.warn('⚠️ 缺少影像網址');
-                    currentLoadingCount--;
-                    processImageQueue();
-                    return;
-                }
-                
-                // 確保使用 HTTPS 和正確的伺服器
-                if (imageUrl.includes('freeway.gov.tw')) {
-                    imageUrl = imageUrl.replace(/^http:/, 'https:')
-                                      .replace('cctv.freeway.gov.tw', 'cctvn.freeway.gov.tw')
-                                      .replace('cctvs.freeway.gov.tw', 'cctvn.freeway.gov.tw');
-                    
-                    // 加上時間戳記避免快取
-                    imageUrl = `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
-                    
-                    // 使用 corsproxy.io 代理 (解決 HTTP/2 Protocol Error)
-                    img.src = `https://corsproxy.io/?${encodeURIComponent(imageUrl)}`;
-                    console.log(`🖼️ 載入: ${imageUrl.substring(0, 60)}...`);
-                } else {
-                    // 非高公局來源，直接使用
-                    img.src = imageUrl;
-                }
+                img.src = src;
             }, LOAD_DELAY);
         }
 

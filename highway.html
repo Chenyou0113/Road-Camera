@@ -492,20 +492,16 @@
             const API_URL = "https://taiwan-traffic-cctv.xiaoyouwu5-fd3.workers.dev/api/cameras?type=highway";
             
             try {
-                window.startLoading({ labelText: '連線至國道即時串流...' });
+                window.startLoading({ labelText: '連線中...' });
                 const response = await fetch(API_URL);
                 const data = await response.json();
-                
-                if (!Array.isArray(data)) throw new Error(data.error || "資料格式錯誤");
 
                 allCameras = data.map(c => ({
                     CCTVID: c.id,
                     RoadName: c.road_name,
-                    RoadNumber: c.road_name,
                     LocationMile: c.location_mile,
                     PositionLat: c.lat,
                     PositionLon: c.lng,
-                    VideoImageUrl: c.display_url,
                     VideoImageURL: c.display_url, 
                     source: 'worker-live'
                 }));
@@ -517,7 +513,7 @@
                 setTimeout(() => initializeMap(), 500);
                 window.finishLoading();
             } catch (error) {
-                container.innerHTML = `<div class="loading" style="color:red;">國道連線失敗</div>`;
+                container.innerHTML = `<div class="loading">載入失敗</div>`;
                 window.finishLoading();
             }
         }
@@ -875,49 +871,24 @@
                 const loadingPlaceholder = container?.querySelector('.image-loading-placeholder');
                 const overlay = container?.querySelector('.image-overlay');
                 const src = img.dataset.src;
-                const camId = src?.match(/camera=(\d+)/)?.[1];
-                const imgId = img.id || src;
 
                 img.onload = function() {
-                    handleImageLoad(this);
                     if (loadingPlaceholder) loadingPlaceholder.style.display = 'none';
                     if (overlay) overlay.style.display = 'flex';
                     this.style.display = 'block';
-                    // 清除重試計數
-                    imageRetryAttempts.delete(imgId);
                     currentLoadingCount--;
                     processImageQueue();
                 };
 
-                img.onerror = function(e) {
-                    console.warn(`❌ 圖片載入失敗: camera=${camId}`);
-                    const retryCount = imageRetryAttempts.get(imgId) || 0;
-                    
-                    if (retryCount < MAX_RETRIES) {
-                        // 重試邏輯
-                        imageRetryAttempts.set(imgId, retryCount + 1);
-                        console.log(`🔄 重試載入 (${retryCount + 1}/${MAX_RETRIES}): camera=${camId}`);
-                        
-                        setTimeout(() => {
-                            // 重試時更新時間戳記
-                            if (this.src.includes('weserv.nl')) {
-                                const currentSrc = this.src;
-                                const newUrl = currentSrc.replace(/&t=\d+/, `&t=${Date.now()}`);
-                                this.src = newUrl;
-                            } else {
-                                this.src = `${src}${src.includes('?') ? '&' : '?'}retry=${retryCount + 1}&t=${Date.now()}`;
-                            }
-                        }, RETRY_DELAY);
-                    } else {
-                        // 超過重試次數，進入冷卻
-                        if (camId) {
-                            cameraCooldown.set(camId, Date.now() + COOLDOWN_DURATION);
-                            console.log(`⏸️ 相機 ${camId} 進入冷卻，時長: ${COOLDOWN_DURATION / 1000 / 60} 分鐘`);
-                        }
-                        
-                        handleImageError(this, src);
-                        imageRetryAttempts.delete(imgId);
-                    }
+                img.onerror = function() {
+                    this.parentNode.innerHTML = `<div class="error-box">連線超時</div>`;
+                    currentLoadingCount--;
+                    processImageQueue();
+                };
+
+                img.src = src; 
+            }, 800);
+        }
                     
                     currentLoadingCount--;
                     processImageQueue();
