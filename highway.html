@@ -764,11 +764,8 @@
                 const sourceIcon = camera.source === 'tdx' ? '<i class="fas fa-database" title="TDX資料" style="color: #1e40af;"></i>' : '';
                 const badge = camera.RoadNumber ? `<span class="highway-badge">${camera.RoadNumber}</span>` : '';
                 const imageId = `img-${startIndex + index}-${Date.now()}`;
-                const rawImageUrl = camera.VideoImageUrl || camera.VideoImageURL || camera.VideoStreamURL || camera.PictureURL;
-                // 如果圖片來自高公局，走 Worker 代理以解決 HTTPS 和 Referer 問題
-                const imageUrl = rawImageUrl && rawImageUrl.includes('freeway.gov.tw') 
-                    ? `https://taiwan-traffic-cctv.xiaoyouwu5-fd3.workers.dev/api/proxy?url=${encodeURIComponent(rawImageUrl)}`
-                    : rawImageUrl;
+                // 🔥 Worker 已經包好了完整的代理 URL，直接用！不再加工！
+                const imageUrl = camera.VideoImageURL || camera.VideoImageUrl || camera.VideoStreamURL || camera.PictureURL;
                 const roadTitle = buildRoadTitle(camera);
                 return `
                     <div class="camera-card" onclick="openModal(${startIndex + index})">
@@ -874,7 +871,13 @@
                 const container = img.closest('.camera-image');
                 const loadingPlaceholder = container?.querySelector('.image-loading-placeholder');
                 const overlay = container?.querySelector('.image-overlay');
-                const src = img.dataset.src;
+                const imageUrl = img.dataset.src;
+
+                if (!imageUrl) {
+                    currentLoadingCount--;
+                    processImageQueue();
+                    return;
+                }
 
                 img.onload = function() {
                     if (loadingPlaceholder) loadingPlaceholder.style.display = 'none';
@@ -885,12 +888,16 @@
                 };
 
                 img.onerror = function() {
-                    this.parentNode.innerHTML = `<div class="error-box">連線超時</div>`;
+                    if (this.parentNode) {
+                        this.parentNode.innerHTML = `<div style="color:#999;font-size:0.8rem;">影像中斷</div>`;
+                    }
                     currentLoadingCount--;
                     processImageQueue();
                 };
 
-                img.src = src; 
+                // 🔥 直接賽下，不要做任何處理！
+                img.src = imageUrl;
+                
             }, 800);
         }
 

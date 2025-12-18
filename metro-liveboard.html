@@ -1239,75 +1239,37 @@
             }
         }
 
-        // ★ 新增：取得路線末班車時間顯示文字
-        // 載入系統資料 (強固版：確保路線名稱一定會被補上)
         // ✅ 修改 2: 改用 Worker 取得車站列表 (讀取 D1)
         async function loadSystemData(systemCode) {
             const lineSelect = document.getElementById('lineSelect');
             const stationSelect = document.getElementById('stationSelect');
-            
             lineSelect.innerHTML = '<option value="">載入中...</option>';
-            stationSelect.innerHTML = '<option value="">請先選擇路線</option>';
-            document.getElementById('stationCount').textContent = '-';
-            
-            let rawData = [];
 
-            if (stationDataCache[systemCode]) {
-                rawData = stationDataCache[systemCode];
-            } else {
-                try {
-                    console.log(`📡 從 Worker 下載車站資料: ${systemCode}`);
-                    // 指向你的 Worker
-                    const response = await fetch(`${WORKER_URL}/api/stations?system=${systemCode}`);
-                    
-                    if (!response.ok) throw new Error('Worker 回傳錯誤');
-                    rawData = await response.json();
-                    
-                    if (!Array.isArray(rawData)) throw new Error("資料格式錯誤");
-                } catch (error) {
-                    console.error(`載入${systemCode}失敗:`, error);
-                    lineSelect.innerHTML = '<option value="">載入失敗</option>';
-                    return;
-                }
-            }
+            try {
+                const response = await fetch(`${WORKER_URL}/api/stations?system=${systemCode}`);
+                const rawData = await response.json(); // 拿到的是 Worker 存的 json_data 陣列
 
-            // 資料修補 (保持不變)
-            const patchedData = rawData.map(item => {
-                let lineName = item.LineName?.Zh_tw;
-                const sID = item.StationID || '';
-                const lID = item.LineID || '';
-
-                if (!lineName || lineName === '未知') {
-                    const lineCodeMap = {
-                        'BL': '板南線', 'BR': '文湖線', 'R': '淡水信義線',
-                        'G': '松山新店線', 'O': '中和新蘆線', 'Y': '環狀線',
-                        'A': '機場線'
-                    };
-                    for (const code in lineCodeMap) {
-                        if (lID === code) { lineName = lineCodeMap[code]; break; }
+                // 資料修補邏輯 (補強路線名稱顯示)
+                allStationData = rawData.map(item => {
+                    let lineName = item.LineName?.Zh_tw;
+                    if (!lineName || lineName === '未知') {
+                        const lineCodeMap = { 'BL': '板南線', 'BR': '文湖線', 'R': '淡水信義線', 'G': '松山新店線', 'O': '中和新蘆線', 'Y': '環狀線', 'A': '機場線' };
+                        lineName = lineCodeMap[item.LineID] || lineCodeMap[item.StationID?.substring(0, 2)];
                     }
-                    if (!lineName) {
-                        for (const code in lineCodeMap) {
-                            if (sID.startsWith(code)) { lineName = lineCodeMap[code]; break; }
-                        }
+                    if (systemCode === 'KRTC') {
+                        if (item.StationID?.startsWith('R')) lineName = '紅線';
+                        if (item.StationID?.startsWith('O')) lineName = '橘線';
                     }
-                }
-                if (systemCode === 'KRTC') {
-                    if (sID.startsWith('R')) lineName = '紅線';
-                    if (sID.startsWith('O')) lineName = '橘線';
-                }
-                if (systemCode === 'KLRT') lineName = '高雄輕軌';
-
-                if (lineName) {
                     if (!item.LineName) item.LineName = {};
-                    item.LineName.Zh_tw = lineName;
-                }
-                return item;
-            });
+                    item.LineName.Zh_tw = lineName || '捷運線';
+                    return item;
+                });
 
-            allStationData = patchedData;
-            stationDataCache[systemCode] = patchedData;
-            renderLineSelect(allStationData, systemCode);
+                renderLineSelect(allStationData, systemCode);
+            } catch (error) {
+                console.error("車站載入失敗", error);
+                lineSelect.innerHTML = '<option value="">載入失敗</option>';
+            }
         }
 
         // 渲染路線選單 (簡化版)
@@ -1418,77 +1380,30 @@
             allStationsMode = checkbox.checked;
         }
 
-        // 查詢看板 (終極穩定版：一次拉取全系統資料，確保不漏接)
         // ✅ 修改 3: 改用 Worker 查詢看板 (KV 快取)
         async function queryLiveboard() {
-            const now = Date.now();
-            if (typeof window.lastApiCall === 'undefined') window.lastApiCall = 0;
-            if (now - window.lastApiCall < 1000) return; // 稍微放寬限制，因為 Worker 很快
-            window.lastApiCall = now;
-
             const stationSelect = document.getElementById('stationSelect');
-            
             if (!allStationsMode && !stationSelect.value) {
-                alert('請選擇車站或勾選「所有車站」');
+                alert('請選擇車站');
                 return;
             }
 
-            const isAutoRefresh = (arguments.callee.isAutoRefresh === true);
-            if (!isAutoRefresh) {
-                document.getElementById('trainTableBody').innerHTML = `
-                    <tr><td colspan="7" style="text-align: center; padding: 40px;">
-                        <i class="fas fa-spinner fa-spin" style="font-size: 2rem; color: #00bcd4;"></i>
-                        <p style="margin-top: 10px; color: #666;">正在更新即時資訊...</p>
-                    </td></tr>`;
-            }
+            currentStationId = allStationsMode ? 'ALL' : stationSelect.value;
+            currentStationName = allStationsMode ? '所有車站' : stationSelect.options[stationSelect.selectedIndex].text;
 
-            if (allStationsMode) {
-                currentStationId = 'ALL';
-                currentStationName = '所有車站';
-            } else {
-                currentStationId = stationSelect.value;
-                currentStationName = stationSelect.options[stationSelect.selectedIndex].text;
-            }
-
-            // 判斷 API 類型
-            let type = 'LiveBoard';
-            if (currentSystem === 'KLRT') type = 'LivePosition';
-
-            // 指向 Worker
+            let type = (currentSystem === 'KLRT') ? 'LivePosition' : 'LiveBoard';
             const endpoint = `${WORKER_URL}/api/liveboard?system=${currentSystem}&type=${type}`;
 
             try {
-                console.log(`🔍 查詢 Worker: ${endpoint}`);
                 const response = await fetch(endpoint);
-                if (!response.ok) throw new Error('API 請求失敗');
+                const data = await response.json();
                 
-                const newData = await response.json();
-                
-                // 相容性處理：如果 Worker 回傳的是包在物件裡的陣列 (例如 LivePositions)
-                if (newData.LivePositions) {
-                    currentLiveboardData = newData.LivePositions;
-                } else {
-                    currentLiveboardData = newData || [];
-                }
-                
-                console.log(`✅ Worker 回應資料筆數: ${currentLiveboardData.length}`);
+                // 你的 Worker 直接回傳 TDX 陣列或空陣列
+                currentLiveboardData = Array.isArray(data) ? data : (data.LivePositions || []);
                 displayLiveboard();
-
             } catch (error) {
-                console.error("查詢失敗:", error);
-                document.getElementById('trainTableBody').innerHTML = `
-                    <tr><td colspan="7" class="no-data">
-                        <i class="fas fa-exclamation-triangle" style="color: #ff9800;"></i>
-                        <p>讀取資料失敗，請稍後再試</p>
-                    </td></tr>`;
+                console.error("即時資料讀取失敗", error);
             }
-            
-            if (window.autoRefreshInterval) clearInterval(window.autoRefreshInterval);
-            window.autoRefreshInterval = setInterval(() => {
-                const autoFunc = queryLiveboard.bind(null);
-                autoFunc.isAutoRefresh = true;
-                autoFunc();
-            }, 30000); // 30秒更新一次 (Worker 有 15秒快取，所以這樣很剛好)
         }
 
         // 輔助函式：計算到站時刻 (輸入秒數，回傳 HH:mm)
@@ -1742,120 +1657,60 @@
          * 使用 TDX API: /v2/Rail/Metro/StationTransfer/{OperatorID}/{StationID}
          */
         // ✅ 修改 4: 改用 Worker 取得轉乘資訊 (讀取 D1，不會 404)
+        // ✅ 修改 4: 改用 Worker 取得轉乘資訊 (讀取 D1，不會 404)
+        // ✅ 修正高雄捷運 ID (補回 R/O 前綴)
         async function getTransferInfo(stationID, systemCode) {
             const cacheKey = `${systemCode}_${stationID}`;
             if (stationTransferCache[cacheKey]) return stationTransferCache[cacheKey];
             
             try {
-                // 指向 Worker
-                const response = await fetch(`${WORKER_URL}/api/transfer?system=${systemCode}&station=${stationID}`);
+                // ✅ 修正高雄捷運 ID (補回 R/O 前綴)
+                let qID = stationID;
+                if (systemCode === 'KRTC' && /^\d+$/.test(stationID)) {
+                    const line = document.getElementById('lineSelect').value;
+                    qID = line.includes('橘') ? 'O' + stationID : 'R' + stationID;
+                }
+
+                const response = await fetch(`${WORKER_URL}/api/transfer?system=${systemCode}&station=${qID}`);
                 const data = await response.json();
                 
-                stationTransferCache[cacheKey] = data; // Worker 若無資料會回傳 []，這裡直接存
+                stationTransferCache[cacheKey] = data;
                 return data;
             } catch (error) {
+                console.warn("轉乘讀取失敗", error);
                 return [];
             }
-        }
-            }
-        }
+        } // ✅ 這裡原本多了一個大括號，現已修復
 
-        /**
-         * 顯示轉乘資訊 (修正版)
-         */
+        // ✅ 修改 4: 顯示轉乘資訊
         async function displayTransferInfo(stationID, systemCode) {
+            const transferArea = document.getElementById('transferInfoArea');
             try {
-                // ✅ 高雄捷運 ID 修正：如果是純數字，嘗試補回前綴
-                let queryStationID = stationID;
-                if (systemCode === 'KRTC' && /^\d+$/.test(stationID)) {
-                    // 從現在選中的車站名稱推斷路線
-                    const selectedLine = document.getElementById('lineSelect').value;
-                    if (selectedLine.includes('橘')) {
-                        queryStationID = 'O' + stationID;
-                    } else if (selectedLine.includes('紅')) {
-                        queryStationID = 'R' + stationID;
-                    }
-                    console.log(`🔧 轉乘查詢 ID 修正: ${stationID} → ${queryStationID}`);
-                }
-                
-                const transferData = await getTransferInfo(queryStationID, systemCode);
-                
+                const transferData = await getTransferInfo(stationID, systemCode);
                 if (!transferData || transferData.length === 0) {
-                    console.log(`ℹ️ ${queryStationID} 無轉乘資訊`);
-                    return; // 沒有轉乘資訊，不顯示
+                    transferArea.style.display = 'none';
+                    return;
                 }
                 
-                console.log(`✅ 找到 ${transferData.length} 項轉乘資訊`);
-                
-                // 分組顯示：依轉乘路線分組
-                const groupedByLine = {};
+                let html = '<div class="transfer-info"><div class="transfer-header"><i class="fas fa-exchange-alt"></i> 轉乘資訊</div>';
                 transferData.forEach(t => {
-                    const toLineKey = t.ToLineID || t.ToLineName?.Zh_tw || '未知';
-                    if (!groupedByLine[toLineKey]) {
-                        groupedByLine[toLineKey] = [];
-                    }
-                    groupedByLine[toLineKey].push(t);
-                });
-                
-                let html = '<div class="transfer-info">';
-                html += '<div class="transfer-header"><i class="fas fa-exchange-alt"></i> 轉乘資訊</div>';
-                
-                Object.entries(groupedByLine).forEach(([lineKey, transfers]) => {
-                    html += '<div class="transfer-group">';
-                    
-                    // 路線名稱
-                    const firstTransfer = transfers[0];
-                    const lineName = firstTransfer.ToLineName?.Zh_tw || lineKey;
-                    const toLineID = firstTransfer.ToLineID || '';
-                    const lineColor = lineColors[toLineID] || '#999';
-                    
-                    html += `<div class="transfer-line-name">
-                        <span class="line-badge" style="background: ${lineColor};">${lineName}</span>
-                    </div>`;
-                    
-                    // 轉乘詳細資訊
-                    transfers.forEach((t, idx) => {
-                        const isInside = t.IsOnSiteTransfer ? '站內' : '站外';
-                        const time = t.TransferTime || '?';
-                        const toStationName = t.ToStationName?.Zh_tw || t.ToStationName || '未知';
-                        
-                        html += `
+                    const isInside = t.IsOnSiteTransfer ? '站內' : '站外';
+                    html += `
+                        <div class="transfer-group">
                             <div class="transfer-item">
                                 <div class="transfer-destination">
-                                    往 <strong>${toStationName}</strong>
-                                    <span class="transfer-badge ${isInside === '站內' ? 'onsite' : 'offsite'}">
-                                        ${isInside}
-                                    </span>
+                                    往 <strong>${t.ToStationName?.Zh_tw || '未知'}</strong>
+                                    <span class="transfer-badge ${t.IsOnSiteTransfer ? 'onsite' : 'offsite'}">${isInside}</span>
                                 </div>
-                                <div class="transfer-time">步行約 <strong>${time}</strong> 分</div>
+                                <div class="transfer-time">步行約 <strong>${t.TransferTime || '?'}</strong> 分</div>
                             </div>
-                        `;
-                    });
-                    
-                    html += '</div>';
+                        </div>`;
                 });
-                
                 html += '</div>';
-                
-                // 將轉乘資訊插入頁面 (如果有轉乘區域)
-                const transferArea = document.getElementById('transferInfoArea');
-                if (transferArea) {
-                    transferArea.innerHTML = html;
-                    transferArea.style.display = 'block';
-                } else {
-                    console.warn('⚠️ 頁面上沒有 #transferInfoArea 容器');
-                }
-                
-            } catch (error) {
-                // ✅ 改善錯誤處理：忽略 404 錯誤，優雅地隱藏轉乘區域
-                if (error.message && error.message.includes('404')) {
-                    console.log(`ℹ️ 該車站無轉乘資訊`);
-                } else {
-                    console.warn('⚠️ 顯示轉乘資訊時發生錯誤:', error.message);
-                }
-                // 隱藏轉乘區塊
-                const transferArea = document.getElementById('transferInfoArea');
-                if (transferArea) transferArea.style.display = 'none';
+                transferArea.innerHTML = html;
+                transferArea.style.display = 'block';
+            } catch (e) {
+                transferArea.style.display = 'none';
             }
         }
 
