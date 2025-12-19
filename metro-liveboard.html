@@ -1499,7 +1499,20 @@
             if (allStationsMode) {
                 stationTrains = currentLiveboardData;
             } else {
-                stationTrains = currentLiveboardData.filter(item => item.StationID === currentStationId);
+                // ✨ 修正：寬鬆比對 StationID (忽略大小寫，相容有無前綴)
+                stationTrains = currentLiveboardData.filter(item => {
+                    if (!item.StationID) return false;
+                    // 如果 ID 完全一樣
+                    if (item.StationID === currentStationId) return true;
+                    // 如果包含 (例如 API 給 TYMC-A1，我們選 A1)
+                    if (item.StationID.endsWith(currentStationId)) return true;
+                    // 如果 API 給 A1，我們選 TYMC-A1
+                    if (currentStationId.endsWith(item.StationID)) return true;
+                    
+                    return false;
+                });
+                
+                console.log(`[Debug] StationID: ${currentStationId}, 篩選後筆數: ${stationTrains.length}`);
             }
 
             let allParsedTrains = [];
@@ -1542,6 +1555,37 @@
                             directionCode: dirCode,
                             isPassedLastTrain: false
                         });
+                    });
+                }
+                // 針對 TYMC 這種扁平結構的處理
+                else if (item.EstimateTime !== undefined) {
+                     // 過濾掉已經離站很久的 (-5分鐘)
+                     if (item.EstimateTime < -5) return;
+
+                     const destName = item.DestinationStationName?.Zh_tw || item.DestinationStationName || '未知';
+                     const tripHeadSign = item.TripHeadSign || destName;
+                     
+                     // ✨ 嘗試判斷車種 (TYMC)
+                     // 因為資料裡沒給 TrainType，我們只能先給個預設值，或者看是否能從 TripHeadSign 猜測
+                     let trainTypeName = '普通車'; // 預設藍色
+                     
+                     // 如果未來 API 有補上 TrainType 或 TrainTypeName，這裡就能生效
+                     if (item.TrainTypeName?.Zh_tw) trainTypeName = item.TrainTypeName.Zh_tw;
+                     else if (item.TrainType === '2' || item.TrainType === 2) trainTypeName = '直達車';
+
+                     // 針對某些特殊終點站猜測 (例如往環北通常是普通車，往機場可能是直達車？這不準確，僅供參考)
+                     // 目前暫時全部顯示為普通車，以免誤導乘客
+
+                     allParsedTrains.push({
+                        stationName: item.StationName?.Zh_tw || currentStationName,
+                        lineName: item.LineName?.Zh_tw || item.LineID,
+                        lineID: item.LineID || '',
+                        tripHeadSign: tripHeadSign,
+                        destinationName: destName,
+                        estimateTime: item.EstimateTime, // 分鐘
+                        trainType: trainTypeName,
+                        directionCode: item.Direction || destName, // 用終點站分組
+                        isPassedLastTrain: false
                     });
                 }
             });
