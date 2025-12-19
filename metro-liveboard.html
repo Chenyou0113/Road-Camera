@@ -1544,11 +1544,43 @@
                          } catch(e) {}
                      }
 
-                     // 嘗試判斷車種 (目前 API 沒給，預設普通車)
-                     let trainTypeName = '普通車';
-                     // 稍微用終點站猜測一下 (僅供參考，不完全準確)
-                     // 通常直達車終點是 A1 或 A13/A21，普通車是 A1 或 A21/A22
-                     // 這裡先全部維持普通車，避免標錯顏色被客訴
+                     // 嘗試判斷車種：根據目的地站名
+                     let trainTypeName = '普通車'; // 預設
+                     
+                     if (currentSystem === 'TYMC') {
+                         // 定義有直達車的終點站清單
+                         const expressDestinations = ['環北', '高鐵桃園', '第一航廈', '第二航廈', '航廈1', '航廈2', '1號航廈', '2號航廈', '長庚醫院', '新北產業園區', '台北車站'];
+                         
+                         // 檢查目的地是否在直達車清單中
+                         const hasExpressToThisDest = expressDestinations.some(dest => destName.includes(dest));
+                         
+                         if (hasExpressToThisDest) {
+                             // 這個終點有直達車，判斷當前列車是否為直達
+                             // 直達車停靠站數較少，普通車停靠站數較多
+                             // 根據 API 提供的停靠站資訊判斷
+                             try {
+                                 // 嘗試從 Stops 或類似欄位判斷停靠站數
+                                 const numStops = item.StopCount || item.Stops?.length || 0;
+                                 // 如果停靠站數 <= 10，通常是直達車；> 10 是普通車
+                                 // 這個數字可能需要根據實際情況調整
+                                 trainTypeName = (numStops <= 10) ? '直達車' : '普通車';
+                             } catch(e) {
+                                 // 如果無法判斷停靠站數，根據站號推測
+                                 try {
+                                     const destID = item.DestinationStationID || item.DestinationStaionID;
+                                     const stNum = parseInt(destID.replace(/[^0-9]/g, ''));
+                                     // A1-A3 通常是直達，往機場；A20+ 往北的通常是普通
+                                     trainTypeName = (stNum <= 3) ? '直達車' : '普通車';
+                                 } catch(e2) {
+                                     trainTypeName = '直達車'; // 有直達車的終點，預設為直達
+                                 }
+                             }
+                         } else {
+                             // 這個終點沒有直達車，全部是普通車
+                             trainTypeName = '普通車';
+                         }
+
+                     }
                      
                      allParsedTrains.push({
                         stationName: item.StationName?.Zh_tw || currentStationName,
