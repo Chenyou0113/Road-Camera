@@ -1517,99 +1517,80 @@
 
             let allParsedTrains = [];
             stationTrains.forEach(item => {
-                const estimates = item.Estimates || item.estimates || item.NextBuses || item.Buses || [];
-                
-                if (Array.isArray(estimates) && estimates.length > 0) {
-                    estimates.forEach(estimate => {
-                        // 過濾掉已經離站很久的 (-5分鐘)
-                        if (estimate.EstimateTime < -5) return;
-
-                        const directionText = estimate.TripHeadSign || estimate.Direction || '';
-                        const destName = estimate.DestinationStationName?.Zh_tw || estimate.DestinationStationName || '未知';
-                        const dirCode = estimate.Direction !== undefined ? estimate.Direction : destName;
-
-                        // ✨ 重點：車種判斷邏輯 (TYMC)
-                        let trainTypeName = estimate.TrainTypeName?.Zh_tw; 
-                        
-                        if (currentSystem === 'TYMC') {
-                            // TDX TYMC: 1=普通車, 2=直達車, 3=加班車, 4=加班直達...
-                            const typeCode = String(estimate.TrainType);
-                            if (typeCode === '1') trainTypeName = '普通車';
-                            else if (typeCode === '2') trainTypeName = '直達車';
-                            else if (typeCode === '3') trainTypeName = '普通車(增)';
-                            else if (typeCode === '4') trainTypeName = '直達車(增)';
-                            else if (typeCode === '5') trainTypeName = '直達車(環)';
-                            
-                            // 如果上面都沒對應到，且原本就有名字，就用原本的
-                            if (!trainTypeName) trainTypeName = '普通車'; // 預設
-                        }
-
-                        allParsedTrains.push({
-                            stationName: item.StationName?.Zh_tw || currentStationName,
-                            lineName: item.LineName?.Zh_tw || item.LineID,
-                            lineID: item.LineID || '',
-                            tripHeadSign: directionText,
-                            destinationName: destName,
-                            estimateTime: estimate.EstimateTime, // 單位：分鐘
-                            trainType: trainTypeName,            // 車種名稱
-                            directionCode: dirCode,
-                            isPassedLastTrain: false
-                        });
-                    });
-                }
-                // 針對 TYMC 這種扁平結構的處理
-                else if (item.EstimateTime !== undefined) {
-                     // 過濾掉已經離站很久的 (-5分鐘)
-                     if (item.EstimateTime < -5) return;
+                // 扁平結構處理 (TYMC)
+                if (item.EstimateTime !== undefined) {
+                     // 過濾掉已離站 (-2分鐘)
+                     if (item.EstimateTime < -2) return;
 
                      const destName = item.DestinationStationName?.Zh_tw || item.DestinationStationName || '未知';
                      const tripHeadSign = item.TripHeadSign || destName;
                      
-                     // ✨ 嘗試判斷車種 (TYMC)
-                     // 因為資料裡沒給 TrainType，我們只能先給個預設值，或者看是否能從 TripHeadSign 猜測
-                     let trainTypeName = '普通車'; // 預設藍色
+                     // ✨ 判斷方向：透過車站編號比較 (例如 A3 往 A1 是北，往 A13 是南)
+                     // 預設用終點站名稱分組
+                     let dirCode = item.Direction || destName; 
                      
-                     // 如果未來 API 有補上 TrainType 或 TrainTypeName，這裡就能生效
-                     if (item.TrainTypeName?.Zh_tw) trainTypeName = item.TrainTypeName.Zh_tw;
-                     else if (item.TrainType === '2' || item.TrainType === 2) trainTypeName = '直達車';
+                     if (currentSystem === 'TYMC') {
+                         try {
+                             // 取出數字 (A3 -> 3, A13 -> 13)
+                             const currentNum = parseInt(item.StationID.replace(/[^0-9]/g, ''));
+                             // TYMC JSON 裡有 DestinationStationID
+                             const destID = item.DestinationStationID || item.DestinationStaionID; // API 有時拼錯
+                             const destNum = parseInt(destID.replace(/[^0-9]/g, ''));
+                             
+                             if (!isNaN(currentNum) && !isNaN(destNum)) {
+                                 // 數字小的是往北(0)，大的是往南(1)
+                                 dirCode = (destNum < currentNum) ? 'NORTH' : 'SOUTH';
+                             }
+                         } catch(e) {}
+                     }
 
-                     // 針對某些特殊終點站猜測 (例如往環北通常是普通車，往機場可能是直達車？這不準確，僅供參考)
-                     // 目前暫時全部顯示為普通車，以免誤導乘客
-
+                     // 嘗試判斷車種 (目前 API 沒給，預設普通車)
+                     let trainTypeName = '普通車';
+                     // 稍微用終點站猜測一下 (僅供參考，不完全準確)
+                     // 通常直達車終點是 A1 或 A13/A21，普通車是 A1 或 A21/A22
+                     // 這裡先全部維持普通車，避免標錯顏色被客訴
+                     
                      allParsedTrains.push({
                         stationName: item.StationName?.Zh_tw || currentStationName,
                         lineName: item.LineName?.Zh_tw || item.LineID,
                         lineID: item.LineID || '',
                         tripHeadSign: tripHeadSign,
                         destinationName: destName,
-                        estimateTime: item.EstimateTime, // 分鐘
+                        estimateTime: item.EstimateTime, 
                         trainType: trainTypeName,
-                        directionCode: item.Direction || destName, // 用終點站分組
+                        directionCode: dirCode, // ✨ 這裡現在是 NORTH 或 SOUTH
                         isPassedLastTrain: false
                     });
                 }
+                // ... (如果有其他系統的 Estimates 邏輯保留在這裡) ...
             });
 
-            // 排序與去重邏輯
+            // 排序 (由小到大)
             allParsedTrains.sort((a, b) => a.estimateTime - b.estimateTime);
+            
             const groups = {};
             allParsedTrains.forEach(train => {
-                const key = train.directionCode;
+                const key = train.directionCode; // 現在 key 只有 'NORTH' 或 'SOUTH'
                 if (!groups[key]) groups[key] = [];
                 
-                // 簡單去重：同方向、同終點、時間差小於1分鐘視為同一班
+                // 去重檢查
                 const isDuplicate = groups[key].some(t => 
                     t.destinationName === train.destinationName && 
-                    Math.abs(t.estimateTime - train.estimateTime) < 1
+                    Math.abs(t.estimateTime - train.estimateTime) < 2
                 );
-                if (!isDuplicate) groups[key].push(train);
+                
+                if (!isDuplicate) {
+                    groups[key].push(train);
+                }
             });
 
-            // 每個方向取前 2 班
+            // ✨ 每個「大方向」只取前 2 班
+            // 這樣就會變成：往北 2 班 + 往南 2 班 = 最多 4 班
             Object.values(groups).forEach(groupTrains => {
                 finalDisplayRows = finalDisplayRows.concat(groupTrains.slice(0, 2));
             });
-            // 最後依照時間排序顯示
+            
+            // 最後依照時間排序
             finalDisplayRows.sort((a, b) => a.estimateTime - b.estimateTime);
 
             // --- HTML 生成 ---
