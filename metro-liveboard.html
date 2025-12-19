@@ -1457,14 +1457,15 @@
         }
 
         // 輔助函式：計算到站時刻 (輸入秒數，回傳 HH:mm)
-        function calculateArrivalTime(seconds) {
-            if (!seconds && seconds !== 0) return '-';
+        // 輔助函式：計算到站時刻 (輸入為「分鐘」)
+        function calculateArrivalTime(minutes) {
+            // 如果沒有資料或是負數過大，回傳 -
+            if (minutes === undefined || minutes === null) return '-';
             
             const now = new Date();
-            // 現在時間 + 預估秒數 = 到站時間
-            const arrivalTime = new Date(now.getTime() + seconds * 1000);
+            // 分鐘 * 60 * 1000 = 毫秒
+            const arrivalTime = new Date(now.getTime() + minutes * 60 * 1000);
             
-            // 格式化為 HH:mm
             return arrivalTime.toLocaleTimeString('zh-TW', { 
                 hour: '2-digit', 
                 minute: '2-digit', 
@@ -1604,38 +1605,42 @@
                         }
                     }
 
-                    // 時間顯示邏輯：HH:mm
-                    let timeDisplay;
-                    const seconds = train.estimateTime;
-                    const timeString = calculateArrivalTime(seconds); 
+                    // ⚠️ 修正：這裡的單位是「分鐘」
+                    const mins = train.estimateTime;
                     
+                    // 1. 處理無效資料
+                    let timeDisplay;
                     let statusClass = 'waiting';
                     let statusText = '準點';
-
-                    if (seconds === undefined || seconds === null) {
-                        timeDisplay = `<span style="color: #999;">-</span>`;
-                    } else if (seconds <= 60) { 
-                        // 1分鐘內
-                        timeDisplay = `<span style="color: #d32f2f; font-weight: bold; font-size: 1.1rem; animation: blink 1s infinite alternate;">● 進站中</span>`;
-                        statusClass = 'arriving';
-                        statusText = '進站中';
-                    } else if (seconds <= 120) {
-                        // 2分鐘內
-                         timeDisplay = `<span style="color: #f57f17; font-weight: bold; font-size: 1.1rem;">即將進站</span>`;
-                         statusClass = 'arriving';
-                         statusText = '即將進站';
+                    
+                    if (mins === undefined || mins === null || mins < -5) {
+                        timeDisplay = `<span style="color: #999; font-size: 0.9rem;">請參考時刻表</span>`;
+                        statusClass = 'waiting';
+                        statusText = '等待中';
                     } else {
-                        // 一般情況：14:35
-                        timeDisplay = `<span style="font-size: 1.3rem; font-weight: bold; color: var(--text-primary, #333); letter-spacing: 1px;">${timeString}</span>`;
+                        // 2. 計算 HH:mm
+                        const timeString = calculateArrivalTime(mins);
+                        
+                        // 3. 狀態判斷 (單位是分鐘)
+                        // 小於等於 1 分鐘 -> 進站中
+                        if (mins <= 1) { 
+                            timeDisplay = `<span style="color: #d32f2f; font-weight: bold; font-size: 1.1rem; animation: blink 1s infinite alternate;">● 進站中</span>`;
+                            statusClass = 'arriving';
+                            statusText = '進站中';
+                        } 
+                        // 小於等於 3 分鐘 -> 即將進站
+                        else if (mins <= 3) {
+                             timeDisplay = `<span style="color: #f57f17; font-weight: bold; font-size: 1.1rem;">即將進站</span>`;
+                             statusClass = 'arriving';
+                             statusText = '即將進站';
+                        } 
+                        // 其他 -> 顯示時間 (例如 14:35)
+                        else {
+                            timeDisplay = `<span style="font-size: 1.3rem; font-weight: bold; color: var(--text-primary, #333); letter-spacing: 1px;">${timeString}</span>`;
+                        }
                     }
 
-                    // 末班車檢查
-                    if (train.isPassedLastTrain) {
-                        statusClass = 'closed';
-                        statusText = '已收班';
-                        timeDisplay = `<span style="color: #999; font-size: 0.9rem;">已過末班</span>`;
-                    }
-
+                    // 4. 末班車檢查
                     try {
                         const isPassed = await checkIfPassedLastTrain(train.lineID, currentSystem);
                         if (isPassed) {
