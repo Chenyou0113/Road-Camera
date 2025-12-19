@@ -328,6 +328,34 @@
             color: #333;
             flex-grow: 1;
         }
+        
+        /* 地圖按鈕樣式 */
+        .map-btn {
+            display: inline-block;
+            margin-top: 5px;
+            padding: 6px 12px;
+            background-color: #607d8b;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-size: 0.9rem;
+            transition: background 0.3s;
+        }
+        .map-btn:hover {
+            background-color: #455a64;
+        }
+        .map-container {
+            margin-top: 10px;
+            border-top: 1px dashed #eee;
+            padding-top: 10px;
+        }
+        body.dark-mode .map-btn {
+            background-color: #37474f;
+            color: #eceff1;
+        }
+        body.dark-mode .map-container {
+            border-top-color: #333;
+        }
         .transfer-destination::before {
             content: '→';
             color: #999;
@@ -1763,33 +1791,91 @@
         } // ✅ 這裡原本多了一個大括號，現已修復
 
         // ✅ 修改 4: 顯示轉乘資訊
+        // ✅ 修改 4: 顯示轉乘資訊 (支援圖片顯示)
         async function displayTransferInfo(stationID, systemCode) {
             const transferArea = document.getElementById('transferInfoArea');
             try {
-                const transferData = await getTransferInfo(stationID, systemCode);
-                if (!transferData || transferData.length === 0) {
+                const rawData = await getTransferInfo(stationID, systemCode);
+                
+                // 相容性處理：判斷是舊陣列還是新物件
+                let transferList = [];
+                let mapList = [];
+
+                if (Array.isArray(rawData)) {
+                    transferList = rawData; // 舊格式
+                } else if (rawData && rawData.list) {
+                    transferList = rawData.list; // 新格式
+                    mapList = rawData.maps || [];
+                }
+
+                // 如果完全沒資料，隱藏
+                if ((!transferList || transferList.length === 0) && mapList.length === 0) {
                     transferArea.style.display = 'none';
                     return;
                 }
                 
-                let html = '<div class="transfer-info"><div class="transfer-header"><i class="fas fa-exchange-alt"></i> 轉乘資訊</div>';
-                transferData.forEach(t => {
-                    const isInside = t.IsOnSiteTransfer ? '站內' : '站外';
-                    html += `
-                        <div class="transfer-group">
-                            <div class="transfer-item">
-                                <div class="transfer-destination">
-                                    往 <strong>${t.ToStationName?.Zh_tw || '未知'}</strong>
-                                    <span class="transfer-badge ${t.IsOnSiteTransfer ? 'onsite' : 'offsite'}">${isInside}</span>
-                                </div>
-                                <div class="transfer-time">步行約 <strong>${t.TransferTime || '?'}</strong> 分</div>
-                            </div>
-                        </div>`;
-                });
+                let html = '<div class="transfer-info">';
+                
+                // 1. 顯示轉乘列表
+                if (transferList.length > 0) {
+                    html += '<div class="transfer-header"><i class="fas fa-exchange-alt"></i> 轉乘資訊</div>';
+                    
+                    // 判斷是否為 TRTC 的新格式 (有 Type 欄位)
+                    if (transferList[0].Type) {
+                        html += '<div class="transfer-group">';
+                        transferList.forEach(t => {
+                            const isInside = t.IsOnSite ? '站內' : '站外';
+                            html += `
+                                <div class="transfer-item">
+                                    <div class="transfer-line-name" style="width:auto;margin-right:10px">
+                                        <span class="line-badge" style="background: #666;">${t.Name}</span>
+                                    </div>
+                                    <div class="transfer-destination">
+                                        往 <strong>${t.ToStation}</strong>
+                                        <span class="transfer-badge ${t.IsOnSite ? 'onsite' : 'offsite'}">${isInside}</span>
+                                    </div>
+                                </div>`;
+                        });
+                        html += '</div>';
+                    } else {
+                        // 舊格式 (KRTC LineTransfer)
+                        const groupedByLine = {};
+                        transferList.forEach(t => {
+                            const toLineKey = t.ToLineID || t.ToLineName?.Zh_tw || '未知';
+                            if (!groupedByLine[toLineKey]) groupedByLine[toLineKey] = [];
+                            groupedByLine[toLineKey].push(t);
+                        });
+                        
+                        Object.entries(groupedByLine).forEach(([lineKey, transfers]) => {
+                            html += '<div class="transfer-group">';
+                            const firstTransfer = transfers[0];
+                            const lineName = firstTransfer.ToLineName?.Zh_tw || lineKey;
+                            const lineColor = lineColors[firstTransfer.ToLineID] || '#999';
+                            html += `<div class="transfer-line-name"><span class="line-badge" style="background: ${lineColor};">${lineName}</span></div>`;
+                            
+                            transfers.forEach(t => {
+                                const isInside = t.IsOnSiteTransfer ? '站內' : '站外';
+                                html += `<div class="transfer-item"><div class="transfer-destination">往 <strong>${t.ToStationName?.Zh_tw || '未知'}</strong><span class="transfer-badge ${isInside === '站內' ? 'onsite' : 'offsite'}">${isInside}</span></div><div class="transfer-time">步行約 <strong>${t.TransferTime || '?'}</strong> 分</div></div>`;
+                            });
+                            html += '</div>';
+                        });
+                    }
+                }
+
+                // 2. 顯示車站地圖按鈕
+                if (mapList.length > 0) {
+                    html += '<div class="map-container"><div class="transfer-header"><i class="fas fa-map"></i> 車站地圖</div>';
+                    mapList.forEach(map => {
+                        html += `<a href="${map.MapURL}" target="_blank" class="map-btn"><i class="fas fa-external-link-alt"></i> ${map.MapName?.Zh_tw || '車站地圖'}</a> `;
+                    });
+                    html += '</div>';
+                }
+
                 html += '</div>';
                 transferArea.innerHTML = html;
                 transferArea.style.display = 'block';
             } catch (e) {
+                console.error(e);
                 transferArea.style.display = 'none';
             }
         }
