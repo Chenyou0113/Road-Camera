@@ -1240,36 +1240,86 @@
         }
 
         // ✅ 修改 2: 改用 Worker 取得車站列表 (讀取 D1)
+        // ✅ 修改 2: 改用 Worker 取得車站列表 (讀取 D1) + 針對 TYMC 資料補強
         async function loadSystemData(systemCode) {
             const lineSelect = document.getElementById('lineSelect');
             const stationSelect = document.getElementById('stationSelect');
+            
             lineSelect.innerHTML = '<option value="">載入中...</option>';
+            stationSelect.innerHTML = '<option value="">請先選擇路線</option>';
+            document.getElementById('stationCount').textContent = '-';
+            
+            let rawData = [];
 
-            try {
-                const response = await fetch(`${WORKER_URL}/api/stations?system=${systemCode}`);
-                const rawData = await response.json(); // 拿到的是 Worker 存的 json_data 陣列
-
-                // 資料修補邏輯 (補強路線名稱顯示)
-                allStationData = rawData.map(item => {
-                    let lineName = item.LineName?.Zh_tw;
-                    if (!lineName || lineName === '未知') {
-                        const lineCodeMap = { 'BL': '板南線', 'BR': '文湖線', 'R': '淡水信義線', 'G': '松山新店線', 'O': '中和新蘆線', 'Y': '環狀線', 'A': '機場線' };
-                        lineName = lineCodeMap[item.LineID] || lineCodeMap[item.StationID?.substring(0, 2)];
-                    }
-                    if (systemCode === 'KRTC') {
-                        if (item.StationID?.startsWith('R')) lineName = '紅線';
-                        if (item.StationID?.startsWith('O')) lineName = '橘線';
-                    }
-                    if (!item.LineName) item.LineName = {};
-                    item.LineName.Zh_tw = lineName || '捷運線';
-                    return item;
-                });
-
-                renderLineSelect(allStationData, systemCode);
-            } catch (error) {
-                console.error("車站載入失敗", error);
-                lineSelect.innerHTML = '<option value="">載入失敗</option>';
+            if (stationDataCache[systemCode]) {
+                rawData = stationDataCache[systemCode];
+            } else {
+                try {
+                    console.log(`📡 從 Worker 下載車站資料: ${systemCode}`);
+                    const response = await fetch(`${WORKER_URL}/api/stations?system=${systemCode}`);
+                    
+                    if (!response.ok) throw new Error('Worker 回傳錯誤');
+                    rawData = await response.json();
+                    
+                    if (!Array.isArray(rawData)) throw new Error("資料格式錯誤 (請確認是否已執行 Sync)");
+                } catch (error) {
+                    console.error(`載入${systemCode}失敗:`, error);
+                    lineSelect.innerHTML = '<option value="">載入失敗 (請確認資料庫已同步)</option>';
+                    return;
+                }
             }
+
+            // 資料修補 (Data Patching)
+            const patchedData = rawData.map(item => {
+                let lineName = item.LineName?.Zh_tw;
+                const sID = item.StationID || '';
+                const lID = item.LineID || '';
+
+                // 1. 通用規則：如果沒有名稱，嘗試用 ID 前綴對應
+                if (!lineName || lineName === '未知') {
+                    const lineCodeMap = {
+                        'BL': '板南線', 'BR': '文湖線', 'R': '淡水信義線',
+                        'G': '松山新店線', 'O': '中和新蘆線', 'Y': '環狀線',
+                        'A': '機場線' // 這裡本來就會對應到
+                    };
+                    // 先看 LineID
+                    for (const code in lineCodeMap) {
+                        if (lID === code) { lineName = lineCodeMap[code]; break; }
+                    }
+                    // 再看 StationID 前綴
+                    if (!lineName) {
+                        for (const code in lineCodeMap) {
+                            if (sID.startsWith(code)) { lineName = lineCodeMap[code]; break; }
+                        }
+                    }
+                }
+
+                // 2. 系統專屬強制規則
+                if (systemCode === 'KRTC') {
+                    if (sID.startsWith('R')) lineName = '紅線';
+                    if (sID.startsWith('O')) lineName = '橘線';
+                }
+                if (systemCode === 'KLRT') {
+                    lineName = '高雄輕軌';
+                }
+                
+                // ✨ 新增：針對你提供的 JSON 結構，強制補上機場線名稱
+                if (systemCode === 'TYMC') {
+                    lineName = '機場線';
+                }
+
+                // 3. 將補好的名稱寫回物件，讓後續選單可以讀取
+                if (lineName) {
+                    if (!item.LineName) item.LineName = {};
+                    item.LineName.Zh_tw = lineName;
+                }
+                
+                return item;
+            });
+
+            allStationData = patchedData;
+            stationDataCache[systemCode] = patchedData;
+            renderLineSelect(allStationData, systemCode);
         }
 
         // 渲染路線選單 (簡化版)
