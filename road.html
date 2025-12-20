@@ -553,20 +553,41 @@
             const API_URL = "https://taiwan-traffic-cctv.xiaoyouwu5-fd3.workers.dev/api/cameras?type=provincial";
             
             try {
-                window.startLoading({ labelText: '連線中...' });
+                window.startLoading({ labelText: '連線至官方影像伺務器...' });
                 const response = await fetch(API_URL);
                 const data = await response.json();
 
-                allCameras = data.map(c => ({
-                    CCTVID: c.id,
-                    RoadName: c.road_name,
-                    LocationMile: c.location_mile,
-                    PositionLat: c.lat,
-                    PositionLon: c.lng,
-                    City: c.city,
-                    VideoImageURL: c.display_url, 
-                    source: 'worker-live'
-                }));
+                if (!Array.isArray(data)) throw new Error("資料格式錯誤");
+
+                allCameras = data.map(c => {
+                    // 🔥 1. 取得原始串流網址
+                    let finalUrl = c.stream_url;
+
+                    // 🔥 2. 強制將 http 轉為 https (高公局與公路局現在都支援 https)
+                    if (finalUrl && finalUrl.startsWith('http://')) {
+                        finalUrl = finalUrl.replace('http://', 'https://');
+                    }
+
+                    // 🔥 3. 針對高公局 (freeway) 的伸佐器名稱修正 (選用)
+                    if (finalUrl && finalUrl.includes('freeway.gov.tw')) {
+                        finalUrl = finalUrl.replace('cctvs.freeway.gov.tw', 'cctvn.freeway.gov.tw');
+                    }
+
+                    const cityName = getCityFromCoordinates(c.lng, c.lat, c.road_name);
+
+                    return {
+                        CCTVID: c.id,
+                        RoadName: c.road_name,
+                        RoadNumber: c.road_name, 
+                        LocationMile: c.location_mile,
+                        PositionLat: c.lat,
+                        PositionLon: c.lng,
+                        City: cityName, 
+                        RoadDirection: c.direction, 
+                        VideoImageURL: finalUrl, 
+                        source: 'worker-d1'
+                    };
+                });
 
                 filteredCameras = allCameras;
                 populateFilters();
@@ -575,7 +596,8 @@
                 setTimeout(() => initializeMap(), 500);
                 window.finishLoading();
             } catch (error) {
-                container.innerHTML = `<div class="loading">載入失敗</div>`;
+                console.error("選單生成失敗", error);
+                container.innerHTML = `<div class="loading">影像連線失敗</div>`;
                 window.finishLoading();
             }
         }
@@ -1132,18 +1154,14 @@
                 
                 img.onerror = function() {
                     if (this.parentNode) {
-                        this.parentNode.innerHTML = `
-                            <div style="color:#666; font-size:0.8rem; text-align:center; padding: 20px;">
-                                <i class="fas fa-redo" style="cursor:pointer; font-size:1.5rem; display: block; margin-bottom: 10px;" onclick="location.reload()"></i>
-                                <span style="display: block;">串流重連中...</span>
-                            </div>`;
+                        this.parentNode.innerHTML = `<div style="color:#999;font-size:0.8rem;">官方影像斷線中</div>`;
                     }
                     currentLoadingCount--;
                     processImageQueue();
                 };
                 
                 img.src = src;
-            }, LOAD_DELAY);
+            }, 500); // 減少憶遅，因為直連速度很快
         }
 
         function updatePagination() {

@@ -492,22 +492,45 @@
             const API_URL = "https://taiwan-traffic-cctv.xiaoyouwu5-fd3.workers.dev/api/cameras?type=highway";
             
             try {
-                window.startLoading({ labelText: '連線中...' });
+                window.startLoading({ labelText: '連線至官方影像伺務器...' });
                 const response = await fetch(API_URL);
                 const data = await response.json();
 
                 if (!Array.isArray(data)) throw new Error("資料格式錯誤");
 
-                allCameras = data.map(c => ({
-                    CCTVID: c.id,
-                    RoadName: c.road_name,
-                    LocationMile: c.location_mile,
-                    PositionLat: c.lat,
-                    PositionLon: c.lng,
-                    // 🔥 這裡一定要對應 display_url，這是 Worker 代理過的即時串流網址
-                    VideoImageURL: c.display_url, 
-                    source: 'worker-live'
-                }));
+                allCameras = data.map(c => {
+                    // 🔥 1. 取得原始串流網址
+                    let finalUrl = c.stream_url;
+
+                    // 🔥 2. 強制將 http 轉為 https (高公局與公路局現在都支援 https)
+                    // 這是為了防止 https 網站封鎖 http 影像
+                    if (finalUrl && finalUrl.startsWith('http://')) {
+                        finalUrl = finalUrl.replace('http://', 'https://');
+                    }
+
+                    // 🔥 3. 針對高公局 (freeway) 的伸佐器名稱修正 (選用)
+                    // 有些舊網址 cctvs 比較慢， cctvn 比較快，這裡可以視情況轉換
+                    if (finalUrl && finalUrl.includes('freeway.gov.tw')) {
+                        finalUrl = finalUrl.replace('cctvs.freeway.gov.tw', 'cctvn.freeway.gov.tw');
+                    }
+
+                    // 🔥 關鍵修正：利用前端現有的 city-boundaries.js 計算縣市
+                    const cityName = getCityFromCoordinates(c.lng, c.lat, c.road_name);
+
+                    return {
+                        CCTVID: c.id,
+                        RoadName: c.road_name,
+                        RoadNumber: c.road_name, 
+                        LocationMile: c.location_mile,
+                        PositionLat: c.lat,
+                        PositionLon: c.lng,
+                        City: cityName, 
+                        RoadDirection: c.direction, 
+                        // 🔥 直接使用修正後的官方網址
+                        VideoImageURL: finalUrl, 
+                        source: 'worker-d1'
+                    };
+                });
 
                 filteredCameras = allCameras;
                 populateFilters();
@@ -516,8 +539,8 @@
                 setTimeout(() => initializeMap(), 500);
                 window.finishLoading();
             } catch (error) {
-                console.error('載入失敗:', error);
-                container.innerHTML = `<div class="loading">載入失敗</div>`;
+                console.error("選單生成失敗", error);
+                container.innerHTML = `<div class="loading">影像連線失敗</div>`;
                 window.finishLoading();
             }
         }
@@ -871,13 +894,7 @@
                 const container = img.closest('.camera-image');
                 const loadingPlaceholder = container?.querySelector('.image-loading-placeholder');
                 const overlay = container?.querySelector('.image-overlay');
-                const imageUrl = img.dataset.src;
-
-                if (!imageUrl) {
-                    currentLoadingCount--;
-                    processImageQueue();
-                    return;
-                }
+                const src = img.dataset.src;
 
                 img.onload = function() {
                     if (loadingPlaceholder) loadingPlaceholder.style.display = 'none';
@@ -888,21 +905,16 @@
                 };
 
                 img.onerror = function() {
+                    // 官方伸務器停時會斷線，顯示提示
                     if (this.parentNode) {
-                        this.parentNode.innerHTML = `
-                            <div style="color:#666; font-size:0.8rem; text-align:center; padding: 20px;">
-                                <i class="fas fa-redo" style="cursor:pointer; font-size:1.5rem; display: block; margin-bottom: 10px;" onclick="location.reload()"></i>
-                                <span style="display: block;">串流重連中...</span>
-                            </div>`;
+                        this.parentNode.innerHTML = `<div style="color:#999;font-size:0.8rem;">官方影像斷線中</div>`;
                     }
                     currentLoadingCount--;
                     processImageQueue();
                 };
 
-                // 🔥 直接賽下，不要做任何處理！
-                img.src = imageUrl;
-                
-            }, 800);
+                img.src = src; 
+            }, 500); // 減少憶遅，因為直連速度很快
         }
 
         function updatePagination() {
