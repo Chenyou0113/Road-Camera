@@ -332,6 +332,15 @@
         }
 
         // 🔥 修改點：強化 transformStationData，抓取詳細資料
+        // 依據 StationID 前綴判斷類型
+        function getStationType(id) {
+            if (id.startsWith('4')) return { type: 'manned', name: '署屬氣象站' }; // 10分鐘更新
+            if (id.startsWith('C0')) return { type: 'auto', name: '自動氣象站' };   // 1小時更新
+            if (id.startsWith('C1')) return { type: 'rain', name: '自動雨量站' };   // 1小時更新
+            if (id.startsWith('C2')) return { type: 'agri', name: '農業氣象站' };   // 1小時更新
+            return { type: 'other', name: '其他觀測站' };
+        }
+
         function transformStationData(s) {
             const we = s.WeatherElement || s; 
             
@@ -386,25 +395,25 @@
                 lat = s.StationLatitude; lon = s.StationLongitude;
             }
 
+            // 🔥 呼叫分類函式
+            const stationInfo = getStationType(s.StationId);
+
             return {
                 stationId: s.StationId,
                 stationName: s.StationName,
-                type: s._sourceType || 'auto',
+                type: stationInfo.type,
+                typeName: stationInfo.name,
                 county: s.GeoInfo ? s.GeoInfo.CountyName : (s.CountyName || '未知'),
                 town: s.GeoInfo ? s.GeoInfo.TownName : (s.TownName || ''),
                 lat: parseFloat(lat),
                 lon: parseFloat(lon),
-                temp: tempObj,
-                rain: rainObj,
-                wind: windObj,
-                hum: humObj,
-                pres: presObj,
-                sun: sunObj,
-                uv: uvObj,
-                gust: gustObj,
-                maxT: maxTObj,
-                minT: minTObj,
+                temperature: tempObj,
                 weather: weatherDesc,
+                humidity: humObj,
+                precipitation: rainObj,
+                windSpeed: windObj,
+                pres: presObj, sun: sunObj, uv: uvObj, gust: gustObj,
+                maxT: maxTObj, minT: minTObj,
                 obsTime: s.ObsTime ? s.ObsTime.DateTime : (s.DateTime || '')
             };
         }
@@ -443,14 +452,14 @@
         }
 
         function renderStats() {
-            const validTemp = filteredStations.filter(s => s.temp.val !== null);
-            const avgTemp = validTemp.length ? (validTemp.reduce((a, b) => a + b.temp.val, 0) / validTemp.length).toFixed(1) : '-';
-            const maxTemp = validTemp.length ? Math.max(...validTemp.map(s => s.temp.val)) : '-';
-            const minTemp = validTemp.length ? Math.min(...validTemp.map(s => s.temp.val)) : '-';
-            const rainCount = filteredStations.filter(s => s.rain.val > 0).length;
-            const validRain = filteredStations.filter(s => s.rain.val !== null);
-            const maxRain = validRain.length ? Math.max(...validRain.map(s => s.rain.val)) : 0;
-            const errorCount = filteredStations.filter(s => s.temp.val === null && (s.temp.str.includes('故障') || s.temp.str.includes('異常'))).length;
+            const validTemp = filteredStations.filter(s => s.temperature.val !== null);
+            const avgTemp = validTemp.length ? (validTemp.reduce((a, b) => a + b.temperature.val, 0) / validTemp.length).toFixed(1) : '-';
+            const maxTemp = validTemp.length ? Math.max(...validTemp.map(s => s.temperature.val)) : '-';
+            const minTemp = validTemp.length ? Math.min(...validTemp.map(s => s.temperature.val)) : '-';
+            const rainCount = filteredStations.filter(s => s.precipitation.val > 0).length;
+            const validRain = filteredStations.filter(s => s.precipitation.val !== null);
+            const maxRain = validRain.length ? Math.max(...validRain.map(s => s.precipitation.val)) : 0;
+            const errorCount = filteredStations.filter(s => s.temperature.val === null && (s.temperature.str.includes('故障') || s.temperature.str.includes('異常'))).length;
 
             document.getElementById('stats-panel').innerHTML = `
                 <div class="stat-card"><div class="stat-number">${filteredStations.length}</div><div class="stat-label">觀測站數</div></div>
@@ -472,10 +481,10 @@
                 return;
             }
 
-            const sortedStations = [...filteredStations].sort((a, b) => (b.temp.val || -100) - (a.temp.val || -100));
+            const sortedStations = [...filteredStations].sort((a, b) => (b.temperature.val || -100) - (a.temperature.val || -100));
 
             grid.innerHTML = sortedStations.map(s => {
-                const tempDisplay = s.temp.val !== null ? `${s.temp.str}°C` : s.temp.str;
+                const tempDisplay = s.temperature.val !== null ? `${s.temperature.str}°C` : s.temperature.str;
                 
                 if (s.lat && s.lon) {
                     const marker = L.marker([s.lat, s.lon]).bindPopup(`<b>${s.stationName}</b><br>🌡️ ${tempDisplay}<br>${s.weather || ''}`);
@@ -483,14 +492,14 @@
                 }
 
                 let tempColor, bgColor;
-                if (s.temp.val === null) {
+                if (s.temperature.val === null) {
                     tempColor = '#999'; bgColor = '#757575';
                 } else {
-                    tempColor = (s.temp.val > 30) ? '#ff5252' : (s.temp.val < 15 ? '#4FC3F7' : '#29B6F6');
-                    bgColor = (s.temp.val > 30) ? 'linear-gradient(135deg, #d32f2f 0%, #c62828 100%)' : 'linear-gradient(135deg, #1976D2 0%, #0D47A1 100%)';
+                    tempColor = (s.temperature.val > 30) ? '#ff5252' : (s.temperature.val < 15 ? '#4FC3F7' : '#29B6F6');
+                    bgColor = (s.temperature.val > 30) ? 'linear-gradient(135deg, #d32f2f 0%, #c62828 100%)' : 'linear-gradient(135deg, #1976D2 0%, #0D47A1 100%)';
                 }
-                const tempClass = s.temp.val === null ? 'temp-main small-text' : 'temp-main';
-                const weatherIcon = getWeatherIcon(s.weather, s.rain.val);
+                const tempClass = s.temperature.val === null ? 'temp-main small-text' : 'temp-main';
+                const weatherIcon = getWeatherIcon(s.weather, s.precipitation.val);
 
                 return `
                 <div class="station-card" onclick="showModal('${s.stationId}')">
@@ -502,13 +511,14 @@
                         <div class="weather-icon" style="font-size: 3rem; margin: 10px 0;">${weatherIcon}</div>
                         <div class="${tempClass}" style="color: ${tempColor}">${tempDisplay}</div>
                         <div class="station-info-row">
-                            <span class="info-pill">💧 ${s.hum.val !== null ? s.hum.str + '%' : s.hum.str}</span>
-                            <span class="info-pill">🌧️ ${s.rain.val !== null ? s.rain.str + 'mm' : s.rain.str}</span>
-                            <span class="info-pill">💨 ${s.wind.val !== null ? s.wind.str + 'm/s' : s.wind.str}</span>
+                            <span class="info-pill">💧 ${s.humidity.val !== null ? s.humidity.str + '%' : s.humidity.str}</span>
+                            <span class="info-pill">🌧️ ${s.precipitation.val !== null ? s.precipitation.str + 'mm' : s.precipitation.str}</span>
+                            <span class="info-pill">💨 ${s.windSpeed.val !== null ? s.windSpeed.str + 'm/s' : s.windSpeed.str}</span>
                         </div>
                     </div>
                 </div>`;
             }).join('');
+
         }
 
         function getWeatherIcon(weather, rainVal) {
@@ -528,7 +538,7 @@
             
             document.getElementById('modalTitle').textContent = `${s.stationName} 測站資料`;
             
-            const weatherBadge = s.weather ? `<div class="weather-badge">${getWeatherIcon(s.weather, s.rain.val)} ${s.weather}</div>` : '';
+            const weatherBadge = s.weather ? `<div class="weather-badge">${getWeatherIcon(s.weather, s.precipitation.val)} ${s.weather}</div>` : '';
             const locationStr = `${s.county} ${s.town || ''}`;
             const timeStr = formatDateTime(s.obsTime);
 
@@ -540,17 +550,17 @@
                     <div class="basic-info-left">
                         <p><strong>📍 地點：</strong>${locationStr}</p>
                         <p><strong>🕒 觀測時間：</strong>${timeStr}</p>
-                        <p><strong>🆔 代碼：</strong>${s.stationId} <span style="font-size:0.8em; color:#666">(${isManned ? '局屬氣象站' : '自動氣象站'})</span></p>
+                        <p><strong>🆔 代碼：</strong>${s.stationId} <span style="font-size:0.8em; color:#666; border:1px solid #ddd; padding:2px 6px; border-radius:4px; display:inline-block; margin-left:4px; background:#f9f9f9;">${s.typeName}</span></p>
                     </div>
                     <div class="basic-info-right">${weatherBadge}</div>
                 </div>
             `;
 
             let cards = [
-                { label: '氣溫 (Temp)', val: s.temp.val, str: s.temp.str, unit: '°C' },
-                { label: '濕度 (Hum)', val: s.hum.val, str: s.hum.str, unit: '%' },
-                { label: '雨量 (Rain)', val: s.rain.val, str: s.rain.str, unit: 'mm' },
-                { label: '風速 (Wind)', val: s.wind.val, str: s.wind.str, unit: 'm/s' }
+                { label: '氣溫 (Temp)', val: s.temperature.val, str: s.temperature.str, unit: '°C' },
+                { label: '濕度 (Hum)', val: s.humidity.val, str: s.humidity.str, unit: '%' },
+                { label: '雨量 (Rain)', val: s.precipitation.val, str: s.precipitation.str, unit: 'mm' },
+                { label: '風速 (Wind)', val: s.windSpeed.val, str: s.windSpeed.str, unit: 'm/s' }
             ];
 
             // 局屬站顯示更多資料
@@ -583,9 +593,9 @@
         // 🔥 修改點：資料過濾與 X 軸優化
         async function fetchHistoryAndRender(stationId) {
             try {
-                // 找出目前測站的類型
-                const currentStation = allStations.find(s => s.stationId === stationId);
-                const isManned = currentStation && currentStation.type === 'manned';
+                // 1. 判斷是否為署屬站 (4開頭)
+                // 只有 4 開頭的站是 10 分鐘更新，其他 (C0, C1, C2) 都是 1 小時
+                const isManned = stationId.startsWith('4');
 
                 const response = await fetch(`${CLOUDFLARE_WORKER_URL}/api/weather/history?station_id=${stationId}`);
                 if (!response.ok) throw new Error("History fetch failed");
@@ -598,10 +608,18 @@
 
                 historyData.forEach(d => {
                     const date = new Date(d.timestamp);
-                    // 局屬站每 10 分鐘，自動站每小時
-                    const timeKey = isManned 
-                        ? `${date.getDate()}-${date.getHours()}:${date.getMinutes()}`
-                        : `${date.getDate()}-${date.getHours()}`;
+                    let timeKey;
+
+                    if (isManned) {
+                        // 🔥 署屬站：保留分鐘 (每10分鐘一筆)
+                        // Key: "日-時:分" -> 16-09:10
+                        timeKey = `${date.getDate()}-${date.getHours()}:${date.getMinutes()}`;
+                    } else {
+                        // 🔥 其他站 (自動/雨量/農業)：只保留小時 (每小時一筆)
+                        // Key: "日-時" -> 16-09
+                        // 這樣同一小時內就算有多筆資料，也只會取第一筆
+                        timeKey = `${date.getDate()}-${date.getHours()}`;
+                    }
                     
                     if (!seenKeys.has(timeKey)) {
                         seenKeys.add(timeKey);
