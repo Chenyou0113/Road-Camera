@@ -498,39 +498,21 @@
 
                 if (!Array.isArray(data)) throw new Error("資料格式錯誤");
 
-                allCameras = data.map(c => {
-                    // 🔥 1. 取得原始串流網址
-                    let finalUrl = c.stream_url;
-
-                    // 🔥 2. 強制將 http 轉為 https (高公局與公路局現在都支援 https)
-                    // 這是為了防止 https 網站封鎖 http 影像
-                    if (finalUrl && finalUrl.startsWith('http://')) {
-                        finalUrl = finalUrl.replace('http://', 'https://');
-                    }
-
-                    // 🔥 3. 針對高公局 (freeway) 的伸佐器名稱修正 (選用)
-                    // 有些舊網址 cctvs 比較慢， cctvn 比較快，這裡可以視情況轉換
-                    if (finalUrl && finalUrl.includes('freeway.gov.tw')) {
-                        finalUrl = finalUrl.replace('cctvs.freeway.gov.tw', 'cctvn.freeway.gov.tw');
-                    }
-
-                    // 🔥 關鍵修正：利用前端現有的 city-boundaries.js 計算縣市
-                    const cityName = getCityFromCoordinates(c.lng, c.lat, c.road_name);
-
-                    return {
-                        CCTVID: c.id,
-                        RoadName: c.road_name,
-                        RoadNumber: c.road_name, 
-                        LocationMile: c.location_mile,
-                        PositionLat: c.lat,
-                        PositionLon: c.lng,
-                        City: cityName, 
-                        RoadDirection: c.direction, 
-                        // 🔥 直接使用修正後的官方網址
-                        VideoImageURL: finalUrl, 
-                        source: 'worker-d1'
-                    };
-                });
+                allCameras = data.map(c => ({
+                    CCTVID: c.id,
+                    RoadName: c.road_name,
+                    RoadNumber: c.road_name,
+                    LocationMile: c.location_mile,
+                    PositionLat: c.lat,
+                    PositionLon: c.lng,
+                    City: getCityFromCoordinates(c.lng, c.lat, c.road_name),
+                    RoadDirection: c.direction,
+                    // 🔥 清單用快照網址 (image_url)，防止協議錯誤
+                    VideoImageURL: c.image_url ? c.image_url.replace('http://', 'https://') : '', 
+                    // 💾 把即時串流網址存起來，點開彈窗才用
+                    RealtimeStreamURL: c.stream_url ? c.stream_url.replace('http://', 'https://') : '', 
+                    source: 'worker-d1'
+                }));
 
                 filteredCameras = allCameras;
                 populateFilters();
@@ -970,7 +952,15 @@
             const modalRoad = document.getElementById('modalRoad');
             const modalCoords = document.getElementById('modalCoords');
             
-            modalImg.src = camera.VideoImageUrl || camera.VideoImageURL || camera.VideoStreamURL || camera.PictureURL || '';
+            modalImg.src = ""; // 先清空
+
+            // 🔥 點開彈窗才載入真正的即時串流
+            let streamUrl = camera.RealtimeStreamURL;
+            
+            // 使用 corsproxy.io 處理串流的協議錯誤最穩定
+            if (streamUrl) {
+                modalImg.src = `https://corsproxy.io/?${encodeURIComponent(streamUrl)}&t=${Date.now()}`;
+            }
             modalTitle.textContent = camera.RoadName || '國道監視器';
             
             // 顯示里程資訊 - 優先使用 LocationMile，格式化為"第XXk+XXX"

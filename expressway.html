@@ -522,36 +522,21 @@
 
                 if (!Array.isArray(data)) throw new Error("資料格式錯誤");
 
-                allCameras = data.map(c => {
-                    // 🔥 1. 取得原始串流網址
-                    let finalUrl = c.stream_url;
-
-                    // 🔥 2. 強制將 http 轉為 https (高公局與公路局現在都支援 https)
-                    if (finalUrl && finalUrl.startsWith('http://')) {
-                        finalUrl = finalUrl.replace('http://', 'https://');
-                    }
-
-                    // 🔥 3. 針對高公局 (freeway) 的伸佐器名稱修正 (選用)
-                    if (finalUrl && finalUrl.includes('freeway.gov.tw')) {
-                        finalUrl = finalUrl.replace('cctvs.freeway.gov.tw', 'cctvn.freeway.gov.tw');
-                    }
-
-                    const cityName = getCityFromCoordinates(c.lng, c.lat, c.road_name);
-
-                    return {
-                        CCTVID: c.id,
-                        RoadName: c.road_name,
-                        RoadNumber: c.road_name, 
-                        LocationMile: c.location_mile,
-                        PositionLat: c.lat,
-                        PositionLon: c.lng,
-                        City: cityName, 
-                        RoadDirection: c.direction, 
-                        VideoImageURL: finalUrl,
-                        VideoImageUrl: finalUrl, 
-                        source: 'worker-d1'
-                    };
-                });
+                allCameras = data.map(c => ({
+                    CCTVID: c.id,
+                    RoadName: c.road_name,
+                    RoadNumber: c.road_name,
+                    LocationMile: c.location_mile,
+                    PositionLat: c.lat,
+                    PositionLon: c.lng,
+                    City: getCityFromCoordinates(c.lng, c.lat, c.road_name),
+                    RoadDirection: c.direction,
+                    // 🔥 清單用快照網址 (image_url)，防止協議錯誤
+                    VideoImageURL: c.image_url ? c.image_url.replace('http://', 'https://') : '', 
+                    // 💾 把即時串流網址存起來，點開彈窗才用
+                    RealtimeStreamURL: c.stream_url ? c.stream_url.replace('http://', 'https://') : '', 
+                    source: 'worker-d1'
+                }));
 
                 filteredCameras = allCameras;
                 populateFilters();
@@ -1057,7 +1042,15 @@
             const modalRoad = document.getElementById('modalRoad');
             const modalCoords = document.getElementById('modalCoords');
             
-            modalImg.src = camera.VideoImageUrl || camera.VideoStreamURL || '';
+            modalImg.src = ""; // 先清空
+            
+            // 🔥 點開彈窗才載入真正的即時串流
+            let streamUrl = camera.RealtimeStreamURL;
+            
+            // 使用 corsproxy.io 處理串流的協議錯誤最穩定
+            if (streamUrl) {
+                modalImg.src = `https://corsproxy.io/?${encodeURIComponent(streamUrl)}&t=${Date.now()}`;
+            }
             modalTitle.textContent = camera.RoadName || '快速道路監視器';
             modalLocation.innerHTML = `<i class="fas fa-map-marker-alt"></i> <strong>位置：</strong>${formatLocationInfo(camera)}`;
             modalRoad.innerHTML = `<i class="fas fa-road"></i> <strong>路線：</strong>${camera.RoadNumber || '未知路線'} (${camera.City || getCityFromCoordinates(camera.PositionLon, camera.PositionLat, camera.RoadName)})`;
@@ -1073,9 +1066,13 @@
                         <i class="fas fa-external-link-alt" style="font-size: 0.8rem; margin-left: 3px;"></i>
                     </a>`;
             }
-            const imageUrl = camera.VideoImageUrl || camera.VideoStreamURL;
-            if (imageUrl) {
-                coordsHtml += `<br><i class="fas fa-external-link-alt"></i> <strong>原始影像：</strong><a href="${imageUrl}" target="_blank" style="color: #4CAF50; text-decoration: none;">開啟原始影像連結</a>`;
+            
+            // 🔥 使用即時串流 URL
+            let streamUrl = camera.RealtimeStreamURL || camera.VideoStreamURL || '';
+            if (streamUrl && streamUrl.startsWith('http://')) streamUrl = streamUrl.replace('http://', 'https://');
+            
+            if (streamUrl) {
+                coordsHtml += `<br><i class="fas fa-external-link-alt"></i> <strong>原始影像：</strong><a href="${streamUrl}" target="_blank" style="color: #4CAF50; text-decoration: none;">開啟原始影像連結</a>`;
             }
             modalCoords.innerHTML = coordsHtml;
             

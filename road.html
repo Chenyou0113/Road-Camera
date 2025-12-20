@@ -559,35 +559,21 @@
 
                 if (!Array.isArray(data)) throw new Error("資料格式錯誤");
 
-                allCameras = data.map(c => {
-                    // 🔥 1. 取得原始串流網址
-                    let finalUrl = c.stream_url;
-
-                    // 🔥 2. 強制將 http 轉為 https (高公局與公路局現在都支援 https)
-                    if (finalUrl && finalUrl.startsWith('http://')) {
-                        finalUrl = finalUrl.replace('http://', 'https://');
-                    }
-
-                    // 🔥 3. 針對高公局 (freeway) 的伸佐器名稱修正 (選用)
-                    if (finalUrl && finalUrl.includes('freeway.gov.tw')) {
-                        finalUrl = finalUrl.replace('cctvs.freeway.gov.tw', 'cctvn.freeway.gov.tw');
-                    }
-
-                    const cityName = getCityFromCoordinates(c.lng, c.lat, c.road_name);
-
-                    return {
-                        CCTVID: c.id,
-                        RoadName: c.road_name,
-                        RoadNumber: c.road_name, 
-                        LocationMile: c.location_mile,
-                        PositionLat: c.lat,
-                        PositionLon: c.lng,
-                        City: cityName, 
-                        RoadDirection: c.direction, 
-                        VideoImageURL: finalUrl, 
-                        source: 'worker-d1'
-                    };
-                });
+                allCameras = data.map(c => ({
+                    CCTVID: c.id,
+                    RoadName: c.road_name,
+                    RoadNumber: c.road_name,
+                    LocationMile: c.location_mile,
+                    PositionLat: c.lat,
+                    PositionLon: c.lng,
+                    City: getCityFromCoordinates(c.lng, c.lat, c.road_name),
+                    RoadDirection: c.direction,
+                    // 🔥 清單用快照網址 (image_url)，防止協議錯誤
+                    VideoImageURL: c.image_url ? c.image_url.replace('http://', 'https://') : '', 
+                    // 💾 把即時串流網址存起來，點開彈窗才用
+                    RealtimeStreamURL: c.stream_url ? c.stream_url.replace('http://', 'https://') : '', 
+                    source: 'worker-d1'
+                }));
 
                 filteredCameras = allCameras;
                 populateFilters();
@@ -1318,9 +1304,7 @@
 
             // 3. 🔥 屬性名稱兼容處理 (處理大小寫不一致)
             // 優先讀取大寫版本，沒有才讀小寫版本
-            const streamUrl = camera.VideoStreamURL || camera.VideoStreamUrl || "";
-            const imageUrl = camera.VideoImageURL || camera.VideoImageUrl || "";
-            const displayUrl = imageUrl || streamUrl || '';
+            let streamUrl = camera.RealtimeStreamURL || "";
             
             // 座標兼容
             const positionLat = camera.PositionLat || (camera.Position && camera.Position.PositionLat) || 0;
@@ -1331,8 +1315,12 @@
             const roadNumber = camera.RoadNumber || '未知路線';
             const city = camera.City || getCityFromCoordinates(positionLon, positionLat, roadName);
 
-            // 4. 更新 UI
-            modalImg.src = displayUrl;
+            // 4. 更新 UI - 🔥 使用 CORS 代理加載實時串流
+            if (streamUrl) {
+                modalImg.src = `https://corsproxy.io/?${encodeURIComponent(streamUrl)}&t=${Date.now()}`;
+            } else {
+                modalImg.src = "";
+            }
             modalTitle.textContent = roadName;
             
             const locationInfo = formatLocationInfo(camera);
@@ -1350,8 +1338,8 @@
                         <i class="fas fa-external-link-alt" style="font-size: 0.8rem; margin-left: 3px;"></i>
                     </a>`;
             }
-            if (displayUrl) {
-                coordsHtml += `<br><i class="fas fa-external-link-alt"></i> <strong>原始影像：</strong><a href="${displayUrl}" target="_blank" style="color: #FF9800; text-decoration: none;">開啟原始影像連結</a>`;
+            if (streamUrl) {
+                coordsHtml += `<br><i class="fas fa-external-link-alt"></i> <strong>原始影像：</strong><a href="${streamUrl}" target="_blank" style="color: #FF9800; text-decoration: none;">開啟原始影像連結</a>`;
             }
             modalCoords.innerHTML = coordsHtml;
             
