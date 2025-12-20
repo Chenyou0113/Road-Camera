@@ -9,6 +9,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     <!-- 引入 Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- 🔥 時間軸適配器 -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
     <style>
         :root {
             --bg-gradient-start: #1976D2;
@@ -640,7 +642,6 @@
 
         function renderCharts(labels, temps, hums, rains, winds) {
             const isDark = document.body.classList.contains('dark-mode');
-            const isMobile = window.innerWidth < 768;
 
             const styles = {
                 titleColor: isDark ? '#64B5F6' : '#28629f',
@@ -658,19 +659,27 @@
                 return `${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
             };
 
-            const formatShortTime = (timestamp) => {
-                const d = new Date(timestamp);
-                return `${d.getHours().toString().padStart(2,'0')}:00`;
-            };
-
             const timeRange = labels.length > 0 
                 ? `${formatFullTime(labels[0])} ~ ${formatFullTime(labels[labels.length-1])}`
                 : '-- ~ --';
 
+            // 🔥 第三步：建立符合 Chart.js Time Scale 的資料格式
+            const datasetTemps = [];
+            const datasetHums = [];
+            const datasetRains = [];
+            const datasetWinds = [];
+
+            for(let i=0; i<labels.length; i++) {
+                const t = labels[i];
+                datasetTemps.push({ x: t, y: temps[i] });
+                datasetHums.push({ x: t, y: hums[i] });
+                datasetRains.push({ x: t, y: rains[i] });
+                datasetWinds.push({ x: t, y: winds[i] });
+            }
+
             const createConfig = (type, title, yLabel, datasetLabel, dataValues, color) => ({
                 type: type,
                 data: {
-                    labels: labels,
                     datasets: [{
                         label: datasetLabel,
                         data: dataValues,
@@ -690,27 +699,23 @@
                     layout: { padding: { top: 10, right: 20, left: 10, bottom: 10 } },
                     scales: {
                         x: {
+                            type: 'time',
+                            time: {
+                                unit: 'hour',
+                                stepSize: 3,
+                                displayFormats: {
+                                    hour: 'HH:mm'
+                                },
+                                tooltipFormat: 'MM/dd HH:mm'
+                            },
                             ticks: {
                                 color: styles.textColor,
                                 maxRotation: 0,
-                                minRotation: 0,
-                                autoSkip: false, 
-                                maxTicksLimit: 24, 
-                                font: { size: 11 },
-                                callback: function(val, index) {
-                                    const timestamp = this.getLabelForValue(val);
-                                    const date = new Date(timestamp);
-                                    const h = date.getHours();
-                                    const m = date.getMinutes();
-                                    
-                                    if (h % 3 === 0 && m < 15) {
-                                        return `${String(h).padStart(2,'0')}:00`;
-                                    }
-                                    return null; 
-                                }
+                                autoSkip: true,
+                                font: { size: 11 }
                             },
                             grid: { display: false },
-                            title: { display: true, text: '時間 (每3小時)', color: styles.subTitleColor, font: {size: 12}, padding: {top: 10} }
+                            title: { display: true, text: '時間 (過去24小時)', color: styles.subTitleColor, font: {size: 12}, padding: {top: 10} }
                         },
                         y: {
                             ticks: { color: styles.textColor, padding: 5 },
@@ -745,15 +750,7 @@
                             borderColor: '#ccc',
                             borderWidth: 1,
                             padding: 10,
-                            displayColors: true,
-                            callbacks: {
-                                title: function(items) {
-                                    if (items.length > 0) {
-                                        return formatFullTime(labels[items[0].dataIndex]);
-                                    }
-                                    return '';
-                                }
-                            }
+                            displayColors: true
                         }
                     }
                 }
@@ -764,25 +761,25 @@
             destroy('tempChart');
             chartInstances['tempChart'] = new Chart(
                 document.getElementById('tempChart').getContext('2d'),
-                createConfig('line', `過去24小時溫度變化圖`, '溫度 (°C)', '氣溫', temps, styles.tempLine)
+                createConfig('line', `過去24小時溫度變化圖`, '溫度 (°C)', '氣溫', datasetTemps, styles.tempLine)
             );
 
             destroy('humChart');
             chartInstances['humChart'] = new Chart(
                 document.getElementById('humChart').getContext('2d'),
-                createConfig('line', `過去24小時相對濕度變化圖`, '相對濕度 (%)', '相對濕度', hums, styles.humLine)
+                createConfig('line', `過去24小時相對濕度變化圖`, '相對濕度 (%)', '相對濕度', datasetHums, styles.humLine)
             );
 
             destroy('rainChart');
             chartInstances['rainChart'] = new Chart(
                 document.getElementById('rainChart').getContext('2d'),
-                createConfig('bar', `過去24小時雨量變化圖`, '毫米 (mm)', '雨量', rains, styles.rainBar)
+                createConfig('bar', `過去24小時雨量變化圖`, '毫米 (mm)', '雨量', datasetRains, styles.rainBar)
             );
 
             destroy('windChart');
             chartInstances['windChart'] = new Chart(
                 document.getElementById('windChart').getContext('2d'),
-                createConfig('line', `過去24小時風速變化圖`, '風速 (m/s)', '風速', winds, styles.windLine)
+                createConfig('line', `過去24小時風速變化圖`, '風速 (m/s)', '風速', datasetWinds, styles.windLine)
             );
         }
 
