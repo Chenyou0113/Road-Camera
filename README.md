@@ -1,103 +1,280 @@
-# 🚗 道路監視器整合系統
+# 🚗 Road Camera - 台灣交通監控整合系統
 
-一個整合台灣交通、環境與災防監控的現代化網頁應用系統。
+一個整合台灣**交通監視器、即時列車資訊、天氣監測、水文監測、災防預警**的現代化網頁應用。支援**Cloudflare Workers**無伺服器部署。
 
-## 📁 專案結構
+---
 
-```
-Road-Camera/
-├── 📄 核心頁面
-│   ├── index.html                      # 🏠 首頁（紫色漸層主題）
-│   ├── dashboard.html                  # 📊 儀表板
-│   └── navbar.js                       # 🧭 全域導航列
-│
-├── 🚗 交通監控頁面
-│   ├── highway.html                    # 🛣️ 國道監視器（藍色主題）
-│   ├── road.html                       # 🏞️ 省道監視器（橘色主題）✨ 里程+地標+方向篩選
-│   ├── expressway.html                 # 🚗 快速道路監視器（綠松石主題）
-│   └── city.html                       # 🏙️ 市區道路監視器（綠色主題）
-│
-├── 🌊 水資源監控頁面
-│   ├── water-resources.html            # 💧 水資源整合頁面（青色主題）
-│   └── soil-observation.html           # 🏞️ 河川流域監測（棕色主題）
-│
-├── 🌍 環境監控頁面
-│   ├── air-quality.html                # 🌫️ 空氣品質監測（紫色主題）
-│   └── debris-flow.html                # ⛰️ 土石流監測（深棕色主題）✨ 地圖標記
-│
-├── 🏔️ 災防監控頁面
-│   └── landslide-monitoring.html       # 🏔️ 邊坡監測（橘紅主題）
-│
-├── 📂 assets/                          # 共用資源目錄
-│   ├── config.js                       # ⚙️ 全域配置檔案（TDX API 設定）
-│   ├── navbar.js                       # 🧭 導航列組件
-│   ├── tdx-api.js                      # 🔌 TDX API 工具函式
-│   ├── image-handler-simple.js         # 🖼️ 簡化圖片載入處理器（推薦）
-│   ├── image-handler.js                # 🖼️ 進階圖片載入處理器（備用）
-│   ├── dark-mode.js                    # 🌙 深色模式功能
-│   ├── dark-mode.css                   # 🌙 深色模式樣式
-│   ├── loading-progress.js             # ⏳ 載入進度條
-│   └── responsive-camera.css           # 📱 響應式監視器樣式
-│
-├── 📂 scripts/                         # 部署與工具腳本
-│   ├── build.sh                        # 🔨 Linux/Mac 建置腳本
-│   ├── deploy.ps1                      # 🚀 Windows 部署腳本
-│   ├── start-server.ps1                # 🖥️ 開發伺服器啟動腳本
-│   ├── add-dark-mode.js                # 🌙 深色模式添加工具
-│   ├── add-dark-mode.ps1               # 🌙 深色模式 PowerShell 工具
-│   └── batch-add-dark-mode.ps1         # 🌙 批次添加深色模式
-│
-├── 📂 test/                            # 測試與開發檔案
-│   ├── *-test.html                     # 🧪 各種功能測試頁面
-│   ├── *-debug.html                    # 🐛 除錯頁面
-│   ├── *-validation.html               # ✅ 驗證頁面
-│   ├── filter-logic-test.html          # 🔍 省道篩選邏輯測試
-│   ├── provincial-test.html            # 🧪 省道API測試
-│   ├── mileage-test.html               # 📏 里程格式測試
-│   └── quick-check.html                # ⚡ 快速檢查工具
-│
-├── 📂 docs/                            # 文檔與報告
-│   ├── FIX-REPORT.md                   # 🔧 圖片載入修復報告
-│   ├── PROVINCIAL-FIX-REPORT.md        # 🏞️ 省道監視器修正報告
-│   └── ROAD-UPGRADE-REPORT.md          # ⬆️ 省道頁面升級報告
-│
-├── 📂 backup/                          # 備份與舊版檔案
-│   ├── *-old.html                      # 📦 舊版頁面
-│   ├── *-backup.html                   # 💾 備份頁面
-│   └── *-fixed.html                    # 🔧 修正版本
-│
-├── 📄 配置檔案
-│   ├── package.json                    # 📦 Node.js 專案配置
-│   ├── wrangler.toml                   # ☁️ Cloudflare Workers 配置
-│   ├── api-proxy.php                   # 🔄 PHP API 代理
-│   └── .gitattributes                  # 📝 Git 屬性配置
-│   └── quick-check.html                # 快速檢查工具
-│
-├── 🛠️ 工具腳本
-│   ├── add-dark-mode.js                # 深色模式添加腳本
-│   ├── add-dark-mode.ps1               # PowerShell 深色模式腳本
-│   └── batch-add-dark-mode.ps1         # 批次添加深色模式
-│
-├── ⚙️ 配置檔案
-│   ├── package.json                    # NPM 套件配置
-│   ├── wrangler.toml                   # Cloudflare Workers 配置
-│   └── api-proxy.php                   # PHP API 代理
-│
-├── 📚 文檔與版本控制
-│   ├── README.md                       # 本檔案
-│   ├── .gitattributes                  # Git 屬性設定
-│   └── .git/                           # Git 版本控制目錄
-│
-└── 📦 舊版與備份檔案
-    ├── *-old.html                      # 舊版頁面
-    ├── *-backup.html                   # 備份檔案
-    └── dashboard_backup.html           # 儀表板備份
-```
+## 📁 專案結構 (2025-12-22 更新)
 
-## 🎨 設計系統
+### 🚄 列車系統 (PIDS & LiveBoard)
+
+| 檔案 | 說明 | 主要功能 |
+|------|------|--------|
+| `tra-pids.html` | 📍 台鐵電子看板 | 即時班次、延誤時間、車站資訊 |
+| `tra_liveboard.html` | 📊 台鐵列車時刻表 | 分站查詢、車次詳細資訊 |
+| `train-liveboard.html` | 📋 台鐵列車動態板 | 即時班次追蹤、目的地篩選 |
+| `thsr_pids.html` | 🚄 高鐵電子看板 | 北上/南下班次、預估時間 |
+| `thsr_liveboard.html` | 📱 高鐵時刻表查詢 | 站點查詢、班次詳情 |
+| `metro-liveboard.html` | 🚇 捷運時刻表 | 各線列車動態（測試中） |
+| `airport_liveboard.html` | ✈️ 機場航班資訊 | 國際/國內航班查詢 |
+| `airport-pids.html` | ✈️ 機場電子看板 | 即時航班顯示 |
+
+**v2.2.0 改進** (tra-pids.html)：
+- 日期字體：電腦版 1rem → 3rem、平板版 0.75rem → 2rem
+- 車站英文：電腦版 1.4rem → 2rem、平板版 0.85rem → 1.2rem
+
+---
+
+### 🛣️ 交通監視器 (CCTV)
+
+| 檔案 | 說明 | 資料來源 |
+|------|------|--------|
+| `highway.html` | 🛣️ 國道監視器 | TDX API - 國道 |
+| `road.html` | 🏞️ 省道監視器 | TDX API - 省道 |
+| `expressway.html` | 🚗 快速道路監視器 | TDX API - 快速 |
+| `city.html` | 🏙️ 市區道路監視器 | TDX API - 市區 |
+| `water-cctv.html` | 💧 水利工程監視器 | 水利署 API |
+
+---
+
+### 🌍 環境與氣象監測
+
+| 檔案 | 說明 | 資料來源 |
+|------|------|--------|
+| `air-quality.html` | 🌫️ 空氣品質 | 環保署 API |
+| `air.html` | 🌬️ 空氣品質（簡版） | 環保署 API |
+| `weather.html` | 🌤️ 天氣預報 | 氣象署 API |
+| `weather-dashboard.html` | 📈 氣象儀表板 | 氣象署多資料集 |
+| `weather-new.html` | 🌦️ 天氣監測（新版） | 氣象署 API |
+| `weather_charts.html` | 📊 天氣圖表 | 氣象署 API |
+| `rainfall-radar.html` | 🌧️ 降雨雷達 | 氣象署雷達 |
+| `rainfall-radar-new.html` | 🌧️ 降雨雷達（新版） | 氣象署雷達 |
+| `weather_atlas.html` | 🗺️ 天氣地圖集 | 多來源整合 |
+
+---
+
+### 💧 水文監測
+
+| 檔案 | 說明 | 資料來源 |
+|------|------|--------|
+| `water-resources.html` | 💧 水資源整合 | 水利署 API |
+| `water.html` | 💧 水文監測（簡版） | 水利署 API |
+| `water-monitor.html` | 📊 水位監測 | 水利署 API |
+| `river-level.html` | 🌊 河川水位 | 水利署 API |
+| `soil-observation.html` | 🏞️ 河川流域監測 | 水利署 API |
+| `reservoir-operation.html` | 🏊 水庫運作資訊 | 水利署 API |
+
+---
+
+### ⚠️ 災防預警
+
+| 檔案 | 說明 | 資料來源 |
+|------|------|--------|
+| `debris-flow.html` | ⛰️ 土石流監測 | 農業部 API（含地圖） |
+| `landslide-monitoring.html` | 🏔️ 邊坡監測 | 地質調查中心 API |
+| `earthquake_report.html` | 🌍 地震速報 | 氣象署 API |
+| `micro_earthquake_report.html` | 📍 微震監測 | 中央氣象署 |
+| `tsunami_monitor.html` | 🌊 海嘯監測 | 氣象署 API |
+
+---
+
+### 📰 新聞與公告
+
+| 檔案 | 說明 |
+|------|------|
+| `tra-news.html` | 🚂 台鐵新聞 |
+| `thsr-news.html` | 🚄 高鐵新聞 |
+
+---
+
+### 🎨 儀表板與工具
+
+| 檔案 | 說明 |
+|------|------|
+| `index.html` | 🏠 首頁入口 |
+| `dashboard.html` | 📊 主儀表板 |
+| `camera-statistics.html` | 📈 攝影機統計 |
+| `contact.html` | 📧 聯絡我們 |
+| `admin.html` | ⚙️ 管理後台 |
+| `register.html` | 📝 使用者註冊 |
+| `forecast.html` | 📅 預報中心 |
+| `bike.html` | 🚴 自行車路線 |
+
+---
+
+### 🔧 系統檔案與配置
+
+**後端與代理：**
+- `api_proxy.py` - Python API 代理
+- `api_proxy_simple.py` - 簡化版代理
+- `api-proxy.php` - PHP API 代理
+- `worker.js` - Cloudflare Worker 指令集
+
+**Cloudflare Workers：**
+- `TRA_WORKER_COMPLETE_v7.5.12.js` - 台鐵 Worker (最新版)
+- `TRA_WORKER_COMPLETE_v7.5.12 copy.js` - 備份版
+
+**配置與環境：**
+- `package.json` - Node.js 依賴
+- `wrangler.toml` - Cloudflare Workers 配置
+- `.env.example` - 環境變數範本
+- `.gitignore` / `.gitattributes` - Git 設定
+
+---
+
+### 📂 資源目錄
+
+**`assets/`** - 共用前端資源
+- `navbar.js` - 全域導航列
+- `config.js` - API 設定
+- `tdx-api.js` - TDX 工具函式
+- `dark-mode.js` - 深色模式
+- `image-handler-simple.js` - 圖片載入器
+- `loading-progress.js` - 進度條
+
+**`scripts/`** - 部署腳本
+- `deploy.ps1` - Windows 部署
+- `build.sh` - Linux/Mac 建置
+
+**`test/`** - 測試檔案
+- `*-test.html` - 各功能測試
+- `*-debug.html` - 除錯頁面
+
+**`backup/`** - 歷史備份
+- 舊版頁面備份
+
+**`docs/`** - 技術文檔
+- 各種實作指南與報告
+
+**`functions/`** - 無伺服器函式
+
+---
+
+### 📄 技術文檔 (超過 100+ 份)
+
+核心指南：
+- `QUICK_START.md` - 快速開始
+- `PROJECT-OVERVIEW.md` - 專案概覽
+- `TECHNICAL_IMPLEMENTATION.md` - 技術實作
+
+列車系統：
+- `TRAIN_LIVEBOARD_README.md` - 台鐵詳細說明
+- `TRAIN_LIVEBOARD_QUICK_START.md` - 台鐵快速開始
+- `STATION_ID_MAPPING_GUIDE.md` - 車站編號對應
+
+地圖與視覺化：
+- `MAP_FEATURE_IMPLEMENTATION.md` - 地圖功能
+- `MARKER_CLUSTER_IMPLEMENTATION.md` - 標記聚合
+- `MAP_TROUBLESHOOTING.md` - 地圖問題排查
+
+API 與代理：
+- `CORS_SOLUTION_GUIDE.md` - CORS 解決方案
+- `API_PROXY_SETUP.md` - API 代理設定
+- `BACKEND_API_IMPLEMENTATION_SUMMARY.md` - 後端 API
+
+部署指南：
+- `CLOUDFLARE_PAGES_SETUP.md` - Pages 部署
+- `CLOUDFLARE_WORKER_MIGRATION.md` - Worker 遷移
+- `D1_DATABASE_SETUP.md` - D1 資料庫設定
+
+---
+
+## 🎨 視覺設計
 
 ### 色彩主題
-每個頁面都有專屬的漸層色彩主題，提供一致且美觀的視覺體驗：
+每個頁面都有專屬的漸層主題：
+
+| 頁面 | 主題 | 漸層色 |
+|------|------|--------|
+| 首頁 | 紫色 | #667eea → #764ba2 |
+| 國道 | 藍色 | #2196F3 → #1976D2 |
+| 省道 | 橘色 | #FF9800 → #F57C00 |
+| 市區 | 綠色 | #4CAF50 → #388E3C |
+| 空品 | 紫色 | #9C27B0 → #7B1FA2 |
+| 土石流 | 深棕 | #795548 → #5D4037 |
+
+### 響應式設計
+- **桌面** (>1200px): 3欄網格
+- **平板** (768-1200px): 2欄網格
+- **手機** (<768px): 1欄堆疊
+
+---
+
+## 🚀 快速開始
+
+### 本地開發
+```bash
+# 使用 Python 伺服器
+python3 -m http.server 8000
+
+# 或使用 PHP
+php -S localhost:8000
+
+# 或使用 Node.js
+npx http-server
+```
+
+### Cloudflare Workers 部署
+```bash
+npm install -g wrangler
+wrangler login
+wrangler publish
+```
+
+---
+
+## 📊 主要功能
+
+✅ **實時列車資訊** - 台鐵、高鐵即時班次與延誤  
+✅ **交通監視器** - 國道、省道、快速道路、市區即時影像  
+✅ **天氣監測** - 氣象預報、降雨雷達、警特報  
+✅ **環境監測** - 空氣品質、河川水位、水庫資訊  
+✅ **災防預警** - 土石流、邊坡、地震、海嘯  
+✅ **深色模式** - 自動日/夜主題切換  
+✅ **離線支援** - PWA 快取機制  
+✅ **無伺服器** - Cloudflare Workers 雲端運行  
+
+---
+
+## 🔌 API 整合
+
+- **TDX** - 交通資料流通服務（國道、省道、市區）
+- **氣象署** - 天氣預報、雷達、警報
+- **水利署** - 河川、水庫、淹水
+- **環保署** - 空氣品質、排放源
+- **農業部** - 土石流觀測
+- **中央氣象署** - 地震、海嘯
+
+---
+
+## 🔐 安全性
+
+- API 金鑰透過環境變數管理
+- CORS 代理層安全防護
+- D1 資料庫加密存儲
+
+---
+
+## 📝 版本歷史
+
+### v2.2.0 (2025-12-22)
+- ✅ 台鐵 PIDS 字體優化：日期 3rem、車站英文 2rem
+- ✅ 響應式設計完善
+
+### v2.1.0 (2025-10-21)
+- ✅ 省道分頁顯示
+- ✅ 土石流地圖標記
+
+### v2.0.0 (2025-10-13)
+- ✅ 首頁現代化
+- ✅ 全系統重構
+
+---
+
+**最後更新**: 2025年12月22日  
+**版本**: v2.2.0  
+**總檔案數**: 200+  
+**技術文檔**: 100+
 
 | 頁面 | 主題色 | 漸層 |
 |------|--------|------|
@@ -209,6 +386,29 @@ chmod +x scripts/build.sh
 ```
 
 ## ✨ 最新功能
+
+## ✨ 最新功能
+
+### v2.2.0 (2025-12-22)
+- ✅ **台鐵 PIDS (tra-pids.html)**: 完整優化顯示效果
+  
+  **修改項目:**
+  
+  1. **日期字體優化** (`.date-text` 樣式)：
+     - 電腦版 (預設)：`1rem` → `3rem`（與時間大小統一）
+     - 平板版 (max-width: 900px)：`0.75rem` → `2rem`（提升可讀性）
+     - 手機版 (max-width: 480px)：保持 `0.65rem`（確保行動裝置最佳體驗）
+  
+  2. **車站英文字體優化** (`.station-sub` 樣式)：
+     - 電腦版 (預設)：`1.4rem` → `2rem`（顯著提升視覺層級）
+     - 平板版 (max-width: 900px)：`0.85rem` → `1.2rem`（保持比例協調）
+     - 手機版 (max-width: 480px)：保持 `0.7rem`（保留原始尺寸）
+  
+  **修改檔案:**
+  - `tra-pids.html` - 更新 CSS 樣式定義（共 3 個斷點）
+  
+- ✅ 響應式設計最適化，各設備均有最佳顯示效果
+- ✅ 優先級清晰：電腦版 > 平板版 > 手機版，分級優化策略
 
 ### v2.1.0 (2025-10-21)
 - ✅ **省道監視器**: 新增上下分頁顯示「第 X 頁 / 共 Y 頁」
@@ -332,8 +532,8 @@ const { lat, lng } = coordinates;
 
 ---
 
-**最後更新**: 2025年10月21日  
-**版本**: v2.1.0  
+**最後更新**: 2025年12月22日  
+**版本**: v2.2.0  
 **維護者**: Road-Camera Team
 
 📧
