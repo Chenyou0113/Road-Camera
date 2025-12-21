@@ -594,13 +594,15 @@
         async function fetchHistoryAndRender(stationId) {
             try {
                 // 1. 判斷是否為署屬站 (4開頭)
-                // 只有 4 開頭的站是 10 分鐘更新，其他 (C0, C1, C2) 都是 1 小時
+                // 署屬站 (4xxxx) -> 10 分鐘一筆
+                // 自動站 (C0xxxx) -> 1 小時一筆
                 const isManned = stationId.startsWith('4');
 
                 const response = await fetch(`${CLOUDFLARE_WORKER_URL}/api/weather/history?station_id=${stationId}`);
                 if (!response.ok) throw new Error("History fetch failed");
                 let historyData = await response.json();
                 
+                // 確保資料按時間排序
                 historyData.sort((a, b) => a.timestamp - b.timestamp);
 
                 const uniqueData = [];
@@ -611,16 +613,14 @@
                     let timeKey;
 
                     if (isManned) {
-                        // 🔥 署屬站：保留分鐘 (每10分鐘一筆)
-                        // Key: "日-時:分" -> 16-09:10
+                        // 🔥 署屬站：精確到「分鐘」，保留每 10 分鐘的變化
                         timeKey = `${date.getDate()}-${date.getHours()}:${date.getMinutes()}`;
                     } else {
-                        // 🔥 其他站 (自動/雨量/農業)：只保留小時 (每小時一筆)
-                        // Key: "日-時" -> 16-09
-                        // 這樣同一小時內就算有多筆資料，也只會取第一筆
+                        // 🔥 自動站：精確到「小時」，過濾掉多餘資料
                         timeKey = `${date.getDate()}-${date.getHours()}`;
                     }
                     
+                    // 去重：如果這個時間點已經有了，就跳過
                     if (!seenKeys.has(timeKey)) {
                         seenKeys.add(timeKey);
                         uniqueData.push(d);
@@ -636,17 +636,25 @@
                 if (uniqueData.length > 0) {
                     uniqueData.forEach(d => {
                         labels.push(d.timestamp);
+                        
+                        // 1. 溫度過濾：-50 以下或 0 (若擔心0度可移除0的判斷，但在台灣平地很少0度)
+                        // 這裡我們只擋 -50，因為高山可能會 0 度
                         temps.push(d.temperature <= -50 ? null : d.temperature);
                         
+                        // 2. 濕度過濾 (重點修正！)：
+                        // 排除 null, 負數, 以及 0 (濕度不可能為0)
                         let h = d.humidity;
-                        if (h === null || h < 0) {
+                        if (h === null || h <= 0) { // 🔥 改成 <= 0，徹底殺死 0 的情況
                             hums.push(null);
                         } else {
                             if (h <= 1 && h > 0) h *= 100;
                             hums.push(Math.round(h));
                         }
                         
+                        // 3. 雨量過濾：負數歸零
                         rains.push((d.rain === 'T' || d.rain < 0) ? 0 : d.rain);
+                        
+                        // 4. 風速過濾：負數給 null
                         winds.push(d.wind_speed === null || d.wind_speed < 0 ? null : d.wind_speed);
                     });
                 }
