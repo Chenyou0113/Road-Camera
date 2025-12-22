@@ -790,108 +790,97 @@
             });
         })();
 
+        // 跑馬燈動畫邏輯
         function startMarquee(elementId) {
             const el = document.getElementById(elementId);
             if (!el) return;
-            el.classList.remove('running-animation');
+            const container = el.parentElement;
+            
+            // 停止當前動畫
+            el.style.transition = 'none';
+            el.ontransitionend = null;
+            
+            // 強制重繪
             void el.offsetWidth;
-            const parent = el.parentElement;
-            const parentWidth = parent.offsetWidth;
-            const contentWidth = el.scrollWidth;
-            el.style.setProperty('--start-pos', `${parentWidth}px`);
-            el.style.setProperty('--end-pos', `-${contentWidth}px`);
-            const speed = 100;
-            const totalDistance = parentWidth + contentWidth;
-            const duration = totalDistance / speed;
-            el.style.animationDuration = `${duration}s`;
-            el.classList.add('running-animation');
+
+            requestAnimationFrame(() => {
+                const textWidth = el.scrollWidth;
+                const containerWidth = container.clientWidth;
+                
+                // 如果文字短於容器，就不跑馬燈，直接置中或靠左
+                if (textWidth < containerWidth) {
+                    el.style.left = '0px';
+                    return;
+                }
+                
+                // 設定起始位置：容器右側外
+                el.style.left = containerWidth + 'px';
+                
+                // 計算速度
+                const isMobileScreen = window.innerWidth <= 900;
+                let speed = isMobileScreen ? 0.015 : 0.01; // 數字越小越快
+                const duration = (textWidth + containerWidth) * speed;
+
+                // 啟動動畫
+                requestAnimationFrame(() => {
+                    el.style.transition = `left ${duration}s linear`;
+                    el.style.left = `-${textWidth}px`;
+                });
+
+                // 動畫結束後重播
+                el.ontransitionend = () => {
+                    startMarquee(elementId);
+                };
+            });
         }
 
+        // 🔥 核心修正：警報更新邏輯 (直接讀取 Worker 的 feed_string)
         async function updateWeatherStatus() {
             const alertEl = document.getElementById('alertText');
-            const alertUrl = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev/api/weather/alert';
+            if (!alertEl) return;
+
+            // 加上時間戳記避免快取
+            const timestamp = new Date().getTime();
+            const alertUrl = `https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev/api/weather/alert?t=${timestamp}`;
+            
             try {
-                const alertRes = await fetch(alertUrl);
-                const alertData = await alertRes.json();
-                let allAlerts = [];
-                let rawDataList = [];
-                if (alertData.cwaopendata && alertData.cwaopendata.dataset) {
-                    const ds = alertData.cwaopendata.dataset;
-                    rawDataList = Array.isArray(ds) ? ds : [ds];
-                } else if (alertData.records && alertData.records.record) {
-                    const rec = alertData.records.record;
-                    rawDataList = Array.isArray(rec) ? rec : [rec];
-                }
-                rawDataList.forEach(item => {
-                    let title = "", content = "", issueTime = "", expireTime = "";
-                    
-                    if (item.datasetInfo) {
-                        title = item.datasetInfo.datasetDescription || "";
-                        issueTime = item.datasetInfo.issueTime || "";
-                        expireTime = item.datasetInfo.expireTime || "";
-                    } else if (item.datasetDescription) {
-                        title = item.datasetDescription;
-                    }
-                    
-                    if (item.contents && item.contents.content && item.contents.content.contentText) {
-                        content = item.contents.content.contentText;
-                    } else if (item.parameterSet) {
-                        let paramSet = item.parameterSet;
-                        if (Array.isArray(paramSet)) paramSet = paramSet[0];
-                        if (paramSet && paramSet.parameter) {
-                            const params = Array.isArray(paramSet.parameter) ? paramSet.parameter : [paramSet.parameter];
-                            const p = params.find(x => x.parameterName === "警報內容" || x.parameterName === "contentText");
-                            if (p) content = p.parameterValue;
-                            else content = "影響區域：" + params.map(x => x.parameterValue).join("、");
-                        }
-                    }
-                    
-                    if (title && title !== "無理") {
-                        // 🔥 修正: 改成新格式 【標題 MM/DD HH:MM】內容(~MM/DD HH:MM)
-                        let dateTime = "";
-                        let endTime = "";
-                        
-                        if (issueTime) {
-                            const d = new Date(issueTime);
-                            dateTime = `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-                        }
-                        
-                        if (expireTime) {
-                            const d = new Date(expireTime);
-                            endTime = `~${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-                        }
-                        
-                        if (content) {
-                            content = content.replace(title + "：", "").replace(/^一、/, "").replace(/二、注意事項.*/, "").trim();
-                        }
-                        
-                        const alertStr = `【${title} ${dateTime}】${content}${endTime}`;
-                        allAlerts.push(alertStr);
-                    }
-                });
+                const res = await fetch(alertUrl);
+                const data = await res.json();
                 
-                if (allAlerts.length > 0) {
-                    // 🔥 修正: 用 「   📢   」分隔多個警報
-                    const finalDisplayString = allAlerts.join("   📢   ");
-                    if(alertEl) {
-                        alertEl.textContent = finalDisplayString;
-                        alertEl.classList.remove('no-warning-text');
-                        const wrapper = document.getElementById('warningContent');
-                        if (wrapper) {
-                            wrapper.classList.remove('running-animation');
-                            void wrapper.offsetWidth;
-                            setTimeout(() => startMarquee('warningContent'), 100);
-                        }
-                    }
+                let displayText = "";
+                let hasAlert = false;
+
+                // 1. 優先使用 Worker 已經排版好的 feed_string
+                if (data.feed_string && data.feed_string.length > 0) {
+                    displayText = data.feed_string;
+                    hasAlert = true;
+                } 
+                // 2. 其次使用 alerts 陣列
+                else if (data.alerts && Array.isArray(data.alerts) && data.alerts.length > 0) {
+                    displayText = data.alerts.join("   📢   ");
+                    hasAlert = true;
+                }
+
+                // 3. 更新 UI
+                if (hasAlert) {
+                    alertEl.textContent = displayText;
+                    alertEl.classList.remove('no-warning-text');
+                    // 啟動跑馬燈
+                    setTimeout(() => startMarquee('warningContent'), 500);
                 } else {
-                    if(alertEl) {
-                        alertEl.textContent = "目前全臺無發布氣象警特報";
-                        alertEl.classList.add('no-warning-text');
+                    alertEl.textContent = "目前全臺無發布氣象警特報";
+                    alertEl.classList.add('no-warning-text');
+                    // 沒警報就停止跑馬燈，置中顯示
+                    const wrapper = document.getElementById('warningContent');
+                    if(wrapper) {
+                        wrapper.style.transition = 'none';
+                        wrapper.style.left = '0';
                     }
                 }
+
             } catch (error) {
-                console.error("警報處理錯誤:", error);
-                if(alertEl) alertEl.textContent = "⚠️ 警報載入失敗";
+                console.error("警報載入錯誤:", error);
+                alertEl.textContent = "⚠️ 警報載入失敗 (連線異常)";
             }
         }
 
@@ -905,9 +894,7 @@
                 let msg = data.text || data.message || data.value;
                 if (msg) {
                     textEl.textContent = msg;
-                    requestAnimationFrame(() => {
-                        startMarquee('wangweiContent');
-                    });
+                    setTimeout(() => startMarquee('wangweiContent'), 500);
                 }
             } catch (e) {
                 console.error("無法載入天氣叮嚀:", e);

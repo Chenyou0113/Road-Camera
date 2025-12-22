@@ -484,47 +484,44 @@
 
         function startMarquee(id) {
             const el = document.getElementById(id);
-            if(!el) return;
+            if (!el) return;
             const container = el.parentElement;
             
-            // 移除舊的事件監聽，避免重複綁定
+            // 清除舊的監聽與狀態
             el.ontransitionend = null;
-            
             el.style.transition = 'none';
-            el.style.left = '100%'; 
-            void el.offsetWidth; 
             
-            const w = el.scrollWidth;
-            const cw = container.clientWidth;
-            
-            // 🔥 修正: 頂部跑馬燈速度優化 (0.006)，平衡顯示完整 + 正常閱讀速度
-            // 宣導跑馬燈速度 (0.004)，更慢便於閱讀
-            // 列車資料跑馬燈速度 (0.008)，稍快一點
-            let speedFactor = (id === 'unifiedTopMarquee') ? 0.006 : 0.008; 
-            const dur = Math.max(18, (w + cw) * speedFactor); 
+            // 讓瀏覽器有時間渲染文字後再取寬度
+            setTimeout(() => {
+                const textWidth = el.scrollWidth;
+                const containerWidth = container.clientWidth;
+                
+                // 起始位置：容器最右邊
+                el.style.left = containerWidth + 'px';
+                
+                // 計算速度：設定每像素跑多少秒 (數值越小越快)
+                // 電腦版超加速、手機版正常速度
+                const isMobileScreen = window.innerWidth <= 900;
+                let speed;
+                if (id === 'unifiedTopMarquee') {
+                    speed = isMobileScreen ? 0.010 : 0.006;  // 電腦版公告超加速
+                } else {
+                    speed = isMobileScreen ? 0.008 : 0.006;  // 列車資料維持
+                }
+                const duration = Math.max(10, (textWidth + containerWidth) * speed);
 
-            const animate = () => {
-                el.style.transition = `left ${dur}s linear`;
-                el.style.left = `-${w}px`;
-            };
-            
-            // 🔥 修正: 使用迴圈播放邏輯，確保持續循環
-            const startLoop = () => {
-                el.style.transition = 'none';
-                el.style.left = '100%';
-                // 使用 setTimeout 而不是 requestAnimationFrame，確保 DOM 更新
-                setTimeout(() => {
-                    animate();
-                }, 50);
-            };
+                // 強制重繪
+                void el.offsetWidth;
 
-            // 監聽轉場結束，循環播放
-            el.ontransitionend = () => {
-                startLoop();
-            };
-            
-            // 立即開始第一次播放
-            animate();
+                // 開始動畫：位移到文字寬度的負值（確保完全消失）
+                el.style.transition = `left ${duration}s linear`;
+                el.style.left = `-${textWidth}px`;
+
+                // 結束後重啟
+                el.ontransitionend = () => {
+                    startMarquee(id);
+                };
+            }, 100);
         }
 
         async function updatePids(id) {
@@ -708,22 +705,21 @@
                 let r = await fetch(`${TRA_WORKER_URL}/api/pids/marquee`);
                 let d = await r.json();
                 let el = document.getElementById('unifiedTopMarquee');
-                // 🔥 修正: 只要有 text 欄位就更新，清理 HTML 標籤和換行符
+                
                 if (d.text !== undefined && d.text !== null) { 
-                    let cleanText = d.text;
+                    let cleanText = d.text
+                        .replace(/<b>/g, "").replace(/<\/b>/g, "")
+                        .replace(/<\/[^>]+>/g, "")
+                        .replace(/<(?![-]{2,}>)[^>]+>/g, "")
+                        .replace(/\\n/g, "     ")
+                        .replace(/[\r\n]+/g, "     ")
+                        .replace(/&nbsp;/g, " ")
+                        .replace(/&amp;/g, "&");
                     
-                    // 清理 HTML 標籤（移除 <b></b> 等，但保留 <--> 這樣的文字）
-                    cleanText = cleanText.replace(/<b>/g, "").replace(/<\/b>/g, "");
-                    cleanText = cleanText.replace(/<\/[^>]+>/g, ""); // 移除關閉標籤
-                    cleanText = cleanText.replace(/<(?![-]{2,}>)[^>]+>/g, ""); // 移除開啟標籤，但保留 <-->
-                    
-                    // 清理換行符，用空格替代
-                    cleanText = cleanText.replace(/\\n/g, "     ");
-                    cleanText = cleanText.replace(/[\r\n]+/g, "     ");
-                    
-                    // 清理 &nbsp; 等 HTML 實體
-                    cleanText = cleanText.replace(/&nbsp;/g, " ");
-                    cleanText = cleanText.replace(/&amp;/g, "&");
+                    // 🔥 關鍵優化：如果內容跟現在一樣，就不要重啟跑馬燈，讓它繼續跑完
+                    if (el.innerHTML === cleanText) {
+                        return; 
+                    }
                     
                     el.innerHTML = cleanText; 
                     startMarquee('unifiedTopMarquee'); 
@@ -746,7 +742,7 @@
             
             checkTopMarquee(); 
             setTimeout(()=>startMarquee('unifiedTopMarquee'), 1500); 
-            setInterval(checkTopMarquee, 30000);
+            setInterval(checkTopMarquee, 300000);  // 5 分鐘檢查一次
         });
     </script>
 </body>
