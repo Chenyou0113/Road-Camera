@@ -761,10 +761,13 @@
                 const delay = parseInt(t.DelayTime || 0);
                 const isCancelled = (String(t.TrainStatus) === '2' || t.TrainStatus === 2);
 
-                // 計算絕對時間 (加上 Day Offset)
-                let absMinutes = schedMinutes + (isTomorrow ? 1440 : 0);
+                // 🔥 計算「實際開車時間」= 表定時間 + 誤點
+                const actualMinutes = schedMinutes + delay;
+                // 只按相對於午夜的分鐘數排序（凌晨班次自動排前面）
+                const sortKey = actualMinutes % 1440;
                 
-                // 加上誤點時間（停駛列車除外）
+                // 計算絕對時間用於判斷是否要顯示
+                let absMinutes = schedMinutes + (isTomorrow ? 1440 : 0);
                 const estimatedMinutes = isCancelled ? absMinutes : (absMinutes + delay);
 
                 // 🔥 篩選：只顯示預計時間在「現在」之後的車，或停駛列車也要顯示
@@ -773,7 +776,7 @@
                 if (isRelevant) {
                     finalFilteredTrains.push({
                         ...t,
-                        _sortKey: estimatedMinutes, // 新的排序鍵（已含誤點）
+                        _sortKey: sortKey, // 新的排序鍵（只用實際時間的相對分鐘數）
                         IsTomorrow: (estimatedMinutes >= 1440) // 重新確認是否跨日
                     });
                 }
@@ -924,7 +927,9 @@
             if (String(train.TrainStatus) === '2' || train.TrainStatus === 2) {
                 return '<span class="delay-badge status-cancelled"><i class="fas fa-ban"></i> 停駛</span>';
             }
-            // 明日班次檢查
+            
+            // 🔥 改成：根據「列車目前位置」來判斷是否已發車
+            // 如果沒有位置訊號且班次在明日，就是「未發車」
             if (train.IsTomorrow) {
                 return '<span class="delay-badge" style="background-color: #ECEFF1; color: #546E7A;"><i class="fas fa-hourglass-start"></i> 未發車</span>';
             }
@@ -953,14 +958,57 @@
 
         async function fetchSchedule(trainNo) {
             try {
+                // 嘗試方案 1: 從 Worker 的 /api/schedule 取得
                 const r = await fetch(`${TRA_WORKER_URL}/api/schedule?trainNo=${trainNo}`);
                 const d = await r.json();
-                if (d?.[0]?.StopTimes) return d[0].StopTimes;
-            } catch(e) {}
+                console.log(`[${trainNo}] Worker /api/schedule 結果:`, d);
+                if (d && Array.isArray(d) && d[0]?.StopTimes) {
+                    console.log(`✅ [${trainNo}] 取得 ${d[0].StopTimes.length} 筆停靠站 (Worker 陣列)`);
+                    stopsCache[trainNo] = d[0].StopTimes;
+                    return d[0].StopTimes;
+                }
+                if (d && d.StopTimes) {
+                    console.log(`✅ [${trainNo}] 取得 ${d.StopTimes.length} 筆停靠站 (Worker 直接)`);
+                    stopsCache[trainNo] = d.StopTimes;
+                    return d.StopTimes;
+                }
+            } catch(e) {
+                console.warn(`[${trainNo}] Worker schedule fetch failed:`, e);
+            }
             try {
+                // 嘗試方案 2: 直接從 TDX V3 取得
+                const r = await tdxApi.fetch(`/v3/Rail/TRA/DailyTrainTimetable/Today?$filter=TrainInfo/TrainNo eq '${trainNo}'&$format=JSON`);
+                console.log(`[${trainNo}] TDX V3 結果:`, r);
+                if (r?.value?.[0]?.StopTimes) {
+                    console.log(`✅ [${trainNo}] 取得 ${r.value[0].StopTimes.length} 筆停靠站 (TDX V3 value)`);
+                    stopsCache[trainNo] = r.value[0].StopTimes;
+                    return r.value[0].StopTimes;
+                }
+                if (r?.[0]?.StopTimes) {
+                    console.log(`✅ [${trainNo}] 取得 ${r[0].StopTimes.length} 筆停靠站 (TDX V3 直接)`);
+                    stopsCache[trainNo] = r[0].StopTimes;
+                    return r[0].StopTimes;
+                }
+            } catch(e) {
+                console.warn(`[${trainNo}] TDX V3 schedule fetch failed:`, e);
+            }
+            try {
+                // 嘗試方案 3: 從 TDX V2 取得
                 const r = await tdxApi.fetch(`/v2/Rail/TRA/DailyTrainInfo/TrainNo/${trainNo}?$format=JSON`);
-                if (r?.[0]?.StopTimes) return r[0].StopTimes;
-            } catch(e) {}
+                console.log(`[${trainNo}] TDX V2 結果:`, r);
+                if (r?.[0]?.StopTimes) {
+                    console.log(`✅ [${trainNo}] 取得 ${r[0].StopTimes.length} 筆停靠站 (TDX V2)`);
+                    stopsCache[trainNo] = r[0].StopTimes;
+                    return r[0].StopTimes;
+                }
+            } catch(e) {
+                console.warn(`[${trainNo}] TDX V2 schedule fetch failed:`, e);
+            }
+            console.error(`❌ [${trainNo}] 無法從任何來源取得停靠站資料`);
+            return [];
+            } catch(e) {
+                console.warn("TDX V2 schedule fetch failed:", e);
+            }
             return [];
         }
 
@@ -1008,6 +1056,7 @@
 
                 html += `<span style="border-left: 2px solid #555; margin: 0 15px;"></span>`;
                 if (liveData?.StationName) {
+                    // 有位置訊號 = 列車已發車
                     const stName = liveData.StationName.Zh_tw || liveData.StationName;
                     
                     // 🔥 加入防呆檢查
@@ -1031,16 +1080,33 @@
                         html += `<span style="color:#aaa;">(訊號偵測中...)</span>`;
                     }
                 } else {
-                    html += `<span style="color:#aaa;">(暫無即時位置訊號)</span>`;
+                    // 無位置訊號 = 列車尚未發車或訊號未更新
+                    html += `<span style="color:#aaa;">(列車尚未發車或訊號偵測中...)</span>`;
                 }
 
-                if (stopTimes.length > 0) {
+                if (stopTimes && stopTimes.length > 0) {
+                    // 根據本站來找後續停靠站
                     const idx = stopTimes.findIndex(s => s.StationID === currentStationID);
-                    const showStops = (idx !== -1) ? stopTimes.slice(idx + 1) : stopTimes;
-                    if (showStops.length > 0) {
+                    console.log(`[${trainNo}] 尋找本站 ${currentStationID}: 找到索引=${idx}, 總停靠站數=${stopTimes.length}`);
+                    const showStops = (idx !== -1) ? stopTimes.slice(idx + 1) : stopTimes.slice(1);
+                    console.log(`[${trainNo}] 後續停靠站數=${showStops.length}`, showStops.map(s => s.StationName.Zh_tw));
+                    if (showStops && showStops.length > 0) {
                         html += `<span style="border-left: 2px solid #555; margin: 0 15px;"></span><span style="color:#ddd;">沿途停靠：</span>`;
                         html += showStops.map(s => `<span class="station-stop">${s.StationName.Zh_tw}</span>`).join('<span class="station-arrow">▶</span>');
+                    } else if (idx !== -1) {
+                        // 本站是終點站
+                        html += `<span style="border-left: 2px solid #555; margin: 0 15px;"></span><span style="color:#999;">▶ 終點站</span>`;
+                    } else {
+                        // 找不到本站，直接顯示所有停靠站（除了第一站）
+                        const allStops = stopTimes.slice(1);
+                        if (allStops.length > 0) {
+                            html += `<span style="border-left: 2px solid #555; margin: 0 15px;"></span><span style="color:#ddd;">沿途停靠：</span>`;
+                            html += allStops.map(s => `<span class="station-stop">${s.StationName.Zh_tw}</span>`).join('<span class="station-arrow">▶</span>');
+                        }
                     }
+                } else {
+                    html += `<span style="border-left: 2px solid #555; margin: 0 15px;"></span><span style="color:#999;">(時刻表讀取中...)</span>`;
+                    console.warn(`[${trainNo}] 停靠站資料為空:`, stopTimes);
                 }
 
                 content.innerHTML = html;

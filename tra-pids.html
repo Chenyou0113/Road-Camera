@@ -402,10 +402,35 @@
         async function fetchTrainStops(trainNo) {
             if (stopsCache[trainNo]) return stopsCache[trainNo];
             try {
+                // 嘗試方案 1: 從 Worker 的 /api/schedule 取得
                 let r = await fetch(`${TRA_WORKER_URL}/api/schedule?trainNo=${trainNo}`);
                 let d = await r.json();
-                if(d.length && d[0].StopTimes) { stopsCache[trainNo] = d[0].StopTimes; return d[0].StopTimes; }
-            } catch(e){} 
+                console.log(`[${trainNo}] Worker /api/schedule 結果:`, d);
+                if(Array.isArray(d) && d.length && d[0].StopTimes) { 
+                    console.log(`✅ [${trainNo}] 取得 ${d[0].StopTimes.length} 筆停靠站 (Worker 陣列)`);
+                    stopsCache[trainNo] = d[0].StopTimes; 
+                    return d[0].StopTimes; 
+                }
+                if(d && d.StopTimes) {
+                    console.log(`✅ [${trainNo}] 取得 ${d.StopTimes.length} 筆停靠站 (Worker 直接)`);
+                    stopsCache[trainNo] = d.StopTimes;
+                    return d.StopTimes;
+                }
+            } catch(e) { console.warn(`[${trainNo}] Worker API 失敗:`, e); } 
+            
+            try {
+                // 嘗試方案 2: 直接從 TDX V3 取得
+                let r = await fetch(`https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/DailyTrainTimetable/Today?$filter=TrainInfo/TrainNo eq '${trainNo}'&$format=JSON`);
+                let d = await r.json();
+                console.log(`[${trainNo}] TDX V3 結果:`, d);
+                if(d?.value?.[0]?.StopTimes) {
+                    console.log(`✅ [${trainNo}] 取得 ${d.value[0].StopTimes.length} 筆停靠站 (TDX V3)`);
+                    stopsCache[trainNo] = d.value[0].StopTimes;
+                    return d.value[0].StopTimes;
+                }
+            } catch(e) { console.warn(`[${trainNo}] TDX V3 API 失敗:`, e); }
+            
+            console.error(`❌ [${trainNo}] 無法從任何來源取得停靠站資料`);
             return [];
         }
 
@@ -529,12 +554,14 @@
                 let r = await fetch(`${TRA_WORKER_URL}/api/liveboard/station?station=${id}`);
                 let d = await r.json();
                 
-                // 🔥 修正: 計算「實際開車時間」(表定時間 + 誤點分鐘數)
+                // 🔥 修正: 按「實際開車時間」排序（純粹按分鐘數）
                 d.forEach(t => {
                     let [h,m] = (t.ScheduledDepartureTime||"00:00").split(':').map(Number);
                     let delayMins = parseInt(t.DelayTime || 0);
-                    // 實際時間 = 表定時間 + 誤點，用於排序
-                    t._sort = (h*60+m) + delayMins + (t.IsTomorrow?1440:0);
+                    // 實際時間 = 表定時間 + 誤點
+                    let actualMins = (h*60+m) + delayMins;
+                    // 只按實際時間的相對分鐘數排序（取 mod 1440 確保凌晨班次排在前面）
+                    t._sort = actualMins % 1440;
                 });
                 d.sort((a,b) => a._sort - b._sort);
 
@@ -689,11 +716,20 @@
 
             if(stops && stops.length>0) {
                 let idx = stops.findIndex(s => String(s.StationID) === GLOBAL_STATION_ID);
+                console.log(`[${t.TrainNo}] 尋找本站 ${GLOBAL_STATION_ID}: 找到索引=${idx}, 總停靠站數=${stops.length}`);
                 if(idx !== -1) {
                     let next = stops.slice(idx+1).map(s => s.StationName.Zh_tw).join('、');
+                    console.log(`[${t.TrainNo}] 後續停靠站：${next || '無(終點)'}`);
                     if(next) msg += `<span style="margin:0 15px;color:#555">|</span>沿途停靠：${next}`;
-                    else msg += `<span style="margin:0 15px;color:#555">|</span>本站為終點站`;
+                    else msg += `<span style="margin:0 15px;color:#555">|</span>▶ 終點站`;
+                } else {
+                    // 找不到本站，顯示除了起點外的所有停靠站
+                    let allStops = stops.slice(1).map(s => s.StationName.Zh_tw).join('、');
+                    console.log(`[${t.TrainNo}] 找不到本站，顯示所有停靠站：${allStops}`);
+                    if(allStops) msg += `<span style="margin:0 15px;color:#555">|</span>沿途停靠：${allStops}`;
                 }
+            } else {
+                console.warn(`[${t.TrainNo}] 停靠站資料為空或未載入`);
             }
             
             el.innerHTML = msg;
