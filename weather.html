@@ -590,19 +590,14 @@
             fetchHistoryAndRender(s.stationId);
         }
 
-        // 🔥 修改點：資料過濾與 X 軸優化
+        // 🔥 修改版：強制所有測站都變成「一小時一筆」資料
         async function fetchHistoryAndRender(stationId) {
             try {
-                // 1. 判斷是否為署屬站 (4開頭)
-                // 署屬站 (4xxxx) -> 10 分鐘一筆
-                // 自動站 (C0xxxx) -> 1 小時一筆
-                const isManned = stationId.startsWith('4');
-
                 const response = await fetch(`${CLOUDFLARE_WORKER_URL}/api/weather/history?station_id=${stationId}`);
                 if (!response.ok) throw new Error("History fetch failed");
                 let historyData = await response.json();
                 
-                // 確保資料按時間排序
+                // 1. 先按時間排序 (確保我們抓到的是該小時最早的一筆)
                 historyData.sort((a, b) => a.timestamp - b.timestamp);
 
                 const uniqueData = [];
@@ -610,17 +605,11 @@
 
                 historyData.forEach(d => {
                     const date = new Date(d.timestamp);
-                    let timeKey;
-
-                    if (isManned) {
-                        // 🔥 署屬站：精確到「分鐘」，保留每 10 分鐘的變化
-                        timeKey = `${date.getDate()}-${date.getHours()}:${date.getMinutes()}`;
-                    } else {
-                        // 🔥 自動站：精確到「小時」，過濾掉多餘資料
-                        timeKey = `${date.getDate()}-${date.getHours()}`;
-                    }
                     
-                    // 去重：如果這個時間點已經有了，就跳過
+                    // 🔥 關鍵修改：不分測站類型，統一用「日-時」當作 Key
+                    // 這樣同一小時內 (例如 10:00, 10:10, 10:20...) 只會保留第一筆 (10:00)
+                    const timeKey = `${date.getDate()}-${date.getHours()}`;
+                    
                     if (!seenKeys.has(timeKey)) {
                         seenKeys.add(timeKey);
                         uniqueData.push(d);
@@ -637,24 +626,17 @@
                     uniqueData.forEach(d => {
                         labels.push(d.timestamp);
                         
-                        // 1. 溫度過濾：-50 以下或 0 (若擔心0度可移除0的判斷，但在台灣平地很少0度)
-                        // 這裡我們只擋 -50，因為高山可能會 0 度
+                        // 數值過濾邏輯 (跟之前一樣)
                         temps.push(d.temperature <= -50 ? null : d.temperature);
                         
-                        // 2. 濕度過濾 (重點修正！)：
-                        // 排除 null, 負數, 以及 0 (濕度不可能為0)
                         let h = d.humidity;
-                        if (h === null || h <= 0) { // 🔥 改成 <= 0，徹底殺死 0 的情況
-                            hums.push(null);
-                        } else {
+                        if (h === null || h <= 0) hums.push(null);
+                        else {
                             if (h <= 1 && h > 0) h *= 100;
                             hums.push(Math.round(h));
                         }
                         
-                        // 3. 雨量過濾：負數歸零
                         rains.push((d.rain === 'T' || d.rain < 0) ? 0 : d.rain);
-                        
-                        // 4. 風速過濾：負數給 null
                         winds.push(d.wind_speed === null || d.wind_speed < 0 ? null : d.wind_speed);
                     });
                 }
@@ -669,12 +651,6 @@
         function renderCharts(labels, temps, hums, rains, winds) {
             const isDark = document.body.classList.contains('dark-mode');
             const isMobile = window.innerWidth < 768;
-
-            // 🔥 判斷是否為高密度資料 (局屬站)
-            // 如果資料點超過 30 個 (代表是 10 分鐘一筆的)，就不畫圓點，只畫線
-            const isHighDensity = labels.length > 30;
-            const pointSize = isHighDensity ? 0 : 3;      // 點的大小 (0=隱藏)
-            const hoverSize = isHighDensity ? 4 : 6;      // 滑鼠移上去的大小
 
             const styles = {
                 titleColor: isDark ? '#64B5F6' : '#28629f',
@@ -720,9 +696,9 @@
                         borderWidth: 2,
                         tension: 0.4,
                         
-                        // 🔥 這裡使用了動態變數
-                        pointRadius: pointSize,         
-                        pointHoverRadius: hoverSize,
+                        // 🔥 恢復顯示圓點：因為現在每小時一點，點不會太擠，顯示出來比較好看
+                        pointRadius: 3, 
+                        pointHoverRadius: 6,
                         
                         fill: type === 'line',
                         spanGaps: true
@@ -733,15 +709,15 @@
                     maintainAspectRatio: false,
                     layout: { padding: { top: 10, right: 20, left: 10, bottom: 10 } },
                     interaction: {
-                        mode: 'index',      // 滑鼠移上去時顯示該時間點所有數據
-                        intersect: false,   // 不需要精準指到點也能觸發
+                        mode: 'index',
+                        intersect: false,
                     },
                     scales: {
                         x: {
                             type: 'time',
                             time: {
                                 unit: 'hour',
-                                stepSize: 3, // 每3小時一格
+                                stepSize: 3, 
                                 displayFormats: { hour: 'HH:mm' },
                                 tooltipFormat: 'MM/dd HH:mm'
                             },
