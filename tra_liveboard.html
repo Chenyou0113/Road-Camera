@@ -753,55 +753,42 @@
             document.getElementById('stationTitle').innerHTML = `${currentStationName} 即時看板 <a href="${pidsLink}" target="_blank" class="pids-btn"><i class="fas fa-desktop"></i> 開啟 PIDS 模擬</a>`;
             document.getElementById('stationInfo').textContent = `車站代碼：${currentStationID}`;
             
-            // --- 🔥 前端排序與篩選邏輯 (V6.0 終極修正版) ---
+            // --- 🔥 修正：使用絕對時間戳排序 (處理跨日大誤點) ---
             
             const now = new Date();
-            const currentH = now.getHours();
-            const currentM = now.getMinutes();
-            const nowTotalMinutes = (currentH * 60) + currentM;
+            const nowTs = now.getTime(); // 當前時間戳 (毫秒)
 
             const finalFilteredTrains = [];
             const seenTrains = new Set();
             
-            // 🔥 處理和過濾邏輯：計算絕對時間，並過濾出相關班次
+            // 🔥 處理和過濾邏輯：計算絕對時間戳，並過濾出相關班次
             trains.forEach(t => {
                 if (seenTrains.has(t.TrainNo)) return;
                 seenTrains.add(t.TrainNo);
 
-                // 🔥 修正：優先使用 ScheduledDepartureTime，若無則使用 ScheduledArrivalTime (針對終點站)
                 const timeStr = t.ScheduledDepartureTime || t.ScheduledArrivalTime || "00:00";
-                const [h, m] = timeStr.split(':').map(Number);
-                
-                // 計算表定分鐘數 (相對今天的 00:00)
-                let schedMinutes = h * 60 + m;
-                
-                // Worker 已經標記了 IsTomorrow，但我們需要考慮誤點時間
-                const isTomorrow = t.IsTomorrow;
                 const delay = parseInt(t.DelayTime || 0);
                 const isCancelled = (String(t.TrainStatus) === '2' || t.TrainStatus === 2);
 
-                // 🔥 計算「實際開車時間」= 表定時間 + 誤點
-                const actualMinutes = schedMinutes + delay;
-                // 只按相對於午夜的分鐘數排序（凌晨班次自動排前面）
-                const sortKey = actualMinutes % 1440;
+                // 🔥 計算絕對時間戳
+                // 如果 IsTomorrow 標記為 true，則加上 24 小時
+                const dateStr = t.IsTomorrow ? 
+                    new Date(now.getTime() + 86400000).toISOString().split('T')[0] :
+                    now.toISOString().split('T')[0];
                 
-                // 計算絕對時間用於判斷是否要顯示
-                let absMinutes = schedMinutes + (isTomorrow ? 1440 : 0);
-                const estimatedMinutes = isCancelled ? absMinutes : (absMinutes + delay);
+                const scheduledTs = new Date(`${dateStr}T${timeStr}:00+08:00`).getTime();
+                const estimatedTs = isCancelled ? scheduledTs : (scheduledTs + (delay * 60000));
 
-                // 🔥 篩選：只顯示預計時間在「現在」之後的車，或停駛列車也要顯示
-                const isRelevant = estimatedMinutes >= nowTotalMinutes || isCancelled;
-
-                if (isRelevant) {
+                // 🔥 篩選：只顯示預計時間在「現在 - 15分鐘」之後的車
+                if (estimatedTs >= (nowTs - 15 * 60000)) {
                     finalFilteredTrains.push({
                         ...t,
-                        _sortKey: sortKey, // 新的排序鍵（只用實際時間的相對分鐘數）
-                        IsTomorrow: (estimatedMinutes >= 1440) // 重新確認是否跨日
+                        _sortKey: estimatedTs // 🔥 使用絕對時間戳排序
                     });
                 }
             });
             
-            // 🔥 排序：依照 _sortKey 排序 (確保跨日凌晨車排在最後)
+            // 🔥 排序：依照絕對時間戳排序
             finalFilteredTrains.sort((a, b) => a._sortKey - b._sortKey);
             
             // --- 分組與切片 ---
