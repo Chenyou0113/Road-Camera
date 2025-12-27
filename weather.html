@@ -590,7 +590,7 @@
             fetchHistoryAndRender(s.stationId);
         }
 
-        // 🔥 修改版：強制所有測站都變成「一小時一筆」資料
+        // 🔥 修改版：署屬氣象站 10 分鐘一筆，其他測站 1 小時一筆
         async function fetchHistoryAndRender(stationId) {
             try {
                 const response = await fetch(`${CLOUDFLARE_WORKER_URL}/api/weather/history?station_id=${stationId}`);
@@ -603,12 +603,21 @@
                 const uniqueData = [];
                 const seenKeys = new Set(); 
 
+                // 判斷是否為署屬氣象站（以 '4' 開頭）
+                const isMannedStation = stationId.startsWith('4');
+
                 historyData.forEach(d => {
                     const date = new Date(d.timestamp);
                     
-                    // 🔥 關鍵修改：不分測站類型，統一用「日-時」當作 Key
-                    // 這樣同一小時內 (例如 10:00, 10:10, 10:20...) 只會保留第一筆 (10:00)
-                    const timeKey = `${date.getDate()}-${date.getHours()}`;
+                    let timeKey;
+                    if (isMannedStation) {
+                        // 署屬氣象站：10 分鐘一個點
+                        const minutes = Math.floor(date.getMinutes() / 10) * 10;
+                        timeKey = `${date.getDate()}-${date.getHours()}-${minutes}`;
+                    } else {
+                        // 其他測站：1 小時一個點
+                        timeKey = `${date.getDate()}-${date.getHours()}`;
+                    }
                     
                     if (!seenKeys.has(timeKey)) {
                         seenKeys.add(timeKey);
