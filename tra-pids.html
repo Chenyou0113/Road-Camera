@@ -1,0 +1,812 @@
+
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台鐵 PIDS (V5.8 最終版 - 名稱統一 + RWD 優化)</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body {
+            background-color: #111; color: white; font-family: "Microsoft JhengHei", "Heiti TC", sans-serif;
+            height: 100vh; overflow: hidden; display: flex; flex-direction: column;
+            padding: 8px; gap: 8px;
+        }
+
+        /* Header */
+        .unified-header {
+            width: 100%; height: 90px; 
+            background: #000; 
+            border: none; /* 🔥 修正: 移除邊框 */
+            border-radius: 0; /* 🔥 修正: 移除圓角 */
+            display: flex; justify-content: space-between; align-items: center; padding: 0 20px;
+            box-shadow: none; /* 移除陰影 */
+            flex-shrink: 0;
+            border-bottom: 2px solid #333; /* 加上底部線條以分隔 */
+        }
+        
+        .station-branding { 
+            display: flex; 
+            align-items: center; 
+            gap: 12px; 
+            flex: 1; 
+            line-height: 1;
+        }
+        .tra-logo-img { height: 50px; border-radius: 50%; border: 2px solid #fff; }
+        
+        .station-name-block {
+            display: flex;
+            flex-direction: row;
+            align-items: baseline;
+            gap: 10px;
+            line-height: 1;
+        }
+        .station-name { 
+            font-size: 3.5rem;
+            font-weight: 900; 
+            line-height: 1; 
+            text-shadow: 0 0 10px rgba(255,255,255,0.6); 
+            margin: 0;
+        }
+        .station-sub { 
+            font-size: 2rem;
+            color: #4fc3f7; 
+            font-family: Consolas, sans-serif; 
+            letter-spacing: 0px; 
+            font-weight: bold; 
+            line-height: 1;
+            margin: 0;
+        }
+        
+        .datetime-block { 
+            text-align: right; 
+            display: flex; 
+            flex-direction: row;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 12px;
+            line-height: 1;
+        }
+        .date-text { 
+            font-size: 3rem;
+            color: #ccc; 
+            font-weight: bold; 
+            font-family: Consolas, monospace; 
+            line-height: 1;
+            margin: 0;
+        }
+        .time-text { 
+            font-size: 3rem;
+            font-weight: bold; 
+            font-family: Consolas, monospace; 
+            color: #ffeb3b; 
+            line-height: 1; 
+            margin: 0;
+        }
+
+        /* Top Marquee */
+        .unified-marquee-container {
+            width: 100%; 
+            height: 60px; 
+            background: #e3f2fd; 
+            border: none; 
+            display: flex; align-items: center; overflow: hidden; position: relative; 
+            color: #003366; 
+            flex-shrink: 0;
+            margin-top: 0; /* 修正: 移除負邊距，讓它緊貼 Header */
+            margin-left: -8px;
+            margin-right: -8px;
+            padding: 0 8px;
+        }
+        .unified-marquee-container .marquee-text {
+            position: absolute; white-space: nowrap; 
+            height: 60px; 
+            line-height: 60px; 
+            font-size: 2.5rem; 
+            font-weight: 900; left: 100%; will-change: transform;
+        }
+        
+        /* 🔥 移除: 不再自動添加箭頭，完全使用 D1 中的內容 */
+
+        /* PIDS Section */
+        .pids-section { 
+            display: flex; width: 100%; gap: 10px; 
+            flex: 1; min-height: 0; overflow: hidden;
+        }
+        .pids-column { 
+            flex: 1; display: flex; flex-direction: column; background: #000; 
+            border: 3px solid #333; border-radius: 8px; overflow: hidden; 
+        }
+        .screen-body { flex: 1; display: flex; flex-direction: column; background: #000; overflow: hidden; }
+
+        .direction-header-1 { background: linear-gradient(to right, #000080, #0d47a1); color: white; padding: 10px 15px; font-size: 1.5rem; font-weight: 900; display: flex; justify-content: space-between; border-bottom: 2px solid #fff; flex-shrink: 0; }
+        .direction-header-0 { background: linear-gradient(to right, #bf360c, #e65100); color: white; padding: 10px 15px; font-size: 1.5rem; font-weight: 900; display: flex; justify-content: space-between; border-bottom: 2px solid #fff; flex-shrink: 0; }
+
+        /* 表格設定 (5欄 + 7班車) */
+        .train-table { width: 100%; border-collapse: collapse; text-align: center; font-size: 1.6rem; font-weight: bold; table-layout: fixed; }
+        .train-table th { padding: 8px; color: #fff; border-bottom: 2px solid #fff; height: 40px; font-size: 1.3rem; }
+        .train-table tbody tr { border-bottom: 1px solid #333; } /* 7班車 */
+        .train-table td { 
+            padding: 0 5px; 
+            vertical-align: middle; 
+            white-space: nowrap; 
+            overflow: hidden; 
+            text-overflow: ellipsis;
+            height: 60px; /* 8班車 */
+        }
+
+        .table-1 th { background: #000080; } .table-1 tr:nth-child(odd) { background: #000; } .table-1 tr:nth-child(even) { background: #002f4b; }
+        .table-0 th { background: #bf360c; } .table-0 tr:nth-child(odd) { background: #000; } .table-0 tr:nth-child(even) { background: #3e2723; }
+
+        .marquee-footer { background: #212121; color: #ffeb3b; height: 50px; position: relative; overflow: hidden; border-top: 3px solid #ff9800; flex-shrink: 0; }
+        .marquee-footer .marquee-text { position: absolute; white-space: nowrap; left: 100%; height: 50px; line-height: 50px; font-size: 1.4rem; font-weight: bold; }
+
+        /* Media Section */
+        .media-section { height: 280px; display: flex; gap: 10px; flex-shrink: 0; } 
+        .media-box { flex: 1; background: #000; border: 3px solid #333; border-radius: 8px; overflow: hidden; position: relative; display: flex; align-items: center; justify-content: center; }
+        .media-label { position: absolute; top: 0; left: 0; background: rgba(0,0,0,0.7); color: #fff; padding: 4px 10px; font-size: 1rem; z-index: 10; border-bottom-right-radius: 8px; }
+        
+        .carousel-img { width: 100%; height: 100%; object-fit: contain; position: absolute; opacity: 0; transition: opacity 1s; }
+        .carousel-img.active { opacity: 1; }
+        .video-iframe { width: 100%; height: 100%; border: none; }
+
+        /* 車種顏色 */
+        .train-type-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; color: white; font-size: 1.4rem; font-weight: bold; white-space: nowrap; min-width: 110px; }
+        .type-自強 { background-color: #FF5722; }
+        .type-新自強 { background: linear-gradient(135deg, #222 0%, #444 100%); border: 1px solid #999; }
+        .type-普悠瑪 { background: linear-gradient(135deg, #E91E63 0%, #C2185B 100%); }
+        .type-太魯閣 { background: linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%); }
+        .type-莒光 { background-color: #FF9800; }
+        .type-區間快 { background-color: #3F51B5; }
+        .type-區間 { background-color: #2196F3; }
+        .type-其他 { background-color: #607D8B; }
+
+        /* 狀態與時間 */
+        .status-ontime { color: #FFFFFF !important; } 
+        .status-delay { color: #ff1744 !important; animation: blink 1s infinite alternate; }
+        .status-cancelled { color: #FF5252; font-weight: 900; }
+        
+        /* 延誤時間容器 -> 橫向並排顯示 */
+        .time-delay-container { 
+            display: flex; 
+            flex-direction: row; /* 橫向排列 */
+            justify-content: flex-end; /* 靠右對齊 */
+            align-items: center; /* 垂直置中 */
+            height: 100%; 
+            padding-right: 5px;
+            gap: 8px; /* 兩個時間之間的間隔 */
+        }
+        .original-time { 
+            text-decoration: line-through; 
+            color: #777; 
+            font-size: 1.2rem;
+            line-height: 1.8rem; /* 與預計時間對齐 */
+        }
+        .expected-time { 
+            color: #4fc3f7; 
+            font-weight: bold; 
+            font-size: 1.8rem; 
+        }
+        .normal-time { font-size: 1.8rem; font-family: Consolas; text-align: right; padding-right: 5px; }
+        .highlight-row { background-color: rgba(255, 255, 255, 0.15) !important; border: 2px solid #ffeb3b !important; }
+
+        @keyframes dynamic-marquee { from { transform: translateX(var(--start-pos)); } to { transform: translateX(var(--end-pos)); } }
+        
+        /* 🔥 RWD 修正區塊 (針對小螢幕，如手機/平板) */
+        @media (max-width: 900px) {
+            .unified-header { 
+                height: 65px;
+                padding: 0 8px; 
+                gap: 8px;
+            }
+            .tra-logo-img { height: 42px; }
+            
+            .station-branding { gap: 8px; }
+            .station-name-block { gap: 5px; }
+            .station-name { font-size: 2.3rem; } 
+            .station-sub { font-size: 1.2rem; }
+
+            .datetime-block { gap: 8px; }
+            .date-text { font-size: 2rem; }
+            .time-text { font-size: 2rem; }
+
+            .unified-marquee-container { 
+                height: 45px;
+                margin-left: -8px;
+                margin-right: -8px;
+            } 
+            .unified-marquee-container .marquee-text { 
+                line-height: 45px; 
+                font-size: 1.4rem; 
+            } 
+
+            .pids-section { flex-direction: column; gap: 8px; }
+            .pids-column { min-height: 320px; }
+            
+            .direction-header-0, .direction-header-1 {
+                font-size: 1.1rem;
+                padding: 6px 10px;
+            }
+
+            .train-table { font-size: 1.1rem; }
+            .train-table th { font-size: 0.95rem; padding: 4px 2px; height: 28px; }
+            .train-table td { height: 55px; padding: 0 3px; } /* 手機版5班車佔滿空間 */
+
+            .train-type-badge { font-size: 0.85rem; min-width: 55px; padding: 2px 3px; }
+            .normal-time, .expected-time { font-size: 1.1rem; }
+            .original-time { font-size: 0.8rem; }
+
+            .marquee-footer { height: 38px; }
+            .marquee-footer .marquee-text { font-size: 0.95rem; line-height: 38px; }
+
+            /* 🔥 修正: 手機版媒體區塊改為垂直堆疊並可滑動 */
+            .media-section { 
+                height: 160px; 
+                flex-direction: column; 
+                gap: 8px;
+                overflow-y: auto; /* 啟用垂直滾動 */
+            }
+            .media-box { height: 140px; } /* 每個盒子高度調整 */
+        }
+        
+        @media (max-width: 480px) {
+            .unified-header { height: 60px; padding: 0 5px; }
+            .tra-logo-img { height: 38px; }
+            .station-name { font-size: 1.8rem; }
+            .station-sub { font-size: 0.7rem; }
+            .date-text { font-size: 0.65rem; }
+            .time-text { font-size: 1.6rem; }
+            .unified-marquee-container { height: 40px; }
+            .unified-marquee-container .marquee-text { line-height: 40px; font-size: 1.2rem; }
+            .direction-header-0, .direction-header-1 { font-size: 0.95rem; padding: 4px 8px; }
+            .train-table { font-size: 0.95rem; }
+            .train-table th { font-size: 0.8rem; height: 26px; padding: 3px 1px; }
+            .train-table td { height: 42px; padding: 0 2px; }
+            .train-type-badge { font-size: 0.75rem; min-width: 48px; }
+            .normal-time, .expected-time { font-size: 0.95rem; }
+            .marquee-footer { height: 35px; }
+            .marquee-footer .marquee-text { font-size: 0.85rem; line-height: 35px; }
+            .media-section { height: 140px; }
+        }
+    </style>
+    <script src="assets/station-code-mapping.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <div class="unified-header">
+        <div class="station-branding">
+            <img src="https://www.railway.gov.tw/tra-tip-web/static/images/TRA_logo.jpg" class="tra-logo-img">
+            <div class="station-name-block">
+                <div class="station-name" id="unifiedStationName">臺鐵車站</div>
+                <div class="station-sub" id="station-en">TRA STATION</div>
+            </div>
+        </div>
+        <div class="datetime-block">
+            <div class="date-text" id="unifiedDate">Loading...</div>
+            <div class="time-text" id="unifiedTime">--:--:--</div>
+        </div>
+    </div>
+
+    <!-- Top Marquee -->
+    <div class="unified-marquee-container">
+        <div class="marquee-text" id="unifiedTopMarquee">載入中...</div>
+    </div>
+
+    <!-- PIDS Tables -->
+    <div class="pids-section">
+        <!-- 逆行 -->
+        <div class="pids-column">
+            <div class="screen-body">
+                <div class="direction-header-1"><span id="dirTitle1">逆行</span><span id="destList1" style="font-size:1rem"></span></div>
+                <table class="train-table table-1">
+                    <thead>
+                        <tr>
+                            <th style="width:15%">車次</th>
+                            <th style="width:20%">車種</th>
+                            <th style="width:28%">開往</th>
+                            <th style="width:20%">實際開車時間</th>
+                            <th style="width:17%">狀態</th>
+                        </tr>
+                    </thead>
+                    <tbody id="body1"></tbody>
+                </table>
+            </div>
+            <div class="marquee-footer"><div class="marquee-text" id="marquee1">讀取中...</div></div>
+        </div>
+        <!-- 順行 -->
+        <div class="pids-column">
+            <div class="screen-body">
+                <div class="direction-header-0"><span id="dirTitle0">順行</span><span id="destList0" style="font-size:1rem"></span></div>
+                <table class="train-table table-0">
+                    <thead>
+                        <tr>
+                            <th style="width:15%">車次</th>
+                            <th style="width:20%">車種</th>
+                            <th style="width:28%">開往</th>
+                            <th style="width:20%">實際開車時間</th>
+                            <th style="width:17%">狀態</th>
+                        </tr>
+                    </thead>
+                    <tbody id="body0"></tbody>
+                </table>
+            </div>
+            <div class="marquee-footer"><div class="marquee-text" id="marquee0">讀取中...</div></div>
+        </div>
+    </div>
+
+    <!-- Media -->
+    <div class="media-section">
+        <div class="media-box" id="carouselBox">
+            <div class="media-label">宣導資訊</div>
+            <img src="https://www.railway.gov.tw/tra-tip-web/static/images/hero-bg-01.jpg" class="carousel-img active">
+        </div>
+        <div class="media-box" id="videoBox">
+            <div class="media-label">影音專區</div>
+            <div id="videoContainer" style="width:100%;height:100%"></div>
+        </div>
+    </div>
+
+    <script src="assets/config.js"></script>
+    <script src="assets/tdx-api.js"></script>
+    <script>
+        const TRA_WORKER_URL = "https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev";
+        let GLOBAL_STATION_ID = "";
+        const MAX_ROWS = 8; 
+        const RWD_MAX_ROWS = 5; // 🔥 手機版顯示5班
+
+        const TRAIN_TYPES = { 
+            "1100":"自強", "1101":"太魯閣", "1102":"自強", "1103":"自強", "1107":"普悠瑪", 
+            "1108":"自強", "110B":"新自強", "110G":"新自強", "110H":"新自強", "110K":"新自強", "110M":"新自強",
+            "1110":"莒光", "1111":"莒光", "1114":"莒光", "1115":"莒光", "1120":"復興", 
+            "1131":"區間", "1132":"區間快", "1140":"普快", "1150":"柴快", "1270":"普通"
+        };
+        const stopsCache = {};
+
+        function updateEnglishStationName(stationID) {
+            const enElement = document.getElementById('station-en');
+            if (enElement && typeof stationDataMap !== 'undefined' && stationDataMap[stationID]) {
+                const rawName = stationDataMap[stationID].ename;
+                const formattedName = rawName.split('_')[0].toUpperCase();
+                enElement.innerText = `${formattedName} STATION`;
+            } else {
+                enElement.innerText = "TRA STATION";
+            }
+        }
+        
+        function getInfo(t) {
+            // 🔥 修正: 使用 String() 確保 name 絕對是字串，防止 null/undefined 導致 .includes() 拋錯
+            let name = String(TRAIN_TYPES[t.TrainTypeID] || t.TrainTypeName?.Zh_tw || '列車');
+            let cls = '其他';
+            
+            if(name.includes('新自強') || name.includes('3000')) { 
+                name='新自強';
+                cls='新自強';
+            }
+            else if(name.includes('自強') || name.includes('推拉式自強')) { 
+                name='自強';
+                cls='自強';
+            }
+            else if(name.includes('普悠瑪')) { cls='普悠瑪'; }
+            else if(name.includes('太魯閣')) { cls='太魯閣'; }
+            else if(name.includes('莒光')) { cls='莒光'; }
+            else if(name.includes('區間快')) { cls='區間快'; }
+            else if(name.includes('區間')) { cls='區間'; }
+            else if(name === '列車') { 
+                cls = '區間';
+            }
+            
+            return { name, cls };
+        }
+
+        async function fetchTrainStops(trainNo) {
+            if (stopsCache[trainNo]) return stopsCache[trainNo];
+            try {
+                // 嘗試方案 1: 從 Worker 的 /api/schedule 取得
+                let r = await fetch(`${TRA_WORKER_URL}/api/schedule?trainNo=${trainNo}`);
+                let d = await r.json();
+                console.log(`[${trainNo}] Worker /api/schedule 結果:`, d);
+                if(Array.isArray(d) && d.length && d[0].StopTimes) { 
+                    console.log(`✅ [${trainNo}] 取得 ${d[0].StopTimes.length} 筆停靠站 (Worker 陣列)`);
+                    stopsCache[trainNo] = d[0].StopTimes; 
+                    return d[0].StopTimes; 
+                }
+                if(d && d.StopTimes) {
+                    console.log(`✅ [${trainNo}] 取得 ${d.StopTimes.length} 筆停靠站 (Worker 直接)`);
+                    stopsCache[trainNo] = d.StopTimes;
+                    return d.StopTimes;
+                }
+            } catch(e) { console.warn(`[${trainNo}] Worker API 失敗:`, e); } 
+            
+            try {
+                // 嘗試方案 2: 直接從 TDX V3 取得
+                let r = await fetch(`https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/DailyTrainTimetable/Today?$filter=TrainInfo/TrainNo eq '${trainNo}'&$format=JSON`);
+                let d = await r.json();
+                console.log(`[${trainNo}] TDX V3 結果:`, d);
+                if(d?.value?.[0]?.StopTimes) {
+                    console.log(`✅ [${trainNo}] 取得 ${d.value[0].StopTimes.length} 筆停靠站 (TDX V3)`);
+                    stopsCache[trainNo] = d.value[0].StopTimes;
+                    return d.value[0].StopTimes;
+                }
+            } catch(e) { console.warn(`[${trainNo}] TDX V3 API 失敗:`, e); }
+            
+            console.error(`❌ [${trainNo}] 無法從任何來源取得停靠站資料`);
+            return [];
+        }
+
+        function getExpectedTime(timeStr, delayMins) {
+            if (!timeStr || delayMins === 0) return timeStr;
+            const [h, m] = timeStr.split(':').map(Number);
+            const total = h * 60 + m + delayMins;
+            const newH = Math.floor(total / 60) % 24;
+            const newM = total % 60;
+            return `${String(newH).padStart(2,'0')}:${String(newM).padStart(2,'0')}`;
+        }
+
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('unifiedTime').innerText = now.toLocaleTimeString('en-GB');
+            document.getElementById('unifiedDate').innerText = now.toISOString().split('T')[0].replace(/-/g,'/');
+        }
+        setInterval(updateClock, 1000);
+
+        async function updateMediaAssets() {
+            try {
+                const res = await fetch(`${TRA_WORKER_URL}/api/pids/assets`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if(data.images && data.images.length > 0) setupCarousel(data.images);
+                    const videos = Array.isArray(data.video) ? data.video : (data.video ? [data.video] : []);
+                    if(videos.length > 0) setupVideo(videos);
+                }
+            } catch(e) { console.warn("Media Load Error", e); }
+        }
+
+        let carTimer;
+        function setupCarousel(imgs) {
+            const box = document.getElementById('carouselBox');
+            box.querySelectorAll('img').forEach(i=>i.remove());
+            imgs.forEach((src,i) => {
+                const img = document.createElement('img');
+                img.src = src; img.className = i===0?'carousel-img active':'carousel-img';
+                box.appendChild(img);
+            });
+            let idx = 0;
+            if(carTimer) clearInterval(carTimer);
+            carTimer = setInterval(() => {
+                const list = box.querySelectorAll('img');
+                if(list.length>1) {
+                    list[idx].classList.remove('active');
+                    idx = (idx+1)%list.length;
+                    list[idx].classList.add('active');
+                }
+            }, 10000);
+        }
+
+        function setupVideo(urls) {
+            const con = document.getElementById('videoContainer');
+            let videoIds = [];
+
+            urls.forEach(url => {
+                let vid = "";
+                if(url.includes('youtube') || url.includes('youtu.be')) {
+                    if(url.includes('v=')) vid = url.split('v=')[1];
+                    else if(url.includes('embed/')) vid = url.split('embed/')[1];
+                    else vid = url.split('/').pop();
+                    vid = vid.split('&')[0];
+                    if(vid.length===11) videoIds.push(vid);
+                }
+            });
+
+            if(videoIds.length > 0) {
+                let first = videoIds[0];
+                let pl = videoIds.join(',');
+                con.innerHTML = `<iframe class="video-iframe" src="https://www.youtube.com/embed/${first}?autoplay=1&mute=1&loop=1&playlist=${pl}&controls=0" allow="autoplay; encrypted-media"></iframe>`;
+            } else if (urls.length === 1 && typeof urls[0] === 'string' && !urls[0].includes('youtube')) {
+                con.innerHTML = `<video src="${urls[0]}" autoplay muted loop playsinline style="width:100%;height:100%;object-fit:contain;"></video>`;
+            }
+        }
+
+        function startMarquee(id) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const container = el.parentElement;
+            
+            // 清除舊的監聽與狀態
+            el.ontransitionend = null;
+            el.style.transition = 'none';
+            
+            // 讓瀏覽器有時間渲染文字後再取寬度
+            setTimeout(() => {
+                const textWidth = el.scrollWidth;
+                const containerWidth = container.clientWidth;
+                
+                // 起始位置：容器最右邊
+                el.style.left = containerWidth + 'px';
+                
+                // 計算速度：設定每像素跑多少秒 (數值越小越快)
+                // 電腦版超加速、手機版正常速度
+                const isMobileScreen = window.innerWidth <= 900;
+                let speed;
+                if (id === 'unifiedTopMarquee') {
+                    speed = isMobileScreen ? 0.010 : 0.006;  // 電腦版公告超加速
+                } else {
+                    speed = isMobileScreen ? 0.008 : 0.006;  // 列車資料維持
+                }
+                const duration = Math.max(10, (textWidth + containerWidth) * speed);
+
+                // 強制重繪
+                void el.offsetWidth;
+
+                // 開始動畫：位移到文字寬度的負值（確保完全消失）
+                el.style.transition = `left ${duration}s linear`;
+                el.style.left = `-${textWidth}px`;
+
+                // 結束後重啟
+                el.ontransitionend = () => {
+                    startMarquee(id);
+                };
+            }, 100);
+        }
+
+        async function updatePids(id) {
+            try {
+                let r = await fetch(`${TRA_WORKER_URL}/api/liveboard/station?station=${id}`);
+                let d = await r.json();
+                
+                // 🔥 新增：篩選已開出的列車 (預計發車時間 < 現在時間)
+                const now = new Date();
+                const currentHours = now.getHours();
+                const currentMins = now.getMinutes();
+                const nowTotalMinutes = currentHours * 60 + currentMins;
+                
+                let filtered = d.filter(t => {
+                    const [h, m] = (t.ScheduledDepartureTime || "00:00").split(':').map(Number);
+                    const schedMins = h * 60 + m;
+                    const delayMins = parseInt(t.DelayTime || 0);
+                    const actualMins = schedMins + delayMins;
+                    
+                    // 停駛列車保留，未來班次也保留
+                    const isCancelled = String(t.TrainStatus) === '2';
+                    const shouldShow = actualMins >= nowTotalMinutes || isCancelled;
+                    
+                    console.log(`[${t.TrainNo}] ${t.ScheduledDepartureTime} 實際=${actualMins}分 現在=${nowTotalMinutes}分 停駛=${isCancelled} 顯示=${shouldShow}`);
+                    return shouldShow;
+                });
+                
+                // 🔥 修正: 按「實際開車時間」排序（純粹按分鐘數）
+                filtered.forEach(t => {
+                    let [h,m] = (t.ScheduledDepartureTime||"00:00").split(':').map(Number);
+                    let delayMins = parseInt(t.DelayTime || 0);
+                    // 實際時間 = 表定時間 + 誤點
+                    let actualMins = (h*60+m) + delayMins;
+                    // 只按實際時間的相對分鐘數排序（取 mod 1440 確保凌晨班次排在前面）
+                    t._sort = actualMins % 1440;
+                });
+                filtered.sort((a,b) => a._sort - b._sort);
+
+                let t1 = filtered.filter(t=>t.Direction==1), t0 = filtered.filter(t=>t.Direction==0);
+
+                renderTable('1', t1); renderTable('0', t0);
+                await updateMarquee('marquee1', t1); 
+                await updateMarquee('marquee0', t0);
+                
+                // 🔥 修正: 顯示前 3 個目的地
+                populateDestinationMarquee('destList1', t1, 1);
+                populateDestinationMarquee('destList0', t0, 0);
+
+            } catch(e) { renderTable('1',[]); renderTable('0',[]); }
+        }
+        
+        // 🔥 新增: 處理方向標題下的站名列表顯示
+        function populateDestinationMarquee(id, list, direction) {
+            const el = document.getElementById(id);
+            if (!list || list.length === 0) {
+                el.innerText = direction === 1 ? '北上列車資訊載入中...' : '南下列車資訊載入中...';
+                return;
+            }
+            
+            // 獲取前 3 筆列車的最終目的地
+            let destinations = list.slice(0, 3).map(t => t.EndingStationName);
+            let uniqueDestinations = [...new Set(destinations)].join('、');
+
+            if (uniqueDestinations.length > 0) {
+                 el.innerText = `開往: ${uniqueDestinations}`;
+            } else {
+                 el.innerText = direction === 1 ? '無近期北上列車' : '無近期南下列車';
+            }
+        }
+
+        function renderTable(dir, list) {
+            const tb = document.getElementById(`body${dir}`);
+            tb.innerHTML = '';
+
+            // 🔥 修正: 根據螢幕寬度決定 MAX_ROWS (如果小於 900px, 顯示 5 列)
+            const isMobile = window.innerWidth <= 900;
+            const currentMaxRows = isMobile ? RWD_MAX_ROWS : MAX_ROWS;
+            
+            list.slice(0, currentMaxRows).forEach((t, i) => {
+                let info = getInfo(t);
+                let delay = parseInt(t.DelayTime||0);
+                let isCancel = String(t.TrainStatus)==='2';
+                let status = delay>0 ? `晚 ${delay} 分` : '準點';
+                let cls = delay>0 ? 'status-delay' : 'status-ontime';
+                
+                let timeStr = (t.ScheduledDepartureTime||"").slice(0,5);
+                let timeHtml = `<span class="normal-time">${timeStr}</span>`;
+                
+                if(delay>0) {
+                    let [h,m] = timeStr.split(':').map(Number);
+                    let min = h*60+m+delay;
+                    let newT = `${String(Math.floor(min/60)%24).padStart(2,'0')}:${String(min%60).padStart(2,'0')}`;
+                    // 🔥 修正: 誤點時只顯示藍色預計時間，不顯示原始時間
+                    timeHtml = `<span class="expected-time">${newT}</span>`;
+                }
+
+                let dest = t.EndingStationName;
+                if(t.TripLine==1) dest+=' (山)';
+                else if(t.TripLine==2) dest+=' (海)';
+
+                let tr = document.createElement('tr');
+                if(i===0) tr.classList.add('highlight-row');
+                tr.innerHTML = `
+                    <td style="font-family:Consolas">${t.TrainNo}</td>
+                    <td><span class="train-type-badge type-${info.cls}">${info.name}</span></td>
+                    <td>${dest}</td>
+                    <td>${timeHtml}</td>
+                    <td class="${cls}">${status}</td>
+                `;
+                tb.appendChild(tr);
+            });
+            // 🔥 修正: 填充空行，直到達到 currentMaxRows
+            for(let i=Math.min(list.length, currentMaxRows); i<currentMaxRows; i++) tb.innerHTML+='<tr><td></td><td></td><td></td><td></td><td></td></tr>';
+        }
+
+        async function updateMarquee(elId, list) {
+            const el = document.getElementById(elId);
+            if(!list || list.length===0) { 
+                el.innerHTML = "目前無列車資訊"; 
+                startMarquee(elId); // 🔥 即使無內容也啟動，會滾動「目前無列車資訊」
+                return; 
+            }
+            
+            let t = list[0];
+            let info = getInfo(t);
+            let delay = parseInt(t.DelayTime||0);
+            let isCancel = String(t.TrainStatus)==='2';
+
+            if(isCancel) {
+                el.innerHTML = `<span style="color:#FF5252;font-weight:bold">🚫 ${t.TrainNo} 次 ${info.name} 往 ${t.EndingStationName} 本日停駛</span>`;
+                startMarquee(elId);
+                return;
+            }
+
+            let msg = `<span style="color:#ffeb3b;font-weight:bold">${t.TrainNo} 次 ${info.name} 往 ${t.EndingStationName}</span>`;
+            msg += `<span style="margin:0 15px;color:#555">|</span>`;
+            
+            let liveData = null;
+            try {
+                const liveWorkerPromise = fetch(`${TRA_WORKER_URL}/api/live?trainNo=${t.TrainNo}`).then(r=>r.json()).catch(()=>null);
+                liveData = await liveWorkerPromise;
+
+                if (liveData?.TrainLiveBoards?.length > 0) liveData = liveData.TrainLiveBoards[0];
+                else if (liveData?.StationName) liveData = liveData;
+                else liveData = null;
+            } catch (e) {}
+
+            let locationText = "";
+            let liveDelay = 0;
+            if (liveData && liveData.StationName) {
+                const lastStationName = liveData.StationName.Zh_tw || liveData.StationName;
+                liveDelay = liveData.DelayTime ? parseInt(liveData.DelayTime) : 0;
+                
+                let stops = await fetchTrainStops(t.TrainNo);
+                let nextStopName = "";
+                if (stops && stops.length > 0) {
+                    const passedIndex = stops.findIndex(s => s.StationName.Zh_tw === lastStationName);
+                    if (passedIndex !== -1 && passedIndex < stops.length - 1) {
+                        nextStopName = stops[passedIndex + 1].StationName.Zh_tw;
+                    }
+                }
+                
+                locationText = nextStopName ? `列車目前位置：${lastStationName} ➡ ${nextStopName}` : `列車目前位置：${lastStationName}`;
+                if (liveDelay > 0) locationText += ` (晚 ${liveDelay} 分)`;
+                
+            } else {
+                locationText = (t.IsTomorrow) ? "列車尚未發車" : "列車訊號偵測中";
+            }
+            
+            msg += `<span style="color:#4fc3f7">${locationText}</span>`;
+            msg += `<span style="margin:0 15px;color:#555">|</span>`;
+
+            // 🔥 修正: 優先使用 Worker 回傳的 ScheduledArrivalTime (表定抵達時間)
+            let arrivalTime = t.ScheduledArrivalTime || t.ScheduledDepartureTime || "00:00"; 
+            
+            // 嘗試取得更精確的停靠站資料 (如果有的話)
+            let stops = await fetchTrainStops(t.TrainNo);
+            if(stops && stops.length>0) {
+                let stationStop = stops.find(s => String(s.StationID) === GLOBAL_STATION_ID);
+                if(stationStop && stationStop.ArrivalTime) {
+                    arrivalTime = stationStop.ArrivalTime.slice(0, 5);
+                }
+            }
+            
+            const predictedTime = getExpectedTime(arrivalTime, delay);
+            const timeColor = delay > 0 ? '#ff5252' : '#ffffff';
+            
+            msg += `本站預計：<span style="color:${timeColor};font-weight:bold;font-size:1.1em">${predictedTime} 抵達 (${delay > 0 ? `晚 ${delay} 分` : '準點'})</span>`;
+
+            if(stops && stops.length>0) {
+                let idx = stops.findIndex(s => String(s.StationID) === GLOBAL_STATION_ID);
+                console.log(`[${t.TrainNo}] 尋找本站 ${GLOBAL_STATION_ID}: 找到索引=${idx}, 總停靠站數=${stops.length}`);
+                if(idx !== -1) {
+                    let next = stops.slice(idx+1).map(s => s.StationName.Zh_tw).join('、');
+                    console.log(`[${t.TrainNo}] 後續停靠站：${next || '無(終點)'}`);
+                    if(next) msg += `<span style="margin:0 15px;color:#555">|</span>沿途停靠：${next}`;
+                    else msg += `<span style="margin:0 15px;color:#555">|</span>▶ 終點站`;
+                } else {
+                    // 找不到本站，顯示除了起點外的所有停靠站
+                    let allStops = stops.slice(1).map(s => s.StationName.Zh_tw).join('、');
+                    console.log(`[${t.TrainNo}] 找不到本站，顯示所有停靠站：${allStops}`);
+                    if(allStops) msg += `<span style="margin:0 15px;color:#555">|</span>沿途停靠：${allStops}`;
+                }
+            } else {
+                console.warn(`[${t.TrainNo}] 停靠站資料為空或未載入`);
+            }
+            
+            el.innerHTML = msg;
+            startMarquee(elId);
+        }
+
+        async function checkTopMarquee() {
+            try {
+                // 🔥 修正: 帶入 station 參數，讓 Worker 能回傳沿途停靠站資訊
+                let url = `${TRA_WORKER_URL}/api/pids/marquee`;
+                if (GLOBAL_STATION_ID) url += `?station=${GLOBAL_STATION_ID}`;
+                
+                let r = await fetch(url);
+                let d = await r.json();
+                let el = document.getElementById('unifiedTopMarquee');
+                
+                if (d.text !== undefined && d.text !== null) { 
+                    let cleanText = d.text
+                        .replace(/<b>/g, "").replace(/<\/b>/g, "")
+                        .replace(/<\/[^>]+>/g, "")
+                        .replace(/<(?![-]{2,}>)[^>]+>/g, "")
+                        .replace(/\\n/g, "     ")
+                        .replace(/[\r\n]+/g, "     ")
+                        .replace(/&nbsp;/g, " ")
+                        .replace(/&amp;/g, "&");
+                    
+                    // 🔥 關鍵優化：如果內容跟現在一樣，就不要重啟跑馬燈，讓它繼續跑完
+                    if (el.innerHTML === cleanText) {
+                        return; 
+                    }
+                    
+                    el.innerHTML = cleanText; 
+                    startMarquee('unifiedTopMarquee'); 
+                }
+            } catch(e){ console.warn("Top Marquee Error:", e); }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const p = new URLSearchParams(location.search);
+            GLOBAL_STATION_ID = p.get('station');
+            let name = p.get('name')||'臺鐵';
+            
+            document.getElementById('unifiedStationName').innerText = name.replace(/車站$|站$/,'')+'車站';
+            
+            updateEnglishStationName(GLOBAL_STATION_ID); 
+            
+            updateClock();
+            updateMediaAssets();
+            if(GLOBAL_STATION_ID) { updatePids(GLOBAL_STATION_ID); setInterval(()=>updatePids(GLOBAL_STATION_ID), 60000); }
+            
+            checkTopMarquee(); 
+            setTimeout(()=>startMarquee('unifiedTopMarquee'), 1500); 
+            setInterval(checkTopMarquee, 300000);  // 5 分鐘檢查一次
+        });
+    </script>
+<!-- Cloudflare Pages Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "28d048b5ece84479b253cc75ae7083c6"}'></script><!-- Cloudflare Pages Analytics --></body>
+</html>
