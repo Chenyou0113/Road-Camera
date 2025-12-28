@@ -755,13 +755,13 @@
             
             // --- 🔥 修正：使用絕對時間戳排序 (處理跨日大誤點) ---
             
-            const now = new Date();
-            const nowTs = now.getTime(); // 當前時間戳 (毫秒)
-
+// 🔥 修正：改用「最近7班列車」替代時間窗口過濾
+            const MAX_DISPLAY_TRAINS = 7;
+            
             const finalFilteredTrains = [];
             const seenTrains = new Set();
             
-            // 🔥 處理和過濾邏輯：計算絕對時間戳，並過濾出相關班次
+            // 處理和過濾邏輯：計算絕對時間戳，所有列車都納入（依賴 Worker 層過濾）
             trains.forEach(t => {
                 if (seenTrains.has(t.TrainNo)) return;
                 seenTrains.add(t.TrainNo);
@@ -770,8 +770,7 @@
                 const delay = parseInt(t.DelayTime || 0);
                 const isCancelled = (String(t.TrainStatus) === '2' || t.TrainStatus === 2);
 
-                // 🔥 計算絕對時間戳
-                // 如果 IsTomorrow 標記為 true，則加上 24 小時
+                // 計算絕對時間戳
                 const dateStr = t.IsTomorrow ? 
                     new Date(now.getTime() + 86400000).toISOString().split('T')[0] :
                     now.toISOString().split('T')[0];
@@ -779,16 +778,13 @@
                 const scheduledTs = new Date(`${dateStr}T${timeStr}:00+08:00`).getTime();
                 const estimatedTs = isCancelled ? scheduledTs : (scheduledTs + (delay * 60000));
 
-                // 🔥 篩選：只顯示預計時間在「現在 - 15分鐘」之後的車
-                if (estimatedTs >= (nowTs - 15 * 60000)) {
-                    finalFilteredTrains.push({
-                        ...t,
-                        _sortKey: estimatedTs // 🔥 使用絕對時間戳排序
-                    });
-                }
+                finalFilteredTrains.push({
+                    ...t,
+                    _sortKey: estimatedTs
+                });
             });
             
-            // 🔥 排序：依照絕對時間戳排序
+            // 排序：依照絕對時間戳排序
             finalFilteredTrains.sort((a, b) => a._sortKey - b._sortKey);
             
             // --- 分組與切片 ---
@@ -800,8 +796,8 @@
             finalFilteredTrains.forEach(train => {
                 const dir = String(train.Direction);
                 if (grouped[dir]) {
-                    // 🔥 前端切片：只取前 8 筆顯示
-                    if (grouped[dir].trains.length < 8) {
+                    // 🔥 修正：取最近 MAX_DISPLAY_TRAINS 班
+                    if (grouped[dir].trains.length < MAX_DISPLAY_TRAINS) {
                         grouped[dir].trains.push(train);
                     }
                 }
