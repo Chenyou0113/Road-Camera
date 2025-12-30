@@ -37,9 +37,10 @@ const TDX_CONFIG = {
     TOKEN_API_ENDPOINT: '/api/token',
     
     // 是否使用 Cloudflare Pages Functions（自動偵測）
-    // 如果部署在 Cloudflare Pages，此值會被設為 true
+    // 如果部署在 Cloudflare Pages 或正式網域，此值會被設為 true
     USE_CLOUDFLARE_FUNCTIONS: typeof window !== 'undefined' && 
-                              window.location.hostname.includes('pages.dev'),
+                              (window.location.hostname.includes('pages.dev') ||
+                               window.location.hostname.includes('weacamm.org')),
     
     // Token 快取設定
     TOKEN_CACHE_KEY: 'tdx_token_cache',
