@@ -154,7 +154,20 @@
         .video-iframe { width: 100%; height: 100%; border: none; }
 
         /* 車種顏色 */
-        .train-type-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; color: white; font-size: 1.4rem; font-weight: bold; white-space: nowrap; min-width: 110px; }
+        .train-type-badge { 
+            display: inline-block; 
+            padding: 2px 6px; 
+            border-radius: 4px; 
+            color: white; 
+            font-size: 1.2rem; 
+            font-weight: bold; 
+            white-space: nowrap; 
+            min-width: 90px;
+            max-width: 130px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-align: center;
+        }
         .type-自強 { background-color: #FF5722; }
         .type-新自強 { background: linear-gradient(135deg, #222 0%, #444 100%); border: 1px solid #999; }
         .type-普悠瑪 { background: linear-gradient(135deg, #E91E63 0%, #C2185B 100%); }
@@ -236,7 +249,7 @@
             .train-table th { font-size: 0.95rem; padding: 4px 2px; height: 28px; }
             .train-table td { height: 55px; padding: 0 3px; } /* 手機版5班車佔滿空間 */
 
-            .train-type-badge { font-size: 0.85rem; min-width: 55px; padding: 2px 3px; }
+            .train-type-badge { font-size: 0.75rem; min-width: 50px; max-width: 70px; padding: 2px 3px; }
             .normal-time, .expected-time { font-size: 1.1rem; }
             .original-time { font-size: 0.8rem; }
 
@@ -359,6 +372,50 @@
     <script src="assets/config.js"></script>
     <script src="assets/tdx-api.js"></script>
     <script>
+        // --- 語言字典 ---
+        const i18n = {
+            zh: {
+                inbound: "逆行", outbound: "順行",
+                trainNo: "車次", type: "車種", dest: "開往", time: "實際開車時間", status: "狀態",
+                onTime: "準點", delay: "晚 {min} 分", cancelled: "停駛",
+                toward: "往", curPos: "列車目前位置：", nextPos: " ➡ ", expected: "本站預計：", arrive: " 抵達",
+                adv: "宣導資訊", video: "影音專區", noTrain: "目前無列車資訊",
+                notDeparted: "列車尚未發車", detecting: "列車訊號偵測中",
+                types: { 
+                    "新自強": "新自強", "自強": "自強", "普悠瑪": "普悠瑪", 
+                    "太魯閣": "太魯閣", "莒光": "莒光", "區間快": "區間快", "區間": "區間", "其他": "列車"
+                }
+            },
+            en: {
+                inbound: "Northbound", outbound: "Southbound",
+                trainNo: "Train No.", type: "Type", dest: "Destination", time: "Departure", status: "Status",
+                onTime: "On Time", delay: "{min} Min Late", cancelled: "Cancelled",
+                toward: "To ", curPos: "Current Location: ", nextPos: " ➡ ", expected: "ETA at Station: ", arrive: "",
+                adv: "Information", video: "Media Center", noTrain: "No Train Information",
+                notDeparted: "Not Yet Departed", detecting: "Signal Detecting",
+                types: { 
+                    "新自強": "Tze-Chiang 3000", "自強": "Tze-Chiang", "普悠瑪": "Puyuma", 
+                    "太魯閣": "Taroko", "莒光": "Chu-Kuang", "區間快": "Local Exp", "區間": "Local", "其他": "Train"
+                },
+                notes: {
+                    "每日行駛": "Daily",
+                    "逢週五至日行駛": "Fri-Sun Only",
+                    "逢週六、日行駛": "Sat & Sun Only",
+                    "逢週六日行駛": "Weekends Only",
+                    "在彰化跨線": "Via Changhua",
+                    "跨線列車": "Cross-line",
+                    "本車次不發售無座票": "Reserved Only",
+                    "僅停靠大站": "Major Stops Only",
+                    "不停靠部分小站": "Express Service"
+                }
+            }
+        };
+
+        let currentLang = localStorage.getItem('pids_lang') || 'zh';
+        let lastTrainData = []; // 快取最近一次抓到的列車資料
+        let autoSwitchTimer = null;
+        const SWITCH_INTERVAL = 80000; // 80 秒自動切換
+
         const TRA_WORKER_URL = "https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev";
         let GLOBAL_STATION_ID = "";
         const MAX_ROWS = 8; 
@@ -371,6 +428,117 @@
             "1131":"區間", "1132":"區間快", "1140":"普快", "1150":"柴快", "1270":"普通"
         };
         const stopsCache = {};
+
+        // 常用車站英譯字典 (作為備援，確保 100% 有英文)
+        const stationEnMap = {
+            "基隆": "Keelung", "七堵": "Qidu", "南港": "Nangang", "松山": "Songshan", "臺北": "Taipei", 
+            "台北": "Taipei", "板橋": "Banqiao", "樹林": "Shulin", "桃園": "Taoyuan", "中壢": "Zhongli", 
+            "新竹": "Hsinchu", "竹南": "Zhunan", "苗栗": "Miaoli", "豐原": "Fengyuan", "臺中": "Taichung", 
+            "台中": "Taichung", "彰化": "Changhua", "員林": "Yuanlin", "斗六": "Douliu", "嘉義": "Chiayi", 
+            "新營": "Xinying", "臺南": "Tainan", "台南": "Tainan", "岡山": "Gangshan", "新左營": "Xinzuoying", 
+            "左營": "Zuoying", "高雄": "Kaohsiung", "屏東": "Pingtung", "潮州": "Chaozhou", "枋寮": "Fangliao", 
+            "臺東": "Taitung", "台東": "Taitung", "玉里": "Yuli", "花蓮": "Hualien", "蘇澳新": "Su'aoxin", 
+            "蘇澳": "Su'ao", "宜蘭": "Yilan", "羅東": "Luodong", "瑞芳": "Ruifang", "福隆": "Fulong",
+            "八堵": "Badu", "汐止": "Xizhi", "萬華": "Wanhua", "鶯歌": "Yingge", "楊梅": "Yangmei",
+            "湖口": "Hukou", "竹北": "Zhubei", "香山": "Xiangshan", "崎頂": "Qiding", "談文": "Tanwen",
+            "大甲": "Dajia", "清水": "Qingshui", "沙鹿": "Shalu", "龍井": "Longjing", "大肚": "Dadu",
+            "追分": "Zhuifen", "烏日": "Wuri", "成功": "Chenggong", "田中": "Tianzhong", "二水": "Ershui",
+            "林內": "Linnei", "斗南": "Dounan", "石榴": "Shiliu", "大林": "Dalin", "民雄": "Minxiong",
+            "水上": "Shuishang", "南靖": "Nanjing", "後壁": "Houbi", "林鳳營": "Linfengying", "隆田": "Longtian",
+            "拔林": "Balin", "善化": "Shanhua", "永康": "Yongkang", "大橋": "Daqiao", "保安": "Baoan",
+            "中洲": "Zhongzhou", "橋頭": "Qiaotou", "楠梓": "Nanzi", "新左營": "Xinzuoying", "鳳山": "Fengshan",
+            "後庄": "Houzhuang", "九曲堂": "Jiuqutang", "六塊厝": "Liukuaicuo", "歸來": "Guilai", "麟洛": "Linluo",
+            "西勢": "Xishi", "竹田": "Zhutian", "內獅": "Neishi", "枋山": "Fangshan", "加祿": "Jialu",
+            "太麻里": "Taimali", "知本": "Zhiben", "康樂": "Kangle", "鹿野": "Luye", "瑞和": "Ruihe",
+            "瑞穗": "Ruisui", "光復": "Guangfu", "萬榮": "Wanrong", "鳳林": "Fenglin", "南平": "Nanping",
+            "壽豐": "Shoufeng", "志學": "Zhixue", "平和": "Pinghe", "新城": "Xincheng", "景美": "Jingmei",
+            "和平": "Heping", "和仁": "Heren", "崇德": "Chongde", "南澳": "Nan'ao", "東澳": "Dong'ao",
+            "永樂": "Yongle", "蘇澳新站": "Su'aoxin", "冬山": "Dongshan", "三貂嶺": "Sandiaolin", "牡丹": "Mudan",
+            "雙溪": "Shuangxi", "貢寮": "Gongliao", "海山": "Mountain Line", "山線": "Mountain Line", "海線": "Coast Line"
+        };
+
+        // 翻譯車站名稱的函式
+        function translateStation(zhName) {
+            if (currentLang === 'zh') return zhName;
+            
+            // 移除括號內的文字 (如 山、海) 獨立翻譯
+            let cleanName = zhName.replace(/\s*\(山\)/g, "").replace(/\s*\(海\)/g, "").replace(/車站$/g, "").trim();
+            let suffix = "";
+            if (zhName.includes("(山)")) suffix = " (MT)";
+            if (zhName.includes("(海)")) suffix = " (CO)";
+
+            // 先找 stationDataMap (如果你引入的 mapping.js 有資料)
+            if (typeof stationDataMap !== 'undefined') {
+                for (let code in stationDataMap) {
+                    if (stationDataMap[code].name === cleanName || stationDataMap[code].name === cleanName + "站") {
+                        return stationDataMap[code].ename.split('_')[0] + suffix;
+                    }
+                }
+            }
+
+            // 再找手動字典
+            return (stationEnMap[cleanName] || cleanName) + suffix;
+        }
+
+        // 翻譯備註的函式
+        function translateNote(note) {
+            if (currentLang === 'zh' || !note || note.trim() === '') return note;
+            const lang = i18n[currentLang];
+            // 檢查是否有預設翻譯，否則回傳原字
+            return lang.notes?.[note.trim()] || note;
+        }
+
+        // --- 語言切換功能 ---
+        function toggleLanguage(isAuto = false) {
+            currentLang = currentLang === 'zh' ? 'en' : 'zh';
+            localStorage.setItem('pids_lang', currentLang);
+            
+            console.log(`[語言切換] 切換至: ${currentLang.toUpperCase()} ${isAuto ? '(自動)' : '(手動)'}`);
+            
+            updateUIStrings();
+            
+            // 如果有舊資料，直接重新渲染表格，不需要等 API
+            if (lastTrainData.length > 0) {
+                refreshDisplay();
+            }
+
+            // 如果是手動點擊，重設計時器
+            if (!isAuto) {
+                startAutoSwitch();
+            }
+        }
+
+        function startAutoSwitch() {
+            if (autoSwitchTimer) clearInterval(autoSwitchTimer);
+            autoSwitchTimer = setInterval(() => {
+                toggleLanguage(true);
+            }, SWITCH_INTERVAL);
+        }
+
+        function updateUIStrings() {
+            const lang = i18n[currentLang];
+            
+            // 更新方向標題
+            const dir1Title = document.getElementById('dirTitle1');
+            const dir0Title = document.getElementById('dirTitle0');
+            if (dir1Title) dir1Title.innerText = lang.inbound;
+            if (dir0Title) dir0Title.innerText = lang.outbound;
+            
+            // 更新表頭
+            const headHtml = `
+                <tr>
+                    <th style="width:15%">${lang.trainNo}</th>
+                    <th style="width:20%">${lang.type}</th>
+                    <th style="width:28%">${lang.dest}</th>
+                    <th style="width:20%">${lang.time}</th>
+                    <th style="width:17%">${lang.status}</th>
+                </tr>`;
+            
+            const table1Head = document.querySelector('.table-1 thead');
+            const table0Head = document.querySelector('.table-0 thead');
+            if (table1Head) table1Head.innerHTML = headHtml;
+            if (table0Head) table0Head.innerHTML = headHtml;
+        }
 
         function updateEnglishStationName(stationID) {
             const enElement = document.getElementById('station-en');
@@ -405,7 +573,11 @@
                 cls = '區間';
             }
             
-            return { name, cls };
+            // 多語言支援
+            const lang = i18n[currentLang];
+            const displayName = lang.types[cls] || name;
+            
+            return { name: displayName, cls };
         }
 
         async function fetchTrainStops(trainNo) {
@@ -594,40 +766,64 @@
                 });
                 filtered.sort((a,b) => a._sort - b._sort);
 
-                let t1 = filtered.filter(t=>t.Direction==1), t0 = filtered.filter(t=>t.Direction==0);
+                // 儲存到快取
+                lastTrainData = filtered;
 
-                renderTable('1', t1); renderTable('0', t0);
-                await updateMarquee('marquee1', t1); 
-                await updateMarquee('marquee0', t0);
+                refreshDisplay();
                 
-                // 🔥 修正: 顯示前 3 個目的地
-                populateDestinationMarquee('destList1', t1, 1);
-                populateDestinationMarquee('destList0', t0, 0);
+            } catch(e) { 
+                console.error("更新PIDS失敗:", e);
+                renderTable('1',[]); 
+                renderTable('0',[]); 
+            }
+        }
 
-            } catch(e) { renderTable('1',[]); renderTable('0',[]); }
+        // 負責把 lastTrainData 畫到畫面上
+        function refreshDisplay() {
+            let t1 = lastTrainData.filter(t=>t.Direction==1);
+            let t0 = lastTrainData.filter(t=>t.Direction==0);
+
+            renderTable('1', t1); 
+            renderTable('0', t0);
+            updateMarquee('marquee1', t1); 
+            updateMarquee('marquee0', t0);
+            
+            // 🔥 修正: 顯示前 3 個目的地
+            populateDestinationMarquee('destList1', t1, 1);
+            populateDestinationMarquee('destList0', t0, 0);
         }
         
         // 🔥 新增: 處理方向標題下的站名列表顯示
         function populateDestinationMarquee(id, list, direction) {
             const el = document.getElementById(id);
+            const lang = i18n[currentLang];
+            
             if (!list || list.length === 0) {
-                el.innerText = direction === 1 ? '北上列車資訊載入中...' : '南下列車資訊載入中...';
+                el.innerText = currentLang === 'zh' 
+                    ? (direction === 1 ? '北上列車資訊載入中...' : '南下列車資訊載入中...')
+                    : (direction === 1 ? 'Loading Northbound...' : 'Loading Southbound...');
                 return;
             }
             
             // 獲取前 3 筆列車的最終目的地
-            let destinations = list.slice(0, 3).map(t => t.EndingStationName);
-            let uniqueDestinations = [...new Set(destinations)].join('、');
+            let destinations = list.slice(0, 3).map(t => {
+                return translateStation(t.EndingStationName);
+            });
+            let uniqueDestinations = [...new Set(destinations)].join(currentLang === 'zh' ? '、' : ', ');
 
             if (uniqueDestinations.length > 0) {
-                 el.innerText = `開往: ${uniqueDestinations}`;
+                const prefix = currentLang === 'zh' ? '開往: ' : 'To: ';
+                el.innerText = prefix + uniqueDestinations;
             } else {
-                 el.innerText = direction === 1 ? '無近期北上列車' : '無近期南下列車';
+                el.innerText = currentLang === 'zh' 
+                    ? (direction === 1 ? '無近期北上列車' : '無近期南下列車')
+                    : (direction === 1 ? 'No Northbound Trains' : 'No Southbound Trains');
             }
         }
 
         function renderTable(dir, list) {
             const tb = document.getElementById(`body${dir}`);
+            const lang = i18n[currentLang];
             tb.innerHTML = '';
 
             // 🔥 修正: 根據螢幕寬度決定 MAX_ROWS (如果小於 900px, 顯示 5 列)
@@ -638,13 +834,15 @@
                 let info = getInfo(t);
                 let delay = parseInt(t.DelayTime||0);
                 let isCancel = String(t.TrainStatus)==='2';
-                let status = delay>0 ? `晚 ${delay} 分` : '準點';
-                let cls = delay>0 ? 'status-delay' : 'status-ontime';
+                
+                // 多語言狀態顯示
+                let status = isCancel ? lang.cancelled : (delay > 0 ? lang.delay.replace('{min}', delay) : lang.onTime);
+                let cls = isCancel ? 'status-cancelled' : (delay > 0 ? 'status-delay' : 'status-ontime');
                 
                 let timeStr = (t.ScheduledDepartureTime||"").slice(0,5);
                 let timeHtml = `<span class="normal-time">${timeStr}</span>`;
                 
-                if(delay>0) {
+                if(delay>0 && !isCancel) {
                     let [h,m] = timeStr.split(':').map(Number);
                     let min = h*60+m+delay;
                     let newT = `${String(Math.floor(min/60)%24).padStart(2,'0')}:${String(min%60).padStart(2,'0')}`;
@@ -652,9 +850,10 @@
                     timeHtml = `<span class="expected-time">${newT}</span>`;
                 }
 
-                let dest = t.EndingStationName;
-                if(t.TripLine==1) dest+=' (山)';
-                else if(t.TripLine==2) dest+=' (海)';
+                // 多語言目的地顯示 - 使用 translateStation 函數
+                let dest = translateStation(t.EndingStationName);
+                if(t.TripLine==1) dest+= currentLang === 'zh' ? ' (山)' : ' (MT)';
+                else if(t.TripLine==2) dest+= currentLang === 'zh' ? ' (海)' : ' (CO)';
 
                 let tr = document.createElement('tr');
                 if(i===0) tr.classList.add('highlight-row');
@@ -673,8 +872,10 @@
 
         async function updateMarquee(elId, list) {
             const el = document.getElementById(elId);
+            const lang = i18n[currentLang];
+            
             if(!list || list.length===0) { 
-                el.innerHTML = "目前無列車資訊"; 
+                el.innerHTML = lang.noTrain;
                 startMarquee(elId); // 🔥 即使無內容也啟動，會滾動「目前無列車資訊」
                 return; 
             }
@@ -685,12 +886,19 @@
             let isCancel = String(t.TrainStatus)==='2';
 
             if(isCancel) {
-                el.innerHTML = `<span style="color:#FF5252;font-weight:bold">🚫 ${t.TrainNo} 次 ${info.name} 往 ${t.EndingStationName} 本日停駛</span>`;
+                const destName = translateStation(t.EndingStationName);
+                const cancelMsg = currentLang === 'zh' 
+                    ? `🚫 ${t.TrainNo} 次 ${info.name} 往 ${destName} 本日停駛`
+                    : `🚫 Train ${t.TrainNo} ${info.name} to ${destName} CANCELLED`;
+                el.innerHTML = `<span style="color:#FF5252;font-weight:bold">${cancelMsg}</span>`;
                 startMarquee(elId);
                 return;
             }
 
-            let msg = `<span style="color:#ffeb3b;font-weight:bold">${t.TrainNo} 次 ${info.name} 往 ${t.EndingStationName}</span>`;
+            // 多語言目的地
+            let destName = translateStation(t.EndingStationName);
+
+            let msg = `<span style="color:#ffeb3b;font-weight:bold">${t.TrainNo} ${info.name} ${lang.toward}${destName}</span>`;
             msg += `<span style="margin:0 15px;color:#555">|</span>`;
             
             let liveData = null;
@@ -707,6 +915,7 @@
             let liveDelay = 0;
             if (liveData && liveData.StationName) {
                 const lastStationName = liveData.StationName.Zh_tw || liveData.StationName;
+                const lastStationNameTranslated = translateStation(lastStationName);
                 liveDelay = liveData.DelayTime ? parseInt(liveData.DelayTime) : 0;
                 
                 let stops = await fetchTrainStops(t.TrainNo);
@@ -714,15 +923,17 @@
                 if (stops && stops.length > 0) {
                     const passedIndex = stops.findIndex(s => s.StationName.Zh_tw === lastStationName);
                     if (passedIndex !== -1 && passedIndex < stops.length - 1) {
-                        nextStopName = stops[passedIndex + 1].StationName.Zh_tw;
+                        nextStopName = translateStation(stops[passedIndex + 1].StationName.Zh_tw);
                     }
                 }
                 
-                locationText = nextStopName ? `列車目前位置：${lastStationName} ➡ ${nextStopName}` : `列車目前位置：${lastStationName}`;
-                if (liveDelay > 0) locationText += ` (晚 ${liveDelay} 分)`;
+                locationText = nextStopName 
+                    ? `${lang.curPos}${lastStationNameTranslated}${lang.nextPos}${nextStopName}` 
+                    : `${lang.curPos}${lastStationNameTranslated}`;
+                if (liveDelay > 0) locationText += currentLang === 'zh' ? ` (晚 ${liveDelay} 分)` : ` (${liveDelay} min late)`;
                 
             } else {
-                locationText = (t.IsTomorrow) ? "列車尚未發車" : "列車訊號偵測中";
+                locationText = (t.IsTomorrow) ? lang.notDeparted : lang.detecting;
             }
             
             msg += `<span style="color:#4fc3f7">${locationText}</span>`;
@@ -742,28 +953,40 @@
             
             const predictedTime = getExpectedTime(arrivalTime, delay);
             const timeColor = delay > 0 ? '#ff5252' : '#ffffff';
+            const statusText = delay > 0 ? lang.delay.replace('{min}', delay) : lang.onTime;
             
-            msg += `本站預計：<span style="color:${timeColor};font-weight:bold;font-size:1.1em">${predictedTime} 抵達 (${delay > 0 ? `晚 ${delay} 分` : '準點'})</span>`;
+            msg += `${lang.expected}<span style="color:${timeColor};font-weight:bold;font-size:1.1em">${predictedTime}${lang.arrive} (${statusText})</span>`;
 
-            // 🔥 新增：顯示列車備註
+            // 🔥 新增：顯示列車備註（支持翻译）
             if(t.Note && t.Note.trim().length > 0) {
                 msg += `<span style="margin:0 15px;color:#555">|</span>`;
-                msg += `<span style="color:#ff9800;font-weight:bold">備註：${t.Note}</span>`;
+                const noteLabel = currentLang === 'zh' ? '備註：' : 'Note: ';
+                const translatedNote = translateNote(t.Note);
+                msg += `<span style="color:#ff9800;font-weight:bold">${noteLabel}${translatedNote}</span>`;
             }
 
             if(stops && stops.length>0) {
                 let idx = stops.findIndex(s => String(s.StationID) === GLOBAL_STATION_ID);
                 console.log(`[${t.TrainNo}] 尋找本站 ${GLOBAL_STATION_ID}: 找到索引=${idx}, 總停靠站數=${stops.length}`);
                 if(idx !== -1) {
-                    let next = stops.slice(idx+1).map(s => s.StationName.Zh_tw).join('、');
+                    let next = stops.slice(idx+1).map(s => translateStation(s.StationName.Zh_tw)).join(currentLang === 'zh' ? '、' : ' → ');
                     console.log(`[${t.TrainNo}] 後續停靠站：${next || '無(終點)'}`);
-                    if(next) msg += `<span style="margin:0 15px;color:#555">|</span>沿途停靠：${next}`;
-                    else msg += `<span style="margin:0 15px;color:#555">|</span>▶ 終點站`;
+                    if(next) {
+                        const stopsLabel = currentLang === 'zh' ? '沿途停靠：' : 'Stops: ';
+                        msg += `<span style="margin:0 15px;color:#555">|</span>${stopsLabel}${next}`;
+                    }
+                    else {
+                        const terminalLabel = currentLang === 'zh' ? '▶ 終點站' : '▶ Terminal';
+                        msg += `<span style="margin:0 15px;color:#555">|</span>${terminalLabel}`;
+                    }
                 } else {
                     // 找不到本站，顯示除了起點外的所有停靠站
-                    let allStops = stops.slice(1).map(s => s.StationName.Zh_tw).join('、');
+                    let allStops = stops.slice(1).map(s => translateStation(s.StationName.Zh_tw)).join(currentLang === 'zh' ? '、' : ' → ');
                     console.log(`[${t.TrainNo}] 找不到本站，顯示所有停靠站：${allStops}`);
-                    if(allStops) msg += `<span style="margin:0 15px;color:#555">|</span>沿途停靠：${allStops}`;
+                    if(allStops) {
+                        const stopsLabel = currentLang === 'zh' ? '沿途停靠：' : 'Stops: ';
+                        msg += `<span style="margin:0 15px;color:#555">|</span>${stopsLabel}${allStops}`;
+                    }
                 }
             } else {
                 console.warn(`[${t.TrainNo}] 停靠站資料為空或未載入`);
@@ -775,32 +998,39 @@
 
         async function checkTopMarquee() {
             try {
-                // 🔥 修正: 帶入 station 參數，讓 Worker 能回傳沿途停靠站資訊
-                let url = `${TRA_WORKER_URL}/api/pids/marquee`;
-                if (GLOBAL_STATION_ID) url += `?station=${GLOBAL_STATION_ID}`;
-                
-                let r = await fetch(url);
-                let d = await r.json();
                 let el = document.getElementById('unifiedTopMarquee');
+                let displayText = "";
                 
-                if (d.text !== undefined && d.text !== null) { 
-                    let cleanText = d.text
-                        .replace(/<b>/g, "").replace(/<\/b>/g, "")
-                        .replace(/<\/[^>]+>/g, "")
-                        .replace(/<(?![-]{2,}>)[^>]+>/g, "")
-                        .replace(/\\n/g, "     ")
-                        .replace(/[\r\n]+/g, "     ")
-                        .replace(/&nbsp;/g, " ")
-                        .replace(/&amp;/g, "&");
+                // 英文模式下显示固定的英文欢迎语
+                if (currentLang === 'en') {
+                    displayText = "🚆 Welcome to Taiwan Railway Administration. Please mind the gap when boarding. Do not give money to strangers. For assistance, please contact station staff. Have a pleasant journey!";
+                } else {
+                    // 中文模式下抓取實時公告
+                    let url = `${TRA_WORKER_URL}/api/pids/marquee`;
+                    if (GLOBAL_STATION_ID) url += `?station=${GLOBAL_STATION_ID}`;
                     
-                    // 🔥 關鍵優化：如果內容跟現在一樣，就不要重啟跑馬燈，讓它繼續跑完
-                    if (el.innerHTML === cleanText) {
-                        return; 
+                    let r = await fetch(url);
+                    let d = await r.json();
+                    
+                    if (d.text !== undefined && d.text !== null) { 
+                        displayText = d.text
+                            .replace(/<b>/g, "").replace(/<\/b>/g, "")
+                            .replace(/<\/[^>]+>/g, "")
+                            .replace(/<(?![-]{2,}>)[^>]+>/g, "")
+                            .replace(/\\n/g, "     ")
+                            .replace(/[\r\n]+/g, "     ")
+                            .replace(/&nbsp;/g, " ")
+                            .replace(/&amp;/g, "&");
                     }
-                    
-                    el.innerHTML = cleanText; 
-                    startMarquee('unifiedTopMarquee'); 
                 }
+                
+                // 🔥 關鍵優化：如果內容跟現在一樣，就不要重啟跑馬燈，讓它繼續跑完
+                if (el.innerHTML === displayText) {
+                    return; 
+                }
+                
+                el.innerHTML = displayText; 
+                startMarquee('unifiedTopMarquee'); 
             } catch(e){ console.warn("Top Marquee Error:", e); }
         }
 
@@ -811,15 +1041,23 @@
             
             document.getElementById('unifiedStationName').innerText = name.replace(/車站$|站$/,'')+'車站';
             
-            updateEnglishStationName(GLOBAL_STATION_ID); 
+            updateEnglishStationName(GLOBAL_STATION_ID);
+            updateUIStrings(); // 初始化語言介面
             
             updateClock();
             updateMediaAssets();
-            if(GLOBAL_STATION_ID) { updatePids(GLOBAL_STATION_ID); setInterval(()=>updatePids(GLOBAL_STATION_ID), 60000); }
+            if(GLOBAL_STATION_ID) { 
+                updatePids(GLOBAL_STATION_ID); 
+                setInterval(()=>updatePids(GLOBAL_STATION_ID), 60000); 
+            }
             
             checkTopMarquee(); 
             setTimeout(()=>startMarquee('unifiedTopMarquee'), 1500); 
             setInterval(checkTopMarquee, 300000);  // 5 分鐘檢查一次
+
+            // 🔥 啟動自動語言切換 (每 80 秒)
+            startAutoSwitch();
+            console.log('✅ 自動語言切換已啟動 (每 80 秒切換一次)');
         });
     </script>
 </body>
