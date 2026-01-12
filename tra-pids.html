@@ -414,6 +414,7 @@
         let currentLang = localStorage.getItem('pids_lang') || 'zh';
         let lastTrainData = []; // 快取最近一次抓到的列車資料
         let autoSwitchTimer = null;
+        let isVideoLoaded = false; // 防止重複載入影片
         const SWITCH_INTERVAL = 80000; // 80 秒自動切換
 
         const TRA_WORKER_URL = "https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev";
@@ -637,8 +638,15 @@
                 if (res.ok) {
                     const data = await res.json();
                     if(data.images && data.images.length > 0) setupCarousel(data.images);
-                    const videos = Array.isArray(data.video) ? data.video : (data.video ? [data.video] : []);
-                    if(videos.length > 0) setupVideo(videos);
+                    
+                    // 避免語言切換時重複載入影片（會導致影片重新開始）
+                    if (!isVideoLoaded) {
+                        const videos = Array.isArray(data.video) ? data.video : (data.video ? [data.video] : []);
+                        if(videos.length > 0) {
+                            setupVideo(videos);
+                            isVideoLoaded = true;
+                        }
+                    }
                 }
             } catch(e) { console.warn("Media Load Error", e); }
         }
@@ -668,23 +676,40 @@
             const con = document.getElementById('videoContainer');
             let videoIds = [];
 
+            // 強化的 YouTube ID 擷取邏輯 (支援 Shorts, 手機版連結)
             urls.forEach(url => {
-                let vid = "";
-                if(url.includes('youtube') || url.includes('youtu.be')) {
-                    if(url.includes('v=')) vid = url.split('v=')[1];
-                    else if(url.includes('embed/')) vid = url.split('embed/')[1];
-                    else vid = url.split('/').pop();
-                    vid = vid.split('&')[0];
-                    if(vid.length===11) videoIds.push(vid);
+                const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+                const match = url.match(regExp);
+                if (match && match[2].length === 11) {
+                    videoIds.push(match[2]);
                 }
             });
 
             if(videoIds.length > 0) {
-                let first = videoIds[0];
-                let pl = videoIds.join(',');
-                con.innerHTML = `<iframe class="video-iframe" src="https://www.youtube.com/embed/${first}?autoplay=1&mute=1&loop=1&playlist=${pl}&controls=0" allow="autoplay; encrypted-media"></iframe>`;
-            } else if (urls.length === 1 && typeof urls[0] === 'string' && !urls[0].includes('youtube')) {
+                const first = videoIds[0];
+                const playlist = videoIds.join(',');
+                const currentOrigin = window.location.origin;
+
+                // 使用 youtube-nocookie 提升相容性
+                // 加入 enablejsapi=1 與 origin 讓播放更穩定
+                // rel=0 避免播放完後顯示推薦影片
+                con.innerHTML = `
+                    <iframe 
+                        class="video-iframe" 
+                        src="https://www.youtube-nocookie.com/embed/${first}?autoplay=1&mute=1&loop=1&playlist=${playlist}&controls=0&rel=0&modestbranding=1&enablejsapi=1&origin=${currentOrigin}" 
+                        allow="autoplay; encrypted-media; picture-in-picture" 
+                        allowfullscreen
+                        style="width:100%; height:100%; border:none; pointer-events:none;">
+                    </iframe>`;
+                    
+                console.log(`✅ YouTube 影片已載入: ${first}`);
+            } else if (urls.length > 0 && typeof urls[0] === 'string' && !urls[0].includes('youtube')) {
+                // 如果是直接的影片檔案連結 (.mp4)
                 con.innerHTML = `<video src="${urls[0]}" autoplay muted loop playsinline style="width:100%;height:100%;object-fit:contain;"></video>`;
+                console.log(`✅ 本地影片已載入: ${urls[0]}`);
+            } else {
+                // 如果沒有影片，顯示預設訊息
+                con.innerHTML = `<div style="padding:20px; color:#666; text-align:center; font-size:1.2rem;">📹 暫無影音內容</div>`;
             }
         }
 
@@ -998,39 +1023,32 @@
 
         async function checkTopMarquee() {
             try {
+                // 🔥 修正: 帶入 station 參數，讓 Worker 能回傳沿途停靠站資訊
+                let url = `${TRA_WORKER_URL}/api/pids/marquee`;
+                if (GLOBAL_STATION_ID) url += `?station=${GLOBAL_STATION_ID}`;
+                
+                let r = await fetch(url);
+                let d = await r.json();
                 let el = document.getElementById('unifiedTopMarquee');
-                let displayText = "";
                 
-                // 英文模式下显示固定的英文欢迎语
-                if (currentLang === 'en') {
-                    displayText = "🚆 Welcome to Taiwan Railway Administration. Please mind the gap when boarding. Do not give money to strangers. For assistance, please contact station staff. Have a pleasant journey!";
-                } else {
-                    // 中文模式下抓取實時公告
-                    let url = `${TRA_WORKER_URL}/api/pids/marquee`;
-                    if (GLOBAL_STATION_ID) url += `?station=${GLOBAL_STATION_ID}`;
+                if (d.text !== undefined && d.text !== null) { 
+                    let cleanText = d.text
+                        .replace(/<b>/g, "").replace(/<\/b>/g, "")
+                        .replace(/<\/[^>]+>/g, "")
+                        .replace(/<(?![-]{2,}>)[^>]+>/g, "")
+                        .replace(/\\n/g, "     ")
+                        .replace(/[\r\n]+/g, "     ")
+                        .replace(/&nbsp;/g, " ")
+                        .replace(/&amp;/g, "&");
                     
-                    let r = await fetch(url);
-                    let d = await r.json();
-                    
-                    if (d.text !== undefined && d.text !== null) { 
-                        displayText = d.text
-                            .replace(/<b>/g, "").replace(/<\/b>/g, "")
-                            .replace(/<\/[^>]+>/g, "")
-                            .replace(/<(?![-]{2,}>)[^>]+>/g, "")
-                            .replace(/\\n/g, "     ")
-                            .replace(/[\r\n]+/g, "     ")
-                            .replace(/&nbsp;/g, " ")
-                            .replace(/&amp;/g, "&");
+                    // 🔥 關鍵優化：如果內容跟現在一樣，就不要重啟跑馬燈，讓它繼續跑完
+                    if (el.innerHTML === cleanText) {
+                        return; 
                     }
+                    
+                    el.innerHTML = cleanText; 
+                    startMarquee('unifiedTopMarquee'); 
                 }
-                
-                // 🔥 關鍵優化：如果內容跟現在一樣，就不要重啟跑馬燈，讓它繼續跑完
-                if (el.innerHTML === displayText) {
-                    return; 
-                }
-                
-                el.innerHTML = displayText; 
-                startMarquee('unifiedTopMarquee'); 
             } catch(e){ console.warn("Top Marquee Error:", e); }
         }
 
