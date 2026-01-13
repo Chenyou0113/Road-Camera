@@ -431,6 +431,44 @@
             updatePaginationControls();
         }
 
+        // === 帶重試機制的 fetch 函數 ===
+        async function fetchWithRetry(url, options = {}, retries = 3, delay = 1000, timeout = 10000) {
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), timeout);
+                    
+                    const response = await fetch(url, {
+                        ...options,
+                        signal: controller.signal
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                    
+                    return response;
+                } catch (error) {
+                    const isLastAttempt = i === retries - 1;
+                    
+                    if (error.name === 'AbortError') {
+                        console.warn(`請求超時 (嘗試 ${i + 1}/${retries})`);
+                    } else {
+                        console.warn(`網路請求失敗 (嘗試 ${i + 1}/${retries}):`, error.message);
+                    }
+                    
+                    if (isLastAttempt) {
+                        throw error;
+                    }
+                    
+                    // 等待後重試，使用指數退避
+                    await new Promise(resolve => setTimeout(resolve, delay * Math.pow(2, i)));
+                }
+            }
+        }
+
         // === 從 CWA API 獲取資料並處理分頁 ===
         async function fetchEarthquakeData() {
             loadingIndicator.style.display = 'block';
@@ -438,17 +476,13 @@
             console.log("正在從 CWA API 獲取地震資料...");
             
             try {
-                // 同時獲取兩個 API 的資料
-                const [responseSignificant, responseMinor] = await Promise.all([
-                    fetch(CWA_API_URL_SIGNIFICANT),
-                    fetch(CWA_API_URL_MINOR)
-                ]);
-
-                if (!responseSignificant.ok || !responseMinor.ok) {
-                    throw new Error('API 請求失敗');
-                }
-
+                // 順序獲取兩個 API 的資料（更穩定）
+                console.log("獲取顯著有感地震資料...");
+                const responseSignificant = await fetchWithRetry(CWA_API_URL_SIGNIFICANT);
                 const dataSignificant = await responseSignificant.json();
+                
+                console.log("獲取小區域有感地震資料...");
+                const responseMinor = await fetchWithRetry(CWA_API_URL_MINOR);
                 const dataMinor = await responseMinor.json();
 
                 // 提取地震資料
