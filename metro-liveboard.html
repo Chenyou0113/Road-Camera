@@ -1035,6 +1035,16 @@
                 <p>Taoyuan Metro (TYMC)</p>
                 <p style="font-size: 0.8rem; color: #999; margin-top: 5px;">僅提供 A1~A21 站</p>
             </div>
+            <div class="system-card" data-system="TMRT" onclick="selectSystem('TMRT')">
+                <h4><i class="fas fa-subway"></i> 台中捷運</h4>
+                <p>Taichung Metro (TMRT)</p>
+                <p style="font-size: 0.8rem; color: #999; margin-top: 5px;">台中綠線</p>
+            </div>
+            <div class="system-card" data-system="NTMC" onclick="selectSystem('NTMC')">
+                <h4><i class="fas fa-train"></i> 新北捷運</h4>
+                <p>New Taipei Metro (NTMC)</p>
+                <p style="font-size: 0.8rem; color: #999; margin-top: 5px;">淡海、安坑輕軌</p>
+            </div>
         </div>
 
         <!-- 車站選擇 -->
@@ -1139,7 +1149,10 @@
             TRTC: { name: '台北捷運', code: 'TRTC' },
             KRTC: { name: '高雄捷運', code: 'KRTC' },
             KLRT: { name: '高雄輕軌', code: 'KLRT' },
-            TYMC: { name: '桃園捷運', code: 'TYMC' }
+            TYMC: { name: '桃園捷運', code: 'TYMC' },
+            TMRT: { name: '台中捷運', code: 'TMRT' },
+            NTMC: { name: '新北捷運', code: 'NTMC' },
+            TRTCMG: { name: '貓空縜車', code: 'TRTCMG' }
         };
 
         const lineColors = {
@@ -1305,6 +1318,15 @@
 
             // 資料修補 (Data Patching)
             const patchedData = rawData.map(item => {
+                // ✨ 優先支援 Worker 的新資料結構：line.name, line.color, line.id
+                if (item.line) {
+                    if (!item.LineName) item.LineName = {};
+                    item.LineName.Zh_tw = item.line.name; // 對齊 Worker 的 line.name
+                    item.LineID = item.line.id;
+                    item.LineColor = item.line.color; // 新增：直接取 Worker 提供的顏色
+                    console.log(`✨ 使用 Worker 資料: ${item.line.name} (${item.line.color})`);
+                }
+                
                 let lineName = item.LineName?.Zh_tw;
                 const sID = item.StationID || '';
                 const lID = item.LineID || '';
@@ -1405,15 +1427,16 @@
 
             console.log(`📍 篩選路線: ${selectedLine}`);
 
-            // 篩選車站：直接比對我們剛剛補全的 LineName
+            // 篩選車站：支援 Worker 新資料結構與舊結構
             const lineStations = allStationData
                 .filter(station => {
-                    const sName = station.LineName?.Zh_tw;
-                    return sName === selectedLine;
+                    // 優先使用 Worker 的新結構 (line.name)
+                    const lineName = station.line?.name || station.LineName?.Zh_tw;
+                    return lineName === selectedLine;
                 })
                 .map(station => {
-                    // ✅ 確保使用原始的 StationID (保留英文前綴如 O9, R9)
-                    let stationId = station.StationID || station.ID || '';
+                    // ✅ 優先使用 Worker 的 id 欄位，回退到 StationID
+                    let stationId = station.id || station.StationID || station.ID || '';
                     // 高雄捷運特殊處理：如果 ID 是純數字，嘗試補回路線前綴
                     if (currentSystem === 'KRTC' && /^\d+$/.test(stationId)) {
                         // 根據 LineID 補回前綴
@@ -1492,9 +1515,17 @@
 
         // 輔助函式：計算到站時刻 (輸入秒數，回傳 HH:mm)
         // 輔助函式：計算到站時刻 (輸入為「分鐘」)
-        function calculateArrivalTime(minutes) {
+        function calculateArrivalTime(value) {
             // 如果沒有資料或是負數過大，回傳 -
-            if (minutes === undefined || minutes === null) return '-';
+            if (value === undefined || value === null) return '-';
+            
+            // ✨ 修正：自動判斷時間單位（秒 vs 分）
+            let minutes = value;
+            // 若數值 > 15，判定為秒，轉換為分
+            if (value > 15) {
+                minutes = Math.floor(value / 60);
+                console.log(`[TimeConvert] ${value}秒 -> ${minutes}分`);
+            }
             
             const now = new Date();
             // 分鐘 * 60 * 1000 = 毫秒
@@ -1608,13 +1639,21 @@
                          // 這是 API 資料缺失的限制，除非 TDX 修復 TrainType 欄位。
                      }
                      
+                     // ✨ 修正時間單位：確保 estimateTime 以分為單位
+                     let estimateMinutes = item.EstimateTime;
+                     if (estimateMinutes !== undefined && estimateMinutes !== null && estimateMinutes > 15) {
+                         // 判定為秒，轉換為分
+                         estimateMinutes = Math.floor(item.EstimateTime / 60);
+                     }
+                     
                      allParsedTrains.push({
                         stationName: item.StationName?.Zh_tw || currentStationName,
                         lineName: item.LineName?.Zh_tw || item.LineID,
                         lineID: item.LineID || '',
+                        lineColor: item.LineColor, // 新增：來自 Worker 的顏色
                         tripHeadSign: tripHeadSign,
                         destinationName: destName,
-                        estimateTime: item.EstimateTime, 
+                        estimateTime: estimateMinutes, 
                         trainType: trainTypeName,
                         directionCode: dirCode, // ✨ 這裡現在是 NORTH 或 SOUTH
                         isPassedLastTrain: false
@@ -1654,9 +1693,8 @@
             // --- HTML 生成 ---
             (async () => {
                 const rows = await Promise.all(finalDisplayRows.map(async (train) => {
-                    const lineColor = lineColors[train.lineID] || '#666';
-                    
-                    // ✨ 重點：產生車種標籤
+                    // ✨ 修正：優先使用 Worker 提供的 LineColor，回退到本地 lineColors
+                    const lineColor = train.lineColor || lineColors[train.lineID] || '#666';
                     let trainTypeBadge = '';
                     if (train.trainType) {
                         let typeClass = 'type-other';
