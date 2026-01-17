@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Professional Metro PIDS - No Controls Edition</title>
+    <title>Professional Metro PIDS - PSA & Safety Edition</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@500;700;900&family=Roboto:wght@700;900&display=swap');
         
@@ -37,7 +37,6 @@
         .arrival-info { padding: 1.2vh 1vw; display: flex; flex-direction: column; border-bottom: 2px solid #ccc; }
         .arrival-info.secondary { background-color: #fcfcfc; }
         
-        /* 方向標籤 (順行/逆行將填入此處) */
         .dir-label { font-size: 1vw; font-weight: 900; color: #555; margin-bottom: 0.3vh; }
         
         .line-tag-row { display: flex; align-items: center; gap: 8px; margin-bottom: 0.3vh; }
@@ -71,14 +70,12 @@
         .weather-desc { font-size: 1.3vw; font-weight: 900; color: var(--theme-color); line-height: 1.2; }
         .weather-detail { font-size: 0.75vw; color: #666; font-weight: 700; }
 
-        /* 右側主區域 */
         .main-display {
             display: grid;
             grid-template-rows: 1fr 100px;
             background-color: #000;
         }
 
-        /* 影片播放區域：預設開啟，但隱藏進度條 */
         .video-placeholder {
             width: 100%;
             height: 100%;
@@ -87,21 +84,27 @@
             overflow: hidden;
         }
 
-        /* 透過 CSS 完全隱藏進度條，並禁用互動 */
         #video-iframe {
             width: 100%;
             height: 100%;
-            pointer-events: none; /* 防止使用者點擊影片彈出控制列 */
+            pointer-events: none;
         }
 
         .congestion-area { background: #fff; display: flex; align-items: center; padding: 0 30px; gap: 20px; }
         .car-container { display: flex; gap: 8px; flex: 1; }
         .car { height: 45px; flex: 1; border-radius: 8px; }
         .green { background: #32b900; } .yellow { background: #ffcc00; }
+        
         .footer { grid-column: 1/3; display: grid; grid-template-columns: 23% 77%; background: #1a1a1a; color: #fff; }
         .clock-section { background: #d32f2f; display: flex; justify-content: center; align-items: center; font-size: 1.8vw; font-weight: 700; }
         .marquee-section { overflow: hidden; display: flex; align-items: center; padding: 0 20px; }
-        .marquee-text { white-space: nowrap; font-size: 1.8vw; animation: scroll 30s linear infinite; }
+        
+        .marquee-text { 
+            white-space: nowrap; 
+            font-size: 1.8vw; 
+            animation: scroll 40s linear infinite; 
+            font-weight: 700;
+        }
         @keyframes scroll { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
     </style>
 </head>
@@ -152,9 +155,7 @@
         </div>
 
         <div class="main-display">
-            <!-- 右側影片區域 -->
             <div class="video-placeholder">
-                <!-- controls=0 隱藏進度條與控制鈕, disablekb=1 禁用鍵盤, rel=0 不顯示相關影片 -->
                 <iframe id="video-iframe" src="" frameborder="0" allow="autoplay; encrypted-media"></iframe>
             </div>
             <div class="congestion-area">
@@ -178,51 +179,45 @@
         const WORKER_URL = 'https://metro-api-worker.xiaoyouwu5-fd3.workers.dev';
         const params = new URLSearchParams(window.location.search);
         const system = params.get('system') || 'TRTC';
-        const station = params.get('station') || 'BL23';
+        const station = params.get('station') || 'BL12';
 
-        // 預設載入影片，但隱藏所有進度條控制
-        const videoId = "dQw4w9WgXcQ"; // 這裡可以換成您想要的 YouTube ID
-        const videoUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0&modestbranding=1&rel=0&disablekb=1&iv_load_policy=3`;
-        document.getElementById('video-iframe').src = videoUrl;
+        const videoId = "dQw4w9WgXcQ"; 
+        document.getElementById('video-iframe').src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0&modestbranding=1&rel=0&disablekb=1&iv_load_policy=3`;
 
         const systemColors = {
             'TRTC': '#0070bd', 'KRTC': '#e3002c', 'TYMC': '#8246af',
-            'TMRT': '#b2d235', 'KLRT': '#008d8b', 'NTMC': '#0096cc', 'TRTCMG': '#779649',
-            'BL': '#0070bd', 'R': '#e3002c', 'O': '#f58220',
-            'G': '#008559', 'Y': '#ffdb00', 'BR': '#c48c31', 'C': '#008d8b'
+            'TMRT': '#b2d235', 'KLRT': '#008d8b', 'NTMC': '#0096cc', 'TRTCMG': '#779649'
         };
 
-        function getThemeColor(stId) {
-            // 優先使用系統級配色
-            if (systemColors[system]) return systemColors[system];
-            // 回退到線別級
-            const line = stId.replace(/[0-9]/g, '');
-            return systemColors[line] || '#333';
+        function getThemeColor(item) {
+            return item?.LineColor || systemColors[system] || '#333';
         }
 
         async function updateLiveBoard() {
             try {
                 const response = await fetch(`${WORKER_URL}/api/liveboard?system=${system}&type=LiveBoard`);
                 const data = await response.json();
-                let stationData = Array.isArray(data) ? data : (data.data || []);
                 
+                let stationData = Array.isArray(data) ? data : [];
                 stationData = stationData.filter(item => 
                     item.StationID === station || 
                     item.StationID === `${system}-${station}` || 
                     item.StationID.endsWith(station)
                 );
                 
-                stationData.sort((a, b) => (a.EstimateTime || 99) - (b.EstimateTime || 99));
+                stationData.sort((a, b) => (a.EstimateTime || 9999) - (b.EstimateTime || 9999));
 
                 if (stationData.length > 0) {
-                    const stName = stationData[0].StationName?.Zh_tw || "未知車站";
-                    document.documentElement.style.setProperty('--theme-color', getThemeColor(station));
+                    const stName = stationData[0].StationName?.Zh_tw || "捷運車站";
+                    document.documentElement.style.setProperty('--theme-color', getThemeColor(stationData[0]));
                     document.getElementById('ui-st-id').innerText = station;
                     document.getElementById('ui-st-id-footer').innerText = station;
                     document.getElementById('ui-st-name').innerText = stName;
 
-                    let dir0 = stationData[0];
-                    let dir1 = stationData.find(item => item.Direction !== dir0.Direction) || (stationData.length > 1 ? stationData[1] : null);
+                    let dir0 = stationData.find(item => String(item.Direction) === "0") || stationData[0];
+                    let dir1 = stationData.find(item => String(item.Direction) === "1") || (stationData.length > 1 ? stationData[1] : null);
+
+                    if (dir1 && dir0.Direction === dir1.Direction) dir1 = null;
 
                     updateUI(0, dir0);
                     updateUI(1, dir1);
@@ -234,75 +229,77 @@
             const prefix = `dir${idx}`;
             const badgeEl = document.getElementById(`ui-line-tag-${idx + 1}`);
             const destEl = document.getElementById(`${prefix}-dest`);
-            const enEl = document.getElementById(`${prefix}-en`);
             const timeEl = document.getElementById(`${prefix}-time`);
             const labelEl = document.getElementById(`${prefix}-label`);
 
             if (!item) {
                 badgeEl.innerText = "--";
-                destEl.innerText = "端點站";
-                enEl.innerText = "Terminal";
+                destEl.innerText = "暫無服務";
+                document.getElementById(`${prefix}-en`).innerText = "No Service";
                 timeEl.innerText = "-- : --";
+                timeEl.style.backgroundColor = "";
                 return;
             }
 
-            const displayID = (item.DestinationStationID || '').split('-').pop() || station.replace(/[0-9]/g, '');
-            badgeEl.innerText = displayID;
             destEl.innerText = item.DestinationStationName?.Zh_tw || "---";
-            enEl.innerText = item.DestinationStationName?.En || "---";
-            
-            // ✨ 關鍵修正：秒轉分鐘，判斷進站狀態
+            document.getElementById(`${prefix}-en`).innerText = item.DestinationStationName?.En || "---";
+            badgeEl.innerText = item.LineID || system[0];
+            badgeEl.style.backgroundColor = item.LineColor || 'var(--theme-color)';
+
             const seconds = item.EstimateTime;
-            if (seconds === undefined || seconds === null) {
+            if (seconds === undefined || seconds === null || seconds < 0) {
                 timeEl.innerText = "-- : --";
                 timeEl.style.backgroundColor = "";
-            } else if (seconds <= 60) {
-                // 不超過 1 分鐘：進站中（紅色）
+            } else if (seconds <= 45) {
                 timeEl.innerText = "進站中";
                 timeEl.style.backgroundColor = "#d32f2f";
-            } else if (seconds <= 120) {
-                // 1-2 分鐘：即將進站（橘色）
+            } else if (seconds <= 90) {
                 timeEl.innerText = "即將進站";
                 timeEl.style.backgroundColor = "#f58220";
             } else {
-                // 超過 2 分鐘：顯示分鐘數（恢復主題色背景）
-                const mins = Math.floor(seconds / 60);
-                timeEl.innerText = `${mins} : 00`;
+                timeEl.innerText = `${Math.floor(seconds / 60)} : 00`;
                 timeEl.style.backgroundColor = "";
             }
 
             if (system === 'KLRT') {
-                if (item.Direction === 0) labelEl.innerHTML = '<span style="color:#d32f2f">順行</span> Clockwise';
-                else labelEl.innerHTML = '<span style="color:#0070bd">逆行</span> Counter-Clockwise';
+                labelEl.innerHTML = item.Direction === 0 ? '<span style="color:#d32f2f">順行</span> Clockwise' : '<span style="color:#0070bd">逆行</span> Counter-Clockwise';
             } else {
                 labelEl.innerText = `第${idx === 0 ? '一' : '二'}月台 Platform ${idx + 1}`;
             }
         }
 
+        // ✨ 強化版：包含政令宣導與即時通阻的跑馬燈
         async function updateMarqueeData() {
+            const psas = [
+                "發現性騷擾及異常事件，協助制止、迅速通報，一同維護社會安全。",
+                "遇緊急狀況保持冷靜勿驚慌，請使用對講機通知服務人員處理。",
+                "提高警覺，注意身旁人、事、物，遇異常狀況，立即撥打110及通報服務人員。",
+                "捷運系統全面禁止吸菸(含電子煙等類菸品)，違者依法最高可處新台幣1萬元罰鍰。",
+                "搭乘電扶梯兩側皆可站立、避免使用手機；電扶梯出入口請勿逗留。"
+            ];
+
             try {
-                const alertRes = await fetch(`${WORKER_URL}/api/liveboard?system=${system}&type=Alert`);
-                const newsRes = await fetch(`${WORKER_URL}/api/liveboard?system=${system}&type=News`);
-                const alerts = await alertRes.json();
-                const news = await newsRes.json();
+                const res = await fetch(`${WORKER_URL}/api/liveboard?system=${system}&type=Alert`);
+                const alerts = await res.json();
                 let marqueeString = "";
                 
                 if (Array.isArray(alerts) && alerts.length > 0) {
-                    const alertText = alerts[0].Description?.Zh_tw || alerts[0].Description || alerts[0].Title || "營運通報";
-                    marqueeString += `【通阻情形】${alertText}　　`;
-                } else {
-                    marqueeString += `【通阻情形】${system} 系統目前營運正常。　　`;
-                }
-
-                if (Array.isArray(news) && news.length > 0) {
-                    marqueeString += "【最新消息】";
-                    news.slice(0, 3).forEach((item, index) => {
-                        const titleText = item.Subject || item.Title?.Zh_tw || item.Title || "詳情";
-                        marqueeString += `${index + 1}.${titleText}　　`;
+                    alerts.forEach(a => {
+                        marqueeString += `【緊急通報】${a.Description || a.Title}　　`;
                     });
                 }
-                document.getElementById('ui-marquee').innerText = marqueeString;
-            } catch (e) { console.error(e); }
+
+                marqueeString += psas.join("　　");
+                marqueeString += `　　祝您旅途愉快！`;
+
+                const marqueeEl = document.getElementById('ui-marquee');
+                marqueeEl.innerText = marqueeString;
+                
+                marqueeEl.style.animationDuration = `${Math.max(30, marqueeString.length * 0.25)}s`;
+
+            } catch (e) { 
+                document.getElementById('ui-marquee').innerText = psas.join("　　");
+            }
         }
 
         function updateClock() {
@@ -312,8 +309,7 @@
             }).replace(',', '');
         }
 
-        const arrivalInterval = (system === 'TRTC') ? 20000 : 60000;
-        setInterval(updateLiveBoard, arrivalInterval);
+        setInterval(updateLiveBoard, 20000);
         setInterval(updateMarqueeData, 300000);
         setInterval(updateClock, 1000);
 
