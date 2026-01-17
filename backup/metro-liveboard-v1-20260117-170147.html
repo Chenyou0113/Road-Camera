@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全台捷運即時智慧看板 - 旗艦版</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="assets/dark-mode.css">
+    <script src="assets/config.js"></script>
+    <style>
+        /* --- 基礎樣式 --- */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Noto Sans TC', 'Microsoft JhengHei', sans-serif; background: #f0f2f5; min-height: 100vh; padding-bottom: 50px; }
+        .header { background: white; padding: 25px 0; box-shadow: 0 2px 15px rgba(0,0,0,0.05); text-align: center; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+        
+        /* --- 系統選擇卡片 --- */
+        .system-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 20px 0; }
+        .system-card { background: white; padding: 15px; border-radius: 12px; text-align: center; cursor: pointer; transition: all 0.3s; border: 2px solid transparent; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+        .system-card:hover { transform: translateY(-3px); box-shadow: 0 5px 15px rgba(0,0,0,0.1); }
+        .system-card.selected { border-color: #00bcd4; background: #e0f7fa; }
+        
+        /* --- 智慧看板網格 --- */
+        .arrival-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; margin-top: 20px; }
+        .platform-group { background: white; border-radius: 15px; box-shadow: 0 8px 25px rgba(0,0,0,0.05); overflow: hidden; border: 1px solid #eee; }
+        .platform-header { color: white; padding: 12px 20px; font-weight: 900; display: flex; justify-content: space-between; align-items: center; font-size: 1.1rem; }
+        
+        .train-card { display: flex; align-items: center; padding: 15px 20px; border-bottom: 1px solid #f5f5f5; transition: all 0.3s; }
+        .train-card:last-child { border-bottom: none; }
+        .train-card.imminent { background: rgba(211, 47, 47, 0.03); }
+        
+        .train-info-main { flex: 1; }
+        .train-dest { font-size: 1.3rem; font-weight: 900; color: #333; margin-bottom: 4px; }
+        .train-meta { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #777; }
+        
+        .train-time-area { text-align: right; min-width: 110px; }
+        .time-val { font-size: 1.8rem; font-weight: 900; color: #00bcd4; }
+        .time-unit { font-size: 0.9rem; margin-left: 3px; color: #888; }
+        .status-arriving { color: #d32f2f; font-weight: 900; animation: pulse 1.5s infinite; font-size: 1.1rem; }
+
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+
+        /* --- 車站導覽網格 --- */
+        .exits-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; padding: 20px; background: #fafafa; }
+        .exit-card { background: white; border-radius: 10px; padding: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border-left: 5px solid #607d8b; }
+        .exit-title { font-weight: 900; color: #333; margin-bottom: 5px; display: flex; align-items: center; justify-content: space-between; }
+        .exit-desc { font-size: 0.85rem; color: #666; margin-bottom: 10px; }
+        .equip-badge { font-size: 0.75rem; background: #eceff1; color: #546e7a; padding: 3px 7px; border-radius: 4px; margin-right: 5px; }
+
+        .map-btn { background: #ff9800; font-size: 0.7rem; padding: 4px 8px; color: white; text-decoration: none; border-radius: 5px; display: inline-block; margin-top: 5px; }
+
+        /* 深色模式修正 */
+        body.dark-mode { background: #121212; color: #eee; }
+        body.dark-mode .header, body.dark-mode .system-card, body.dark-mode .platform-group, body.dark-mode .exit-card { background: #1e1e2e; border-color: #333; }
+        body.dark-mode .train-dest, body.dark-mode .exit-title { color: #eee; }
+        body.dark-mode .train-card { border-bottom-color: #333; }
+        body.dark-mode .exits-grid { background: #151525; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="container">
+            <h1><i class="fas fa-subway"></i> 全台捷運智慧看板</h1>
+            <p>即時串連五大捷運系統 ‧ 智慧車站導覽</p>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- 系統選擇 -->
+        <div class="system-cards">
+            <div class="system-card" data-system="TRTC" onclick="selectSystem('TRTC')">
+                <h4><i class="fas fa-subway"></i> 台北捷運</h4>
+                <p style="font-size: 0.8rem; color: #999;">Taipei Metro</p>
+            </div>
+            <div class="system-card" data-system="KRTC" onclick="selectSystem('KRTC')">
+                <h4><i class="fas fa-subway"></i> 高雄捷運</h4>
+                <p style="font-size: 0.8rem; color: #999;">Kaohsiung Metro</p>
+            </div>
+            <div class="system-card" data-system="TMRT" onclick="selectSystem('TMRT')">
+                <h4><i class="fas fa-subway"></i> 台中捷運</h4>
+                <p style="font-size: 0.8rem; color: #999;">Taichung Metro</p>
+            </div>
+            <div class="system-card" data-system="TYMC" onclick="selectSystem('TYMC')">
+                <h4><i class="fas fa-subway"></i> 桃園捷運</h4>
+                <p style="font-size: 0.8rem; color: #999;">Taoyuan Metro</p>
+            </div>
+            <div class="system-card" data-system="KLRT" onclick="selectSystem('KLRT')">
+                <h4><i class="fas fa-train"></i> 高雄輕軌</h4>
+                <p style="font-size: 0.8rem; color: #999;">Kaohsiung LRT</p>
+            </div>
+            <div class="system-card" data-system="NTMC" onclick="selectSystem('NTMC')">
+                <h4><i class="fas fa-train"></i> 新北捷運</h4>
+                <p style="font-size: 0.8rem; color: #999;">New Taipei Metro</p>
+            </div>
+        </div>
+
+        <!-- 查詢列 -->
+        <div class="system-selector" id="stationSelector" style="display:none; background:white; padding:20px; border-radius:15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+            <div style="display:flex; gap:15px; align-items:center; flex-wrap:wrap;">
+                <select id="lineSelect" onchange="onLineChange()" style="padding:10px; border-radius:8px; border:1px solid #ddd; flex:1; min-width:150px;">
+                    <option value="">選擇路線</option>
+                </select>
+                <select id="stationSelect" style="padding:10px; border-radius:8px; border:1px solid #ddd; flex:1; min-width:150px;">
+                    <option value="">請先選擇路線</option>
+                </select>
+                <button onclick="queryLiveboard()" style="padding:10px 25px; background:#00bcd4; color:white; border:none; border-radius:8px; font-weight:900; cursor:pointer;">
+                    <i class="fas fa-search"></i> 查詢
+                </button>
+                <button onclick="openPIDS()" style="padding:10px 20px; background:#9c27b0; color:white; border:none; border-radius:8px; font-weight:900; cursor:pointer;">
+                    <i class="fas fa-tv"></i> PIDS
+                </button>
+            </div>
+        </div>
+
+        <!-- 看板區域 -->
+        <div id="liveboardContainer" style="display:none; margin-top:20px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; background:white; padding:20px; border-radius:12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05);">
+                <h2 id="stationTitle" style="font-weight:900; display:flex; align-items:center; gap:10px; flex:1;">
+                    <span id="systemName">系統</span> - <span id="stationName">車站</span>
+                    <div id="mainMapContainer"></div>
+                </h2>
+                <div id="updateTime" style="font-size:0.85rem; color:#888; white-space:nowrap;">--</div>
+            </div>
+
+            <div id="arrivalGrid" class="arrival-grid"></div>
+
+            <!-- 車站深度資訊 -->
+            <div id="stationExtraArea" style="margin-top:30px; display:none;">
+                <div class="platform-group">
+                    <div class="platform-header" style="background: #607d8b;">
+                        <span><i class="fas fa-map-signs"></i> 車站導覽與設施 Station Guide & Facilities</span>
+                    </div>
+                    <div id="exitsList" class="exits-grid"></div>
+                    <div id="facilitiesList" class="exits-grid" style="border-top:1px solid #eee; background:#fff;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const WORKER_URL = 'https://metro-api-worker.xiaoyouwu5-fd3.workers.dev';
+        let currentSystem = '', currentStationId = '', currentStationName = '', allStationData = [];
+        const metroSystems = { 
+            TRTC: {name:'台北捷運'}, 
+            KRTC: {name:'高雄捷運'}, 
+            TMRT: {name:'台中捷運'}, 
+            TYMC: {name:'桃園捷運'}, 
+            KLRT: {name:'高雄輕軌'}, 
+            NTMC: {name:'新北捷運'}, 
+            TRTCMG: {name:'貓空纜車'}
+        };
+
+        async function selectSystem(sys) {
+            currentSystem = sys;
+            document.querySelectorAll('.system-card').forEach(c => c.classList.toggle('selected', c.dataset.system === sys));
+            document.getElementById('stationSelector').style.display = 'block';
+            
+            try {
+                const res = await fetch(`${WORKER_URL}/api/stations?system=${sys}`);
+                allStationData = await res.json();
+                renderLineSelect(allStationData, sys);
+            } catch (error) {
+                console.error('載入車站資料失敗:', error);
+                alert('載入車站資料失敗,請稍後再試');
+            }
+        }
+
+        function renderLineSelect(data, sys) {
+            const lineSelect = document.getElementById('lineSelect');
+            const lines = Array.from(new Set(data.map(s => s.line?.name).filter(Boolean)));
+            
+            // 官方線路排序
+            const order = { 
+                'TRTC': { '文湖線': 1, '淡水信義線': 2, '松山新店線': 3, '中和新蘆線': 4, '板南線': 5, '環狀線': 6 },
+                'KRTC': { '紅線': 1, '橘線': 2 },
+                'TMRT': { '綠線': 1, '紅線': 2, '藍線': 3 },
+                'TYMC': { '紫線': 1, '紅線': 2, '綠線': 3 }
+            };
+            
+            lines.sort((a, b) => {
+                const orderA = order[sys]?.[a] || 99;
+                const orderB = order[sys]?.[b] || 99;
+                if (orderA !== orderB) return orderA - orderB;
+                return a.localeCompare(b, 'zh-Hant');
+            });
+            
+            lineSelect.innerHTML = '<option value="">選擇路線</option>' + lines.map(l => `<option value="${l}">${l}</option>`).join('');
+        }
+
+        function onLineChange() {
+            const line = document.getElementById('lineSelect').value;
+            if (!line) {
+                document.getElementById('stationSelect').innerHTML = '<option value="">請先選擇路線</option>';
+                return;
+            }
+            
+            const stations = allStationData.filter(s => s.line?.name === line);
+            stations.sort((a, b) => {
+                const numA = parseInt(a.id.replace(/\D/g, '')) || 0;
+                const numB = parseInt(b.id.replace(/\D/g, '')) || 0;
+                return numA - numB;
+            });
+            
+            document.getElementById('stationSelect').innerHTML = '<option value="">選擇車站</option>' + 
+                stations.map(s => `<option value="${s.id}">${s.name} (${s.id})</option>`).join('');
+        }
+
+        async function queryLiveboard() {
+            const sel = document.getElementById('stationSelect');
+            if (!sel.value) {
+                alert('請選擇車站');
+                return;
+            }
+            
+            currentStationId = sel.value;
+            currentStationName = sel.options[sel.selectedIndex].text.split(' (')[0];
+            
+            try {
+                const res = await fetch(`${WORKER_URL}/api/liveboard?system=${currentSystem}&type=LiveBoard`);
+                const data = await res.json();
+                
+                // 嚴格過濾車站 (解決 R09/BR09 問題)
+                const expectedLine = allStationData.find(s => s.id === currentStationId)?.line?.id;
+                const filtered = data.filter(t => {
+                    const matchesStation = t.StationID === currentStationId || t.StationID.endsWith(currentStationId);
+                    const matchesLine = !expectedLine || t.LineID === expectedLine;
+                    return matchesStation && matchesLine;
+                });
+                
+                renderLiveboard(filtered);
+                renderExtras(currentSystem, currentStationId);
+            } catch (error) {
+                console.error('查詢失敗:', error);
+                alert('查詢失敗,請稍後再試');
+            }
+        }
+
+        function renderLiveboard(trains) {
+            const grid = document.getElementById('arrivalGrid');
+            document.getElementById('liveboardContainer').style.display = 'block';
+            document.getElementById('systemName').textContent = metroSystems[currentSystem].name;
+            document.getElementById('stationName').textContent = currentStationName;
+
+            if (!trains || trains.length === 0) {
+                grid.innerHTML = '<p style="grid-column:1/-1; text-align:center; padding:50px; color:#999;"><i class="fas fa-train" style="font-size:3rem; display:block; margin-bottom:10px; opacity:0.3;"></i>目前無列車資訊</p>';
+                document.getElementById('updateTime').textContent = `更新於 ${new Date().toLocaleTimeString()}`;
+                return;
+            }
+
+            // 按方向分組
+            const groups = {};
+            trains.forEach(t => {
+                const dir = t.Direction !== undefined ? t.Direction : (t.TripHeadSign || '未知');
+                if (!groups[dir]) groups[dir] = [];
+                groups[dir].push(t);
+            });
+
+            grid.innerHTML = Object.entries(groups).map(([dir, ts]) => {
+                ts.sort((a,b) => (a.EstimateTime || 9999) - (b.EstimateTime || 9999));
+                const first = ts[0];
+                const destName = first.DestinationStationName?.Zh_tw || first.TripHeadSign || '終點站';
+                
+                return `
+                    <div class="platform-group">
+                        <div class="platform-header" style="background:${first.LineColor || '#455a64'}">
+                            <span>往 <strong>${destName}</strong> 方向</span>
+                            <span style="font-size:0.8rem; opacity:0.8;">${ts.length} 班</span>
+                        </div>
+                        ${ts.slice(0,3).map(t => {
+                            const secs = t.EstimateTime || 0;
+                            const mins = Math.max(0, Math.floor(secs / 60));
+                            
+                            let timeHtml = '';
+                            let cardClass = 'train-card';
+                            
+                            if (secs <= 45) {
+                                timeHtml = '<span class="status-arriving">● 進站中</span>';
+                                cardClass += ' imminent';
+                            } else if (secs <= 90) {
+                                timeHtml = '<span style="color:#f58220; font-weight:900;">即將進站</span>';
+                            } else {
+                                timeHtml = `<span class="time-val">${mins}</span><span class="time-unit">分</span>`;
+                            }
+                            
+                            return `
+                                <div class="${cardClass}">
+                                    <div class="train-info-main">
+                                        <div class="train-dest">${t.DestinationStationName?.Zh_tw || '捷運列車'}</div>
+                                        <div class="train-meta">
+                                            <span style="background:${t.LineColor || '#666'}; color:white; padding:2px 6px; border-radius:3px; font-size:0.75rem;">${t.LineID || '—'}</span>
+                                            ${t.TrainTypeName?.Zh_tw ? `<span>${t.TrainTypeName.Zh_tw}</span>` : ''}
+                                        </div>
+                                    </div>
+                                    <div class="train-time-area">${timeHtml}</div>
+                                </div>`;
+                        }).join('')}
+                    </div>`;
+            }).join('') || '<p style="grid-column:1/-1; text-align:center; padding:50px; color:#999;">目前無列車資訊</p>';
+            
+            document.getElementById('updateTime').textContent = `更新於 ${new Date().toLocaleTimeString()}`;
+        }
+
+        async function renderExtras(sys, sid) {
+            const extraArea = document.getElementById('stationExtraArea');
+            
+            try {
+                // 獲取轉乘地圖
+                const resMap = await fetch(`${WORKER_URL}/api/transfer?system=${sys}&stationID=${sid}`);
+                const mapData = await resMap.json();
+                const mapList = Array.isArray(mapData) ? mapData : (mapData.maps || []);
+                
+                if (mapList.length > 0 && mapList[0].MapURL) {
+                    document.getElementById('mainMapContainer').innerHTML = `
+                        <a href="${mapList[0].MapURL}" target="_blank" class="map-btn">
+                            <i class="fas fa-map"></i> 車站平面圖
+                        </a>`;
+                } else {
+                    document.getElementById('mainMapContainer').innerHTML = '';
+                }
+
+                // 獲取出口資訊
+                const resExits = await fetch(`${WORKER_URL}/api/exits?sys=${sys}&sid=${sid}`);
+                const exits = await resExits.json();
+                
+                if (exits && exits.length > 0) {
+                    document.getElementById('exitsList').innerHTML = exits.map(ex => `
+                        <div class="exit-card">
+                            <div class="exit-title">
+                                ${ex.name} 
+                                ${ex.floor ? `<small style="background:#ff9800; color:white; padding:2px 5px; border-radius:3px; font-size:0.7rem;">${ex.floor}</small>` : ''}
+                            </div>
+                            <div class="exit-desc"><i class="fas fa-map-pin"></i> ${ex.desc || '位置資訊載入中'}</div>
+                            <div>
+                                ${ex.equip?.elevator ? '<span class="equip-badge"><i class="fas fa-wheelchair"></i> 電梯</span>' : ''}
+                                ${ex.equip?.escalator ? '<span class="equip-badge"><i class="fas fa-stairs"></i> 手扶梯</span>' : ''}
+                            </div>
+                            ${ex.map ? `<a href="${ex.map}" target="_blank" class="map-btn"><i class="fas fa-map"></i> 查看地圖</a>` : ''}
+                        </div>`).join('');
+                    extraArea.style.display = 'block';
+                } else {
+                    document.getElementById('exitsList').innerHTML = '<p style="padding:20px; color:#999; text-align:center;">暫無出口資訊</p>';
+                }
+
+                // 獲取設施資訊
+                const resFac = await fetch(`${WORKER_URL}/api/facilities?sys=${sys}&sid=${sid}`);
+                const facs = await resFac.json();
+                
+                if (facs && facs.length > 0) {
+                    const iconMap = { 'Restroom': 'restroom', 'Information': 'info-circle', 'Nursery': 'baby', 'Charging': 'battery-half' };
+                    document.getElementById('facilitiesList').innerHTML = facs.map(f => `
+                        <div class="exit-card" style="border-left-color:#009688;">
+                            <div class="exit-title">
+                                <i class="fas fa-${iconMap[f.FacilityType] || 'concierge-bell'}"></i>
+                                ${f.FacilityName?.Zh_tw || f.FacilityType}
+                            </div>
+                            <div class="exit-desc">${f.LocationDescription || '車站大廳'}</div>
+                        </div>`).join('');
+                } else {
+                    document.getElementById('facilitiesList').innerHTML = '<p style="padding:20px; color:#999; text-align:center;">暫無設施資訊</p>';
+                }
+            } catch (error) {
+                console.warn('載入車站資訊失敗:', error);
+                extraArea.style.display = 'none';
+            }
+        }
+
+        function openPIDS() {
+            if (!currentStationId) {
+                alert('請先查詢車站');
+                return;
+            }
+            window.open(`metro-pids.html?system=${currentSystem}&station=${currentStationId}`, '_blank');
+        }
+    </script>
+</body>
+</html>
