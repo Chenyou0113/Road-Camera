@@ -101,6 +101,12 @@
 
         const systemColors = { 'TRTC': '#0070bd', 'KRTC': '#e3002c', 'TYMC': '#8246af', 'TMRT': '#b2d235', 'KLRT': '#008010', 'NTMC': '#0096cc' };
 
+        // ✅ 倒數計時器資料儲存
+        const countdownData = {
+            dir0: { remainingSecs: 0, lastUpdate: 0 },
+            dir1: { remainingSecs: 0, lastUpdate: 0 }
+        };
+
         async function updateLiveBoard() {
             try {
                 const response = await fetch(`${WORKER_URL}/liveboard?sys=${system}`);
@@ -149,18 +155,57 @@
                 document.getElementById(`${prefix}-en`).innerText = "No Service";
                 document.getElementById(`${prefix}-time`).innerText = "-- : --";
                 document.getElementById(`${prefix}-time`).className = "time-box";
+                countdownData[prefix].remainingSecs = 0;
                 return;
             }
             document.getElementById(`${prefix}-dest`).innerText = item.DestinationStationName?.Zh_tw || "---";
             document.getElementById(`${prefix}-en`).innerText = item.DestinationStationName?.En || "---";
             document.getElementById(`ui-line-tag-${idx+1}`).innerText = item.LineID || "--";
             
+            // ✅ 儲存剩餘秒數，用於倒數計時
             const secs = item.EstimateTime;
-            const timeBox = document.getElementById(`${prefix}-time`);
-            if (secs <= 45) { timeBox.innerText = "進站中"; timeBox.className = "time-box arriving"; }
-            else if (secs <= 90) { timeBox.innerText = "即將進站"; timeBox.className = "time-box approaching"; }
-            else { timeBox.innerText = `${Math.floor(secs/60)} : 00`; timeBox.className = "time-box"; }
+            countdownData[prefix].remainingSecs = secs;
+            countdownData[prefix].lastUpdate = Date.now();
+            
+            // 立即更新顯示
+            updateTimeDisplay(idx);
         }
+
+        // ✅ 更新時間顯示（分:秒格式）
+        function updateTimeDisplay(idx) {
+            const prefix = `dir${idx}`;
+            const timeBox = document.getElementById(`${prefix}-time`);
+            const secs = Math.max(0, countdownData[prefix].remainingSecs);
+            
+            if (secs === 0) {
+                timeBox.innerText = "-- : --";
+                timeBox.className = "time-box";
+                return;
+            }
+            
+            const mins = Math.floor(secs / 60);
+            const remainderSecs = secs % 60;
+            timeBox.innerText = `${mins} : ${String(remainderSecs).padStart(2, '0')}`;
+            
+            // ✅ 動態樣式：少於45秒紅色閃爍，少於90秒橙色
+            if (secs <= 45) {
+                timeBox.className = "time-box arriving";
+            } else if (secs <= 90) {
+                timeBox.className = "time-box approaching";
+            } else {
+                timeBox.className = "time-box";
+            }
+        }
+
+        // ✅ 倒數計時器（每秒更新）
+        setInterval(() => {
+            ['dir0', 'dir1'].forEach((prefix, idx) => {
+                if (countdownData[prefix].remainingSecs > 0) {
+                    countdownData[prefix].remainingSecs--;
+                    updateTimeDisplay(idx);
+                }
+            });
+        }, 1000);
 
         async function updateMarquee() {
             const psas = ["發現性騷擾及異常事件，迅速通報。", "遇緊急狀況保持冷靜，使用對講機。", "提高警覺，遇異常撥打110。", "捷運系統全面禁菸。", "電扶梯兩側皆可站立。"];
@@ -174,7 +219,13 @@
 
         setInterval(updateLiveBoard, 15000);
         setInterval(updateMarquee, 60000);
-        setInterval(() => { document.getElementById('clock').innerText = new Date().toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:true}); }, 1000);
+        setInterval(() => { 
+            const now = new Date();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+            document.getElementById('clock').innerText = `${month}/${day} ${time}`;
+        }, 1000);
         
         document.getElementById('video-iframe').src = "https://www.youtube.com/embed/S_8q0sS3-vM?autoplay=1&mute=1&loop=1&playlist=S_8q0sS3-vM&controls=0";
         updateLiveBoard(); updateMarquee();
