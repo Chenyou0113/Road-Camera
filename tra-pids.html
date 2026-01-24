@@ -9,7 +9,7 @@
     <!-- 🔥 PWA 支援 -->
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#1e3a8a">
-    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="台鐵PIDS">
     <link rel="apple-touch-icon" href="assets/icon-192.png">
@@ -1269,8 +1269,11 @@
 
         // 負責把 lastTrainData 畫到畫面上
         function refreshDisplay() {
-            let t1 = lastTrainData.filter(t=>t.Direction==1);
-            let t0 = lastTrainData.filter(t=>t.Direction==0);
+            // ✅ 改為直接從 STATE 讀取，確保抓到 Proxy 更新後的資料
+            const data = PIDS_APP.STATE.lastTrainData;
+            
+            let t1 = data.filter(t=>t.Direction==1);
+            let t0 = data.filter(t=>t.Direction==0);
 
             renderTable('1', t1); 
             renderTable('0', t0);
@@ -1285,12 +1288,11 @@
         // 🔥 新增: 處理方向標題下的站名列表顯示
         function populateDestinationMarquee(id, list, direction) {
             const el = document.getElementById(id);
-            const lang = i18n[currentLang];
+            const lang = i18n[PIDS_APP.STATE.currentLang]; // ✅ 統一使用 STATE
             
             if (!list || list.length === 0) {
-                el.innerText = currentLang === 'zh' 
-                    ? (direction === 1 ? '北上列車資訊載入中...' : '南下列車資訊載入中...')
-                    : (direction === 1 ? 'Loading Northbound...' : 'Loading Southbound...');
+                // ✅ 修正：顯示「無列車資訊」而非一直 Loading
+                el.innerText = lang.noTrain;
                 return;
             }
             
@@ -1298,15 +1300,13 @@
             let destinations = list.slice(0, 3).map(t => {
                 return translateStation(t.EndingStationName);
             });
-            let uniqueDestinations = [...new Set(destinations)].join(currentLang === 'zh' ? '、' : ', ');
+            let uniqueDestinations = [...new Set(destinations)].join(PIDS_APP.STATE.currentLang === 'zh' ? '、' : ', ');
 
             if (uniqueDestinations.length > 0) {
-                const prefix = currentLang === 'zh' ? '開往: ' : 'To: ';
+                const prefix = PIDS_APP.STATE.currentLang === 'zh' ? '開往: ' : 'To: ';
                 el.innerText = prefix + uniqueDestinations;
             } else {
-                el.innerText = currentLang === 'zh' 
-                    ? (direction === 1 ? '無近期北上列車' : '無近期南下列車')
-                    : (direction === 1 ? 'No Northbound Trains' : 'No Southbound Trains');
+                el.innerText = lang.noTrain;
             }
         }
 
@@ -1636,6 +1636,15 @@
             console.log('  ✅ 鍵盤導航支援');
             console.log('  ✅ PWA 離線能力');
         });
+
+        /**
+         * 格式化時間工具 (Master Class 版)
+         * 用於向後兼容和未來擴充
+         */
+        function formatTime(t) { 
+            if (!t || typeof t !== 'string') return '--:--';
+            return t.substring(0, 5); 
+        }
     </script>
 </body>
 </html>
