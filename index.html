@@ -360,8 +360,9 @@
             font-weight: 800;
             font-size: 1.15rem;
             white-space: nowrap;
-            z-index: 2;
-            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+            z-index: 10; /* 確保標籤在最上層 */
+            position: relative; /* 配合 z-index */
+            box-shadow: 10px 0 15px rgba(0,0,0,0.3); /* 增加陰影遮擋後方跑過的文字 */
         }
 
         .ticker-wrapper {
@@ -369,8 +370,9 @@
             overflow: hidden;
             position: relative;
             height: 100%;
-            mask-image: linear-gradient(to right, transparent, black 20px, black 95%, transparent);
-            -webkit-mask-image: linear-gradient(to right, transparent, black 20px, black 95%, transparent);
+            /* 修改遮罩，讓文字在靠近標籤時才淡入，避免直接穿透 */
+            mask-image: linear-gradient(to right, transparent, black 40px, black 95%, transparent);
+            -webkit-mask-image: linear-gradient(to right, transparent, black 40px, black 95%, transparent);
         }
 
         .ticker-content {
@@ -378,6 +380,7 @@
             display: inline-block;
             white-space: nowrap;
             will-change: transform;
+            padding-left: 50px; /* 初始間距，避免一開始就疊到標籤 */
             padding-left: 100%;
             animation: marquee-scroll linear infinite;
             animation-play-state: paused;
@@ -1090,7 +1093,7 @@
             bottom: -15px; /* 修正圖示中心點 */
             font-size: 2rem;
             color: #FDB813;
-            filter: drop-shadow(0 0 15px rgba(253, 184, 19, 0.8));
+            filter: drop-shadow(0 0 10px rgba(253, 184, 19, 0.5));
             background: white;
             border-radius: 50%;
             width: 30px;
@@ -1099,6 +1102,7 @@
             align-items: center;
             justify-content: center;
             animation: sun-glow 3s infinite alternate;
+            transition: all 0.5s ease; /* 平滑過渡 */
         }
         
         body.dark-mode .sun-icon { background: #1e293b; }
@@ -1937,7 +1941,7 @@
         }
 
         // � Fetch 重試工具（靜默失敗）
-        async function fetchWithRetry(url, retries = 1, timeout = 3000) {
+        async function fetchWithRetry(url, retries = 1, timeout = 8000) {
             for (let i = 0; i <= retries; i++) {
                 try {
                     const controller = new AbortController();
@@ -1945,19 +1949,29 @@
                     
                     const response = await fetch(url, { 
                         signal: controller.signal,
-                        cache: 'no-cache' 
+                        cache: 'default', // 允許瀏覽器快取
+                        mode: 'cors',
+                        credentials: 'omit'
                     });
                     clearTimeout(timeoutId);
                     
                     if (response.ok) return response;
+                    
+                    // 5xx 錯誤值得重試
+                    if (response.status >= 500 && i < retries) {
+                        await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+                        continue;
+                    }
+                    
                     if (i === retries) throw new Error(`HTTP ${response.status}`);
                 } catch (error) {
-                    // 連線問題時不重試，快速失敗
-                    if (error.name === 'AbortError' || error.message.includes('Failed to fetch')) {
-                        throw error;
+                    // CONNECTION_RESET 給予一次重試機會
+                    if (i < retries && (error.name === 'AbortError' || error.message.includes('Failed to fetch'))) {
+                        await new Promise(resolve => setTimeout(resolve, 1500));
+                        continue;
                     }
                     if (i === retries) throw error;
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    await new Promise(resolve => setTimeout(resolve, 800));
                 }
             }
         }
@@ -2234,14 +2248,16 @@
                 // 還沒日出 (左底)
                 degree = -90;
                 if (sunIcon) {
-                    sunIcon.style.opacity = '0.3';
+                    sunIcon.style.opacity = '0'; // 晚上太陽消失
+                    sunIcon.style.filter = 'none';
                     sunIcon.style.backgroundColor = '#ccc';
                 }
             } else if (nowM >= setM) {
                 // 已經日落 (右底)
                 degree = 90;
                 if (sunIcon) {
-                    sunIcon.style.opacity = '0.3'; 
+                    sunIcon.style.opacity = '0'; // 晚上太陽消失
+                    sunIcon.style.filter = 'none';
                     sunIcon.style.backgroundColor = '#ccc';
                 }
             } else {
@@ -2252,6 +2268,12 @@
                 if (sunIcon) {
                     sunIcon.style.opacity = '1';
                     sunIcon.style.backgroundColor = 'white';
+                    
+                    // 根據時間調整亮度，中午最亮
+                    const midday = (riseM + setM) / 2;
+                    const brightness = 1 - (Math.abs(nowM - midday) / (midday - riseM));
+                    const glowIntensity = 10 + (brightness * 15);
+                    sunIcon.style.filter = `drop-shadow(0 0 ${glowIntensity}px rgba(253, 184, 19, ${0.6 + brightness * 0.3}))`;
                 }
             }
 
@@ -2356,43 +2378,66 @@
 
         // 6. 更新生活指數 (現在支援接收真實溫度！)
         function updateLifestyleIndices(realTemp, realWeather) {
-            // 如果沒有傳入真實溫度，則使用隨機模擬 (fallback)
-            const temp = realTemp !== null ? realTemp : Math.floor(Math.random() * 15 + 15);
-            // 簡單判斷下雨機率 (如果有 '雨' 字)
-            const isRaining = realWeather && realWeather.includes('雨');
+            const temp = realTemp !== null ? realTemp : 22;
+            const now = new Date();
+            const hour = now.getHours();
             
-            // 穿衣建議
+            // 天氣關鍵字判斷
+            const isRaining = realWeather && (realWeather.includes('雨') || realWeather.includes('陣雨'));
+            const isCloudy = realWeather && (realWeather.includes('陰') || realWeather.includes('多雲'));
+            const isClear = realWeather && realWeather.includes('晴');
+
+            // 1. 穿衣建議 (符合台灣體感)
             let clothing = '短袖';
-            if (temp < 15) clothing = '羽絨衣';
-            else if (temp < 20) clothing = '厚外套';
-            else if (temp < 24) clothing = '薄外套';
-            else if (temp < 28) clothing = '短袖+薄衫';
+            if (temp < 14) clothing = '厚外套/羽絨';
+            else if (temp < 18) clothing = '大衣/厚夾克';
+            else if (temp < 22) clothing = '薄外套/長袖'; // 18.7度應該落在這裡
+            else if (temp < 26) clothing = '短袖+薄衫';
             
             const clothEl = document.getElementById('clothingIndex');
             if(clothEl) clothEl.textContent = clothing;
             
-            // 帶傘指數
+            // 2. 帶傘指數 (根據天氣描述)
             let umbrella = '不需要';
-            if (isRaining) umbrella = '必帶 ☔';
-            else if (realWeather && realWeather.includes('陰')) umbrella = '建議帶';
+            if (isRaining) umbrella = '務必帶傘 ☔';
+            else if (isCloudy) umbrella = '建議帶傘';
+            else if (realWeather && realWeather.includes('疏')) umbrella = '偶有陣雨';
             
             const umbEl = document.getElementById('umbrellaIndex');
             if(umbEl) umbEl.textContent = umbrella;
             
-            // 紫外線指數 (這裡仍然模擬，因為很多小測站沒有 UV 數據)
-            const uvLevel = Math.floor(Math.random() * 11);
+            // 3. 紫外線指數 (邏輯連動：時間 + 天氣)
             let uvText = '低';
-            if (uvLevel > 7) uvText = '過量 🔴';
-            else if (uvLevel > 5) uvText = '高 🟠';
-            else if (uvLevel > 2) uvText = '中等';
+            let uvLevel = 1;
+
+            // 如果是晚上，UV 絕對是 0
+            if (hour < 6 || hour > 18) {
+                uvLevel = 0;
+            } else {
+                // 白天情況
+                if (isRaining) uvLevel = 1;
+                else if (isCloudy) uvLevel = 3; // 陰天紫外線中等
+                else if (isClear) uvLevel = 8;  // 晴天紫外線高
+                else uvLevel = 5;
+
+                // 正中午加成 (11:00 - 14:00)
+                if (hour >= 11 && hour <= 14 && !isRaining) uvLevel += 2;
+            }
+
+            if (uvLevel === 0) uvText = '無 🌑';
+            else if (uvLevel <= 2) uvText = '低 🟢';
+            else if (uvLevel <= 5) uvText = '中等 🟡';
+            else if (uvLevel <= 7) uvText = '高 🟠';
+            else uvText = '過量 🔴';
             
             const uvEl = document.getElementById('uvIndex');
             if(uvEl) uvEl.textContent = uvText;
             
-            // 晾衣指數
+            // 4. 晾衣指數
             let laundry = '適合 ✨';
-            if (isRaining) laundry = '不適合';
-            else if (realWeather && realWeather.includes('陰')) laundry = '普通';
+            if (isRaining) laundry = '極不適合 ❌';
+            else if (isCloudy) laundry = '普通 ☁️';
+            else if (temp < 15) laundry = '乾得慢';
             
             const laundryEl = document.getElementById('laundryIndex');
             if(laundryEl) laundryEl.textContent = laundry;
