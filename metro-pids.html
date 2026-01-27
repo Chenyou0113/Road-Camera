@@ -112,37 +112,46 @@
                 const response = await fetch(`${WORKER_URL}/liveboard?sys=${system}`);
                 const data = await response.json();
                 
-                // 強化過濾邏輯：相容 O9 與 O09 格式
-                let stationData = data.filter(t => 
-                    t.StationID === station || 
-                    t.StationID === (station.length === 2 ? station[0]+'0'+station[1] : station) ||
-                    t.StationID.endsWith(station)
-                );
+                // --- 核心修復：使用 parseInt 忽略補零差異 ---
+                const targetNum = parseInt(station.replace(/\D/g, '')); // BR01 -> 1
+                const targetPrefix = station.replace(/[0-9]/g, '');     // BR01 -> BR
+
+                let stationData = data.filter(t => {
+                    const trainSid = String(t.StationID);
+                    const trainNum = parseInt(trainSid.replace(/\D/g, '')); // 1 -> 1, 01 -> 1
+                    const trainPrefix = trainSid.replace(/[0-9]/g, '');
+
+                    // 匹配邏輯：
+                    // 1. ID 完全一樣 (如 BR01 === BR01)
+                    // 2. 或是數字部分一樣 (如 1 === 1) 且 (如果是北捷，前綴也要檢查或放寬)
+                    return trainSid === station || trainNum === targetNum;
+                });
+                // ---------------------------------------
+
+                stationData.sort((a, b) => a.EstimateTime - b.EstimateTime);
 
                 if (stationData.length > 0) {
-                    // 設定車站名稱與主題色
                     const first = stationData[0];
                     const color = first.LineColor || systemColors[system] || '#333';
+                    
                     document.documentElement.style.setProperty('--theme-color', color);
                     document.getElementById('ui-st-id').innerText = station;
                     document.getElementById('ui-st-id-footer').innerText = station;
-                    document.getElementById('ui-st-name').innerText = first.StationName?.Zh_tw || "未知車站";
+                    document.getElementById('ui-st-name').innerText = first.StationName?.Zh_tw || "載入中...";
 
-                    // 核心修復：強制按方向分組 (Direction 0 與 1)
-                    const groups = { "0": [], "1": [] };
+                    // 分組邏輯：改用目的地或方向分組
+                    const groups = {};
                     stationData.forEach(t => {
-                        const d = String(t.Direction);
-                        if (groups[d]) groups[d].push(t);
+                        const d = t.Direction !== undefined ? String(t.Direction) : String(t.DestinationStationID);
+                        if (!groups[d]) groups[d] = [];
+                        groups[d].push(t);
                     });
-
-                    // 排序並更新 UI
-                    const trainDir0 = groups["0"].sort((a,b) => a.EstimateTime - b.EstimateTime)[0];
-                    const trainDir1 = groups["1"].sort((a,b) => a.EstimateTime - b.EstimateTime)[0];
-
-                    updateUI(0, trainDir0);
-                    updateUI(1, trainDir1);
+                    
+                    const keys = Object.keys(groups).sort();
+                    updateUI(0, groups[keys[0]] ? groups[keys[0]][0] : null);
+                    updateUI(1, groups[keys[1]] ? groups[keys[1]][0] : null);
                 } else {
-                    document.getElementById('ui-st-name').innerText = "暫無班次資訊";
+                    document.getElementById('ui-st-name').innerText = "暫無班次資料";
                     updateUI(0, null); updateUI(1, null);
                 }
             } catch (e) { 
