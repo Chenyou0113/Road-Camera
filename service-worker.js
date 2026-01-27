@@ -49,6 +49,11 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
     
+    // ⚠️ 跳過外部 API 請求（Cloudflare Workers, 第三方服務）
+    if (url.origin !== location.origin) {
+        return; // 讓瀏覽器直接處理，不攔截
+    }
+    
     // 🔥 API 請求：Network First（優先網路，失敗則使用緩存）
     if (url.pathname.includes('/api/')) {
         event.respondWith(
