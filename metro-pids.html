@@ -97,64 +97,54 @@
         const WORKER_URL = 'https://metro-api-worker.xiaoyouwu5-fd3.workers.dev/api';
         const params = new URLSearchParams(window.location.search);
         const system = params.get('system') || 'TRTC';
-        const station = params.get('station') || 'O9'; // 這裡預設改為 O9 測試
+        const station = params.get('station') || 'O9'; 
 
         const systemColors = { 'TRTC': '#0070bd', 'KRTC': '#f58220', 'TYMC': '#8246af', 'TMRT': '#b2d235', 'KLRT': '#008010', 'NTMC': '#0096cc' };
 
         const countdownData = {
-            dir0: { remainingSecs: -1, lastUpdate: 0 },
-            dir1: { remainingSecs: -1, lastUpdate: 0 }
+            dir0: { remainingSecs: -1 },
+            dir1: { remainingSecs: -1 }
         };
 
         async function updateLiveBoard() {
             try {
-                console.log(`Fetching data for ${system} station ${station}...`);
-                const response = await fetch(`${WORKER_URL}/liveboard?sys=${system}`);
-                const data = await response.json();
+                // ✨ 改良點 1：直接帶入 sid 讓後端 Worker 過濾，提升速度
+                const response = await fetch(`${WORKER_URL}/liveboard?sys=${system}&sid=${station}`);
+                const stationData = await response.json();
                 
-                // --- 核心修復：使用 parseInt 忽略補零差異 ---
-                const targetNum = parseInt(station.replace(/\D/g, '')); // BR01 -> 1
-                const targetPrefix = station.replace(/[0-9]/g, '');     // BR01 -> BR
-
-                let stationData = data.filter(t => {
-                    const trainSid = String(t.StationID);
-                    const trainNum = parseInt(trainSid.replace(/\D/g, '')); // 1 -> 1, 01 -> 1
-                    const trainPrefix = trainSid.replace(/[0-9]/g, '');
-
-                    // 匹配邏輯：
-                    // 1. ID 完全一樣 (如 BR01 === BR01)
-                    // 2. 或是數字部分一樣 (如 1 === 1) 且 (如果是北捷，前綴也要檢查或放寬)
-                    return trainSid === station || trainNum === targetNum;
-                });
-                // ---------------------------------------
-
-                stationData.sort((a, b) => a.EstimateTime - b.EstimateTime);
-
                 if (stationData.length > 0) {
                     const first = stationData[0];
                     const color = first.LineColor || systemColors[system] || '#333';
                     
                     document.documentElement.style.setProperty('--theme-color', color);
                     document.getElementById('ui-st-id').innerText = station;
-                    document.getElementById('ui-st-id-footer').innerText = station;
+                    document.getElementById('ui-st-id-footer').innerText = first.StationName?.Zh_tw || station;
                     document.getElementById('ui-st-name').innerText = first.StationName?.Zh_tw || "載入中...";
 
-                    // ✨ 修復：優先使用 Direction (0:順行, 1:逆行) 作為分組 Key
+                    // ✨ 改良點 2：更嚴謹的分組邏輯
                     const groups = {};
                     stationData.forEach(t => {
-                        // 對高雄輕軌等環狀線，必須依靠 Direction 而非目的地
-                        const key = t.Direction !== undefined ? `DIR_${t.Direction}` : String(t.DestinationStationID);
+                        // 優先使用 Direction，高雄輕軌這類環狀線才不會出錯
+                        const key = (t.Direction !== undefined) ? `DIR_${t.Direction}` : String(t.DestinationStationID);
                         if (!groups[key]) groups[key] = [];
                         groups[key].push(t);
                     });
                     
-                    // 排序分組，確保兩個月台顯示不同方向
                     const keys = Object.keys(groups).sort();
                     
-                    // 每個方向取最快到站的那班車
+                    // 分別處理兩個月台
                     const train1 = groups[keys[0]] ? groups[keys[0]].sort((a,b) => a.EstimateTime - b.EstimateTime)[0] : null;
                     const train2 = groups[keys[1]] ? groups[keys[1]].sort((a,b) => a.EstimateTime - b.EstimateTime)[0] : null;
                     
+                    // ✨ 改良點 3：針對高雄輕軌自動變更月台標題
+                    if (system === 'KLRT') {
+                        if (train1) document.getElementById('dir0-label').innerText = train1.Direction == 0 ? "順行 Clockwise" : "逆行 Counter-clockwise";
+                        if (train2) document.getElementById('dir1-label').innerText = train2.Direction == 0 ? "順行 Clockwise" : "逆行 Counter-clockwise";
+                    } else {
+                        document.getElementById('dir0-label').innerText = "第一月台 Platform 1";
+                        document.getElementById('dir1-label').innerText = "第二月台 Platform 2";
+                    }
+
                     updateUI(0, train1);
                     updateUI(1, train2);
                 } else {
@@ -162,7 +152,7 @@
                     updateUI(0, null); updateUI(1, null);
                 }
             } catch (e) { 
-                console.error("Worker Fetch Error:", e);
+                console.error("Fetch Error:", e);
                 document.getElementById('ui-st-name').innerText = "連線錯誤";
             }
         }
@@ -185,7 +175,7 @@
             document.getElementById(`${prefix}-en`).innerText = item.DestinationStationName?.En || "---";
             document.getElementById(`ui-line-tag-${idx+1}`).innerText = item.LineID || "--";
             
-            // 儲存秒數
+            // 儲存秒數 (Worker 已處理好單位統一)
             countdownData[prefix].remainingSecs = item.EstimateTime;
             updateTimeDisplay(idx);
         }
@@ -197,82 +187,56 @@
             
             if (secs === -1) return;
 
-            // ✨ 核心修正：只要秒數小於等於 30 (包含 0)，就顯示「進站中」
+            // 秒數小於 30 顯示進站中
             if (secs <= 30) {
                 timeBox.innerText = "進站中";
-                timeBox.className = "time-box arriving"; // 會觸發紅色閃爍動畫
+                timeBox.className = "time-box arriving";
                 return;
             }
             
             const mins = Math.floor(secs / 60);
             const remainderSecs = secs % 60;
-            
-            // 如果是北捷，通常直接顯示分鐘即可，如果是要顯示分:秒也可以
             timeBox.innerText = `${mins} : ${String(remainderSecs).padStart(2, '0')}`;
             
             if (secs <= 90) {
-                timeBox.className = "time-box approaching"; // 橙色
+                timeBox.className = "time-box approaching";
             } else {
-                timeBox.className = "time-box"; // 藍色/主題色
+                timeBox.className = "time-box";
             }
         }
 
-        // 倒數計時（允許從任何正數倒數到 0）
+        // 倒數計時器
         setInterval(() => {
             ['dir0', 'dir1'].forEach((prefix, idx) => {
-                const secs = countdownData[prefix].remainingSecs;
-                if (secs > 0) {
+                if (countdownData[prefix].remainingSecs > 0) {
                     countdownData[prefix].remainingSecs--;
                     updateTimeDisplay(idx);
-                } else if (secs === 0) {
-                    // 確保進站中狀態持續顯示
+                } else if (countdownData[prefix].remainingSecs === 0) {
                     updateTimeDisplay(idx);
                 }
             });
         }, 1000);
 
-        // 時鐘與跑馬燈
+        // 時鐘功能
         setInterval(() => { 
             const now = new Date();
-            const month = String(now.getMonth() + 1).padStart(2, '0');
-            const day = String(now.getDate()).padStart(2, '0');
             const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-            document.getElementById('clock').innerText = `${month}/${day} ${time}`;
+            document.getElementById('clock').innerText = `${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')} ${time}`;
         }, 1000);
 
+        // 跑馬燈功能 (抓取真實新聞)
         async function updateMarquee() {
-            // 預設的宣導標語 (當沒有新聞時顯示)
-            const psas = [
-                "發現性騷擾及異常事件，迅速通報。",
-                "遇緊急狀況保持冷靜，使用對講機。",
-                "提高警覺，遇異常撥打110。",
-                "捷運系統全面禁菸。",
-                "電扶梯兩側皆可站立。"
-            ];
-
+            const psas = ["發現性騷擾及異常事件，迅速通報。", "遇緊急狀況保持冷靜，使用對講機。", "捷運系統全面禁菸。", "電扶梯兩側皆可站立。"];
             try {
-                // 抓取後端 API 的最新消息
                 const res = await fetch(`${WORKER_URL}/news?sys=${system}`);
                 const data = await res.json();
-                
                 let marqueeContent = "";
-
-                // 如果有抓到新聞資料 (TDX 格式是放在 Newses 欄位裡)
                 if (data.Newses && data.Newses.length > 0) {
-                    // 提取前 5 條新聞標題，加上【最新消息】前綴
-                    const newsList = data.Newses.slice(0, 5).map(n => `【最新消息】${n.Title}`);
-                    marqueeContent = newsList.join('　　') + '　　' + psas.join('　　');
-                } else {
-                    marqueeContent = psas.join('　　');
+                    marqueeContent = data.Newses.slice(0, 5).map(n => `【最新消息】${n.Title}`).join('　　') + '　　';
                 }
-
-                // 更新到畫面上
-                const marqueeEl = document.getElementById('ui-marquee');
-                marqueeEl.innerText = marqueeContent + '　　祝您旅途愉快！';
-                
+                document.getElementById('ui-marquee').innerText = marqueeContent + psas.join('　　') + '　　祝您旅途愉快！';
             } catch (e) {
-                console.error("News Fetch Error:", e);
-                document.getElementById('ui-marquee').innerText = psas.join('　　') + '　　祝您旅途愉快！';
+                document.getElementById('ui-marquee').innerText = psas.join('　　');
             }
         }
 
