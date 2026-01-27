@@ -1239,9 +1239,20 @@
 
         async function fetchTrainStops(trainNo) {
             if (stopsCache[trainNo]) return stopsCache[trainNo];
+            
+            // 🔥 新增：15秒超時保護
+            const abortController = new AbortController();
+            const timeoutId = setTimeout(() => {
+                abortController.abort();
+                console.warn(`⚠️ [${trainNo}] 請求超時，已取消`);
+            }, 15000);
+            
             try {
                 // 嘗試方案 1: 從 Worker 的 /api/schedule 取得
-                let r = await fetch(`${TRA_WORKER_URL}/api/schedule?trainNo=${trainNo}`);
+                let r = await fetch(`${TRA_WORKER_URL}/api/schedule?trainNo=${trainNo}`, {
+                    signal: abortController.signal
+                });
+                clearTimeout(timeoutId);
                 let d = await r.json();
                 console.log(`[${trainNo}] Worker /api/schedule 結果:`, d);
                 if(Array.isArray(d) && d.length && d[0].StopTimes) { 
@@ -1254,11 +1265,24 @@
                     stopsCache[trainNo] = d.StopTimes;
                     return d.StopTimes;
                 }
-            } catch(e) { console.warn(`[${trainNo}] Worker API 失敗:`, e); } 
+            } catch(e) { 
+                clearTimeout(timeoutId);
+                if (e.name === 'AbortError') {
+                    console.warn(`⚠️ [${trainNo}] Worker API 超時`);
+                } else {
+                    console.warn(`[${trainNo}] Worker API 失敗:`, e);
+                }
+            } 
             
             try {
                 // 嘗試方案 2: 直接從 TDX V3 取得
-                let r = await fetch(`https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/DailyTrainTimetable/Today?$filter=TrainInfo/TrainNo eq '${trainNo}'&$format=JSON`);
+                const abortController2 = new AbortController();
+                const timeoutId2 = setTimeout(() => abortController2.abort(), 15000);
+                
+                let r = await fetch(`https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/DailyTrainTimetable/Today?$filter=TrainInfo/TrainNo eq '${trainNo}'&$format=JSON`, {
+                    signal: abortController2.signal
+                });
+                clearTimeout(timeoutId2);
                 let d = await r.json();
                 console.log(`[${trainNo}] TDX V3 結果:`, d);
                 if(d?.value?.[0]?.StopTimes) {
@@ -1266,7 +1290,13 @@
                     stopsCache[trainNo] = d.value[0].StopTimes;
                     return d.value[0].StopTimes;
                 }
-            } catch(e) { console.warn(`[${trainNo}] TDX V3 API 失敗:`, e); }
+            } catch(e) { 
+                if (e.name === 'AbortError') {
+                    console.warn(`⚠️ [${trainNo}] TDX V3 API 超時`);
+                } else {
+                    console.warn(`[${trainNo}] TDX V3 API 失敗:`, e);
+                }
+            }
             
             console.error(`❌ [${trainNo}] 無法從任何來源取得停靠站資料`);
             return [];
@@ -1645,7 +1675,10 @@
                 if (stops && stops.length > 0) {
                     const passedIndex = stops.findIndex(s => s.StationName.Zh_tw === lastStationName);
                     if (passedIndex !== -1 && passedIndex < stops.length - 1) {
-                        nextStopName = translateStation(stops[passedIndex + 1].StationName.Zh_tw);
+                        // 🔥 移除重複站名（使用 Set 去重）
+                        const nextStops = stops.slice(passedIndex + 1);
+                        const uniqueNextStops = [...new Set(nextStops.map(s => translateStation(s.StationName.Zh_tw)))];
+                        nextStopName = uniqueNextStops[0] || '';
                     }
                 }
                 
@@ -1795,35 +1828,60 @@
                 });
             }
             
-            // 🔥 安裝到桌面提示（PWA）
+            // 🔥 安裝到桌面提示（PWA）- 優化版
             let deferredPrompt;
+            let installButton = null;
+            
             window.addEventListener('beforeinstallprompt', (e) => {
                 e.preventDefault();
                 deferredPrompt = e;
                 
-                // 顯示自訂安裝按鈕（可選）
-                console.log('📱 可安裝為 App - 在瀏覽器選單中選擇「安裝」');
+                // 🎯 優化：創建自定義安裝按鈕（而非自動 confirm）
+                console.log('📱 可安裝為 App');
                 
-                // 記錄可安裝事件
-                setTimeout(() => {
-                    if (deferredPrompt && !localStorage.getItem('pwa_install_dismissed')) {
-                        const shouldInstall = confirm('將「台鐵即時資訊」安裝到您的裝置，即使離線也能查看最後更新的資訊？');
-                        if (shouldInstall) {
+                // 創建浮動安裝按鈕
+                if (!localStorage.getItem('pwa_install_dismissed')) {
+                    installButton = document.createElement('div');
+                    installButton.id = 'pwa-install-banner';
+                    installButton.innerHTML = `
+                        <div style="position:fixed;top:20px;right:20px;background:#1976d2;color:#fff;padding:15px 25px;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);z-index:9999;cursor:pointer;font-size:1rem;display:flex;align-items:center;gap:10px;animation:slideIn 0.5s ease-out">
+                            <i class="fas fa-mobile-alt"></i>
+                            <span>安裝 App</span>
+                            <button style="background:#fff;color:#1976d2;border:none;padding:5px 10px;border-radius:4px;cursor:pointer;font-weight:bold;margin-left:10px">安裝</button>
+                            <button id="pwa-dismiss" style="background:transparent;color:#fff;border:none;padding:5px;cursor:pointer;font-size:1.2rem">×</button>
+                        </div>
+                        <style>
+                            @keyframes slideIn {
+                                from { transform: translateX(400px); opacity: 0; }
+                                to { transform: translateX(0); opacity: 1; }
+                            }
+                        </style>
+                    `;
+                    document.body.appendChild(installButton);
+                    
+                    // 安裝按鈕事件
+                    installButton.querySelector('button:not(#pwa-dismiss)').addEventListener('click', async () => {
+                        if (deferredPrompt) {
                             deferredPrompt.prompt();
-                            deferredPrompt.userChoice.then((choiceResult) => {
-                                if (choiceResult.outcome === 'accepted') {
-                                    console.log('✅ 使用者接受安裝');
-                                } else {
-                                    console.log('❌ 使用者拒絕安裝');
-                                    localStorage.setItem('pwa_install_dismissed', 'true');
-                                }
-                                deferredPrompt = null;
-                            });
-                        } else {
-                            localStorage.setItem('pwa_install_dismissed', 'true');
+                            const { outcome } = await deferredPrompt.userChoice;
+                            console.log(outcome === 'accepted' ? '✅ 使用者接受安裝' : '❌ 使用者拒絕安裝');
+                            deferredPrompt = null;
+                            installButton.remove();
                         }
-                    }
-                }, 5000); // 5 秒後提示
+                    });
+                    
+                    // 關閉按鈕
+                    installButton.querySelector('#pwa-dismiss').addEventListener('click', () => {
+                        localStorage.setItem('pwa_install_dismissed', 'true');
+                        installButton.remove();
+                    });
+                }
+            });
+            
+            // 安裝成功後移除按鈕
+            window.addEventListener('appinstalled', () => {
+                console.log('✅ PWA 安裝成功！');
+                if (installButton) installButton.remove();
             });
             
             console.log('✅ PIDS 系統初始化完成');
