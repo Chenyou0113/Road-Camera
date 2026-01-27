@@ -1104,8 +1104,14 @@
         body.dark-mode .sun-icon { background: #1e293b; }
 
         @keyframes sun-glow {
-            from { box-shadow: 0 0 10px #FDB813; transform: scale(1); }
-            to { box-shadow: 0 0 20px #FDB813; transform: scale(1.1); }
+            0%, 100% { 
+                box-shadow: 0 0 15px rgba(253, 184, 19, 0.6); 
+                transform: scale(1); 
+            }
+            50% { 
+                box-shadow: 0 0 25px rgba(253, 184, 19, 0.9); 
+                transform: scale(1.05); 
+            }
         }
 
         .horizon-line {
@@ -1202,11 +1208,15 @@
         #warningTickerContainer { opacity: 0; animation: fadeInUp 0.8s ease-out forwards; animation-delay: 1.0s; }
         #wangweiTickerContainer { opacity: 0; animation: fadeInUp 0.8s ease-out forwards; animation-delay: 1.2s; }
 
-        /* 右側超級卡片：進場 + 懸浮 */
+        /* 右側超級卡片：進場動畫 */
         .super-weather-card {
-            /* 結合進場動畫與懸浮動畫 */
-            animation: slideInRight 1s ease-out, float-card 6s ease-in-out infinite;
-            animation-delay: 0s, 1s; /* 懸浮等進場完再開始 */
+            animation: slideInRight 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .super-weather-card:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 25px 60px rgba(0,0,0,0.35);
         }
 
         /* 地點標籤加強 */
@@ -1926,7 +1936,33 @@
             el.style.animationPlayState = 'running';
         }
 
-        // 🔥 核心修正：警報更新邏輯 (直接讀取 Worker 的 feed_string)
+        // � Fetch 重試工具（靜默失敗）
+        async function fetchWithRetry(url, retries = 1, timeout = 3000) {
+            for (let i = 0; i <= retries; i++) {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), timeout);
+                    
+                    const response = await fetch(url, { 
+                        signal: controller.signal,
+                        cache: 'no-cache' 
+                    });
+                    clearTimeout(timeoutId);
+                    
+                    if (response.ok) return response;
+                    if (i === retries) throw new Error(`HTTP ${response.status}`);
+                } catch (error) {
+                    // 連線問題時不重試，快速失敗
+                    if (error.name === 'AbortError' || error.message.includes('Failed to fetch')) {
+                        throw error;
+                    }
+                    if (i === retries) throw error;
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            }
+        }
+
+        // �🔥 核心修正：警報更新邏輯 (直接讀取 Worker 的 feed_string)
         async function updateWeatherStatus() {
             const alertEl = document.getElementById('alertText');
             if (!alertEl) return;
@@ -1936,7 +1972,7 @@
             const alertUrl = `https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev/api/weather/alert?t=${timestamp}`;
             
             try {
-                const res = await fetch(alertUrl);
+                const res = await fetchWithRetry(alertUrl);
                 const data = await res.json();
                 
                 let displayText = "";
@@ -1971,8 +2007,9 @@
                 }
 
             } catch (error) {
-                console.error("警報載入錯誤:", error);
-                alertEl.textContent = "⚠️ 警報載入失敗 (連線異常)";
+                // 靜默處理：網路暫時不穩定時不顯示錯誤
+                alertEl.textContent = "⚠️ 網路連線中...";
+                alertEl.classList.add('no-warning-text');
             }
         }
 
@@ -1981,7 +2018,7 @@
             if (!textEl) return;
             const url = 'https://wang-weather.xiaoyouwu5-fd3.workers.dev/message';
             try {
-                const res = await fetch(url);
+                const res = await fetchWithRetry(url);
                 const data = await res.json();
                 let msg = data.text || data.message || data.value;
                 if (msg) {
@@ -1989,8 +2026,8 @@
                     setTimeout(() => startMarquee('wangweiContent'), 500);
                 }
             } catch (e) {
-                console.error("無法載入天氣叮嚀:", e);
-                textEl.textContent = "目前無特殊天氣叮嚀";
+                // 靜默處理：網路問題時顯示友好訊息
+                textEl.textContent = "🌤️ 天氣叮嚀載入中...";
             }
         }
 
@@ -2359,7 +2396,7 @@
         }
 
         // ==========================================
-        // 🖱️ 超級卡片 3D 傾斜特效
+        // 🖱️ 超級卡片 3D 傾斜特效（簡化版）
         // ==========================================
         document.addEventListener('DOMContentLoaded', () => {
             const card = document.querySelector('.super-weather-card');
@@ -2375,27 +2412,17 @@
                     const centerX = rect.width / 2;
                     const centerY = rect.height / 2;
                     
-                    // 限制旋轉角度 (例如最大 15度)
-                    const rotateX = ((y - centerY) / centerY) * -10; 
-                    const rotateY = ((x - centerX) / centerX) * 10;
+                    // 限制旋轉角度（減少到 5 度，更柔和）
+                    const rotateX = ((y - centerY) / centerY) * -5; 
+                    const rotateY = ((x - centerX) / centerX) * 5;
 
-                    // 套用 3D 變形，同時保留原本的懸浮效果(translateY會被覆蓋，所以要手動加一點)
-                    card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale(1.02)`;
-                    card.style.transition = 'transform 0.1s ease'; // 快速跟隨
-                    
-                    // 暫停 CSS 的懸浮動畫，避免衝突
-                    card.style.animationPlayState = 'paused';
+                    // 套用 3D 變形
+                    card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
                 });
 
                 // 滑鼠離開時復原
                 card.addEventListener('mouseleave', () => {
-                    card.style.transform = 'perspective(1000px) rotateX(0) rotateY(0) scale(1)';
-                    card.style.transition = 'transform 0.5s ease'; // 平滑復原
-                    
-                    // 恢復 CSS 懸浮動畫
-                    setTimeout(() => {
-                        card.style.animationPlayState = 'running';
-                    }, 500);
+                    card.style.transform = '';
                 });
             }
         });
@@ -2409,16 +2436,12 @@
             if(countEl) {
                 const WORKER_URL = 'https://site-counter.xiaoyouwu5-fd3.workers.dev/?page=home';
                 try {
-                    const response = await fetch(WORKER_URL);
-                    if (response.ok) {
-                        const data = await response.json();
-                        countEl.innerText = Number(data.visits).toLocaleString();
-                        sessionStorage.setItem('visited_home', 'true');
-                    } else {
-                        countEl.innerText = "統計中";
-                    }
+                    const response = await fetchWithRetry(WORKER_URL, 0, 2000); // 不重試，2秒超時
+                    const data = await response.json();
+                    countEl.innerText = Number(data.visits).toLocaleString();
+                    sessionStorage.setItem('visited_home', 'true');
                 } catch (e) {
-                    console.error(e);
+                    // 靜默處理：計數器失敗不影響使用
                     countEl.innerText = "---";
                 }
             }
