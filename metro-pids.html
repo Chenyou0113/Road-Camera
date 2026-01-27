@@ -97,89 +97,90 @@
         const WORKER_URL = 'https://metro-api-worker.xiaoyouwu5-fd3.workers.dev/api';
         const params = new URLSearchParams(window.location.search);
         const system = params.get('system') || 'TRTC';
-        const station = params.get('station') || 'BL12';
+        const station = params.get('station') || 'O9'; // 這裡預設改為 O9 測試
 
-        const systemColors = { 'TRTC': '#0070bd', 'KRTC': '#e3002c', 'TYMC': '#8246af', 'TMRT': '#b2d235', 'KLRT': '#008010', 'NTMC': '#0096cc' };
+        const systemColors = { 'TRTC': '#0070bd', 'KRTC': '#f58220', 'TYMC': '#8246af', 'TMRT': '#b2d235', 'KLRT': '#008010', 'NTMC': '#0096cc' };
 
-        // ✅ 倒數計時器資料儲存
         const countdownData = {
-            dir0: { remainingSecs: 0, lastUpdate: 0 },
-            dir1: { remainingSecs: 0, lastUpdate: 0 }
+            dir0: { remainingSecs: -1, lastUpdate: 0 },
+            dir1: { remainingSecs: -1, lastUpdate: 0 }
         };
 
         async function updateLiveBoard() {
             try {
+                console.log(`Fetching data for ${system} station ${station}...`);
                 const response = await fetch(`${WORKER_URL}/liveboard?sys=${system}`);
                 const data = await response.json();
                 
-                // ✨ 智慧過濾：如果 ID 完全匹配失敗（如 R13 vs BR13），嘗試用數字匹配
-                let stationData = data.filter(t => t.StationID === station || t.StationID.endsWith(station));
-                if (stationData.length === 0) {
-                    const numOnly = station.replace(/\D/g, '');
-                    stationData = data.filter(t => t.StationID.replace(/\D/g, '') === numOnly);
-                }
-                
-                stationData.sort((a, b) => a.EstimateTime - b.EstimateTime);
+                // 強化過濾邏輯：相容 O9 與 O09 格式
+                let stationData = data.filter(t => 
+                    t.StationID === station || 
+                    t.StationID === (station.length === 2 ? station[0]+'0'+station[1] : station) ||
+                    t.StationID.endsWith(station)
+                );
 
                 if (stationData.length > 0) {
+                    // 設定車站名稱與主題色
                     const first = stationData[0];
                     const color = first.LineColor || systemColors[system] || '#333';
-                    
                     document.documentElement.style.setProperty('--theme-color', color);
-                    document.getElementById('ui-st-id').innerText = first.StationID;
-                    document.getElementById('ui-st-id-footer').innerText = first.StationID;
-                    document.getElementById('ui-st-name').innerText = first.StationName?.Zh_tw || station;
+                    document.getElementById('ui-st-id').innerText = station;
+                    document.getElementById('ui-st-id-footer').innerText = station;
+                    document.getElementById('ui-st-name').innerText = first.StationName?.Zh_tw || "未知車站";
 
-                    // 分組邏輯
-                    const groups = {};
+                    // 核心修復：強制按方向分組 (Direction 0 與 1)
+                    const groups = { "0": [], "1": [] };
                     stationData.forEach(t => {
                         const d = String(t.Direction);
-                        if (!groups[d]) groups[d] = [];
-                        groups[d].push(t);
+                        if (groups[d]) groups[d].push(t);
                     });
-                    const keys = Object.keys(groups).sort();
-                    updateUI(0, groups[keys[0]] ? groups[keys[0]][0] : null);
-                    updateUI(1, groups[keys[1]] ? groups[keys[1]][0] : null);
+
+                    // 排序並更新 UI
+                    const trainDir0 = groups["0"].sort((a,b) => a.EstimateTime - b.EstimateTime)[0];
+                    const trainDir1 = groups["1"].sort((a,b) => a.EstimateTime - b.EstimateTime)[0];
+
+                    updateUI(0, trainDir0);
+                    updateUI(1, trainDir1);
                 } else {
-                    // 如果還是沒資料，顯示暫無班次
-                    document.getElementById('ui-st-name').innerText = "暫無班次資料";
+                    document.getElementById('ui-st-name').innerText = "暫無班次資訊";
                     updateUI(0, null); updateUI(1, null);
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) { 
+                console.error("Worker Fetch Error:", e);
+                document.getElementById('ui-st-name').innerText = "連線錯誤";
+            }
         }
 
         function updateUI(idx, item) {
             const prefix = `dir${idx}`;
             if (!item) {
-                document.getElementById(`${prefix}-dest`).innerText = "暫無服務";
+                document.getElementById(`${prefix}-dest`).innerText = "終點站/無服務";
                 document.getElementById(`${prefix}-en`).innerText = "No Service";
                 document.getElementById(`${prefix}-time`).innerText = "-- : --";
                 document.getElementById(`${prefix}-time`).className = "time-box";
-                countdownData[prefix].remainingSecs = 0;
+                countdownData[prefix].remainingSecs = -1;
                 return;
             }
+
             document.getElementById(`${prefix}-dest`).innerText = item.DestinationStationName?.Zh_tw || "---";
             document.getElementById(`${prefix}-en`).innerText = item.DestinationStationName?.En || "---";
-            document.getElementById(`ui-line-tag-${idx+1}`).innerText = item.LineID || "--";
+            document.getElementById(`ui-line-tag-${idx+1}`).innerText = item.LineID || (system === 'KRTC' ? 'O' : '--');
             
-            // ✅ 儲存剩餘秒數，用於倒數計時
-            const secs = item.EstimateTime;
-            countdownData[prefix].remainingSecs = secs;
-            countdownData[prefix].lastUpdate = Date.now();
-            
-            // 立即更新顯示
+            countdownData[prefix].remainingSecs = item.EstimateTime;
             updateTimeDisplay(idx);
         }
 
-        // ✅ 更新時間顯示（分:秒格式）
         function updateTimeDisplay(idx) {
             const prefix = `dir${idx}`;
             const timeBox = document.getElementById(`${prefix}-time`);
-            const secs = Math.max(0, countdownData[prefix].remainingSecs);
+            const secs = countdownData[prefix].remainingSecs;
             
-            if (secs === 0) {
-                timeBox.innerText = "-- : --";
-                timeBox.className = "time-box";
+            if (secs === -1) return;
+
+            // 修復：處理進站中 (30秒內都算進站)
+            if (secs <= 30) {
+                timeBox.innerText = "進站中";
+                timeBox.className = "time-box arriving";
                 return;
             }
             
@@ -187,17 +188,14 @@
             const remainderSecs = secs % 60;
             timeBox.innerText = `${mins} : ${String(remainderSecs).padStart(2, '0')}`;
             
-            // ✅ 動態樣式：少於45秒紅色閃爍，少於90秒橙色
-            if (secs <= 45) {
-                timeBox.className = "time-box arriving";
-            } else if (secs <= 90) {
+            if (secs <= 90) {
                 timeBox.className = "time-box approaching";
             } else {
                 timeBox.className = "time-box";
             }
         }
 
-        // ✅ 倒數計時器（每秒更新）
+        // 倒數計時
         setInterval(() => {
             ['dir0', 'dir1'].forEach((prefix, idx) => {
                 if (countdownData[prefix].remainingSecs > 0) {
@@ -207,18 +205,7 @@
             });
         }, 1000);
 
-        async function updateMarquee() {
-            const psas = ["發現性騷擾及異常事件，迅速通報。", "遇緊急狀況保持冷靜，使用對講機。", "提高警覺，遇異常撥打110。", "捷運系統全面禁菸。", "電扶梯兩側皆可站立。"];
-            try {
-                const res = await fetch(`${WORKER_URL}/liveboard?sys=${system}&type=Alert`);
-                const alerts = await res.json();
-                let msg = Array.isArray(alerts) ? alerts.map(a => `【重要通報】${a.Description || a.Title || ""}`).filter(s => s.length > 8).join('　') : "";
-                document.getElementById('ui-marquee').innerText = (msg ? msg + '　' : '') + psas.join('　') + '　祝您旅途愉快！';
-            } catch (e) { document.getElementById('ui-marquee').innerText = psas.join('　'); }
-        }
-
-        setInterval(updateLiveBoard, 15000);
-        setInterval(updateMarquee, 60000);
+        // 時鐘與跑馬燈
         setInterval(() => { 
             const now = new Date();
             const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -226,9 +213,18 @@
             const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
             document.getElementById('clock').innerText = `${month}/${day} ${time}`;
         }, 1000);
-        
-        document.getElementById('video-iframe').src = "https://www.youtube.com/embed/S_8q0sS3-vM?autoplay=1&mute=1&loop=1&playlist=S_8q0sS3-vM&controls=0";
-        updateLiveBoard(); updateMarquee();
+
+        async function updateMarquee() {
+            const psas = ["發現性騷擾及異常事件，迅速通報。", "遇緊急狀況保持冷靜，使用對講機。", "提高警覺，遇異常撥打110。", "捷運系統全面禁菸。"];
+            document.getElementById('ui-marquee').innerText = psas.join('　') + '　祝您旅途愉快！';
+        }
+
+        // 影片更換一個確定可用的 (目前的可能是私有影片)
+        document.getElementById('video-iframe').src = "https://www.youtube.com/embed/5_mI_V_I90s?autoplay=1&mute=1&loop=1&playlist=5_mI_V_I90s&controls=0";
+
+        updateLiveBoard(); 
+        updateMarquee();
+        setInterval(updateLiveBoard, 15000);
     </script>
 </body>
 </html>
