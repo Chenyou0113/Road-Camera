@@ -162,19 +162,23 @@
 
         function updateUI(idx, item) {
             const prefix = `dir${idx}`;
+            const timeBox = document.getElementById(`${prefix}-time`);
+            
             if (!item) {
                 document.getElementById(`${prefix}-dest`).innerText = "終點站/無服務";
                 document.getElementById(`${prefix}-en`).innerText = "No Service";
-                document.getElementById(`${prefix}-time`).innerText = "-- : --";
-                document.getElementById(`${prefix}-time`).className = "time-box";
+                timeBox.innerText = "-- : --";
+                timeBox.className = "time-box";
                 countdownData[prefix].remainingSecs = -1;
                 return;
             }
 
+            // 抓取目的地 (府中這筆資料會顯示 "南港展覽館")
             document.getElementById(`${prefix}-dest`).innerText = item.DestinationStationName?.Zh_tw || "---";
             document.getElementById(`${prefix}-en`).innerText = item.DestinationStationName?.En || "---";
-            document.getElementById(`ui-line-tag-${idx+1}`).innerText = item.LineID || (system === 'KRTC' ? 'O' : '--');
+            document.getElementById(`ui-line-tag-${idx+1}`).innerText = item.LineID || "--";
             
+            // 儲存秒數
             countdownData[prefix].remainingSecs = item.EstimateTime;
             updateTimeDisplay(idx);
         }
@@ -186,29 +190,35 @@
             
             if (secs === -1) return;
 
-            // 修復：處理進站中 (30秒內都算進站)
+            // ✨ 核心修正：只要秒數小於等於 30 (包含 0)，就顯示「進站中」
             if (secs <= 30) {
                 timeBox.innerText = "進站中";
-                timeBox.className = "time-box arriving";
+                timeBox.className = "time-box arriving"; // 會觸發紅色閃爍動畫
                 return;
             }
             
             const mins = Math.floor(secs / 60);
             const remainderSecs = secs % 60;
+            
+            // 如果是北捷，通常直接顯示分鐘即可，如果是要顯示分:秒也可以
             timeBox.innerText = `${mins} : ${String(remainderSecs).padStart(2, '0')}`;
             
             if (secs <= 90) {
-                timeBox.className = "time-box approaching";
+                timeBox.className = "time-box approaching"; // 橙色
             } else {
-                timeBox.className = "time-box";
+                timeBox.className = "time-box"; // 藍色/主題色
             }
         }
 
-        // 倒數計時
+        // 倒數計時（允許從任何正數倒數到 0）
         setInterval(() => {
             ['dir0', 'dir1'].forEach((prefix, idx) => {
-                if (countdownData[prefix].remainingSecs > 0) {
+                const secs = countdownData[prefix].remainingSecs;
+                if (secs > 0) {
                     countdownData[prefix].remainingSecs--;
+                    updateTimeDisplay(idx);
+                } else if (secs === 0) {
+                    // 確保進站中狀態持續顯示
                     updateTimeDisplay(idx);
                 }
             });
@@ -224,8 +234,39 @@
         }, 1000);
 
         async function updateMarquee() {
-            const psas = ["發現性騷擾及異常事件，迅速通報。", "遇緊急狀況保持冷靜，使用對講機。", "提高警覺，遇異常撥打110。", "捷運系統全面禁菸。"];
-            document.getElementById('ui-marquee').innerText = psas.join('　') + '　祝您旅途愉快！';
+            // 預設的宣導標語 (當沒有新聞時顯示)
+            const psas = [
+                "發現性騷擾及異常事件，迅速通報。",
+                "遇緊急狀況保持冷靜，使用對講機。",
+                "提高警覺，遇異常撥打110。",
+                "捷運系統全面禁菸。",
+                "電扶梯兩側皆可站立。"
+            ];
+
+            try {
+                // 抓取後端 API 的最新消息
+                const res = await fetch(`${WORKER_URL}/news?sys=${system}`);
+                const data = await res.json();
+                
+                let marqueeContent = "";
+
+                // 如果有抓到新聞資料 (TDX 格式是放在 Newses 欄位裡)
+                if (data.Newses && data.Newses.length > 0) {
+                    // 提取前 5 條新聞標題，加上【最新消息】前綴
+                    const newsList = data.Newses.slice(0, 5).map(n => `【最新消息】${n.Title}`);
+                    marqueeContent = newsList.join('　　') + '　　' + psas.join('　　');
+                } else {
+                    marqueeContent = psas.join('　　');
+                }
+
+                // 更新到畫面上
+                const marqueeEl = document.getElementById('ui-marquee');
+                marqueeEl.innerText = marqueeContent + '　　祝您旅途愉快！';
+                
+            } catch (e) {
+                console.error("News Fetch Error:", e);
+                document.getElementById('ui-marquee').innerText = psas.join('　　') + '　　祝您旅途愉快！';
+            }
         }
 
         // 影片更換一個確定可用的 (目前的可能是私有影片)
@@ -234,6 +275,7 @@
         updateLiveBoard(); 
         updateMarquee();
         setInterval(updateLiveBoard, 15000);
+        setInterval(updateMarquee, 60000); // 每分鐘更新跑馬燈新聞
     </script>
 </body>
 </html>
