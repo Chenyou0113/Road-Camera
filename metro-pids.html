@@ -138,30 +138,28 @@
         const METRO_API = 'https://metro-api-worker.xiaoyouwu5-fd3.workers.dev/api';
         const WEATHER_API = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev';
 
-        // 從網址讀取參數 (例如 ?system=TYMC&station=A8)
         const params = new URLSearchParams(window.location.search);
-        const system = params.get('system') || 'TYMC';
-        const station = params.get('station') || 'A8';
+        const system = params.get('sys') || params.get('system') || 'TYMC';
+        const station = params.get('sid') || params.get('station') || 'A8';
 
-        const sysColors = { 'TRTC': '#0070bd', 'KRTC': '#f58220', 'TYMC': '#8246af', 'TMRT': '#b2d235', 'NTMC': '#0096cc' };
         let countdownSecs = { dir0: -1, dir1: -1 };
 
+        // 與 Worker 內部的 METRO_CONFIG 顏色保持同步
+        const sysColors = { 
+            'TRTC': '#0070bd', 'KRTC': '#f58220', 'TYMC': '#8246af', 
+            'TMRT': '#b2d235', 'NTMC': '#0096cc', 'KLRT': '#008010' 
+        };
+
         function init() {
-            // 1. 設定主題色
             document.documentElement.style.setProperty('--theme-color', sysColors[system] || '#333');
-            
-            // 2. 初始化畫面文字為「讀取中」
             document.getElementById('ui-st-id').innerText = station;
-            document.getElementById('ui-st-name').innerText = "讀取中...";
-            document.getElementById('dir0-dest').innerText = "載入中...";
-            document.getElementById('dir0-en').innerText = "Loading...";
-            document.getElementById('dir1-dest').innerText = "載入中...";
-            document.getElementById('dir1-en').innerText = "Loading...";
+            document.getElementById('ui-st-name').innerText = "載入中...";
 
             updateData();
             updateWeather();
             updateMarquee();
-            setInterval(updateData, 20000);
+            
+            setInterval(updateData, 15000); // 配合 Worker 緩存時間
             setInterval(updateWeather, 600000);
             setInterval(updateMarquee, 60000);
             
@@ -173,9 +171,9 @@
                 document.getElementById('clock').innerText = `${d} ${t}`;
             }, 1000);
 
-            // 倒數
+            // 倒數計時器
             setInterval(() => {
-                [0,1].forEach(i => {
+                [0, 1].forEach(i => {
                     if(countdownSecs[`dir${i}`] > 0) {
                         countdownSecs[`dir${i}`]--;
                         renderTime(i);
@@ -187,35 +185,31 @@
         async function updateData() {
             try {
                 const res = await fetch(`${METRO_API}/liveboard?sys=${system}&sid=${station}`);
-                const data = await res.json();
-                
-                // 1. 過濾出該站資料
-                const sData = data.filter(t => t.StationID === station);
+                const sData = await res.json();
                 
                 if(sData && sData.length > 0) {
                     // 更新站名
-                    if (sData[0].StationName) {
-                        document.getElementById('ui-st-name').innerText = sData[0].StationName.Zh_tw;
-                    }
+                    document.getElementById('ui-st-name').innerText = sData[0].StationName.Zh_tw;
 
-                    // 2. 依照「方向」分組
-                    // 高雄捷運通常 Direction 1 是往北(岡山)，2 是往南(小港)
-                    // 找出所有不同的方向
-                    const directions = [...new Set(sData.map(item => item.Direction))].sort();
+                    // --- 核心修正：強制區分方向 ---
+                    // 找出所有不同的方向代碼 (例如 0 和 1)
+                    const dirList = [...new Set(sData.map(item => item.Direction))];
                     
-                    // 分配第一月台與第二月台
-                    const d0_data = sData.find(t => t.Direction == directions[0]);
-                    const d1_data = sData.find(t => t.Direction == directions[1]);
+                    // 月台 1：抓第一個方向的第一班車
+                    const d0_data = sData.find(t => t.Direction == dirList[0]);
+                    
+                    // 月台 2：抓「跟月台 1 不同方向」的第一班車
+                    // 如果只有單向資料，則第二月台顯示暫無資料
+                    const d1_data = sData.find(t => t.Direction != dirList[0]);
 
                     updateUI(0, d0_data);
                     updateUI(1, d1_data);
                 } else {
-                    // 完全沒資料時
-                    updateUI(0, null);
-                    updateUI(1, null);
+                    setOfflineUI(0);
+                    setOfflineUI(1);
                 }
             } catch(e) { 
-                console.error("API 抓取失敗:", e);
+                console.error("資料更新出錯:", e);
             }
         }
 
@@ -226,10 +220,7 @@
             const lineBadge = document.getElementById(`ui-line-tag-${idx+1}`);
 
             if(!item) {
-                destZh.innerText = "暫無列車資料";
-                destEn.innerText = "No Train Service";
-                timeBox.innerText = "-- : --";
-                timeBox.className = "time-box";
+                setOfflineUI(idx);
                 return;
             }
 
@@ -237,30 +228,36 @@
             destZh.innerText = item.DestinationStationName.Zh_tw;
             destEn.innerText = item.DestinationStationName.En;
             
-            // 更新線路顏色與文字 (高雄 R:紅線, O:橘線 / 桃園 A:機場線)
-            if (system === 'KRTC') {
-                lineBadge.innerText = station.startsWith('R') ? 'R' : 'O';
-                lineBadge.style.background = station.startsWith('R') ? '#E3002C' : '#F28500';
-            } else {
-                lineBadge.innerText = item.LineID || 'A';
+            // 更新線路標誌 (LineID 或由 Worker 提供的 LineColor)
+            lineBadge.innerText = item.LineID || (system === 'TYMC' ? 'A' : '');
+            if (item.LineColor) {
+                lineBadge.style.background = item.LineColor;
             }
-            
-            // 更新時間
+
+            // 存入倒數秒數 (Worker 已經幫我們統一成「秒」了)
             countdownSecs[`dir${idx}`] = item.EstimateTime;
             renderTime(idx);
+        }
+
+        function setOfflineUI(idx) {
+            document.getElementById(`dir${idx}-dest`).innerText = "暫無列車";
+            document.getElementById(`dir${idx}-en`).innerText = "No Service";
+            document.getElementById(`dir${idx}-time`).innerText = "-- : --";
+            document.getElementById(`dir${idx}-time`).className = "time-box";
         }
 
         function renderTime(idx) {
             const el = document.getElementById(`dir${idx}-time`);
             const s = countdownSecs[`dir${idx}`];
-            if (s < 0) return;
+            
+            if (s === undefined || s < 0) return;
 
-            if(s <= 30) {
+            if(s <= 40) { // 40秒內顯示進站中
                 el.innerText = "進站中";
                 el.className = "time-box arriving";
-            } else if (s <= 120) {
+            } else if (s <= 120) { // 2分鐘內顯示橘色
                 const m = Math.floor(s/60);
-                el.innerText = "將進站";
+                el.innerText = `${m} : ${String(s%60).padStart(2,'0')}`;
                 el.className = "time-box approaching";
             } else {
                 const m = Math.floor(s/60);
