@@ -184,35 +184,46 @@
 
         async function updateData() {
             try {
-                // 確保發送正確的 sys 和 sid（大寫標準化）
-                const res = await fetch(`${METRO_API}/liveboard?sys=${system}&sid=${station.toUpperCase()}`);
+                const res = await fetch(`${METRO_API}/liveboard?sys=${system}&sid=${station}`);
                 const sData = await res.json();
                 
                 if(sData && sData.length > 0) {
-                    // 1. 設定正確的站名 (這會修正 O15 顯示錯誤站名的問題)
-                    // 我們直接找 StationID 完全符合的那一筆
-                    const correctStation = sData.find(t => t.StationID.toUpperCase() === station.toUpperCase());
-                    if (correctStation) {
-                        document.getElementById('ui-st-name').innerText = correctStation.StationName.Zh_tw;
+                    // 1. 更新站名
+                    document.getElementById('ui-st-name').innerText = sData[0].StationName.Zh_tw;
+
+                    // 2. 定義方向邏輯 (針對全台捷運通用優化)
+                    // 通常 0 或 1 代表上行，另一者代表下行
+                    let upTrain = null;
+                    let downTrain = null;
+
+                    // 桃園捷運 (TYMC) 特規：0 是往台北，1 是往中壢/機場
+                    if (system === 'TYMC') {
+                        upTrain = sData.find(t => String(t.Direction) === "0");
+                        downTrain = sData.find(t => String(t.Direction) === "1");
+                    } 
+                    // 台北捷運 (TRTC) 特規：通常 1 是往南/西，0 是往北/東
+                    else if (system === 'TRTC') {
+                        upTrain = sData.find(t => String(t.Direction) === "1");
+                        downTrain = sData.find(t => String(t.Direction) === "0");
+                    }
+                    // 其他系統 (高捷、中捷) 則使用自動排除法
+                    else {
+                        const dirs = [...new Set(sData.map(item => String(item.Direction)))].sort();
+                        upTrain = sData.find(t => String(t.Direction) === dirs[0]);
+                        downTrain = sData.find(t => String(t.Direction) === dirs[1]);
                     }
 
-                    // 2. 處理方向 (區分往南、往北)
-                    // 北捷的 Direction 通常是 1(往南/下行) 與 0(往北/上行)
-                    const directions = [...new Set(sData.map(item => item.Direction))].sort();
-                    
-                    // 月台 1：抓第一種方向中最快的一班車
-                    const d0_data = sData.find(t => t.Direction == directions[0]);
-                    // 月台 2：抓「不同於月台 1 方向」的最快一班車
-                    const d1_data = sData.find(t => t.Direction != directions[0]);
+                    // 3. 更新 UI
+                    // 月台 1 固定放 upTrain，月台 2 固定放 downTrain
+                    updateUI(0, upTrain);
+                    updateUI(1, downTrain);
 
-                    updateUI(0, d0_data);
-                    updateUI(1, d1_data);
                 } else {
                     setOfflineUI(0);
                     setOfflineUI(1);
                 }
             } catch(e) { 
-                console.error("更新失敗:", e);
+                console.error("更新資料時發生錯誤:", e);
             }
         }
 
