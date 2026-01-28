@@ -184,31 +184,30 @@
 
         async function updateData() {
             try {
-                // 使用大寫 station 代碼，確保精準命中
                 const res = await fetch(`${METRO_API}/liveboard?sys=${system}&sid=${station.toUpperCase()}`);
                 const sData = await res.json();
                 
                 if(sData && sData.length > 0) {
-                    // 1. 站名顯示 (忠孝復興)
+                    // 1. 直接載入 API 給的站名
                     document.getElementById('ui-st-name').innerText = sData[0].StationName.Zh_tw;
 
-                    // 2. 自動方向分組
-                    // 找出所有目的地 ID (如往南港 BL23, 往亞東醫院 BL05)
-                    const dirList = [...new Set(sData.map(item => String(item.Direction)))];
+                    // 2. 獲取所有獨特的目的地
+                    // 例如：["頂埔", "南港展覽館"]
+                    const dests = [...new Set(sData.map(item => item.DestinationStationName.Zh_tw))];
                     
-                    // 第一月台：第一種目的地
-                    const d0_data = sData.find(t => String(t.Direction) === dirList[0]);
+                    // 月台 1：顯示去往第一個目的地的最快列車
+                    const train1 = sData.find(t => t.DestinationStationName.Zh_tw === dests[0]);
                     
-                    // 第二月台：第二種目的地 (只要跟第一種不一樣就放進去)
-                    const d1_data = sData.find(t => String(t.Direction) !== dirList[0]);
+                    // 月台 2：顯示去往「不同目的地」的最快列車
+                    const train2 = sData.find(t => t.DestinationStationName.Zh_tw !== dests[0]);
 
-                    updateUI(0, d0_data);
-                    updateUI(1, d1_data);
+                    updateUI(0, train1); 
+                    updateUI(1, train2);
                 } else {
                     setOfflineUI(0);
                     setOfflineUI(1);
                 }
-            } catch(e) { console.error("Update Error:", e); }
+            } catch(e) { console.error(e); }
         }
 
         function updateUI(idx, item) {
@@ -218,21 +217,18 @@
             const lineBadge = document.getElementById(`ui-line-tag-${idx+1}`);
 
             if(!item) {
-                setOfflineUI(idx);
+                destZh.innerText = "暫無列車";
+                destEn.innerText = "No Service";
+                timeBox.innerText = "-- : --";
+                timeBox.className = "time-box";
                 return;
             }
 
-            // 更新目的地
-            destZh.innerText = item.DestinationStationName?.Zh_tw || "未知方向";
-            destEn.innerText = item.DestinationStationName?.En || "";
+            destZh.innerText = item.DestinationStationName.Zh_tw;
+            destEn.innerText = item.DestinationStationName.En;
+            lineBadge.innerText = item.LineID || system.substring(0,1);
+            lineBadge.style.background = item.LineColor || "#808080";
             
-            // 更新標籤文字與顏色 (優先使用 Worker 給的顏色)
-            lineBadge.innerText = item.LineID || system.substring(0, 1);
-            if (item.LineColor) {
-                lineBadge.style.background = item.LineColor;
-            }
-
-            // 設定時間
             countdownSecs[`dir${idx}`] = item.EstimateTime;
             renderTime(idx);
         }
