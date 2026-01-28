@@ -242,7 +242,7 @@
 
         const Core = {
             // 站名修正對照表
-            stationNameOverrides: { 'RK1': '岡山車站', 'R3': '小港', 'O1': '哈瑪星', 'OT1': '大寮', 'R24': '南岡山', '103a': '北屯總站' },
+            stationNameOverrides: { 'RK1': '岡山車站', 'R3': '小港', 'O1': '哈瑪星', 'OT1': '大寮', 'R24': '岡山高醫', '103a': '北屯總站' },
             
             // 🚀 全局線路名稱映射表 (對接所有系統)
             globalLineMap: {
@@ -351,14 +351,17 @@
 
             async fetchData() {
                 try {
-                    const endpoint = AppState.mode === 'live' ? `/liveboard?sys=${AppState.sys}` : `/schedule?sys=${AppState.sys}&station=${AppState.sid}`;
+                    // ★★★ 修正重點：加上 &sid=${AppState.sid} ★★★
+                    const endpoint = AppState.mode === 'live' 
+                        ? `/liveboard?sys=${AppState.sys}&sid=${AppState.sid}` 
+                        : `/schedule?sys=${AppState.sys}&sid=${AppState.sid}`;
+                    
                     const res = await fetch(`${WORKER_URL}${endpoint}`);
                     const data = await res.json();
 
                     if (AppState.mode === 'live') {
                         document.getElementById('stat-trains').textContent = data.length || 0;
-                        const filtered = data.filter(t => String(t.StationID).toUpperCase().includes(AppState.sid.toUpperCase()));
-                        this.renderLive(filtered);
+                        this.renderLive(data);
                     } else {
                         this.renderSchedule(data);
                     }
@@ -381,28 +384,20 @@
 
             renderLive(trains) {
                 const grid = document.getElementById('board');
+                grid.className = "board-grid"; // 切回網格
                 if (!trains || trains.length === 0) {
                     grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:100px; color:var(--text-sub);">目前無即時班次資訊</div>`;
                     return;
                 }
 
                 let groups = {};
-                if (AppState.sid === 'O12' && AppState.sys === 'TRTC') {
-                    groups = {
-                        "往 南勢角": trains.filter(t => t.DestinationStationID === 'O01'),
-                        "往 迴龍": trains.filter(t => t.DestinationStationID === 'O54'),
-                        "往 蘆洲": trains.filter(t => t.DestinationStationID === 'O21')
-                    };
-                } else {
-                    trains.forEach(t => {
-                        const key = `往 ${t.DestinationStationName?.Zh_tw || '終點站'}`;
-                        if (!groups[key]) groups[key] = [];
-                        groups[key].push(t);
-                    });
-                }
+                trains.forEach(t => {
+                    const key = `往 ${t.DestinationStationName?.Zh_tw || '終點站'}`;
+                    if (!groups[key]) groups[key] = [];
+                    groups[key].push(t);
+                });
 
                 grid.innerHTML = Object.entries(groups).map(([groupTitle, list]) => {
-                    if (list.length === 0) return '';
                     const sorted = list.sort((a, b) => a.EstimateTime - b.EstimateTime);
                     const first = sorted[0];
 
@@ -412,21 +407,26 @@
                                 <i class="fas fa-train"></i>
                                 <span>${groupTitle}</span>
                             </div>
-                            ${sorted.slice(0, 2).map((t, idx) => {
+                            ${sorted.slice(0, 3).map(t => {
                                 const seconds = parseInt(t.EstimateTime);
-                                const isArriving = seconds <= 40;
-                                const mins = Math.max(0, Math.floor(seconds / 60));
+                                let timeDisplay = '';
+                                if (seconds <= 0 || t.EstimateTime === 0) {
+                                    timeDisplay = '<span class="arriving-badge">進站中</span>';
+                                } else if (seconds <= 60) {
+                                    timeDisplay = '<span class="arriving-badge" style="background:#f58220">將到站</span>';
+                                } else {
+                                    const mins = Math.ceil(seconds / 60);
+                                    timeDisplay = `<span class="time-number">${mins}</span><span class="time-unit">分</span>`;
+                                }
+
                                 return `
                                     <div class="arrival-row">
                                         <div>
                                             <div class="destination">${t.DestinationStationName?.Zh_tw || '終點站'}</div>
-                                            <div class="meta">${t.LineID} 線 · ${this.stationNameOverrides[AppState.sid] || t.StationName?.Zh_tw || ''}站</div>
+                                            <div class="meta">${t.LineID || ''} 線 · ${t.StationName?.Zh_tw || ''}</div>
                                         </div>
-                                        <div class="arrival-time">
-                                            ${isArriving ? '<span class="arriving-badge">進站中</span>' : `<span class="time-number">${mins}</span><span class="time-unit">分</span>`}
-                                        </div>
+                                        <div class="arrival-time">${timeDisplay}</div>
                                     </div>
-                                    ${idx === 0 ? this.generateCongestionHTML(t.Congestion) : ''}
                                 `;
                             }).join('')}
                         </div>
@@ -436,15 +436,56 @@
 
             renderSchedule(data) {
                 const grid = document.getElementById('board');
-                const dayType = ['Sunday','Monday','Monday','Monday','Monday','Monday','Saturday'][new Date().getDay()];
-                grid.innerHTML = (data.Timetables || []).filter(t => t.ServiceDays[dayType]).map(t => `
-                    <div class="card">
-                        <div class="card-header" style="background:#475569">往 ${t.DestinationStationName.Zh_tw}</div>
-                        <div class="timetable-list">${t.Timetables.map(time => `<div class="time-chip">${time.ArrivalTime}</div>`).join('')}</div>
-                    </div>`).join('') || '<div style="grid-column:1/-1; text-align:center; padding:50px;">暫無時刻表</div>';
+                grid.className = "schedule-container";
+                
+                const now = new Date();
+                const currentHHmm = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+                const dayType = ['Sunday','Monday','Monday','Monday','Monday','Monday','Saturday'][now.getDay()];
+
+                if (!data.Timetables || data.Timetables.length === 0) {
+                    grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:100px; color:var(--text-sub);">暫無時刻表資料</div>`;
+                    return;
+                }
+
+                // 取得當前站點的顏色
+                const currentStation = AppState.stations.find(s => s.id === AppState.sid);
+                const headerColor = currentStation?.line?.color || '#475569';
+
+                grid.innerHTML = data.Timetables.map(route => {
+                    const futureTrips = route.Timetables
+                        .filter(t => t.ServiceDays[dayType] && t.ArrivalTime >= currentHHmm);
+
+                    if (futureTrips.length === 0) return '';
+
+                    const hoursGroup = {};
+                    futureTrips.forEach((trip, idx) => {
+                        const [hh, mm] = trip.ArrivalTime.split(':');
+                        if (!hoursGroup[hh]) hoursGroup[hh] = [];
+                        hoursGroup[hh].push({ mm: mm, isNext: idx === 0 });
+                    });
+
+                    const rowsHtml = Object.entries(hoursGroup).map(([hour, minutes]) => `
+                        <div class="hour-row">
+                            <div class="hour-label">${hour}</div>
+                            <div class="minute-list">
+                                ${minutes.map(m => `<div class="min-chip ${m.isNext ? 'next-up' : ''}">${m.mm}</div>`).join('')}
+                            </div>
+                        </div>
+                    `).join('');
+
+                    return `
+                        <div class="timetable-card">
+                            <div class="timetable-header" style="background: ${headerColor}">
+                                <span><i class="fas fa-clock"></i> 往 ${route.DestinationStationName.Zh_tw}</span>
+                                <small style="font-size:0.8rem; opacity:0.8;">${dayType === 'Monday' ? '平日' : '例假日'}</small>
+                            </div>
+                            <div class="timetable-body">${rowsHtml}</div>
+                        </div>
+                    `;
+                }).join('');
             },
 
-            openPIDS() { window.open(`metro-pids.html?system=${AppState.sys}&station=${AppState.sid}`, '_blank'); }
+            openPIDS() { window.open(`metro-pids.html?sys=${AppState.sys}&sid=${AppState.sid}`, '_blank'); }
         };
 
         document.addEventListener('DOMContentLoaded', () => Core.selectSystem('TRTC'));
