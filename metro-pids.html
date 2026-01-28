@@ -214,29 +214,78 @@
             }, 1000);
         }
 
+        // 🌙 判斷是否顯示「末班車已駛離」
+        function getOfflineStatus() {
+            const h = new Date().getHours();
+            // 設定判定時段：深夜 23:00 到 凌晨 06:00 視為營運結束
+            // 高雄輕軌通常 22:00-23:00 收班，其他捷運約 00:00-01:00
+            const isLateNight = (h >= 23 || h < 6);
+            
+            return isLateNight 
+                ? { zh: "末班車已駛離", en: "Last Train Departed" }
+                : { zh: "暫無列車", en: "No Service" };
+        }
+
         async function updateData() {
             try {
                 const res = await fetch(`${METRO_API}/liveboard?sys=${system}&sid=${station.toUpperCase()}`);
                 const sData = await res.json();
                 
-                if(sData && sData.length > 0) {
-                    // 2. 獲取所有獨特的目的地
-                    // 例如：["頂埔", "南港展覽館"]
-                    const dests = [...new Set(sData.map(item => item.DestinationStationName.Zh_tw))];
-                    
-                    // 月台 1：顯示去往第一個目的地的最快列車
-                    const train1 = sData.find(t => t.DestinationStationName.Zh_tw === dests[0]);
-                    
-                    // 月台 2：顯示去往「不同目的地」的最快列車
-                    const train2 = sData.find(t => t.DestinationStationName.Zh_tw !== dests[0]);
-
-                    updateUI(0, train1); 
-                    updateUI(1, train2);
-                } else {
+                if (!sData || sData.length === 0) {
                     setOfflineUI(0);
                     setOfflineUI(1);
+                    return;
                 }
-            } catch(e) { console.error(e); }
+
+                // === 🚦 智慧月台分流邏輯 ===
+                
+                if (system === 'TYMC') {
+                    // 【桃園捷運專用邏輯】
+                    // 月台 1 (左邊)：固定顯示往「中壢/機場/環北/老街溪」(非台北車站)
+                    // 月台 2 (右邊)：固定顯示往「台北車站」
+                    
+                    const toTaipei = sData.find(t => t.DestinationStationName.Zh_tw.includes('台北車站'));
+                    const toSouth = sData.find(t => !t.DestinationStationName.Zh_tw.includes('台北車站'));
+
+                    // 如果是在台北車站(A1)，往台北的車會是 null (正常，因為是終點)
+                    // 如果是在老街溪(A22)，往南的車會是 null
+                    updateUI(0, toSouth);   // 第一月台：往南 (Platform 1)
+                    updateUI(1, toTaipei);  // 第二月台：往北 (Platform 2)
+
+                } else if (system === 'KLRT') {
+                    // 【高雄輕軌專用邏輯】
+                    // 因為是環狀線，且 Worker 已經幫忙加上 (順行)/(逆行)
+                    // 所以直接依序顯示最近的兩班車即可，不用刻意分方向
+                    updateUI(0, sData[0]);
+                    updateUI(1, sData.length > 1 ? sData[1] : null);
+
+                } else {
+                    // 【台北捷運 / 高雄捷運 / 台中捷運 通用邏輯】
+                    // 嘗試找出「兩個不同目的地」的車來顯示
+                    // 例如：R線同時有「往象山」和「往淡水」，分別顯示
+                    
+                    const dests = [...new Set(sData.map(item => item.DestinationStationName.Zh_tw))];
+                    
+                    if (dests.length >= 2) {
+                        // 如果有兩個以上不同的目的地 (代表是雙向中途站)
+                        // 分別抓出各方向的第一班車
+                        const trainA = sData.find(t => t.DestinationStationName.Zh_tw === dests[0]);
+                        const trainB = sData.find(t => t.DestinationStationName.Zh_tw === dests[1]);
+                        updateUI(0, trainA);
+                        updateUI(1, trainB);
+                    } else {
+                        // 如果只有一個目的地 (代表是端點站，或單向運行)
+                        // 就顯示最近的兩班同向列車
+                        updateUI(0, sData[0]);
+                        updateUI(1, sData.length > 1 ? sData[1] : null);
+                    }
+                }
+
+            } catch(e) { 
+                console.error("資料更新失敗:", e);
+                setOfflineUI(0);
+                setOfflineUI(1);
+            }
         }
 
         function updateUI(idx, item) {
@@ -245,35 +294,57 @@
             const timeBox = document.getElementById(`dir${idx}-time`);
             const lineBadge = document.getElementById(`ui-line-tag-${idx+1}`);
 
+            // ⚠️ 如果沒有列車資料 (item 為 null)
             if(!item) {
-                destZh.innerText = "暫無列車";
-                destEn.innerText = "No Service";
+                const status = getOfflineStatus(); // 取得狀態文字
+                destZh.innerText = status.zh;
+                destEn.innerText = status.en;
                 timeBox.innerText = "-- : --";
                 timeBox.className = "time-box";
+                // 隱藏路線編號標籤，讓畫面更乾淨
+                lineBadge.style.opacity = '0'; 
                 return;
             }
 
+            // 正常顯示列車資訊
+            lineBadge.style.opacity = '1';
             destZh.innerText = item.DestinationStationName.Zh_tw;
-            destEn.innerText = item.DestinationStationName.En;
+            destEn.innerText = item.DestinationStationName.En || "";
             lineBadge.innerText = item.LineID || system.substring(0,1);
-            lineBadge.style.background = item.LineColor || "#808080";
             
-            countdownSecs[`dir${idx}`] = item.EstimateTime;
+            // 使用 Worker 提供的顏色 (如果有的話)，否則用預設
+            if (item.LineColor) {
+                lineBadge.style.background = item.LineColor;
+            } else {
+                lineBadge.style.background = "#808080";
+            }
+            
+            // ★★★ 處理 null 時間：如果 API 返回 null 或 undefined，視為 0 (進站中)
+            const estimateTime = item.EstimateTime != null ? item.EstimateTime : 0;
+            countdownSecs[`dir${idx}`] = estimateTime;
             renderTime(idx);
         }
 
+        // 當完全抓不到資料時 (例如 API 錯誤或空陣列)
         function setOfflineUI(idx) {
-            document.getElementById(`dir${idx}-dest`).innerText = "暫無列車";
-            document.getElementById(`dir${idx}-en`).innerText = "No Service";
+            const status = getOfflineStatus();
+            document.getElementById(`dir${idx}-dest`).innerText = status.zh;
+            document.getElementById(`dir${idx}-en`).innerText = status.en;
             document.getElementById(`dir${idx}-time`).innerText = "-- : --";
             document.getElementById(`dir${idx}-time`).className = "time-box";
+            document.getElementById(`ui-line-tag-${idx+1}`).style.opacity = '0';
         }
 
         function renderTime(idx) {
             const el = document.getElementById(`dir${idx}-time`);
             const s = countdownSecs[`dir${idx}`];
             
-            if (s === undefined || s < 0) return;
+            // ★★★ 處理 null/undefined/NaN
+            if (s == null || isNaN(s) || s < 0) {
+                el.innerText = "-- : --";
+                el.className = "time-box";
+                return;
+            }
 
             if(s <= 40) { // 40秒內顯示進站中
                 el.innerText = "進站中";
