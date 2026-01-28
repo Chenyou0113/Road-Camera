@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Professional Metro PIDS | 旗艦穩定版</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@500;700;900&family=Roboto:wght@700;900&display=swap">
+    <style>
+        :root { --theme-color: #0070bd; }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Noto Sans TC', sans-serif; }
+        body { background-color: #000; height: 100vh; width: 100vw; display: flex; overflow: hidden; }
+        .pids-wrapper { display: grid; grid-template-columns: 23% 77%; grid-template-rows: 90% 10%; width: 100%; height: 100%; background-color: #f0f0f0; }
+        .sidebar { display: flex; flex-direction: column; border-right: 2px solid #ccc; background-color: #fff; }
+        .station-header { height: 10%; min-height: 60px; background-color: var(--theme-color); color: white; display: flex; align-items: center; padding: 0 15px; gap: 12px; transition: background 0.5s; }
+        .st-badge { background: #fff; color: var(--theme-color); font-weight: 900; padding: 4px 10px; border-radius: 6px; font-size: 1.4vw; }
+        .st-name-zh { font-size: 1.8vw; font-weight: 900; }
+        .arrival-info { flex: 1; padding: 1vh 1vw; display: flex; flex-direction: column; border-bottom: 1px solid #eee; }
+        .arrival-info.secondary { background-color: #fcfcfc; }
+        .dir-label { font-size: 1vw; font-weight: 900; color: #555; margin-bottom: 0.3vh; }
+        .line-tag-row { display: flex; align-items: center; gap: 8px; margin-bottom: 0.3vh; }
+        .line-badge-small { background: var(--theme-color); color: white; padding: 2px 8px; border-radius: 4px; font-size: 1.1vw; font-weight: 900; min-width: 50px; text-align: center; }
+        .dest-zh { font-size: 2vw; font-weight: 900; color: #000; }
+        .dest-en { font-size: 0.9vw; color: #888; }
+        .time-box { background-color: var(--theme-color); color: white; margin-top: auto; margin-bottom: 5px; text-align: center; font-size: 3.5vw; font-weight: 700; border-radius: 8px; padding: 0.6vh 0; font-family: 'Roboto', sans-serif; box-shadow: inset 0 0 8px rgba(0,0,0,0.2); width: 92%; align-self: center; }
+        .time-box.arriving { background-color: #d32f2f; animation: pulse 1s infinite; }
+        .time-box.approaching { background-color: #f58220; }
+        .weather-box { height: 15%; min-height: 80px; padding: 1.2vh 1.2vw; background: linear-gradient(180deg, #fff, #eef2f3); display: flex; flex-direction: column; justify-content: center; }
+        .temp-value { font-size: 3.8vw; font-weight: 900; color: #222; }
+        .main-display { display: grid; grid-template-rows: 1fr 100px; background-color: #000; }
+        .video-placeholder { width: 100%; height: 100%; background: #000; position: relative; }
+        #video-iframe { width: 100%; height: 100%; pointer-events: none; }
+        .congestion-area { background: #fff; height: 120px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; padding-left: 50px; padding-right: 20px; }
+        .car-container { display: flex; gap: 8px; flex: 1; }
+        /* 車廂擁擠度顏色定義 */
+        .car { height: 45px; flex: 1; border-radius: 8px; transition: background 0.5s; background: #32b900; } /* 預設 1: 綠色 (平常) */
+        .car.level2 { background: #ffcc00; } /* 2: 黃色 (普通) */
+        .car.level3 { background: #f58220; } /* 3: 橘色 (擁擠) */
+        .car.level4 { background: #d32f2f; } /* 4: 紅色 (極度擁擠) */
+        .car.none { background: #e0e0e0; }    /* 無資料：灰色 */
+        .footer { grid-column: 1/3; display: grid; grid-template-columns: 23% 77%; background: #1a1a1a; color: #fff; }
+        .clock-section { background: #d32f2f; display: flex; justify-content: center; align-items: center; font-size: 1.8vw; font-weight: 700; }
+        .marquee-section { overflow: hidden; display: flex; align-items: center; padding: 0 20px; background: #000; }
+        .marquee-text { white-space: nowrap; font-size: 1.8vw; animation: scroll 45s linear infinite; font-weight: 700; color: #fff; }
+        @keyframes scroll { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+    </style>
+</head>
+<body>
+
+    <div class="pids-wrapper">
+        <div class="sidebar">
+            <div class="station-header" id="ui-header">
+                <div class="st-badge" id="ui-st-id">--</div>
+                <div class="st-name-zh" id="ui-st-name">載入中...</div>
+            </div>
+
+            <div class="arrival-info">
+                <div class="dir-label" id="dir0-label">第一月台 Platform 1</div>
+                <div class="line-tag-row">
+                    <div class="line-badge-small" id="ui-line-tag-1">--</div>
+                    <div class="dest-zh" id="dir0-dest">正在獲取</div>
+                </div>
+                <div class="dest-en" id="dir0-en">Fetching data...</div>
+                <div class="time-box" id="dir0-time">-- : --</div>
+            </div>
+
+            <div class="arrival-info secondary">
+                <div class="dir-label" id="dir1-label">第二月台 Platform 2</div>
+                <div class="line-tag-row">
+                    <div class="line-badge-small" id="ui-line-tag-2">--</div>
+                    <div class="dest-zh" id="dir1-dest">正在獲取</div>
+                </div>
+                <div class="dest-en" id="dir1-en">Fetching data...</div>
+                <div class="time-box" id="dir1-time">-- : --</div>
+            </div>
+
+            <div class="arrival-info" id="dir2-block" style="display:none;">
+                <div class="dir-label" id="dir2-label">第二月台 Platform 2</div>
+                <div class="line-tag-row">
+                    <div class="line-badge-small" id="ui-line-tag-3">O</div>
+                    <div class="dest-zh" id="dir2-dest">正在獲取</div>
+                </div>
+                <div class="dest-en" id="dir2-en">Fetching data...</div>
+                <div class="time-box" id="dir2-time">-- : --</div>
+            </div>
+
+            <div class="weather-box">
+                <div class="weather-content"><span class="temp-value">24</span>°C <span style="font-size:1.5vw; font-weight:900; color:var(--theme-color)">多雲時晴</span></div>
+            </div>
+        </div>
+
+        <div class="main-display">
+            <div class="video-placeholder">
+                <iframe id="video-iframe" src="" frameborder="0" allow="autoplay; encrypted-media"></iframe>
+            </div>
+            <div class="congestion-area">
+                <div style="font-size: 2.5vw; font-weight: 900; color: var(--theme-color);" id="ui-st-id-footer">--</div>
+                <div class="car-container" id="ui-congestion">
+                    <div class="car"></div><div class="car"></div><div class="car"></div><div class="car"></div><div class="car"></div><div class="car"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div class="clock-section" id="clock">00:00</div>
+            <div class="marquee-section"><div class="marquee-text" id="ui-marquee">歡迎搭乘捷運系統...</div></div>
+        </div>
+    </div>
+
+    <script>
+        const WORKER_URL = 'https://metro-api-worker.xiaoyouwu5-fd3.workers.dev/api';
+        const params = new URLSearchParams(window.location.search);
+        const system = params.get('system') || 'TRTC';
+        const station = params.get('station') || 'O9'; 
+
+        const systemColors = { 'TRTC': '#0070bd', 'KRTC': '#f58220', 'TYMC': '#8246af', 'TMRT': '#b2d235', 'KLRT': '#008010', 'NTMC': '#0096cc' };
+
+        // 新增：常用車站名稱修正表 (防止 API 回傳錯誤站名)
+        const stationNameOverrides = {
+            'RK1': '岡山車站',
+            'R3': '小港',
+            'O1': '哈瑪星',
+            'OT1': '大寮',
+            'R24': '南岡山'
+        };
+
+        const countdownData = {
+            dir0: { remainingSecs: -1 },
+            dir1: { remainingSecs: -1 },
+            dir2: { remainingSecs: -1 }
+        };
+
+        async function updateLiveBoard() {
+            try {
+                // 向 Worker 請求資料
+                const response = await fetch(`${WORKER_URL}/liveboard?sys=${system}`);
+                const allData = await response.json();
+                
+                // ✨ 修正 1：實施「嚴格過濾」，確保只抓取 URL 指定的 station ID
+                const stationData = allData.filter(t => {
+                    const sid = String(t.StationID).toUpperCase();
+                    const target = station.toUpperCase();
+                    return sid === target;
+                });
+                
+                if (stationData.length > 0) {
+                    const first = stationData[0];
+                    
+                    // 設定佈景顏色
+                    const color = first.LineColor || systemColors[system] || '#333';
+                    document.documentElement.style.setProperty('--theme-color', color);
+
+                    // ✨ 修正 2：優先使用修正表中的站名，否則才用 API 回傳的
+                    const correctName = stationNameOverrides[station] || first.StationName?.Zh_tw || "未知車站";
+                    
+                    document.getElementById('ui-st-id').innerText = station;
+                    document.getElementById('ui-st-id-footer').innerText = correctName;
+                    document.getElementById('ui-st-name').innerText = correctName;
+
+                    // 特殊處理：大橋頭站 O12
+                    if (station === 'O12' && system === 'TRTC') {
+                        document.getElementById('dir2-block').style.display = 'flex';
+                        
+                        // 按目的地精準分組
+                        const toNanshijiao = stationData.filter(t => t.DestinationStationID === 'O01').sort((a,b) => a.EstimateTime - b.EstimateTime)[0];
+                        const toHuilong = stationData.filter(t => t.DestinationStationID === 'O54').sort((a,b) => a.EstimateTime - b.EstimateTime)[0];
+                        const toLuzhou = stationData.filter(t => t.DestinationStationID === 'O21').sort((a,b) => a.EstimateTime - b.EstimateTime)[0];
+
+                        document.getElementById('dir0-label').innerText = "第一月台 往南勢角";
+                        document.getElementById('dir1-label').innerText = "第二月台 往迴龍";
+                        document.getElementById('dir2-label').innerText = "第二月台 往蘆洲";
+
+                        updateUI(0, toNanshijiao);
+                        updateUI(1, toHuilong);
+                        updateUI(2, toLuzhou);
+                        updateCongestionDisplay(toNanshijiao, toHuilong, toLuzhou);
+                    } 
+                    else {
+                        // 一般車站邏輯
+                        document.getElementById('dir2-block').style.display = 'none';
+                        
+                        // ✨ 修正 3：重新分組 (KRTC 紅線通常只有 0:往小港, 1:往岡山)
+                        const groups = {};
+                        stationData.forEach(t => {
+                            // 優先以 Direction 分組 (0 或 1)，若無則用目的地 ID
+                            const key = (t.Direction !== undefined) ? `DIR_${t.Direction}` : t.DestinationStationID;
+                            if (!groups[key]) groups[key] = [];
+                            groups[key].push(t);
+                        });
+                        
+                        const keys = Object.keys(groups).sort();
+                        
+                        // 取得兩個方向的第一班車
+                        const train1 = groups[keys[0]] ? groups[keys[0]].sort((a,b) => a.EstimateTime - b.EstimateTime)[0] : null;
+                        const train2 = groups[keys[1]] ? groups[keys[1]].sort((a,b) => a.EstimateTime - b.EstimateTime)[0] : null;
+                        
+                        // 高雄捷運特殊標題處理
+                        if (system === 'KRTC' || system === 'KLRT') {
+                            if (train1) document.getElementById('dir0-label').innerText = getDirectionName(train1);
+                            if (train2) document.getElementById('dir1-label').innerText = getDirectionName(train2);
+                        } else {
+                            document.getElementById('dir0-label').innerText = "第一月台 Platform 1";
+                            document.getElementById('dir1-label').innerText = "第二月台 Platform 2";
+                        }
+
+                        updateUI(0, train1);
+                        updateUI(1, train2);
+                        updateCongestionDisplay(train1, train2, null);
+                    }
+                } else {
+                    // 如果過濾後沒資料，顯示目前無班次
+                    document.getElementById('ui-st-id').innerText = station;
+                    document.getElementById('ui-st-name').innerText = stationNameOverrides[station] || "無班次資訊";
+                    document.getElementById('dir2-block').style.display = 'none';
+                    updateUI(0, null); updateUI(1, null);
+                    updateCongestionDisplay(null, null, null);
+                }
+            } catch (e) { 
+                console.error("Fetch Error:", e);
+                document.getElementById('ui-st-name').innerText = "連線錯誤";
+            }
+        }
+
+        // 輔助函式：判斷月台方向標題
+        function getDirectionName(train) {
+            if (system === 'KLRT') return train.Direction == 0 ? "順行 Clockwise" : "逆行 Counter-clockwise";
+            if (system === 'KRTC') {
+                // 紅線方向判斷
+                if (train.LineID === 'R' || train.StationID.startsWith('R')) {
+                    return train.Direction == 0 ? "南下往小港 Bound for Siaogang" : "北上往岡山 Bound for Gangshan";
+                }
+                // 橘線方向判斷
+                if (train.LineID === 'O' || train.StationID.startsWith('O')) {
+                    return train.Direction == 0 ? "西往哈瑪星 Bound for Hamasen" : "東往大寮 Bound for Daliao";
+                }
+            }
+            return "即時資訊 Real-time Info";
+        }
+
+        function updateUI(idx, item) {
+            const prefix = `dir${idx}`;
+            const timeBox = document.getElementById(`${prefix}-time`);
+            
+            if (!timeBox) return; // 防止 dir2 在一般站出錯
+            
+            if (!item) {
+                document.getElementById(`${prefix}-dest`).innerText = "終點站/無服務";
+                document.getElementById(`${prefix}-en`).innerText = "No Service";
+                timeBox.innerText = "-- : --";
+                timeBox.className = "time-box";
+                countdownData[prefix].remainingSecs = -1;
+                return;
+            }
+
+            // 抓取目的地 (府中這筆資料會顯示 "南港展覽館")
+            document.getElementById(`${prefix}-dest`).innerText = item.DestinationStationName?.Zh_tw || "---";
+            document.getElementById(`${prefix}-en`).innerText = item.DestinationStationName?.En || "---";
+            const tag = document.getElementById(`ui-line-tag-${idx+1}`);
+            if(tag) tag.innerText = item.LineID || "--";
+            
+            // 儲存秒數 (Worker 已處理好單位統一)
+            countdownData[prefix].remainingSecs = item.EstimateTime;
+            updateTimeDisplay(idx);
+        }
+
+        function updateTimeDisplay(idx) {
+            const prefix = `dir${idx}`;
+            const timeBox = document.getElementById(`${prefix}-time`);
+            const secs = countdownData[prefix].remainingSecs;
+            
+            if (secs === -1) return;
+
+            // 秒數小於 30 顯示進站中
+            if (secs <= 30) {
+                timeBox.innerText = "進站中";
+                timeBox.className = "time-box arriving";
+                return;
+            }
+            
+            const mins = Math.floor(secs / 60);
+            const remainderSecs = secs % 60;
+            timeBox.innerText = `${mins} : ${String(remainderSecs).padStart(2, '0')}`;
+            
+            if (secs <= 90) {
+                timeBox.className = "time-box approaching";
+            } else {
+                timeBox.className = "time-box";
+            }
+        }
+
+        // 完整的北捷端點站清單 (用於判斷顯示一列還是兩列擁擠度)
+        const TRTC_TERMINAL_STATIONS = [
+            'BL01', 'BL23', // 板南線
+            'BR01', 'BR24', // 文湖線
+            'G01', 'G19',   // 松山新店線
+            'O01', 'O21', 'O54', // 中和新蘆線 (南勢角、蘆洲、迴龍)
+            'R02', 'R28',   // 淡水信義線 (象山、淡水)
+            'Y01', 'Y20',   // 環狀線
+            'R22A', 'G03A'  // 支線 (新北投、小碧潭)
+        ];
+
+        // 擁擠度顯示邏輯
+        function updateCongestionDisplay(t1, t2, t3) {
+            const container = document.getElementById('ui-congestion');
+            const area = document.querySelector('.congestion-area');
+            
+            if (system !== 'TRTC') {
+                area.style.visibility = 'hidden';
+                return;
+            }
+            area.style.visibility = 'visible';
+
+            let html = '';
+            const isTerminal = TRTC_TERMINAL_STATIONS.includes(station);
+
+            // 每一列擁擠度的 HTML 模板
+            const renderRow = (label, train) => `
+                <div style="display:flex; align-items:center; gap:12px; width:100%; margin-bottom:4px;">
+                    <span style="font-size:1.1vw; font-weight:900; color:#666; background:#f0f0f0; padding:2px 8px; border-radius:4px; min-width:90px; text-align:center;">${label}</span>
+                    ${generateCongestionCars(train?.Congestion)}
+                </div>
+            `;
+
+            if (station === 'O12') {
+                // 大橋頭站：顯示三列
+                html += renderRow('往南勢角', t1);
+                html += renderRow('往 迴 龍', t2);
+                html += renderRow('往 蘆 洲', t3);
+            } else if (isTerminal) {
+                // 端點站：顯示一列
+                html += renderRow('車廂擁擠度', t1 || t2);
+            } else {
+                // 一般車站：顯示兩列
+                html += renderRow('第一月台', t1);
+                html += renderRow('第二月台', t2);
+            }
+            
+            container.innerHTML = html;
+        }
+
+        // 產生車廂 HTML 的輔助函式 (精確對應北捷 1-4 等級)
+        function generateCongestionCars(congestion) {
+            // 建立 6 節車廂的容器
+            let html = '<div style="display:flex; gap:6px; flex:1;">';
+
+            // 若完全無資料，顯示 6 個灰色車廂
+            if (!congestion || !Array.isArray(congestion) || congestion.length === 0) {
+                for (let i = 0; i < 6; i++) {
+                    html += '<div class="car none"></div>';
+                }
+            } else {
+                // 依照北捷 1, 2, 3, 4 數值對應 class
+                congestion.forEach(level => {
+                    let cls = 'car'; // 預設 level 1 (綠)
+                    const val = parseInt(level);
+                    
+                    if (val === 4) cls = 'car level4';      // 紅
+                    else if (val === 3) cls = 'car level3'; // 橘
+                    else if (val === 2) cls = 'car level2'; // 黃
+                    else if (val === 1) cls = 'car';        // 綠
+                    else if (val === 0) cls = 'car none';   // 無資料 (灰色)
+
+                    html += `<div class="${cls}"></div>`;
+                });
+
+                // 防錯：如果資料不足 6 節車廂（例如支線），補齊灰色
+                for (let i = congestion.length; i < 6; i++) {
+                    html += '<div class="car none"></div>';
+                }
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        // 倒數計時器
+        setInterval(() => {
+            ['dir0', 'dir1', 'dir2'].forEach((prefix, idx) => {
+                if (countdownData[prefix] && countdownData[prefix].remainingSecs > 0) {
+                    countdownData[prefix].remainingSecs--;
+                    updateTimeDisplay(idx);
+                } else if (countdownData[prefix] && countdownData[prefix].remainingSecs === 0) {
+                    updateTimeDisplay(idx);
+                }
+            });
+        }, 1000);
+
+        // 時鐘功能
+        setInterval(() => { 
+            const now = new Date();
+            const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+            document.getElementById('clock').innerText = `${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')} ${time}`;
+        }, 1000);
+
+        // 跑馬燈功能 (抓取真實新聞)
+        async function updateMarquee() {
+            const psas = ["發現性騷擾及異常事件，迅速通報。", "遇緊急狀況保持冷靜，使用對講機。", "捷運系統全面禁菸。", "電扶梯兩側皆可站立。"];
+            try {
+                const res = await fetch(`${WORKER_URL}/news?sys=${system}`);
+                const data = await res.json();
+                let marqueeContent = "";
+                if (data.Newses && data.Newses.length > 0) {
+                    marqueeContent = data.Newses.slice(0, 5).map(n => `【最新消息】${n.Title}`).join('　　') + '　　';
+                }
+                document.getElementById('ui-marquee').innerText = marqueeContent + psas.join('　　') + '　　祝您旅途愉快！';
+            } catch (e) {
+                document.getElementById('ui-marquee').innerText = psas.join('　　');
+            }
+        }
+
+        // 影片更換一個確定可用的 (目前的可能是私有影片)
+        document.getElementById('video-iframe').src = "https://www.youtube.com/embed/5_mI_V_I90s?autoplay=1&mute=1&loop=1&playlist=5_mI_V_I90s&controls=0";
+
+        updateLiveBoard(); 
+        updateMarquee();
+        // 北捷20秒，其他捷運系統60秒
+        const refreshInterval = (system === 'TRTC') ? 20000 : 60000;
+        setInterval(updateLiveBoard, refreshInterval);
+        setInterval(updateMarquee, 60000); // 每分鐘更新跑馬燈新聞
+    </script>
+</body>
+</html>

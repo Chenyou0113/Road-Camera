@@ -234,43 +234,77 @@
         };
 
         const Core = {
-            // 站名修正對照表 (與 PIDS 同步)
-            stationNameOverrides: {
-                'RK1': '岡山車站',
-                'R3': '小港',
-                'O1': '哈瑪星',
-                'OT1': '大寮',
-                'R24': '南岡山'
-            },
+            // 站名修正對照表
+            stationNameOverrides: { 'RK1': '岡山車站', 'R3': '小港', 'O1': '哈瑪星', 'OT1': '大寮', 'R24': '南岡山', '103a': '北屯總站' },
             
-            // 北捷端點站清單
-            trtcTerminals: ['BL01', 'BL23', 'BR01', 'BR24', 'G01', 'G19', 'O01', 'O21', 'O54', 'R02', 'R28', 'Y01', 'Y20'],
+            // 🚀 全局線路名稱映射表 (對接所有系統)
+            globalLineMap: {
+                'TRTC': { 'BR': '文湖線', 'R': '淡水信義線', 'G': '松山新店線', 'O': '中和新蘆線', 'BL': '板南線', 'Y': '環狀線' },
+                'KRTC': { 'R': '紅線', 'RA': '紅線', 'O': '橘線', 'OA': '橘線' },
+                'TMRT': { 'G': '綠線', 'GA': '綠線' },
+                'TYMC': { 'A': '機場捷運' },
+                'KLRT': { 'C': '高雄輕軌' },
+                'NTMC': { 'V': '淡海輕軌', 'Y': '環狀線', 'K': '安坑輕軌' }
+            },
 
             async selectSystem(sys) {
                 AppState.sys = sys;
+                // UI 反饋：切換按鈕狀態
                 document.querySelectorAll('.sys-card').forEach(c => c.classList.toggle('active', c.dataset.sys === sys));
                 document.getElementById('stationSelector').style.display = 'flex';
                 
-                const res = await fetch(`${WORKER_URL}/stations?sys=${sys}`);
-                AppState.stations = await res.json();
-                document.getElementById('stat-stations').textContent = AppState.stations.length;
+                try {
+                    const res = await fetch(`${WORKER_URL}/stations?sys=${sys}`);
+                    const rawStations = await res.json();
 
-                const lines = Array.from(new Set(AppState.stations.map(s => s.line.name)));
-                const order = { 'TRTC': { '文湖線': 1, '淡水信義線': 2, '松山新店線': 3, '中和新蘆線': 4, '板南線': 5, '環狀線': 6 } };
-                lines.sort((a, b) => (order[sys]?.[a] || 99) - (order[sys]?.[b] || 99));
+                    // 1. 預處理車站資料：強制轉換線路名稱
+                    AppState.stations = rawStations.map(s => {
+                        const sysMap = this.globalLineMap[sys] || {};
+                        // 優先檢查 line.id (如 "RA")，再檢查 line.name (如 "紅線")
+                        const mappedName = sysMap[s.line.id] || sysMap[s.line.name] || s.line.name;
+                        return { ...s, displayLineName: mappedName };
+                    });
 
-                document.getElementById('lineSelect').innerHTML = lines.map(l => `<option value="${l}">${l}</option>`).join('');
-                this.onLineChange();
+                    document.getElementById('stat-stations').textContent = AppState.stations.length;
+
+                    // 2. 提取唯一的線路名稱並進行「業務排序」
+                    const lineSet = new Set(AppState.stations.map(s => s.displayLineName));
+                    const uniqueLines = Array.from(lineSet);
+                    
+                    const sortOrder = { 
+                        '文湖線': 1, '淡水信義線': 2, '松山新店線': 3, '中和新蘆線': 4, '板南線': 5, '環狀線': 6,
+                        '紅線': 1, '橘線': 2, '綠線': 1, '機場捷運': 1, '高雄輕軌': 1, '淡海輕軌': 1, '安坑輕軌': 2
+                    };
+                    uniqueLines.sort((a, b) => (sortOrder[a] || 99) - (sortOrder[b] || 99));
+
+                    // 3. 更新線路下拉選單 (此時 "RA", "GA" 已經變成 "紅線", "綠線")
+                    document.getElementById('lineSelect').innerHTML = uniqueLines
+                        .map(l => `<option value="${l}">${l}</option>`)
+                        .join('');
+
+                    this.onLineChange();
+                } catch (e) {
+                    console.error("車站清單載入失敗", e);
+                }
             },
 
             onLineChange() {
-                const line = document.getElementById('lineSelect').value;
-                const filtered = AppState.stations.filter(s => s.line.name === line);
+                const selectedLineName = document.getElementById('lineSelect').value;
+                
+                // 4. 過濾車站，並進行「編號排序」
+                const filtered = AppState.stations.filter(s => s.displayLineName === selectedLineName);
+                
+                filtered.sort((a, b) => {
+                    // 提取 ID 中的數字進行排序 (例如 R4A -> 4, R22A -> 22)
+                    const getNum = (id) => parseInt(id.replace(/\D/g, '')) || 0;
+                    return getNum(a.id) - getNum(b.id);
+                });
+
                 document.getElementById('stationSelect').innerHTML = filtered.map(s => {
-                    // 在選單中也顯示修正後的站名
                     const displayName = this.stationNameOverrides[s.id] || s.name;
                     return `<option value="${s.id}">${displayName} (${s.id})</option>`;
                 }).join('');
+
                 this.refresh();
             },
 
@@ -297,28 +331,16 @@
 
                     if (AppState.mode === 'live') {
                         document.getElementById('stat-trains').textContent = data.length || 0;
-                        
-                        // 強化過濾：確保 ID 匹配
-                        const filtered = data.filter(t => {
-                            const targetSid = AppState.sid.toUpperCase();
-                            const trainSid = String(t.StationID).toUpperCase();
-                            return trainSid === targetSid || trainSid.includes(targetSid) || targetSid.includes(trainSid);
-                        });
-
+                        const filtered = data.filter(t => String(t.StationID).toUpperCase().includes(AppState.sid.toUpperCase()));
                         this.renderLive(filtered);
                     } else {
                         this.renderSchedule(data);
                     }
-                } catch (error) {
-                    console.error("Fetch Error:", error);
-                    document.getElementById('board').innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:50px;">資料載入失敗</div>';
-                }
+                } catch (error) { console.error(error); }
             },
 
-            // 產生擁擠度 HTML (僅北捷)
             generateCongestionHTML(congestion) {
                 if (AppState.sys !== 'TRTC' || !congestion || congestion.length === 0) return '';
-                
                 let carsHtml = congestion.map(lvl => {
                     const val = parseInt(lvl);
                     let cls = 'cong-car';
@@ -328,11 +350,7 @@
                     else if (val === 1) cls += ' cong-lvl-1';
                     return `<div class="${cls}"></div>`;
                 }).join('');
-
-                return `
-                    <div class="cong-label">各車廂擁擠度</div>
-                    <div class="congestion-bar">${carsHtml}</div>
-                `;
+                return `<div class="cong-label">各車廂擁擠度</div><div class="congestion-bar">${carsHtml}</div>`;
             },
 
             renderLive(trains) {
@@ -343,8 +361,6 @@
                 }
 
                 let groups = {};
-
-                // --- 特殊處理：北捷大橋頭站 (O12) ---
                 if (AppState.sid === 'O12' && AppState.sys === 'TRTC') {
                     groups = {
                         "往 南勢角": trains.filter(t => t.DestinationStationID === 'O01'),
@@ -352,25 +368,21 @@
                         "往 蘆洲": trains.filter(t => t.DestinationStationID === 'O21')
                     };
                 } else {
-                    // 一般站分組邏輯
                     trains.forEach(t => {
-                        const destName = t.DestinationStationName?.Zh_tw || t.TripHeadSign || "終點站";
-                        const key = `往 ${destName}`;
+                        const key = `往 ${t.DestinationStationName?.Zh_tw || '終點站'}`;
                         if (!groups[key]) groups[key] = [];
                         groups[key].push(t);
                     });
                 }
 
                 grid.innerHTML = Object.entries(groups).map(([groupTitle, list]) => {
-                    if (list.length === 0) return ''; // 若該方向沒車則不顯示
-
+                    if (list.length === 0) return '';
                     const sorted = list.sort((a, b) => a.EstimateTime - b.EstimateTime);
                     const first = sorted[0];
-                    const bgColor = first.LineColor || '#0070bd';
 
                     return `
                         <div class="card">
-                            <div class="card-header" style="background: ${bgColor}">
+                            <div class="card-header" style="background: ${first.LineColor || '#0070bd'}">
                                 <i class="fas fa-train"></i>
                                 <span>${groupTitle}</span>
                             </div>
@@ -378,7 +390,6 @@
                                 const seconds = parseInt(t.EstimateTime);
                                 const isArriving = seconds <= 40;
                                 const mins = Math.max(0, Math.floor(seconds / 60));
-
                                 return `
                                     <div class="arrival-row">
                                         <div>
@@ -386,10 +397,7 @@
                                             <div class="meta">${t.LineID} 線 · ${this.stationNameOverrides[AppState.sid] || t.StationName?.Zh_tw || ''}站</div>
                                         </div>
                                         <div class="arrival-time">
-                                            ${isArriving ? 
-                                                '<span class="arriving-badge">進站中</span>' : 
-                                                `<span class="time-number">${mins}</span><span class="time-unit">分</span>`
-                                            }
+                                            ${isArriving ? '<span class="arriving-badge">進站中</span>' : `<span class="time-number">${mins}</span><span class="time-unit">分</span>`}
                                         </div>
                                     </div>
                                     ${idx === 0 ? this.generateCongestionHTML(t.Congestion) : ''}
@@ -402,21 +410,11 @@
 
             renderSchedule(data) {
                 const grid = document.getElementById('board');
-                if (AppState.sys === 'TRTC' && AppState.sid.startsWith('BR')) {
-                    grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:50px;">⚠️ 文湖線不提供站別時刻表</div>';
-                    return;
-                }
                 const dayType = ['Sunday','Monday','Monday','Monday','Monday','Monday','Saturday'][new Date().getDay()];
                 grid.innerHTML = (data.Timetables || []).filter(t => t.ServiceDays[dayType]).map(t => `
                     <div class="card">
                         <div class="card-header" style="background:#475569">往 ${t.DestinationStationName.Zh_tw}</div>
-                        <div class="timetable-list">
-                            ${t.Timetables.map(time => {
-                                const now = new Date();
-                                const isPast = time.ArrivalTime < now.toTimeString().slice(0,5);
-                                return `<div class="time-chip ${isPast?'past':''}">${time.ArrivalTime}</div>`;
-                            }).join('')}
-                        </div>
+                        <div class="timetable-list">${t.Timetables.map(time => `<div class="time-chip">${time.ArrivalTime}</div>`).join('')}</div>
                     </div>`).join('') || '<div style="grid-column:1/-1; text-align:center; padding:50px;">暫無時刻表</div>';
             },
 
