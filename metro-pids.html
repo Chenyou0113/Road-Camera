@@ -161,7 +161,7 @@
             
             setInterval(updateData, 15000); // 配合 Worker 緩存時間
             setInterval(updateWeather, 600000);
-            setInterval(updateMarquee, 60000);
+            setInterval(updateMarquee, 300000); // 每 5 分鐘更新一次最新消息
             
             // 時鐘
             setInterval(() => {
@@ -184,23 +184,26 @@
 
         async function updateData() {
             try {
-                const res = await fetch(`${METRO_API}/liveboard?sys=${system}&sid=${station}`);
+                // 確保發送正確的 sys 和 sid（大寫標準化）
+                const res = await fetch(`${METRO_API}/liveboard?sys=${system}&sid=${station.toUpperCase()}`);
                 const sData = await res.json();
                 
                 if(sData && sData.length > 0) {
-                    // 更新站名
-                    document.getElementById('ui-st-name').innerText = sData[0].StationName.Zh_tw;
+                    // 1. 設定正確的站名 (這會修正 O15 顯示錯誤站名的問題)
+                    // 我們直接找 StationID 完全符合的那一筆
+                    const correctStation = sData.find(t => t.StationID.toUpperCase() === station.toUpperCase());
+                    if (correctStation) {
+                        document.getElementById('ui-st-name').innerText = correctStation.StationName.Zh_tw;
+                    }
 
-                    // --- 核心修正：強制區分方向 ---
-                    // 找出所有不同的方向代碼 (例如 0 和 1)
-                    const dirList = [...new Set(sData.map(item => item.Direction))];
+                    // 2. 處理方向 (區分往南、往北)
+                    // 北捷的 Direction 通常是 1(往南/下行) 與 0(往北/上行)
+                    const directions = [...new Set(sData.map(item => item.Direction))].sort();
                     
-                    // 月台 1：抓第一個方向的第一班車
-                    const d0_data = sData.find(t => t.Direction == dirList[0]);
-                    
-                    // 月台 2：抓「跟月台 1 不同方向」的第一班車
-                    // 如果只有單向資料，則第二月台顯示暫無資料
-                    const d1_data = sData.find(t => t.Direction != dirList[0]);
+                    // 月台 1：抓第一種方向中最快的一班車
+                    const d0_data = sData.find(t => t.Direction == directions[0]);
+                    // 月台 2：抓「不同於月台 1 方向」的最快一班車
+                    const d1_data = sData.find(t => t.Direction != directions[0]);
 
                     updateUI(0, d0_data);
                     updateUI(1, d1_data);
@@ -209,7 +212,7 @@
                     setOfflineUI(1);
                 }
             } catch(e) { 
-                console.error("資料更新出錯:", e);
+                console.error("更新失敗:", e);
             }
         }
 
@@ -286,46 +289,44 @@
         }
 
         async function updateMarquee() {
-            // 完整宣傳詞 (不適合跑馬燈，但保留以供未來其他用途)
-            const fullTpass = "交通部公路局於114年1月起推出TPASS 2.0公共運輸常客優惠，每月搭乘公共運輸11次以上可享最高30％回饋；另為照顧搭乘國道客運返鄉遠行需求，自114年12月1日起再升級推出TPASS 2.0+公共運輸常客優惠（回饋內容說明，詳如TPASS 2.0+專屬網頁https://tpass.thb.gov.tw/），每月搭乘91條中長途國道客運路線（西部70公里以上及東部國道客運路線）2次以上可享最高30％回饋，其他公共運輸則仍依既有條件回饋金額，合先敘明。";
-
-            // 精煉後的宣傳語 (適合跑馬燈)
-            const tpassSummary = "【TPASS 2.0+ 升級】常客優惠，搭乘11次以上最高享30%回饋，國道客運遠行再享優惠。詳情請見專屬網頁。";
+            // 預設的固定宣傳語
+            const tpassSummary = "【TPASS 2.0+ 升級】常客優惠正式上線！搭乘11次以上最高享30%回饋，國道客運遠行再享優惠，詳情請見官網。";
+            const safetyPsas = "【安全宣導】月台候車請勿超越黃線。遇緊急狀況請保持冷靜，使用對講機求助。捷運系統全面禁菸。";
             
-            // 系統安全提醒及環境提示
-            const safetyPsas = ["遇緊急狀況請保持冷靜，使用對講機求助。", "捷運系統全面禁菸，維護公共安全與環境品質。"];
-
-            let defaultNews = "歡迎搭乘捷運系統，請注意列車行進方向。"; 
             let finalMarquee = "";
 
             try {
+                // 1. 向 Worker 請求最新消息
                 const res = await fetch(`${METRO_API}/news?sys=${system}`);
                 const data = await res.json();
+                
                 let newsContent = "";
+                
+                // 2. 如果有新聞資料，抓取前 3 條標題
+                if (Array.isArray(data) && data.length > 0) {
+                    newsContent = data.slice(0, 3).map(n => {
+                        // 有些 API 回傳欄位是 Title，有些是 NewsTitle
+                        const title = n.Title || n.NewsTitle || "最新消息";
+                        return `【最新消息】${title}`;
+                    }).join('　　') + '　　';
+                }
 
-                if (data.Newses && data.Newses.length > 0) {
-                    newsContent = data.Newses.slice(0, 3).map(n => `【最新消息】${n.Title}`).join('　　') + '　　';
-                }
+                // 3. 組合：[新聞] + [TPASS] + [安全宣導]
+                finalMarquee = newsContent + tpassSummary + '　　' + safetyPsas + '　　祝您旅途愉快！';
                 
-                // 組合：[新聞] + [TPASS 摘要] + [安全提醒] + [結束語]
-                finalMarquee = newsContent + tpassSummary + '　　' + safetyPsas.join('　　') + '　　祝您旅途愉快！';
-                
-                // 如果沒有新聞，則以歡迎語開頭
-                if (!newsContent) {
-                    finalMarquee = defaultNews + '　　' + tpassSummary + '　　' + safetyPsas.join('　　') + '　　祝您旅途愉快！';
-                }
-                
-                document.getElementById('ui-marquee').innerText = finalMarquee;
-                
-                // 由於文字變長，我們可能需要調整滾動速度
-                // 計算大致滾動時間 (假設每秒 10 個字元)
+                // 4. 更新到畫面
+                const marqueeEl = document.getElementById('ui-marquee');
+                marqueeEl.innerText = finalMarquee;
+
+                // 5. 動態調整滾動速度 (根據文字長度計算秒數，避免字多跑太快)
                 const charCount = finalMarquee.length;
-                const newDuration = Math.max(25, charCount * 0.4); // 至少 25秒，每字元 0.4秒
-                document.querySelector('.marquee-text').style.animationDuration = `${newDuration}s`;
+                const newDuration = Math.max(30, charCount * 0.4); // 每 1 個字給 0.4 秒，最少 30 秒
+                marqueeEl.style.animationDuration = `${newDuration}s`;
 
             } catch (e) {
-                // 連線失敗時的備用內容
-                document.getElementById('ui-marquee').innerText = defaultNews + '　　' + tpassSummary + '　　' + safetyPsas.join('　　');
+                console.error("新聞抓取失敗:", e);
+                // 失敗時顯示預設內容
+                document.getElementById('ui-marquee').innerText = tpassSummary + '　　' + safetyPsas;
             }
         }
 
