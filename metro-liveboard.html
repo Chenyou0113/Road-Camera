@@ -223,6 +223,13 @@
     </div>
 
     <script>
+        // 🚇 本地站點資料庫 (從 metro-stations-raw.json 導入)
+        let METRO_STATIONS_LOCAL = null;
+        fetch('metro-stations-raw.json')
+            .then(r => r.json())
+            .then(data => { METRO_STATIONS_LOCAL = data; })
+            .catch(() => console.log('本地站點資料未載入，將使用 API 資料'));
+        
         const WORKER_URL = 'https://metro-api-worker.xiaoyouwu5-fd3.workers.dev/api';
         const AppState = { sys: '', sid: '', stations: [], mode: 'live', timer: null };
 
@@ -254,8 +261,27 @@
                 document.getElementById('stationSelector').style.display = 'flex';
                 
                 try {
-                    const res = await fetch(`${WORKER_URL}/stations?sys=${sys}`);
-                    const rawStations = await res.json();
+                    let rawStations = [];
+                    
+                    // 🎯 優先使用本地資料
+                    if (METRO_STATIONS_LOCAL && METRO_STATIONS_LOCAL.systems[sys]) {
+                        const sysData = METRO_STATIONS_LOCAL.systems[sys];
+                        rawStations = Object.entries(sysData.stations).map(([id, info]) => ({
+                            id: id,
+                            name: info.name,
+                            line: {
+                                id: info.lineId,
+                                name: sysData.lines[info.lineId]?.name || info.lineId,
+                                color: sysData.lines[info.lineId]?.color || '#808080'
+                            }
+                        }));
+                        console.log(`✅ 使用本地資料：${sys} 系統共 ${rawStations.length} 站`);
+                    } else {
+                        // 回退到 API
+                        const res = await fetch(`${WORKER_URL}/stations?sys=${sys}`);
+                        rawStations = await res.json();
+                        console.log(`🌐 使用 API 資料：${sys} 系統`);
+                    }
 
                     // 1. 預處理車站資料：強制轉換線路名稱
                     AppState.stations = rawStations.map(s => {
