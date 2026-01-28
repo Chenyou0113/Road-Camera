@@ -147,8 +147,17 @@
         let countdownSecs = { dir0: -1, dir1: -1 };
 
         function init() {
+            // 1. 設定主題色
             document.documentElement.style.setProperty('--theme-color', sysColors[system] || '#333');
+            
+            // 2. 初始化畫面文字為「讀取中」
             document.getElementById('ui-st-id').innerText = station;
+            document.getElementById('ui-st-name').innerText = "讀取中...";
+            document.getElementById('dir0-dest').innerText = "載入中...";
+            document.getElementById('dir0-en').innerText = "Loading...";
+            document.getElementById('dir1-dest').innerText = "載入中...";
+            document.getElementById('dir1-en').innerText = "Loading...";
+
             updateData();
             updateWeather();
             updateMarquee();
@@ -179,24 +188,40 @@
             try {
                 const res = await fetch(`${METRO_API}/liveboard?sys=${system}&sid=${station}`);
                 const data = await res.json();
+                
+                // 過濾出目前車站的資料
                 const sData = data.filter(t => t.StationID === station);
                 
                 if(sData.length > 0) {
-                    // 簡單排序與分配
-                    const d0 = sData.filter(t => t.Direction == 0 || t.Direction == "1")[0];
-                    const d1 = sData.filter(t => t.Direction == 1 || t.Direction == "2")[0];
+                    // *** 自動更新站名 (解決硬編碼問題) ***
+                    if (sData[0].StationName) {
+                        document.getElementById('ui-st-name').innerText = sData[0].StationName.Zh_tw;
+                    }
+
+                    // 依照方向分配 (高雄捷運 Direction 通常是 1 跟 2)
+                    const d0 = sData.find(t => t.Direction == 0 || t.Direction == 1);
+                    const d1 = sData.find(t => (t.Direction == 1 || t.Direction == 2) && t !== d0);
                     
                     updateUI(0, d0);
                     updateUI(1, d1);
                 }
-            } catch(e) { console.error(e); }
+            } catch(e) { console.error("API 抓取失敗:", e); }
         }
 
         function updateUI(idx, item) {
-            if(!item) return;
+            if(!item) {
+                document.getElementById(`dir${idx}-dest`).innerText = "末班車已過";
+                document.getElementById(`dir${idx}-en`).innerText = "Service Ended";
+                document.getElementById(`dir${idx}-time`).innerText = "-- : --";
+                return;
+            }
             document.getElementById(`dir${idx}-dest`).innerText = item.DestinationStationName.Zh_tw;
             document.getElementById(`dir${idx}-en`).innerText = item.DestinationStationName.En;
-            document.getElementById(`ui-line-tag-${idx+1}`).innerText = item.LineID || (system==='TYMC'?'A':'');
+            
+            // 設定線路代碼 (高雄可能是 R 或 O)
+            let lineTag = item.LineID || system.substring(0,1);
+            document.getElementById(`ui-line-tag-${idx+1}`).innerText = lineTag;
+            
             countdownSecs[`dir${idx}`] = item.EstimateTime;
             renderTime(idx);
         }
@@ -204,13 +229,19 @@
         function renderTime(idx) {
             const el = document.getElementById(`dir${idx}-time`);
             const s = countdownSecs[`dir${idx}`];
-            if(s <= 30 && s >= 0) {
+            if (s < 0) return;
+
+            if(s <= 30) {
                 el.innerText = "進站中";
                 el.className = "time-box arriving";
+            } else if (s <= 120) {
+                const m = Math.floor(s/60);
+                el.innerText = "將進站";
+                el.className = "time-box approaching";
             } else {
                 const m = Math.floor(s/60);
                 el.innerText = `${m} : ${String(s%60).padStart(2,'0')}`;
-                el.className = s <= 90 ? "time-box approaching" : "time-box";
+                el.className = "time-box";
             }
         }
 
@@ -234,26 +265,46 @@
         }
 
         async function updateMarquee() {
-            const psas = ["TPASS 2.0 公運常客優惠正式上線！搭越多回饋越多，最高回饋 40%！", "遇緊急狀況請保持冷靜，使用對講機求助。", "捷運系統全面禁菸，維護公共安全與環境品質。"];
-            let defaultNews = "歡迎搭乘捷運系統，請注意列車行進方向。"; // 確保有基礎開頭
+            // 完整宣傳詞 (不適合跑馬燈，但保留以供未來其他用途)
+            const fullTpass = "交通部公路局於114年1月起推出TPASS 2.0公共運輸常客優惠，每月搭乘公共運輸11次以上可享最高30％回饋；另為照顧搭乘國道客運返鄉遠行需求，自114年12月1日起再升級推出TPASS 2.0+公共運輸常客優惠（回饋內容說明，詳如TPASS 2.0+專屬網頁https://tpass.thb.gov.tw/），每月搭乘91條中長途國道客運路線（西部70公里以上及東部國道客運路線）2次以上可享最高30％回饋，其他公共運輸則仍依既有條件回饋金額，合先敘明。";
+
+            // 精煉後的宣傳語 (適合跑馬燈)
+            const tpassSummary = "【TPASS 2.0+ 升級】常客優惠，搭乘11次以上最高享30%回饋，國道客運遠行再享優惠。詳情請見專屬網頁。";
+            
+            // 系統安全提醒及環境提示
+            const safetyPsas = ["遇緊急狀況請保持冷靜，使用對講機求助。", "捷運系統全面禁菸，維護公共安全與環境品質。"];
+
+            let defaultNews = "歡迎搭乘捷運系統，請注意列車行進方向。"; 
+            let finalMarquee = "";
 
             try {
                 const res = await fetch(`${METRO_API}/news?sys=${system}`);
                 const data = await res.json();
-                let newsContent = defaultNews; // 預設為歡迎詞
+                let newsContent = "";
 
                 if (data.Newses && data.Newses.length > 0) {
-                    // 抓到最新消息，將其放在最前面
                     newsContent = data.Newses.slice(0, 3).map(n => `【最新消息】${n.Title}`).join('　　') + '　　';
                 }
                 
-                // 將新聞內容、宣傳詞、結束語結合
-                const finalMarquee = newsContent + psas.join('　　') + '　　祝您旅途愉快！';
+                // 組合：[新聞] + [TPASS 摘要] + [安全提醒] + [結束語]
+                finalMarquee = newsContent + tpassSummary + '　　' + safetyPsas.join('　　') + '　　祝您旅途愉快！';
+                
+                // 如果沒有新聞，則以歡迎語開頭
+                if (!newsContent) {
+                    finalMarquee = defaultNews + '　　' + tpassSummary + '　　' + safetyPsas.join('　　') + '　　祝您旅途愉快！';
+                }
+                
                 document.getElementById('ui-marquee').innerText = finalMarquee;
+                
+                // 由於文字變長，我們可能需要調整滾動速度
+                // 計算大致滾動時間 (假設每秒 10 個字元)
+                const charCount = finalMarquee.length;
+                const newDuration = Math.max(25, charCount * 0.4); // 至少 25秒，每字元 0.4秒
+                document.querySelector('.marquee-text').style.animationDuration = `${newDuration}s`;
 
             } catch (e) {
-                // 如果連線失敗，只顯示宣傳詞
-                document.getElementById('ui-marquee').innerText = defaultNews + psas.join('　　');
+                // 連線失敗時的備用內容
+                document.getElementById('ui-marquee').innerText = defaultNews + '　　' + tpassSummary + '　　' + safetyPsas.join('　　');
             }
         }
 
