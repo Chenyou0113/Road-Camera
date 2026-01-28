@@ -189,39 +189,63 @@
                 const res = await fetch(`${METRO_API}/liveboard?sys=${system}&sid=${station}`);
                 const data = await res.json();
                 
-                // 過濾出目前車站的資料
+                // 1. 過濾出該站資料
                 const sData = data.filter(t => t.StationID === station);
                 
-                if(sData.length > 0) {
-                    // *** 自動更新站名 (解決硬編碼問題) ***
+                if(sData && sData.length > 0) {
+                    // 更新站名
                     if (sData[0].StationName) {
                         document.getElementById('ui-st-name').innerText = sData[0].StationName.Zh_tw;
                     }
 
-                    // 依照方向分配 (高雄捷運 Direction 通常是 1 跟 2)
-                    const d0 = sData.find(t => t.Direction == 0 || t.Direction == 1);
-                    const d1 = sData.find(t => (t.Direction == 1 || t.Direction == 2) && t !== d0);
+                    // 2. 依照「方向」分組
+                    // 高雄捷運通常 Direction 1 是往北(岡山)，2 是往南(小港)
+                    // 找出所有不同的方向
+                    const directions = [...new Set(sData.map(item => item.Direction))].sort();
                     
-                    updateUI(0, d0);
-                    updateUI(1, d1);
+                    // 分配第一月台與第二月台
+                    const d0_data = sData.find(t => t.Direction == directions[0]);
+                    const d1_data = sData.find(t => t.Direction == directions[1]);
+
+                    updateUI(0, d0_data);
+                    updateUI(1, d1_data);
+                } else {
+                    // 完全沒資料時
+                    updateUI(0, null);
+                    updateUI(1, null);
                 }
-            } catch(e) { console.error("API 抓取失敗:", e); }
+            } catch(e) { 
+                console.error("API 抓取失敗:", e);
+            }
         }
 
         function updateUI(idx, item) {
+            const destZh = document.getElementById(`dir${idx}-dest`);
+            const destEn = document.getElementById(`dir${idx}-en`);
+            const timeBox = document.getElementById(`dir${idx}-time`);
+            const lineBadge = document.getElementById(`ui-line-tag-${idx+1}`);
+
             if(!item) {
-                document.getElementById(`dir${idx}-dest`).innerText = "末班車已過";
-                document.getElementById(`dir${idx}-en`).innerText = "Service Ended";
-                document.getElementById(`dir${idx}-time`).innerText = "-- : --";
+                destZh.innerText = "暫無列車資料";
+                destEn.innerText = "No Train Service";
+                timeBox.innerText = "-- : --";
+                timeBox.className = "time-box";
                 return;
             }
-            document.getElementById(`dir${idx}-dest`).innerText = item.DestinationStationName.Zh_tw;
-            document.getElementById(`dir${idx}-en`).innerText = item.DestinationStationName.En;
+
+            // 更新目的地
+            destZh.innerText = item.DestinationStationName.Zh_tw;
+            destEn.innerText = item.DestinationStationName.En;
             
-            // 設定線路代碼 (高雄可能是 R 或 O)
-            let lineTag = item.LineID || system.substring(0,1);
-            document.getElementById(`ui-line-tag-${idx+1}`).innerText = lineTag;
+            // 更新線路顏色與文字 (高雄 R:紅線, O:橘線 / 桃園 A:機場線)
+            if (system === 'KRTC') {
+                lineBadge.innerText = station.startsWith('R') ? 'R' : 'O';
+                lineBadge.style.background = station.startsWith('R') ? '#E3002C' : '#F28500';
+            } else {
+                lineBadge.innerText = item.LineID || 'A';
+            }
             
+            // 更新時間
             countdownSecs[`dir${idx}`] = item.EstimateTime;
             renderTime(idx);
         }
