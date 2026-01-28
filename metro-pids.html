@@ -184,39 +184,31 @@
 
         async function updateData() {
             try {
+                // 使用大寫 station 代碼，確保精準命中
                 const res = await fetch(`${METRO_API}/liveboard?sys=${system}&sid=${station.toUpperCase()}`);
                 const sData = await res.json();
                 
                 if(sData && sData.length > 0) {
-                    // 1. 強制更新正確站名 (解決台中捷運不顯示站名的問題)
-                    // 直接從回傳的第一筆資料抓站名，保證絕對正確
-                    const stationDisplayName = sData[0].StationName?.Zh_tw || sData[0].StationID;
-                    document.getElementById('ui-st-name').innerText = stationDisplayName;
+                    // 1. 站名顯示 (忠孝復興)
+                    document.getElementById('ui-st-name').innerText = sData[0].StationName.Zh_tw;
 
-                    // 2. 全系統通用方向分配邏輯
-                    // 我們不看 Direction 代碼了，直接看 Destination (目的地)
+                    // 2. 自動方向分組
+                    // 找出所有目的地 ID (如往南港 BL23, 往亞東醫院 BL05)
+                    const dirList = [...new Set(sData.map(item => String(item.Direction)))];
                     
-                    // 月台 1：顯示 API 給的第一班車
-                    const trainA = sData[0];
+                    // 第一月台：第一種目的地
+                    const d0_data = sData.find(t => String(t.Direction) === dirList[0]);
                     
-                    // 月台 2：在列表裡找「目的地跟第一班車不一樣」的最快一班車
-                    const destA = trainA.DestinationStationID;
-                    const trainB = sData.find(t => t.DestinationStationID !== destA);
+                    // 第二月台：第二種目的地 (只要跟第一種不一樣就放進去)
+                    const d1_data = sData.find(t => String(t.Direction) !== dirList[0]);
 
-                    // 3. 更新 UI
-                    updateUI(0, trainA); 
-                    updateUI(1, trainB);
-
+                    updateUI(0, d0_data);
+                    updateUI(1, d1_data);
                 } else {
-                    // 如果 API 沒回傳資料，顯示暫無列車
-                    document.getElementById('ui-st-name').innerText = "查無此站資料";
                     setOfflineUI(0);
                     setOfflineUI(1);
                 }
-            } catch(e) { 
-                console.error("更新失敗:", e);
-                document.getElementById('ui-st-name').innerText = "連線錯誤";
-            }
+            } catch(e) { console.error("Update Error:", e); }
         }
 
         function updateUI(idx, item) {
