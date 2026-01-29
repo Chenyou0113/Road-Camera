@@ -159,16 +159,11 @@
     </div>
 
     <script>
-        // 🚇 本地站點資料庫 (若無此檔案，程式會自動嘗試從 TDX Worker 抓取，不影響 TRTC 運作)
-        let METRO_STATIONS_LOCAL = null;
-        fetch('metro-stations-raw.json').then(r => r.json()).then(data => { METRO_STATIONS_LOCAL = data; }).catch(e => console.log("Local station DB not found, fallback to API"));
-        
-        // 🚨 非 TRTC 系統維持原樣
+        // 🚨 外部 Worker 設定
         const WORKER_URL_TDX = 'https://metro-api-worker.xiaoyouwu5-fd3.workers.dev/api';
-        
-        // 🔥 您的 TRTC 專屬 Worker (注意：去掉了結尾的 /api，因為您的 worker 路徑是 /arrival)
         const WORKER_URL_TRTC = 'https://trtc-metro-api.xiaoyouwu5-fd3.workers.dev';
         
+        let METRO_STATIONS_LOCAL = null;
         const AppState = { sys: '', sid: '', stations: [], mode: 'live', timer: null };
 
         const UI = {
@@ -182,20 +177,27 @@
             stationNameOverrides: { 'RK1': '岡山車站', 'R3': '小港', 'O1': '哈瑪星', 'OT1': '大寮', 'R24': '岡山高醫', '103a': '北屯總站' },
             globalLineMap: {
                 'TRTC': { 'BR': '文湖線', 'R': '淡水信義線', 'G': '松山新店線', 'O': '中和新蘆線', 'BL': '板南線', 'Y': '環狀線' },
-                'KRTC': { 'R': '紅線', 'RA': '紅線', 'O': '橘線', 'OA': '橘線' },
-                'TMRT': { 'G': '綠線', 'GA': '綠線' },
-                'TYMC': { 'A': '機場捷運' },
-                'KLRT': { 'C': '高雄輕軌' },
-                'NTMC': { 'V': '淡海輕軌', 'Y': '環狀線', 'K': '安坑輕軌' }
+                'KRTC': { 'R': '紅線', 'O': '橘線' }, 'TMRT': { 'G': '綠線' }, 'TYMC': { 'A': '機場捷運' },
+                'NTMC': { 'Y': '環狀線', 'V': '淡海輕軌', 'K': '安坑輕軌' }
+            },
+
+            // 🚀 啟動函式
+            async init() {
+                try {
+                    const res = await fetch('metro-stations-raw.json');
+                    METRO_STATIONS_LOCAL = await res.json();
+                    console.log("Station DB Loaded");
+                } catch (e) {
+                    console.error("Local JSON load failed");
+                }
+                this.selectSystem('TRTC');
             },
 
             async selectSystem(sys) {
                 AppState.sys = sys;
                 document.querySelectorAll('.sys-card').forEach(c => c.classList.toggle('active', c.dataset.sys === sys));
-                document.getElementById('stationSelector').style.display = 'flex';
                 
                 let rawStations = [];
-                // 嘗試讀取站點列表
                 if (METRO_STATIONS_LOCAL && METRO_STATIONS_LOCAL.systems[sys]) {
                     const sysData = METRO_STATIONS_LOCAL.systems[sys];
                     rawStations = Object.entries(sysData.stations).map(([id, info]) => ({
@@ -203,33 +205,25 @@
                         line: { id: info.lineId, name: sysData.lines[info.lineId]?.name || info.lineId, color: sysData.lines[info.lineId]?.color || '#808080' }
                     }));
                 } else {
-                    // 如果沒有本地資料，回退到 TDX Worker API 抓取站點列表 (TRTC 也可以用這個抓站點列表)
                     try {
                         const res = await fetch(`${WORKER_URL_TDX}/stations?sys=${sys}`);
                         rawStations = await res.json();
-                    } catch (e) {
-                        console.error("Fetch stations failed", e);
-                        // 若抓不到，手動塞入幾個測試站點以免畫面全白
-                        if(sys === 'TRTC') {
-                            rawStations = [
-                                { id: 'BL15', name: '忠孝復興', line: {id:'BL', name:'板南線', color:'#005eb8'} },
-                                { id: 'R10', name: '台北車站', line: {id:'R', name:'淡水信義線', color:'#e3002c'} },
-                                { id: 'G12', name: '台電大樓', line: {id:'G', name:'松山新店線', color:'#008659'} }
-                            ];
-                        }
-                    }
+                    } catch (e) { console.error("API load failed"); }
                 }
+
+                if (!rawStations || rawStations.length === 0) return;
+
+                document.getElementById('stationSelector').style.display = 'flex';
 
                 AppState.stations = rawStations.map(s => {
                     const sysMap = this.globalLineMap[sys] || {};
-                    const mappedName = sysMap[s.line.id] || sysMap[s.line.name] || s.line.name;
+                    const mappedName = sysMap[s.line.id] || s.line.name;
                     return { ...s, displayLineName: mappedName };
                 });
 
                 document.getElementById('stat-stations').textContent = AppState.stations.length;
 
-                const lineSet = new Set(AppState.stations.map(s => s.displayLineName));
-                const uniqueLines = Array.from(lineSet);
+                const uniqueLines = Array.from(new Set(AppState.stations.map(s => s.displayLineName)));
                 const sortOrder = { '文湖線': 1, '淡水信義線': 2, '松山新店線': 3, '中和新蘆線': 4, '板南線': 5, '環狀線': 6 };
                 uniqueLines.sort((a, b) => (sortOrder[a] || 99) - (sortOrder[b] || 99));
 
@@ -268,7 +262,6 @@
                 if (AppState.mode === 'live') AppState.timer = setInterval(() => this.fetchData(), 20000);
             },
 
-            // 專門處理 TRTC 時間字串轉換 (ex: "02:30" -> 150)
             parseTRTCTime(timeStr) {
                 if (!timeStr || timeStr === '列車進站' || timeStr === '資料擷取中') return 0;
                 if (timeStr.includes(':')) {
@@ -278,186 +271,145 @@
                 return 9999;
             },
 
-            // 🚀 核心資料抓取函式
             async fetchData() {
                 try {
-                    // --- 1. 北捷 (TRTC) 即時模式：使用新 Worker ---
-                    if (AppState.sys === 'TRTC' && AppState.mode === 'live') {
+                    // 如果是北捷或環狀線，即時模式走 TRTC Worker
+                    const isTrtcData = (AppState.sys === 'TRTC' || (AppState.sys === 'NTMC' && AppState.sid.startsWith('Y')));
+                    if (isTrtcData && AppState.mode === 'live') {
                         await this.fetchTRTCData();
-                    } 
-                    // --- 2. 其他捷運或時刻表模式：使用舊 TDX Worker ---
-                    else {
-                        const endpoint = AppState.mode === 'live' 
-                            ? `/liveboard?sys=${AppState.sys}&sid=${AppState.sid}` 
-                            : `/schedule?sys=${AppState.sys}&sid=${AppState.sid}`;
-                        
-                        const res = await fetch(`${WORKER_URL_TDX}${endpoint}`);
+                    } else {
+                        const res = await fetch(`${WORKER_URL_TDX}/${AppState.mode === 'live' ? 'liveboard' : 'schedule'}?sys=${AppState.sys}&sid=${AppState.sid}`);
                         const data = await res.json();
-                        
                         if (AppState.mode === 'live') {
                             document.getElementById('stat-trains').textContent = data.length || 0;
-                            this.renderLive(data, []); // 非 TRTC 暫無擁擠度
+                            this.renderLive(data, []);
                         } else {
                             this.renderSchedule(data);
                         }
                     }
-                } catch (error) { console.error("Fetch Error:", error); }
+                } catch (error) { console.error(error); }
             },
 
-            // 🔥 專門處理 TRTC 資料的邏輯 (含 API 端點自動切換)
             async fetchTRTCData() {
-                const arrivalRes = await fetch(`${WORKER_URL_TRTC}/arrival`);
-                const rawArrivals = await arrivalRes.json();
-
-                let crowdData = [];
                 try {
-                    const lineId = AppState.sid.replace(/[0-9]/g, '');
-                    const crowdEndpoint = (lineId === 'BR') ? '/crowdedness/wenhu' : '/crowdedness/high-capacity';
-                    const crowdRes = await fetch(`${WORKER_URL_TRTC}${crowdEndpoint}`);
-                    crowdData = await crowdRes.json();
-                } catch(e) { console.log("Crowd data unavailable"); }
+                    const arrivalRes = await fetch(`${WORKER_URL_TRTC}/arrival`);
+                    const rawArrivals = await arrivalRes.json();
 
-                // ★★★ 核心修正：精確篩選 StationID ★★★
-                const formattedTrains = rawArrivals
-                    .filter(t => {
-                        // 只保留 StationID 完全相符的資料 (例如只要 BR24，不要 BL23)
-                        return t.StationID === AppState.sid;
-                    })
-                    .map(t => ({
-                        StationName: { Zh_tw: t.StationName },
-                        DestinationStationName: { Zh_tw: t.DestinationName },
-                        EstimateTime: this.parseTRTCTime(t.CountDown),
-                        CountDown: t.CountDown,
-                        LineID: t.LineID,
-                        TrainNumber: t.TrainNumber
-                    }));
+                    let crowdData = [];
+                    try {
+                        const lineId = AppState.sid.replace(/[0-9]/g, '');
+                        if (lineId !== 'Y') {
+                            const crowdRes = await fetch(`${WORKER_URL_TRTC}/crowdedness/${lineId === 'BR' ? 'wenhu' : 'high-capacity'}`);
+                            crowdData = await crowdRes.json();
+                        }
+                    } catch(e) {}
 
-                document.getElementById('stat-trains').textContent = formattedTrains.length;
-                this.renderLive(formattedTrains, crowdData);
+                    const currentStation = AppState.stations.find(s => s.id === AppState.sid);
+                    const targetName = currentStation ? currentStation.name : "";
+
+                    // ★★★ 核心修正：放寬篩選邏輯，解決麟光站等顯示問題 ★★★
+                    const formattedTrains = rawArrivals
+                        .filter(t => {
+                            // 1. 優先比對 ID (例如 BR06)
+                            if (t.StationID && t.StationID === AppState.sid) return true;
+                            // 2. 如果 ID 不符，比對去掉"站"字後的名稱
+                            const apiName = (t.StationName || "").replace('站', '').replace('BR','').trim();
+                            const pureTargetName = targetName.replace('站', '').trim();
+                            return apiName === pureTargetName;
+                        })
+                        .map(t => ({
+                            StationName: { Zh_tw: t.StationName },
+                            DestinationStationName: { Zh_tw: t.DestinationName },
+                            EstimateTime: this.parseTRTCTime(t.CountDown),
+                            CountDown: t.CountDown,
+                            TrainNumber: t.TrainNumber
+                        }));
+
+                    document.getElementById('stat-trains').textContent = formattedTrains.length;
+                    
+                    // 根據到站時間排序，讓顯示更順暢
+                    formattedTrains.sort((a, b) => a.EstimateTime - b.EstimateTime);
+                    
+                    this.renderLive(formattedTrains, crowdData);
+                } catch (e) {
+                    console.error("fetchTRTCData error:", e);
+                }
             },
 
-            // 產生擁擠度 HTML 的輔助函式 (修復文湖線雙車號)
             generateCongestionHTML(train, crowdData) {
-                // 取得路線代號
+                // 1. 取得路線 ID (只聲明一次，修復 SyntaxError)
                 const lineId = AppState.sid.replace(/[0-9]/g, '');
                 
-                // ★★★ 如果是環狀線(Y)，直接不顯示擁擠度區塊 ★★★
-                if (lineId === 'Y') return '';
+                // 2. 環狀線或無資料則不顯示
+                if (lineId === 'Y' || AppState.sys !== 'TRTC' || !crowdData || crowdData.length === 0) return '';
 
-                if (AppState.sys !== 'TRTC' || !crowdData || crowdData.length === 0) return '';
-
-                const currentStationMeta = AppState.stations.find(s => s.id === AppState.sid);
-                const currentStationName = (currentStationMeta?.name || '').replace('站', '').replace('臺', '台').trim();
-
-                // --- 策略 A：使用車號比對 (優先) ---
+                const currentStation = AppState.stations.find(s => s.id === AppState.sid)?.name.replace('站','').replace('臺','台');
                 let match = null;
+
+                // 3. 比對邏輯
                 if (train.TrainNumber) {
                     const targetTN = parseInt(train.TrainNumber, 10);
-                    match = crowdData.find(c => {
-                        const crowdNumbers = String(c.TrainNumber).split(',').map(n => parseInt(n.trim(), 10));
-                        return crowdNumbers.includes(targetTN);
-                    });
+                    match = crowdData.find(c => String(c.TrainNumber).split(',').some(n => parseInt(n, 10) === targetTN));
                 }
-
-                // --- 策略 B：端點站備案 (如果車號找不到，改用站名比對) ---
                 if (!match) {
-                    match = crowdData.find(c => {
-                        const apiStation = (c.StationName || "").replace('BR', '').replace('站', '').replace('臺', '台').trim();
-                        return apiStation === currentStationName;
-                    });
+                    match = crowdData.find(c => c.StationName?.replace('BR','').replace('站','').replace('臺','台') === currentStation);
                 }
                 
                 if (!match) return '';
 
-                const lineId = AppState.sid.replace(/[0-9]/g, '');
-                // ★★★ 關鍵修改：文湖線(BR) 與 環狀線(Y) 都是 4 節車廂 ★★★
-                const cars = (lineId === 'BR' || lineId === 'Y') ? 4 : 6;
-                
+                // 4. 渲染燈號
+                const cars = (lineId === 'BR') ? 4 : 6;
                 let carsHtml = '';
                 for(let i=1; i<=cars; i++) {
-                    // 欄位容錯：文湖線API有時欄位叫 Car1，有時 Cart1L，這裡通吃
                     const level = match[`Car${i}`] || match[`Cart${i}L`] || 0;
-                    
                     let cls = 'cong-car';
                     if (level == 1) cls += ' cong-lvl-1';
                     else if (level == 2) cls += ' cong-lvl-2';
                     else if (level == 3) cls += ' cong-lvl-3';
                     else if (level >= 4) cls += ' cong-lvl-4';
-                    
-                    // 如果 level 是 0 或找不到，就顯示預設灰色
-                    if (!level) cls = 'cong-car';
-
                     carsHtml += `<div class="${cls}"></div>`;
                 }
-
                 return `<div class="cong-label"><span>車廂擁擠度</span><span style="font-size:0.7rem; opacity:0.7">綠➔紅</span></div><div class="congestion-bar">${carsHtml}</div>`;
             },
 
             renderLive(trains, crowdData = []) {
                 const grid = document.getElementById('board');
-                grid.className = "board-grid"; 
-                
                 if (!trains || trains.length === 0) {
                     grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:100px; color:var(--text-sub);">目前無即時班次資訊</div>`;
                     return;
                 }
 
-                const currentStationMeta = AppState.stations.find(s => s.id === AppState.sid);
-                const currentStationNameZh = currentStationMeta?.name || '';
-                const defaultColor = currentStationMeta?.line?.color || '#0070bd';
-
+                const currentStation = AppState.stations.find(s => s.id === AppState.sid);
                 let groups = {};
                 trains.forEach(t => {
-                    const destName = t.DestinationStationName?.Zh_tw || t.DestinationName || '終點站';
-                    const key = `往 ${destName}`;
+                    const key = `往 ${t.DestinationStationName.Zh_tw}`;
                     if (!groups[key]) groups[key] = [];
                     groups[key].push(t);
                 });
 
-                grid.innerHTML = Object.entries(groups).map(([groupTitle, list]) => {
-                    // 依照到站時間排序
+                grid.innerHTML = Object.entries(groups).map(([title, list]) => {
                     const sorted = list.sort((a, b) => a.EstimateTime - b.EstimateTime);
-                    const first = sorted[0];
-
+                    const defaultColor = currentStation?.line?.color || '#0070bd';
                     return `
                         <div class="card">
-                            <div class="card-header" style="background: ${first.LineColor || defaultColor}">
-                                <i class="fas fa-train"></i>
-                                <span>${groupTitle}</span>
+                            <div class="card-header" style="background: ${defaultColor}">
+                                <i class="fas fa-train"></i> <span>${title}</span>
                             </div>
                             ${sorted.slice(0, 3).map((t, idx) => {
-                                // --- 時間格式修改區塊 ---
-                                const seconds = parseInt(t.EstimateTime);
-                                let timeDisplay = '';
-                                
-                                if (t.CountDown === '列車進站' || seconds <= 10) {
-                                    timeDisplay = '<span class="arriving-badge">進站中</span>';
-                                } else if (t.CountDown === '資料擷取中') {
-                                    timeDisplay = '<span class="time-unit">更新中...</span>';
-                                } else {
-                                    // 轉換成 MM:SS 格式
-                                    const mm = Math.floor(seconds / 60);
-                                    const ss = seconds % 60;
-                                    const mmStr = String(mm).padStart(2, '0');
-                                    const ssStr = String(ss).padStart(2, '0');
-                                    timeDisplay = `<span class="time-number" style="font-size: 2rem;">${mmStr}:${ssStr}</span>`;
-                                }
-                                // ----------------------
-
-                                // 只有北捷且第一班車顯示擁擠度
-                                const congestionHtml = (AppState.sys === 'TRTC' && idx === 0) 
-                                    ? this.generateCongestionHTML(t, crowdData) 
-                                    : '';
+                                const seconds = t.EstimateTime;
+                                let timeDisplay = (t.CountDown === '列車進站' || seconds <= 10) 
+                                    ? '<span class="arriving-badge">進站中</span>' 
+                                    : `<span class="time-number" style="font-size:2rem;">${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}</span>`;
 
                                 return `
                                     <div class="arrival-row">
                                         <div>
-                                            <div class="destination">${t.DestinationStationName?.Zh_tw || '終點站'}</div>
-                                            <div class="meta">${currentStationNameZh}</div>
+                                            <div class="destination">${t.DestinationStationName.Zh_tw}</div>
+                                            <div class="meta">${currentStation.name}</div>
                                         </div>
                                         <div class="arrival-time">${timeDisplay}</div>
                                     </div>
-                                    ${congestionHtml} 
+                                    ${idx === 0 ? this.generateCongestionHTML(t, crowdData) : ''}
                                 `;
                             }).join('')}
                         </div>
@@ -468,76 +420,33 @@
             renderSchedule(data) {
                 const grid = document.getElementById('board');
                 grid.className = "schedule-container";
-                
                 const now = new Date();
                 const currentHHmm = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-                const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-                const dayType = days[now.getDay()];
+                const dayType = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][now.getDay()];
+                
+                if (!data.Timetables) { grid.innerHTML = "無資料"; return; }
 
-                if (!data.Timetables || data.Timetables.length === 0) {
-                    grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:100px; color:var(--text-sub);">暫無時刻表資料</div>`;
-                    return;
-                }
-
-                const currentStation = AppState.stations.find(s => s.id === AppState.sid);
-                const headerColor = currentStation?.line?.color || '#475569';
-
-                const activeRoutes = data.Timetables.filter(route => {
-                    return route.ServiceDays ? route.ServiceDays[dayType] : true;
-                });
-
-                if (activeRoutes.length === 0) {
-                    grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:100px; color:var(--text-sub);">今日無營運班次</div>`;
-                    return;
-                }
-
-                grid.innerHTML = activeRoutes.map(route => {
-                    const futureTrips = route.Timetables.filter(t => t.ArrivalTime >= currentHHmm);
-
-                    if (futureTrips.length === 0) {
-                        return `
-                            <div class="timetable-card">
-                                <div class="timetable-header" style="background: ${headerColor}; opacity: 0.7;">
-                                    <span><i class="fas fa-moon"></i> 往 ${route.DestinationStationName.Zh_tw}</span>
-                                    <small>營運結束</small>
-                                </div>
-                                <div class="end-msg" style="padding:20px; text-align:center; color:var(--text-sub);">今日班次已駛離 Service Ended</div>
-                            </div>
-                        `;
-                    }
-
-                    const hoursGroup = {};
-                    futureTrips.forEach((trip, idx) => {
-                        const [hh, mm] = trip.ArrivalTime.split(':');
-                        if (!hoursGroup[hh]) hoursGroup[hh] = [];
-                        hoursGroup[hh].push({ mm: mm, isNext: idx === 0 });
+                grid.innerHTML = data.Timetables.filter(r => r.ServiceDays[dayType]).map(route => {
+                    const future = route.Timetables.filter(t => t.ArrivalTime >= currentHHmm);
+                    const hours = {};
+                    future.forEach((trip, i) => {
+                        const hh = trip.ArrivalTime.split(':')[0];
+                        if (!hours[hh]) hours[hh] = [];
+                        hours[hh].push({ mm: trip.ArrivalTime.split(':')[1], isNext: i === 0 });
                     });
-
-                    const rowsHtml = Object.entries(hoursGroup).map(([hour, minutes]) => `
-                        <div class="hour-row">
-                            <div class="hour-label">${hour}</div>
-                            <div class="minute-list">
-                                ${minutes.map(m => `<div class="min-chip ${m.isNext ? 'next-up' : ''}">${m.mm}</div>`).join('')}
-                            </div>
-                        </div>
-                    `).join('');
-
-                    return `
-                        <div class="timetable-card">
-                            <div class="timetable-header" style="background: ${headerColor}">
-                                <span><i class="fas fa-clock"></i> 往 ${route.DestinationStationName.Zh_tw}</span>
-                                <small style="font-size:0.8rem; opacity:0.8;">${dayType === 'Saturday' || dayType === 'Sunday' ? '例假日' : '平日'}</small>
-                            </div>
-                            <div class="timetable-body">${rowsHtml}</div>
-                        </div>
-                    `;
+                    const rows = Object.entries(hours).map(([h, m]) => `
+                        <div class="hour-row"><div class="hour-label">${h}</div><div class="minute-list">
+                        ${m.map(mm => `<div class="min-chip ${mm.isNext?'next-up':''}">${mm.mm}</div>`).join('')}
+                        </div></div>`).join('');
+                    return `<div class="timetable-card"><div class="timetable-header">往 ${route.DestinationStationName.Zh_tw}</div>${rows}</div>`;
                 }).join('');
             },
 
             openPIDS() { window.open(`metro-pids.html?sys=${AppState.sys}&sid=${AppState.sid}`, '_blank'); }
         };
 
-        document.addEventListener('DOMContentLoaded', () => Core.selectSystem('TRTC'));
+        // 啟動
+        window.onload = () => Core.init();
     </script>
 </body>
 </html>
