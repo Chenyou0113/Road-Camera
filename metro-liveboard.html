@@ -163,7 +163,11 @@
         let METRO_STATIONS_LOCAL = null;
         fetch('metro-stations-raw.json').then(r => r.json()).then(data => { METRO_STATIONS_LOCAL = data; });
         
-        const WORKER_URL = 'https://metro-api-worker.xiaoyouwu5-fd3.workers.dev/api';
+        // 🚨 這是 TDX 和非 TRTC 的 Worker 網址
+        const WORKER_URL_TDX = 'https://metro-api-worker.xiaoyouwu5-fd3.workers.dev/api';
+        // 🔥 這是您新部署的 TRTC 專屬 Worker 網址
+        const WORKER_URL_TRTC = 'https://trtc-metro-api.xiaoyouwu5-fd3.workers.dev/api';
+        
         const AppState = { sys: '', sid: '', stations: [], mode: 'live', timer: null };
 
         const UI = {
@@ -197,7 +201,8 @@
                         line: { id: info.lineId, name: sysData.lines[info.lineId]?.name || info.lineId, color: sysData.lines[info.lineId]?.color || '#808080' }
                     }));
                 } else {
-                    const res = await fetch(`${WORKER_URL}/stations?sys=${sys}`);
+                    // 回退到 TDX Worker API
+                    const res = await fetch(`${WORKER_URL_TDX}/stations?sys=${sys}`);
                     rawStations = await res.json();
                 }
 
@@ -250,23 +255,27 @@
             },
 
             async fetchData() {
+                // 根據系統選擇要用的 Worker 網址
+                const targetWorkerUrl = AppState.sys === 'TRTC' ? WORKER_URL_TRTC : WORKER_URL_TDX;
+                
                 try {
                     const endpoint = AppState.mode === 'live' 
                         ? `/liveboard?sys=${AppState.sys}&sid=${AppState.sid}` 
                         : `/schedule?sys=${AppState.sys}&sid=${AppState.sid}`;
                     
-                    const res = await fetch(`${WORKER_URL}${endpoint}`);
+                    // Liveboard 和 Schedule 數據 (TRTC 走 TRTC Worker，其他走 TDX Worker)
+                    const res = await fetch(`${targetWorkerUrl}${endpoint}`);
                     const data = await res.json();
 
                     if (AppState.mode === 'live') {
                         document.getElementById('stat-trains').textContent = data.length || 0;
                         
-                        // ★★★ 新增：如果是北捷，額外抓取擁擠度資料 ★★★
                         let crowdData = [];
                         if (AppState.sys === 'TRTC') {
                             try {
-                                const lineId = AppState.sid.replace(/[0-9]/g, ''); // 從 BL12 取出 BL
-                                const crowdRes = await fetch(`${WORKER_URL}/trtc/crowd?line=${lineId}`);
+                                const lineId = AppState.sid.replace(/[0-9]/g, '');
+                                // 擁擠度也從 TRTC Worker 抓取
+                                const crowdRes = await fetch(`${WORKER_URL_TRTC}/trtc/crowd?line=${lineId}`);
                                 crowdData = await crowdRes.json();
                             } catch(e) { console.error("Crowd data error", e); }
                         }
