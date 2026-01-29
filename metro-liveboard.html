@@ -304,28 +304,43 @@
                 } catch (error) { console.error("Fetch Error:", error); }
             },
 
-            // 🔥 新增：專門處理 TRTC 資料的邏輯
+            // 🔥 專門處理 TRTC 資料的邏輯 (含 API 端點自動切換)
             async fetchTRTCData() {
-                // A. 抓取列車即時到站資訊
+                // A. 抓取列車即時到站資訊 (Arrival)
                 const arrivalRes = await fetch(`${WORKER_URL_TRTC}/arrival`);
                 const rawArrivals = await arrivalRes.json();
 
-                // B. 抓取擁擠度資訊
+                // B. 抓取擁擠度資訊 (Crowdedness)
                 let crowdData = [];
                 try {
-                    // 判斷是否為文湖線 (BR開頭)
-                    const isWenhu = AppState.sid.startsWith('BR');
-                    const crowdEndpoint = isWenhu ? '/crowdedness/wenhu' : '/crowdedness/high-capacity';
-                    const crowdRes = await fetch(`${WORKER_URL_TRTC}${crowdEndpoint}`);
-                    crowdData = await crowdRes.json();
-                } catch(e) { console.log("Crowd data unavailable"); }
+                    // 取得路線代號 (例如 BL15 -> BL)
+                    const lineId = AppState.sid.replace(/[0-9]/g, '');
+                    
+                    let crowdEndpoint = '';
+
+                    if (lineId === 'BR') {
+                        // 1. 文湖線 (獨立 API)
+                        crowdEndpoint = '/crowdedness/wenhu';
+                    } else if (lineId === 'BL') {
+                        // 2. 板南線 (雖然通常在 high-capacity，但這裡將邏輯獨立出來)
+                        // 如果您未來有專屬板南線的 API，改這裡即可
+                        crowdEndpoint = '/crowdedness/high-capacity'; 
+                    } else {
+                        // 3. 其他高運量 (紅、綠、橘線)
+                        crowdEndpoint = '/crowdedness/high-capacity';
+                    }
+                    
+                    if (crowdEndpoint) {
+                        const crowdRes = await fetch(`${WORKER_URL_TRTC}${crowdEndpoint}`);
+                        crowdData = await crowdRes.json();
+                    }
+                } catch(e) { console.log("Crowd data unavailable", e); }
 
                 // C. 轉換資料格式 (Adapter)
-                // 因為 Worker 回傳的是包含全線所有車站的大陣列，我們需要轉換成 renderLive 看得懂的格式
                 const currentStation = AppState.stations.find(s => s.id === AppState.sid);
                 const currentStationName = currentStation ? currentStation.name : "";
 
-                // 過濾出本站資訊並格式化
+                // 過濾出本站資訊
                 const formattedTrains = rawArrivals
                     .filter(t => {
                         // 寬鬆比對站名 (API可能有"站"字也可能沒有)
@@ -334,46 +349,57 @@
                         return apiName === targetName;
                     })
                     .map(t => ({
-                        // 轉換成 RenderLive 預期的欄位
                         StationName: { Zh_tw: t.StationName },
                         DestinationStationName: { Zh_tw: t.DestinationName },
-                        EstimateTime: this.parseTRTCTime(t.CountDown), // "02:00" -> 120
+                        EstimateTime: this.parseTRTCTime(t.CountDown), // 轉換時間 "02:00" -> 120
                         CountDown: t.CountDown, // 保留原始字串 "列車進站" 用
-                        LineID: t.LineID, // 原始資料沒這欄位沒關係，renderLive 有 fallback
-                        TrainNumber: t.TrainNumber // 重要！用來對應擁擠度
+                        LineID: t.LineID,
+                        TrainNumber: t.TrainNumber // 保留車號做擁擠度比對
                     }));
 
                 document.getElementById('stat-trains').textContent = formattedTrains.length;
                 this.renderLive(formattedTrains, crowdData);
             },
 
-            // 產生擁擠度 HTML 的輔助函式
+            // 產生擁擠度 HTML 的輔助函式 (修復文湖線)
             generateCongestionHTML(train, crowdData) {
                 if (AppState.sys !== 'TRTC' || !crowdData || crowdData.length === 0) return '';
-                if (!train.TrainNumber) return ''; // 沒有車號無法對應
+                if (!train.TrainNumber) return ''; 
 
-                // 使用 TrainNumber 進行精確比對
-                const match = crowdData.find(c => c.TrainNumber === train.TrainNumber);
+                // --- 修正重點：寬鬆比對車號 ---
+                // 將兩邊的車號都轉成數字比對，解決 "010" != "10" 的問題
+                const targetTN = parseInt(train.TrainNumber, 10);
+                
+                const match = crowdData.find(c => {
+                    const crowdTN = parseInt(c.TrainNumber, 10);
+                    // 確保車號有效且相等
+                    return !isNaN(crowdTN) && !isNaN(targetTN) && crowdTN === targetTN;
+                });
                 
                 if (!match) return '';
 
-                // 判斷車廂數 (文湖線4節，其他6節)
+                // 判斷車廂數 (文湖線 BR 是 4 節，其他是 6 節)
                 const lineId = AppState.sid.replace(/[0-9]/g, '');
                 const cars = (lineId === 'BR') ? 4 : 6;
                 
                 let carsHtml = '';
                 for(let i=1; i<=cars; i++) {
-                    const level = match[`Car${i}`] || match[`Cart${i}L`]; // 相容不同API欄位命名
+                    // 欄位容錯：文湖線API有時欄位叫 Car1，有時 Cart1L，這裡通吃
+                    const level = match[`Car${i}`] || match[`Cart${i}L`] || 0;
+                    
                     let cls = 'cong-car';
-                    // 擁擠度 1~4
                     if (level == 1) cls += ' cong-lvl-1';
                     else if (level == 2) cls += ' cong-lvl-2';
                     else if (level == 3) cls += ' cong-lvl-3';
                     else if (level >= 4) cls += ' cong-lvl-4';
+                    
+                    // 如果 level 是 0 或找不到，就顯示預設灰色
+                    if (!level) cls = 'cong-car';
+
                     carsHtml += `<div class="${cls}"></div>`;
                 }
 
-                return `<div class="cong-label"><span>車廂擁擠度 (${train.TrainNumber})</span><span style="font-size:0.7rem; opacity:0.7">綠➔紅</span></div><div class="congestion-bar">${carsHtml}</div>`;
+                return `<div class="cong-label"><span>車廂擁擠度</span><span style="font-size:0.7rem; opacity:0.7">綠➔紅</span></div><div class="congestion-bar">${carsHtml}</div>`;
             },
 
             renderLive(trains, crowdData = []) {
@@ -409,20 +435,23 @@
                                 <span>${groupTitle}</span>
                             </div>
                             ${sorted.slice(0, 3).map((t, idx) => {
-                                const seconds = t.EstimateTime;
+                                // --- 時間格式修改區塊 ---
+                                const seconds = parseInt(t.EstimateTime);
                                 let timeDisplay = '';
                                 
-                                // 判斷顯示文字
-                                if (t.CountDown === '列車進站' || seconds <= 0) {
+                                if (t.CountDown === '列車進站' || seconds <= 10) {
                                     timeDisplay = '<span class="arriving-badge">進站中</span>';
                                 } else if (t.CountDown === '資料擷取中') {
                                     timeDisplay = '<span class="time-unit">更新中...</span>';
-                                } else if (seconds <= 60) {
-                                    timeDisplay = '<span class="arriving-badge" style="background:#f58220">將到站</span>';
                                 } else {
-                                    const mins = Math.ceil(seconds / 60);
-                                    timeDisplay = `<span class="time-number">${mins}</span><span class="time-unit">分</span>`;
+                                    // 轉換成 MM:SS 格式
+                                    const mm = Math.floor(seconds / 60);
+                                    const ss = seconds % 60;
+                                    const mmStr = String(mm).padStart(2, '0');
+                                    const ssStr = String(ss).padStart(2, '0');
+                                    timeDisplay = `<span class="time-number" style="font-size: 2rem;">${mmStr}:${ssStr}</span>`;
                                 }
+                                // ----------------------
 
                                 // 只有北捷且第一班車顯示擁擠度
                                 const congestionHtml = (AppState.sys === 'TRTC' && idx === 0) 
