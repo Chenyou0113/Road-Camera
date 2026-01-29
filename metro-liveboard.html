@@ -84,6 +84,34 @@
         
         @keyframes blink-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(220, 38, 38, 0); } 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); } }
+
+        /* --- 👥 擁擠度微型條樣式 --- */
+        .congestion-bar {
+            display: flex;
+            gap: 2px;
+            padding: 0 20px 15px 20px; /* 放在 arrival-row 下方 */
+            background: var(--surface);
+        }
+        .cong-car {
+            height: 6px;
+            flex: 1;
+            border-radius: 2px;
+            background: #e2e8f0; /* 預設灰色 */
+        }
+        .cong-label {
+            font-size: 0.75rem;
+            color: var(--text-sub);
+            font-weight: 700;
+            margin-bottom: 4px;
+            padding: 8px 20px 0 20px;
+            display: flex;
+            justify-content: space-between;
+        }
+        /* 北捷標準色 */
+        .cong-lvl-1 { background: #32b900; } /* 綠 */
+        .cong-lvl-2 { background: #ffcc00; } /* 黃 */
+        .cong-lvl-3 { background: #f58220; } /* 橘 */
+        .cong-lvl-4 { background: #d32f2f; } /* 紅 */
     </style>
 </head>
 <body class="dark-mode">
@@ -232,14 +260,58 @@
 
                     if (AppState.mode === 'live') {
                         document.getElementById('stat-trains').textContent = data.length || 0;
-                        this.renderLive(data);
+                        
+                        // ★★★ 新增：如果是北捷，額外抓取擁擠度資料 ★★★
+                        let crowdData = [];
+                        if (AppState.sys === 'TRTC') {
+                            try {
+                                const lineId = AppState.sid.replace(/[0-9]/g, ''); // 從 BL12 取出 BL
+                                const crowdRes = await fetch(`${WORKER_URL}/trtc/crowd?line=${lineId}`);
+                                crowdData = await crowdRes.json();
+                            } catch(e) { console.error("Crowd data error", e); }
+                        }
+
+                        // 將擁擠度資料傳給 renderLive
+                        this.renderLive(data, crowdData);
                     } else {
                         this.renderSchedule(data);
                     }
                 } catch (error) { console.error(error); }
             },
 
-            renderLive(trains) {
+            // 產生擁擠度 HTML 的輔助函式
+            generateCongestionHTML(train, crowdData) {
+                if (!crowdData || crowdData.length === 0) return '';
+
+                // 比對邏輯：尋找目的地相同的列車
+                const match = crowdData.find(c => c.Destination === train.DestinationStationName.Zh_tw);
+                if (!match) return '';
+
+                // 判斷車廂數 (文湖線4節，其他6節)
+                const lineId = AppState.sid.replace(/[0-9]/g, '');
+                const cars = (lineId === 'BR') ? 4 : 6;
+                
+                let carsHtml = '';
+                for(let i=1; i<=cars; i++) {
+                    const lvl = match[`Car${i}`]; // 取得等級 1~4
+                    let cls = 'cong-car';
+                    if (lvl == 1) cls += ' cong-lvl-1';
+                    else if (lvl == 2) cls += ' cong-lvl-2';
+                    else if (lvl == 3) cls += ' cong-lvl-3';
+                    else if (lvl == 4) cls += ' cong-lvl-4';
+                    carsHtml += `<div class="${cls}"></div>`;
+                }
+
+                return `
+                    <div class="cong-label">
+                        <span>車廂擁擠度</span>
+                        <span style="font-size:0.7rem; opacity:0.7">舒適 ➔ 擁擠</span>
+                    </div>
+                    <div class="congestion-bar">${carsHtml}</div>
+                `;
+            },
+
+            renderLive(trains, crowdData = []) { // 接收 crowdData 參數
                 const grid = document.getElementById('board');
                 grid.className = "board-grid"; 
                 if (!trains || trains.length === 0) {
@@ -268,7 +340,7 @@
                                 <i class="fas fa-train"></i>
                                 <span>${groupTitle}</span>
                             </div>
-                            ${sorted.slice(0, 3).map(t => {
+                            ${sorted.slice(0, 3).map((t, idx) => {
                                 const seconds = parseInt(t.EstimateTime);
                                 let timeDisplay = '';
                                 if (seconds <= 0 || t.EstimateTime === 0) {
@@ -280,6 +352,9 @@
                                     timeDisplay = `<span class="time-number">${mins}</span><span class="time-unit">分</span>`;
                                 }
 
+                                // ★★★ 在第一班車加入擁擠度顯示 ★★★
+                                const congestionHtml = (idx === 0) ? this.generateCongestionHTML(t, crowdData) : '';
+
                                 return `
                                     <div class="arrival-row">
                                         <div>
@@ -288,6 +363,7 @@
                                         </div>
                                         <div class="arrival-time">${timeDisplay}</div>
                                     </div>
+                                    ${congestionHtml}
                                 `;
                             }).join('')}
                         </div>
@@ -301,7 +377,10 @@
                 
                 const now = new Date();
                 const currentHHmm = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-                const dayType = ['Sunday','Monday','Monday','Monday','Monday','Monday','Saturday'][now.getDay()];
+                
+                // 轉換星期格式以配合 TDX (Sunday, Monday...)
+                const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+                const dayType = days[now.getDay()];
 
                 if (!data.Timetables || data.Timetables.length === 0) {
                     grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:100px; color:var(--text-sub);">暫無時刻表資料</div>`;
@@ -311,19 +390,46 @@
                 const currentStation = AppState.stations.find(s => s.id === AppState.sid);
                 const headerColor = currentStation?.line?.color || '#475569';
 
-                grid.innerHTML = data.Timetables.map(route => {
-                    const futureTrips = route.Timetables
-                        .filter(t => t.ServiceDays[dayType] && t.ArrivalTime >= currentHHmm);
+                // ★★★ 修正邏輯開始 ★★★
+                // 1. 先過濾出「今天有營運」的路線 (例如平日/假日)
+                const activeRoutes = data.Timetables.filter(route => {
+                    // 如果資料包含 ServiceDays，檢查今日是否營運；若無則預設顯示
+                    return route.ServiceDays ? route.ServiceDays[dayType] : true;
+                });
 
-                    if (futureTrips.length === 0) return '';
+                if (activeRoutes.length === 0) {
+                    grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:100px; color:var(--text-sub);">今日無營運班次</div>`;
+                    return;
+                }
 
+                grid.innerHTML = activeRoutes.map(route => {
+                    // 2. 再過濾出「尚未發車」的時間
+                    // API 截圖顯示時間在 Timetables 陣列內，且只有 ArrivalTime/DepartureTime
+                    const futureTrips = route.Timetables.filter(t => t.ArrivalTime >= currentHHmm);
+
+                    // 如果今天這條線有開，但晚於現在的班次都沒了
+                    if (futureTrips.length === 0) {
+                        return `
+                            <div class="timetable-card">
+                                <div class="timetable-header" style="background: ${headerColor}; opacity: 0.7;">
+                                    <span><i class="fas fa-moon"></i> 往 ${route.DestinationStationName.Zh_tw}</span>
+                                    <small>營運結束</small>
+                                </div>
+                                <div class="end-msg">今日班次已駛離 Service Ended</div>
+                            </div>
+                        `;
+                    }
+
+                    // 3. 將時間按小時分組
                     const hoursGroup = {};
                     futureTrips.forEach((trip, idx) => {
                         const [hh, mm] = trip.ArrivalTime.split(':');
                         if (!hoursGroup[hh]) hoursGroup[hh] = [];
+                        // 標記第一班車 (Next Train)
                         hoursGroup[hh].push({ mm: mm, isNext: idx === 0 });
                     });
 
+                    // 4. 生成 HTML
                     const rowsHtml = Object.entries(hoursGroup).map(([hour, minutes]) => `
                         <div class="hour-row">
                             <div class="hour-label">${hour}</div>
@@ -337,12 +443,13 @@
                         <div class="timetable-card">
                             <div class="timetable-header" style="background: ${headerColor}">
                                 <span><i class="fas fa-clock"></i> 往 ${route.DestinationStationName.Zh_tw}</span>
-                                <small style="font-size:0.8rem; opacity:0.8;">${dayType === 'Monday' ? '平日' : '例假日'}</small>
+                                <small style="font-size:0.8rem; opacity:0.8;">${dayType === 'Saturday' || dayType === 'Sunday' ? '例假日' : '平日'}</small>
                             </div>
                             <div class="timetable-body">${rowsHtml}</div>
                         </div>
                     `;
                 }).join('');
+                // ★★★ 修正邏輯結束 ★★★
             },
 
             openPIDS() { window.open(`metro-pids.html?sys=${AppState.sys}&sid=${AppState.sid}`, '_blank'); }

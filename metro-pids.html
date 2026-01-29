@@ -413,25 +413,53 @@
         }
 
         let newsCache = { data: null, timestamp: 0 };
+        const NEWS_CACHE_TIME = 300000; // 5 分鐘
+
         async function updateMarquee() {
-            const tpassSummary = "【TPASS 2.0+ 升級】常客優惠正式上線！搭乘11次以上最高享30%回饋...";
+            // 1. 定義固定的宣導文字
+            const tpassSummary = "【TPASS 2.0+ 升級】常客優惠正式上線！搭乘11次以上最高享30%回饋，國道客運遠行再享優惠，詳情請見官網。";
+            const safetyPsas = "【安全宣導】月台候車請勿超越黃線。遇緊急狀況請保持冷靜，使用對講機求助。捷運系統全面禁菸。";
+            const closing = "祝您旅途愉快！";
+            
             let finalMarquee = "";
+
             try {
                 let data = null;
-                if (newsCache.data && (Date.now() - newsCache.timestamp) < 300000) {
+                // 檢查快取
+                if (newsCache.data && (Date.now() - newsCache.timestamp) < NEWS_CACHE_TIME) {
                     data = newsCache.data;
                 } else {
                     const res = await fetch(`${METRO_API}/news?sys=${system}`);
                     data = await res.json();
                     newsCache = { data, timestamp: Date.now() };
                 }
+                
                 let newsContent = "";
+                // 抓取前 3 則最新消息
                 if (Array.isArray(data) && data.length > 0) {
-                    newsContent = data.slice(0, 3).map(n => `【最新消息】${n.Title || n.NewsTitle}`).join('　　') + '　　';
+                    newsContent = data.slice(0, 3).map(n => {
+                        return `【最新消息】${n.Title || n.NewsTitle}`;
+                    }).join('　　') + '　　';
                 }
-                finalMarquee = newsContent + tpassSummary;
-                document.getElementById('ui-marquee').innerText = finalMarquee;
-            } catch (e) { document.getElementById('ui-marquee').innerText = tpassSummary; }
+
+                // 2. 組合所有文字：新聞 + TPASS + 安全宣導 + 結尾
+                finalMarquee = newsContent + tpassSummary + '　　' + safetyPsas + '　　' + closing;
+                
+                // 3. 更新畫面
+                const marqueeEl = document.getElementById('ui-marquee');
+                marqueeEl.innerText = finalMarquee;
+
+                // 4. ★關鍵★ 動態調整滾動速度
+                // 字越多，時間就要越長，這樣才不會跑太快 (每個字約 0.4 秒)
+                const charCount = finalMarquee.length;
+                const newDuration = Math.max(30, charCount * 0.4); 
+                marqueeEl.style.animationDuration = `${newDuration}s`;
+
+            } catch (e) {
+                // 失敗時顯示預設內容
+                const marqueeEl = document.getElementById('ui-marquee');
+                marqueeEl.innerText = tpassSummary + '　　' + safetyPsas;
+            }
         }
 
         init();
