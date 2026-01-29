@@ -306,55 +306,30 @@
 
             // 🔥 專門處理 TRTC 資料的邏輯 (含 API 端點自動切換)
             async fetchTRTCData() {
-                // A. 抓取列車即時到站資訊 (Arrival)
                 const arrivalRes = await fetch(`${WORKER_URL_TRTC}/arrival`);
                 const rawArrivals = await arrivalRes.json();
 
-                // B. 抓取擁擠度資訊 (Crowdedness)
                 let crowdData = [];
                 try {
-                    // 取得路線代號 (例如 BL15 -> BL)
                     const lineId = AppState.sid.replace(/[0-9]/g, '');
-                    
-                    let crowdEndpoint = '';
+                    const crowdEndpoint = (lineId === 'BR') ? '/crowdedness/wenhu' : '/crowdedness/high-capacity';
+                    const crowdRes = await fetch(`${WORKER_URL_TRTC}${crowdEndpoint}`);
+                    crowdData = await crowdRes.json();
+                } catch(e) { console.log("Crowd data unavailable"); }
 
-                    if (lineId === 'BR') {
-                        // 1. 文湖線 (獨立 API)
-                        crowdEndpoint = '/crowdedness/wenhu';
-                    } else if (lineId === 'BL') {
-                        // 2. 板南線 (雖然通常在 high-capacity，但這裡將邏輯獨立出來)
-                        // 如果您未來有專屬板南線的 API，改這裡即可
-                        crowdEndpoint = '/crowdedness/high-capacity'; 
-                    } else {
-                        // 3. 其他高運量 (紅、綠、橘線)
-                        crowdEndpoint = '/crowdedness/high-capacity';
-                    }
-                    
-                    if (crowdEndpoint) {
-                        const crowdRes = await fetch(`${WORKER_URL_TRTC}${crowdEndpoint}`);
-                        crowdData = await crowdRes.json();
-                    }
-                } catch(e) { console.log("Crowd data unavailable", e); }
-
-                // C. 轉換資料格式 (Adapter)
-                const currentStation = AppState.stations.find(s => s.id === AppState.sid);
-                const currentStationName = currentStation ? currentStation.name : "";
-
-                // 過濾出本站資訊
+                // ★★★ 核心修正：精確篩選 StationID ★★★
                 const formattedTrains = rawArrivals
                     .filter(t => {
-                        // 寬鬆比對站名 (API可能有"站"字也可能沒有)
-                        const apiName = t.StationName.replace('站','');
-                        const targetName = currentStationName.replace('站','');
-                        return apiName === targetName;
+                        // 只保留 StationID 完全相符的資料 (例如只要 BR24，不要 BL23)
+                        return t.StationID === AppState.sid;
                     })
                     .map(t => ({
                         StationName: { Zh_tw: t.StationName },
                         DestinationStationName: { Zh_tw: t.DestinationName },
-                        EstimateTime: this.parseTRTCTime(t.CountDown), // 轉換時間 "02:00" -> 120
-                        CountDown: t.CountDown, // 保留原始字串 "列車進站" 用
+                        EstimateTime: this.parseTRTCTime(t.CountDown),
+                        CountDown: t.CountDown,
                         LineID: t.LineID,
-                        TrainNumber: t.TrainNumber // 保留車號做擁擠度比對
+                        TrainNumber: t.TrainNumber
                     }));
 
                 document.getElementById('stat-trains').textContent = formattedTrains.length;
@@ -394,7 +369,6 @@
                 
                 if (!match) return '';
 
-                const lineId = AppState.sid.replace(/[0-9]/g, '');
                 // ★★★ 關鍵修改：文湖線(BR) 與 環狀線(Y) 都是 4 節車廂 ★★★
                 const cars = (lineId === 'BR' || lineId === 'Y') ? 4 : 6;
                 

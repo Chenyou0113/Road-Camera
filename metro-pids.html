@@ -278,41 +278,48 @@
         }
 
         // 🔥 專門處理 TRTC 資料 (含智慧分流)
+        // 🔥 PIDS 專用：精確篩選 StationID 函式
         async function fetchTRTCData() {
+            // 1. 抓取所有列車到站資訊
             const res = await fetch(`${METRO_API_TRTC}/arrival`);
             const rawData = await res.json();
             
-            const stNameEl = document.getElementById('ui-st-name');
-            const currentStationName = stNameEl.innerText.replace('站', '');
+            // 2. 取得網址參數中的車站 ID (例如 BR24)
+            const targetStationID = station.toUpperCase().trim();
 
-            // 1. 過濾本站列車
+            // ★★★ 核心修正：只過濾出 StationID 完全符合的列車 ★★★
+            // 這樣在「南港展覽館」就不會同時抓到 BR24(文湖) 跟 BL23(板南)
             const stationTrains = rawData.filter(t => {
-                const apiName = t.StationName.replace('站', '');
-                return apiName === currentStationName;
+                // 確保 ID 存在且完全相等
+                return t.StationID && t.StationID.toUpperCase().trim() === targetStationID;
             });
 
+            // 3. 如果沒車，直接回傳空值，讓 UI 顯示「暫無列車」或「營運結束」
             if (stationTrains.length === 0) return [null, null];
 
-            // 2. 格式轉換
+            // 4. 轉換資料格式 (Raw -> PIDS Format)
             const formattedTrains = stationTrains.map(t => ({
                 DestinationStationName: { Zh_tw: t.DestinationName, En: '' }, 
                 EstimateTime: parseTRTCTime(t.CountDown),
                 LineID: t.LineID,
+                // 使用 CSS 變數中的顏色作為後備
                 LineColor: getComputedStyle(document.documentElement).getPropertyValue('--theme-color').trim(),
                 TrainNumber: t.TrainNumber
             }));
 
-            // 3. 智慧分流 (Platform 1 / Platform 2)
+            // 5. 智慧分流 (月台1 vs 月台2)
             const dests = [...new Set(formattedTrains.map(t => t.DestinationStationName.Zh_tw))];
             
             let t1 = null, t2 = null;
             
             if (dests.length >= 2) {
+                // 有兩個目的地 (上行與下行)，分別取各組最快到站的車
                 const group1 = formattedTrains.filter(t => t.DestinationStationName.Zh_tw === dests[0]).sort((a,b)=>a.EstimateTime-b.EstimateTime);
                 const group2 = formattedTrains.filter(t => t.DestinationStationName.Zh_tw === dests[1]).sort((a,b)=>a.EstimateTime-b.EstimateTime);
                 t1 = group1[0];
                 t2 = group2[0];
             } else {
+                // 只有一個目的地 (如端點站)，取前兩班車
                 const sorted = formattedTrains.sort((a,b)=>a.EstimateTime-b.EstimateTime);
                 t1 = sorted[0];
                 t2 = sorted.length > 1 ? sorted[1] : null;
