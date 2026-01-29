@@ -409,29 +409,19 @@
             }
 
             try {
-                // 1. 判斷路線與 API Endpoint
                 const lineId = station.replace(/[0-9]/g, ''); 
-                let endpoint = '';
-                
-                if (lineId === 'BR') {
-                    endpoint = '/crowdedness/wenhu';
-                } else if (lineId === 'BL') {
-                    // 板南線 (目前在 high-capacity，若未來分離可改這裡)
-                    endpoint = '/crowdedness/high-capacity';
-                } else {
-                    endpoint = '/crowdedness/high-capacity';
-                }
+                let endpoint = (lineId === 'BR') ? '/crowdedness/wenhu' : '/crowdedness/high-capacity';
 
-                // 2. 呼叫 API
                 const res = await fetch(`${METRO_API_TRTC}${endpoint}`);
                 let data = await res.json();
 
-                if (data.error) {
-                    document.querySelector('.congestion-area').innerHTML = `<div class="cong-no-data">擁擠度資料取得失敗</div>`;
+                if (data.error || !Array.isArray(data)) {
+                    document.querySelector('.congestion-area').innerHTML = `<div class="cong-no-data">目前無擁擠度訊號</div>`;
                     return;
                 }
-                
-                if (!Array.isArray(data)) data = [];
+
+                const stNameEl = document.getElementById('ui-st-name');
+                const currentStationName = stNameEl.innerText.replace('站', '').replace('臺', '台').trim();
 
                 let html = '';
                 const carCount = (lineId === 'BR') ? 4 : 6;
@@ -440,9 +430,23 @@
                     const train = nextTrains[idx];
                     if (!train) return;
 
-                    // 3. 關鍵修正：轉成數字比對車號
-                    const targetTN = parseInt(train.TrainNumber, 10);
-                    const match = data.find(c => parseInt(c.TrainNumber, 10) === targetTN);
+                    // --- 策略 A：車號比對 ---
+                    let match = null;
+                    if (train.TrainNumber) {
+                        const targetTN = parseInt(train.TrainNumber, 10);
+                        match = data.find(c => {
+                            const crowdNumbers = String(c.TrainNumber).split(',').map(n => parseInt(n.trim(), 10));
+                            return crowdNumbers.includes(targetTN);
+                        });
+                    }
+
+                    // --- 策略 B：站名比對 (端點站備案) ---
+                    if (!match) {
+                        match = data.find(c => {
+                            const apiStation = (c.StationName || "").replace('BR', '').replace('站', '').replace('臺', '台').trim();
+                            return apiStation === currentStationName;
+                        });
+                    }
 
                     const label = `往 ${train.DestinationStationName.Zh_tw}`;
                     let barsHtml = '';
