@@ -314,8 +314,24 @@
             renderLive(trains, crowdData = []) { // 接收 crowdData 參數
                 const grid = document.getElementById('board');
                 grid.className = "board-grid"; 
-                if (!trains || trains.length === 0) {
-                    grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:100px; color:var(--text-sub);">目前無即時班次資訊</div>`;
+                
+                // 1. 取得當前選擇的站名 (中文)
+                const currentStationMeta = AppState.stations.find(s => s.id === AppState.sid);
+                const currentStationNameZh = currentStationMeta?.name || '';
+                
+                // 2. 嚴格篩選：只顯示當前車站的列車數據
+                // 使用 includes 增加容錯，並將「站」字移除以防 API 格式不一
+                const filteredTrains = trains.filter(t => {
+                    const apiStationName = t.StationName?.Zh_tw || t.StationName || '';
+                    const matchName = apiStationName.replace('站', '');
+                    const targetName = currentStationNameZh.replace('站', '');
+                    
+                    // 執行比對
+                    return matchName.includes(targetName) || t.StationID === AppState.sid;
+                });
+
+                if (!filteredTrains || filteredTrains.length === 0) {
+                    grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:100px; color:var(--text-sub);">目前無即時班次資訊 (該站無列車或資料未匹配)</div>`;
                     return;
                 }
 
@@ -324,7 +340,7 @@
                 const defaultColor = currentStation?.line?.color || '#0070bd';
 
                 let groups = {};
-                trains.forEach(t => {
+                filteredTrains.forEach(t => {
                     const key = `往 ${t.DestinationStationName?.Zh_tw || '終點站'}`;
                     if (!groups[key]) groups[key] = [];
                     groups[key].push(t);
@@ -343,7 +359,7 @@
                             ${sorted.slice(0, 3).map((t, idx) => {
                                 const seconds = parseInt(t.EstimateTime);
                                 let timeDisplay = '';
-                                if (seconds <= 0 || t.EstimateTime === 0) {
+                                if (seconds <= 0 || t.EstimateTime === 0 || t.CountDown === '列車進站') { // 加上 CountDown 判斷以防萬一
                                     timeDisplay = '<span class="arriving-badge">進站中</span>';
                                 } else if (seconds <= 60) {
                                     timeDisplay = '<span class="arriving-badge" style="background:#f58220">將到站</span>';
@@ -352,18 +368,18 @@
                                     timeDisplay = `<span class="time-number">${mins}</span><span class="time-unit">分</span>`;
                                 }
 
-                                // ★★★ 在第一班車加入擁擠度顯示 ★★★
-                                const congestionHtml = (idx === 0) ? this.generateCongestionHTML(t, crowdData) : '';
+                                // 只有北捷且有資料時顯示擁擠度
+                                const congestionHtml = (AppState.sys === 'TRTC' && idx === 0) ? this.generateCongestionHTML(t, crowdData) : '';
 
                                 return `
                                     <div class="arrival-row">
                                         <div>
                                             <div class="destination">${t.DestinationStationName?.Zh_tw || '終點站'}</div>
-                                            <div class="meta">${t.LineID || ''} 線 · ${t.StationName?.Zh_tw || ''}</div>
+                                            <div class="meta">${t.LineID || ''} 線 · ${currentStationNameZh}</div>
                                         </div>
                                         <div class="arrival-time">${timeDisplay}</div>
                                     </div>
-                                    ${congestionHtml}
+                                    ${congestionHtml} 
                                 `;
                             }).join('')}
                         </div>
