@@ -219,7 +219,6 @@
             }, 1000);
         }
 
-        // 🌙 離線狀態邏輯
         function getOfflineStatus() {
             const h = new Date().getHours();
             const isLateNight = (h >= 23 || h < 6);
@@ -235,7 +234,6 @@
             };
         }
 
-        // 🚀 核心資料抓取函式
         async function updateData() {
             try {
                 let nextTrains = [null, null];
@@ -269,7 +267,6 @@
                     }
                 }
 
-                // 更新 UI
                 updateUI(0, nextTrains[0]);
                 updateUI(1, nextTrains[1]);
                 updateCongestion(nextTrains);
@@ -280,16 +277,15 @@
             }
         }
 
-        // 🔥 新增：專門處理 TRTC 資料的函式
+        // 🔥 專門處理 TRTC 資料 (含智慧分流)
         async function fetchTRTCData() {
             const res = await fetch(`${METRO_API_TRTC}/arrival`);
             const rawData = await res.json();
             
-            // 取得目前車站中文名
             const stNameEl = document.getElementById('ui-st-name');
-            const currentStationName = stNameEl.innerText.replace('站', ''); // 去掉"站"字以便比對
+            const currentStationName = stNameEl.innerText.replace('站', '');
 
-            // 1. 過濾出本站列車
+            // 1. 過濾本站列車
             const stationTrains = rawData.filter(t => {
                 const apiName = t.StationName.replace('站', '');
                 return apiName === currentStationName;
@@ -297,29 +293,26 @@
 
             if (stationTrains.length === 0) return [null, null];
 
-            // 2. 轉換資料格式 (Raw -> PIDS Format)
+            // 2. 格式轉換
             const formattedTrains = stationTrains.map(t => ({
-                DestinationStationName: { Zh_tw: t.DestinationName, En: '' }, // 北捷 Raw Data 沒給英文，暫留空
+                DestinationStationName: { Zh_tw: t.DestinationName, En: '' }, 
                 EstimateTime: parseTRTCTime(t.CountDown),
-                LineID: t.LineID, // 暫時可能沒有
+                LineID: t.LineID,
                 LineColor: getComputedStyle(document.documentElement).getPropertyValue('--theme-color').trim(),
                 TrainNumber: t.TrainNumber
             }));
 
-            // 3. 智慧分流 (月台1 vs 月台2)
-            // 由於 API 沒給月台編號，我們用「目的地」來分組
+            // 3. 智慧分流 (Platform 1 / Platform 2)
             const dests = [...new Set(formattedTrains.map(t => t.DestinationStationName.Zh_tw))];
             
             let t1 = null, t2 = null;
             
             if (dests.length >= 2) {
-                // 如果有兩個不同目的地，各取第一班最快到的
                 const group1 = formattedTrains.filter(t => t.DestinationStationName.Zh_tw === dests[0]).sort((a,b)=>a.EstimateTime-b.EstimateTime);
                 const group2 = formattedTrains.filter(t => t.DestinationStationName.Zh_tw === dests[1]).sort((a,b)=>a.EstimateTime-b.EstimateTime);
                 t1 = group1[0];
                 t2 = group2[0];
             } else {
-                // 如果只有一個目的地，取前兩班
                 const sorted = formattedTrains.sort((a,b)=>a.EstimateTime-b.EstimateTime);
                 t1 = sorted[0];
                 t2 = sorted.length > 1 ? sorted[1] : null;
@@ -355,8 +348,7 @@
 
             lineBadge.style.opacity = '1';
             destZh.innerText = item.DestinationStationName.Zh_tw;
-            // 簡單對應英文 (可擴充)
-            destEn.innerText = item.DestinationStationName.En || "Train";
+            destEn.innerText = item.DestinationStationName.En || "Train"; // 英文暫時顯示 Train
             
             lineBadge.innerText = item.LineID || system.substring(0,1);
             lineBadge.style.background = item.LineColor || "#808080";
@@ -391,17 +383,20 @@
                 el.innerText = "進站中";
                 el.className = "time-box arriving";
             } else if (s <= 120) {
+                // 顯示 MM : SS
                 const m = Math.floor(s/60);
-                el.innerText = `${m} : ${String(s%60).padStart(2,'0')}`;
+                const secs = String(s%60).padStart(2,'0');
+                el.innerText = `${m} : ${secs}`;
                 el.className = "time-box approaching";
             } else {
                 const m = Math.floor(s/60);
-                el.innerText = `${m} : ${String(s%60).padStart(2,'0')}`;
+                const secs = String(s%60).padStart(2,'0');
+                el.innerText = `${m} : ${secs}`;
                 el.className = "time-box";
             }
         }
 
-        // 👥 更新擁擠度資訊 (TRTC 專用)
+        // 👥 更新擁擠度資訊 (TRTC 專用 - 全新邏輯)
         async function updateCongestion(nextTrains) {
             if (system !== 'TRTC') {
                 document.querySelector('.congestion-area').innerHTML = `<div class="cong-no-data">本系統暫無擁擠度資訊</div>`;
@@ -414,49 +409,60 @@
             }
 
             try {
-                // 判斷是否為文湖線
-                const isWenhu = station.startsWith('BR');
-                const endpoint = isWenhu ? '/crowdedness/wenhu' : '/crowdedness/high-capacity';
+                // 1. 判斷路線與 API Endpoint
+                const lineId = station.replace(/[0-9]/g, ''); 
+                let endpoint = '';
                 
-                // 呼叫 Worker 擁擠度 API
+                if (lineId === 'BR') {
+                    endpoint = '/crowdedness/wenhu';
+                } else if (lineId === 'BL') {
+                    // 板南線 (目前在 high-capacity，若未來分離可改這裡)
+                    endpoint = '/crowdedness/high-capacity';
+                } else {
+                    endpoint = '/crowdedness/high-capacity';
+                }
+
+                // 2. 呼叫 API
                 const res = await fetch(`${METRO_API_TRTC}${endpoint}`);
                 let data = await res.json();
 
-                // 若回傳格式為 { error: ... }
                 if (data.error) {
                     document.querySelector('.congestion-area').innerHTML = `<div class="cong-no-data">擁擠度資料取得失敗</div>`;
                     return;
                 }
                 
-                // 確保 data 是陣列
                 if (!Array.isArray(data)) data = [];
 
                 let html = '';
+                const carCount = (lineId === 'BR') ? 4 : 6;
                 
                 [0, 1].forEach(idx => {
                     const train = nextTrains[idx];
                     if (!train) return;
 
-                    // 使用 TrainNumber 比對
-                    const match = data.find(c => c.TrainNumber === train.TrainNumber);
+                    // 3. 關鍵修正：轉成數字比對車號
+                    const targetTN = parseInt(train.TrainNumber, 10);
+                    const match = data.find(c => parseInt(c.TrainNumber, 10) === targetTN);
 
                     const label = `往 ${train.DestinationStationName.Zh_tw}`;
                     let barsHtml = '';
-                    const carCount = isWenhu ? 4 : 6;
 
                     if (match) {
                         for (let i = 1; i <= carCount; i++) {
-                            // 欄位容錯: Car1 ~ Car6 或者 Cart1L ~ Cart6L (板南線可能會有 CartXL)
-                            const level = match[`Car${i}`] || match[`Cart${i}L`]; 
+                            const level = match[`Car${i}`] || match[`Cart${i}L`] || 0;
                             let cls = 'cong-car';
                             if (level == 1) cls += ' cong-lvl-1';
                             else if (level == 2) cls += ' cong-lvl-2';
                             else if (level == 3) cls += ' cong-lvl-3';
                             else if (level >= 4) cls += ' cong-lvl-4';
-                            barsHtml += `<div class="${cls}" title="第 ${i} 節"></div>`;
+                            
+                            // 若無資料 level=0，顯示灰色
+                            if(!level) cls = 'cong-car';
+                            
+                            barsHtml += `<div class="${cls}"></div>`;
                         }
                     } else {
-                        // 有車但沒對應到擁擠度 (顯示灰色)
+                        // 有車但無擁擠度資料 (顯示灰色)
                         for (let i = 1; i <= carCount; i++) barsHtml += `<div class="cong-car"></div>`;
                     }
 
