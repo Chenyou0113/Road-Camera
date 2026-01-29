@@ -72,7 +72,16 @@
         .video-container { width: 100%; height: 100%; position: relative; overflow: hidden; background: #000; }
         #video-iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; transform: scale(1.01); }
         
-        .congestion-area { background: #fff; border-top: 2px solid #ccc; padding: 10px 25px; display: flex; flex-direction: column; justify-content: center; }
+        /* 擁擠度顯示區 */
+        .congestion-area { 
+            background: #fff; 
+            border-top: 2px solid #ccc; 
+            padding: 10px 25px; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center;
+            min-height: 80px; /* 確保最小高度 */
+        }
         .cong-row { display: flex; align-items: center; gap: 15px; margin-bottom: 8px; }
         .cong-row:last-child { margin-bottom: 0; }
         .cong-label { font-size: 1.1vw; font-weight: 900; color: #333; width: 180px; text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
@@ -340,14 +349,25 @@
             }
         }
 
+        // 👥 更新擁擠度資訊 (TRTC 專用 - 增強版)
         async function updateCongestion(nextTrains) {
+            // 只有台北捷運 (TRTC) 有擁擠度資料
             if (system !== 'TRTC') {
                 document.querySelector('.congestion-area').innerHTML = `<div class="cong-no-data">本系統暫無擁擠度資訊</div>`;
                 return;
             }
 
+            // 如果兩邊都沒車，直接顯示無訊號
+            if (!nextTrains[0] && !nextTrains[1]) {
+                document.querySelector('.congestion-area').innerHTML = `<div class="cong-no-data">待列車進站後顯示擁擠度</div>`;
+                return;
+            }
+
             try {
+                // 1. 取得路線代號 (例如 BL, R, O)
                 const lineId = station.replace(/[0-9]/g, ''); 
+                
+                // 2. 呼叫 Worker API
                 const res = await fetch(`${METRO_API}/trtc/crowd?line=${lineId}`);
                 const data = await res.json(); 
 
@@ -357,27 +377,48 @@
                 }
 
                 let html = '';
+                
+                // 針對 PIDS 上顯示的兩班車 (月台1, 月台2)
                 [0, 1].forEach(idx => {
                     const train = nextTrains[idx];
-                    if (!train) return;
+                    if (!train) return; // 沒車就不顯示
 
-                    const carData = data.find(c => c.DestinationStationID === train.DestinationStationID || c.Destination === train.DestinationStationName.Zh_tw);
+                    // ★★★ 增強比對邏輯 ★★★
+                    // 1. 統一將「臺」轉為「台」以防 API 字體不一致
+                    // 2. 尋找目的地名稱相符的列車
+                    const targetDest = train.DestinationStationName.Zh_tw.replace('臺', '台');
+                    
+                    const carData = data.find(c => {
+                        const crowdDest = c.Destination.replace('臺', '台');
+                        return crowdDest === targetDest; 
+                        // 未來可加入 StationID 比對更精準，但目前目的地比對已足夠
+                    });
+
                     const label = `往 ${train.DestinationStationName.Zh_tw}`;
                     let barsHtml = '';
+
+                    // 判斷車廂數 (文湖線 BR 是 4 節，其他是 6 節)
                     const carCount = (lineId === 'BR') ? 4 : 6;
 
                     if (carData) {
+                        // 有抓到資料，依序填入顏色
                         for (let i = 1; i <= carCount; i++) {
-                            const level = carData[`Car${i}`];
+                            const level = carData[`Car${i}`]; // 取得 API 回傳的等級 (1~4)
                             let cls = 'cong-car';
-                            if (level == 1) cls += ' cong-lvl-1';
-                            else if (level == 2) cls += ' cong-lvl-2';
-                            else if (level == 3) cls += ' cong-lvl-3';
-                            else if (level == 4) cls += ' cong-lvl-4';
+                            
+                            // 對應顏色 Class
+                            if (level == 1) cls += ' cong-lvl-1'; // 綠
+                            else if (level == 2) cls += ' cong-lvl-2'; // 黃
+                            else if (level == 3) cls += ' cong-lvl-3'; // 橘
+                            else if (level == 4) cls += ' cong-lvl-4'; // 紅
+                            
                             barsHtml += `<div class="${cls}" title="第 ${i} 節: 等級 ${level}"></div>`;
                         }
                     } else {
-                        for (let i = 1; i <= carCount; i++) barsHtml += `<div class="cong-car"></div>`;
+                        // 該列車無資料 (顯示灰色)
+                        for (let i = 1; i <= carCount; i++) {
+                            barsHtml += `<div class="cong-car"></div>`;
+                        }
                     }
 
                     html += `
@@ -390,8 +431,12 @@
                         </div>
                     `;
                 });
-                document.querySelector('.congestion-area').innerHTML = html || `<div class="cong-no-data">目前無擁擠度資料</div>`;
-            } catch (e) { console.error("擁擠度更新失敗", e); }
+
+                document.querySelector('.congestion-area').innerHTML = html || `<div class="cong-no-data">接收擁擠度訊號中...</div>`;
+
+            } catch (e) {
+                console.error("擁擠度更新失敗", e);
+            }
         }
 
         async function updateWeather() {
