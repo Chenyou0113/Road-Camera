@@ -534,16 +534,57 @@
 
         async function updateMarquee() {
             try {
-                // 新聞還是走 TDX Worker
-                const res = await fetch(`${METRO_API_TDX}/news?sys=${system}`);
-                const data = await res.json();
-                let text = "【TPASS 2.0+ 升級】常客優惠正式上線！搭乘11次以上最高享30%回饋，國道客運遠行再享優惠，詳情請見官網。　　";
-                
-                if (data && data.length > 0) {
-                    text = data.slice(0, 3).map(n => `【最新消息】${n.Title || n.NewsTitle}`).join('　　') + '　　' + text;
+                // --- 1. 定義宣導語與固定資訊 ---
+                const safetyMessages = [
+                    "【安全宣導】月台候車請勿超越黃線，乘車時請握緊扶手，並請往車廂內部移動。",
+                    "【緊急事項】遇緊急狀況請保持冷靜，透過對講機與司機員或站務人員聯繫。",
+                    "【系統提示】捷運系統內全面禁止吸菸、飲食、嚼食口香糖或檳榔，違者最高處新臺幣 7,500 元罰鍰。",
+                    "【TPASS 2.0】行政院通勤月票優惠實施中，常客搭乘越多回饋越多，詳情請洽各車站詢問處。"
+                ];
+
+                // --- 2. 根據時間產生問候語 ---
+                const now = new Date();
+                const hour = now.getHours();
+                let greeting = "";
+                if (hour >= 5 && hour < 9) greeting = "早安！台北捷運祝您有個充滿活力的一天。";
+                else if (hour >= 9 && hour < 17) greeting = "台北捷運陪伴您前往目的地的每一刻。";
+                else if (hour >= 17 && hour < 20) greeting = "下班辛苦了！回家路上請注意安全。";
+                else greeting = "晚安，台北捷運守護您的歸途。";
+
+                // --- 3. 抓取 API 最新消息 (從 TDX Worker) ---
+                let newsContent = "";
+                try {
+                    const res = await fetch(`${METRO_API_TDX}/news?sys=${system}`);
+                    const data = await res.json();
+                    if (Array.isArray(data) && data.length > 0) {
+                        // 擷取前 3 則新聞，並加上 [最新消息] 標籤
+                        newsContent = data.slice(0, 3).map(n => `【最新消息】${n.Title || n.NewsTitle}`).join('　　');
+                    }
+                } catch (e) {
+                    console.log("News fetch failed, using fallback.");
                 }
-                document.getElementById('ui-marquee').innerText = text;
-            } catch(e) {}
+
+                // --- 4. 隨機選取一條安全宣導 ---
+                const randomSafety = safetyMessages[Math.floor(Math.random() * safetyMessages.length)];
+
+                // --- 5. 組合最終跑馬燈字串 ---
+                // 格式：[問候語] --- [API新聞] --- [安全宣導] --- [祝語]
+                const finalMarquee = `${greeting}　　${newsContent}　　${randomSafety}　　祝您旅途愉快！`;
+
+                // --- 6. 更新畫面並動態調整速度 ---
+                const marqueeEl = document.getElementById('ui-marquee');
+                if (marqueeEl) {
+                    marqueeEl.innerText = finalMarquee;
+                    
+                    // 動態調整滾動時間 (字越多滾越慢，確保看得清楚)
+                    // 設定每個字約 0.4 秒
+                    const duration = Math.max(30, finalMarquee.length * 0.4);
+                    marqueeEl.style.animationDuration = `${duration}s`;
+                }
+
+            } catch (e) {
+                console.error("Marquee update error:", e);
+            }
         }
 
         init();
