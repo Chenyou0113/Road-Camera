@@ -467,35 +467,59 @@
             // 🔥 轉乘站特色：同時顯示所有路線，例如忠孝復興會顯示文湖線+板南線
             renderLive(trains, crowdData = []) {
                 const grid = document.getElementById('board');
+                
+                // 1. 如果 trains 陣列為空 (0 線上列車)，顯示無資訊
                 if (!trains || trains.length === 0) {
                     grid.innerHTML = `<div style="grid-column:1/-1; text-align:center; padding:100px; color:var(--text-sub);">目前無即時班次資訊</div>`;
                     return;
                 }
 
                 const currentStation = AppState.stations.find(s => s.id === AppState.sid);
+                const defaultColor = currentStation?.line?.color || '#0070bd';
 
                 let groups = {};
                 trains.forEach(t => {
-                    // 1. 從 LinePrefix 查找路線名稱 (例如 BR -> 文湖線)
-                    const lineInfo = AppState.stations.find(s => s.id.startsWith(t.LinePrefix));
-                    const lineName = lineInfo?.displayLineName || t.LinePrefix;
-                    const lineColor = lineInfo?.line?.color || '#0070bd';
+                    // 確保 LinePrefix 存在（備案使用 LineID）
+                    let linePrefix = t.LinePrefix || (t.LineID ? t.LineID.substring(0, 1) : 'Z');
                     
-                    const dest = t.DestinationStationName.Zh_tw; 
+                    // 1. 查找路線名稱 (優先使用 globalLineMap，其次用當前系統的站點資訊)
+                    const sysLineMap = Core?.globalLineMap?.[AppState.sys] || {};
+                    let lineName = sysLineMap[linePrefix] || sysLineMap[t.LineID];
                     
-                    // 2. 關鍵：分組標題加上路線名稱，例如：[文湖線] 往 南港展覽館
+                    // 備案：從 AppState.stations 查找
+                    if (!lineName) {
+                        const lineInfo = AppState.stations.find(s => s.id.startsWith(linePrefix));
+                        lineName = lineInfo?.displayLineName || t.LineName || linePrefix;
+                    }
+                    
+                    // 確保 lineName 不是 undefined
+                    lineName = lineName || linePrefix || '未知路線';
+
+                    // 2. 獲取顏色 (容錯處理)
+                    const lineInfo = AppState.stations.find(s => s.id.startsWith(linePrefix));
+                    const lineColor = lineInfo?.line?.color || defaultColor;
+
+                    const dest = (t.DestinationStationName?.Zh_tw) || '終點站'; 
+                    
+                    // 3. 關鍵：分組標題
                     const key = `[${lineName}] 往 ${dest}`; 
-                    if (!groups[key]) groups[key] = { trains: [], linePrefix: t.LinePrefix, lineColor: lineColor };
+                    if (!groups[key]) {
+                        groups[key] = { trains: [], linePrefix: linePrefix, lineColor: lineColor };
+                    }
                     groups[key].trains.push(t);
                 });
 
+                // 2. 渲染邏輯
                 grid.innerHTML = Object.entries(groups).map(([title, group]) => {
                     const sorted = group.trains.sort((a, b) => a.EstimateTime - b.EstimateTime);
+                    
+                    // 最終容錯：清除任何 undefined
+                    const finalTitle = title.replace(/\[undefined\]/g, '[未知線]');
                     
                     return `
                         <div class="card">
                             <div class="card-header" style="background: ${group.lineColor}">
-                                <i class="fas fa-train"></i> <span>${title}</span>
+                                <i class="fas fa-train"></i> <span>${finalTitle}</span>
                             </div>
                             ${sorted.slice(0, 3).map((t, idx) => {
                                 const seconds = t.EstimateTime;
@@ -503,15 +527,20 @@
                                     ? '<span class="arriving-badge">進站中</span>' 
                                     : `<span class="time-number" style="font-size:2rem;">${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}</span>`;
 
+                                // 確保車廂數判斷正確
+                                const congestionHtml = (AppState.sys === 'TRTC' && idx === 0) 
+                                    ? this.generateCongestionHTML(t, crowdData, group.linePrefix) 
+                                    : '';
+
                                 return `
                                     <div class="arrival-row">
                                         <div>
-                                            <div class="destination">${t.DestinationStationName.Zh_tw}</div>
-                                            <div class="meta">${currentStation.name}</div>
+                                            <div class="destination">${(t.DestinationStationName?.Zh_tw) || '終點站'}</div>
+                                            <div class="meta">${currentStation?.name || '未知站'}</div>
                                         </div>
                                         <div class="arrival-time">${timeDisplay}</div>
                                     </div>
-                                    ${idx === 0 ? this.generateCongestionHTML(t, crowdData, group.linePrefix) : ''}
+                                    ${congestionHtml}
                                 `;
                             }).join('')}
                         </div>
