@@ -328,23 +328,18 @@
                             return pureApiName.includes(targetName);
                         })
                         .map(t => {
-                            // 2. ★ 核心判斷：優先使用目的地唯一性來判定 LinePrefix ★
-                            let linePrefix = currentLinePrefix; // 預設為當前選擇的線路
-                            const dest = t.DestinationName || '';
+                            // ★ 關鍵修正：直接從字典中查找 LinePrefix ★
+                            const destName = (t.DestinationName || "").replace('站', '').trim();
+                            let linePrefix = DEST_TO_LINE[destName] || null;
                             
-                            // 目的地強制判定：以確保顏色和車廂數正確
-                            if (dest.includes('動物園')) {
-                                linePrefix = 'BR'; // 動物園是文湖線唯一終點
-                            } else if (dest.includes('頂埔') || dest.includes('亞東醫院')) {
-                                linePrefix = 'BL'; // 頂埔/亞東醫院是板南線唯一
-                            } else if (dest.includes('南港展覽館')) {
-                                // 南港展覽館是共用站，需要用 StationID 或車號數據庫判斷
+                            // 特殊處理：南港展覽館是 BR/BL 共用站
+                            if (destName === '南港展覽館') {
                                 if (t.StationID?.startsWith('BR')) {
                                     linePrefix = 'BR';
                                 } else if (t.StationID?.startsWith('BL')) {
                                     linePrefix = 'BL';
                                 } else {
-                                    // 用車號反查數據庫
+                                    // 沒有 StationID，用車號反查數據庫
                                     const targetTN = t.TrainNumber ? parseInt(t.TrainNumber, 10) : null;
                                     if (targetTN) {
                                         const isInWenhu = wenhuCrowd.some(c => {
@@ -352,25 +347,19 @@
                                             return crowdNumbers.includes(targetTN);
                                         });
                                         linePrefix = isInWenhu ? 'BR' : 'BL';
+                                    } else {
+                                        linePrefix = 'BL'; // 預設為板南線
                                     }
                                 }
-                            } else if (dest.includes('新店') || dest.includes('松山')) {
-                                linePrefix = 'G'; // 松山新店線
-                            } else if (dest.includes('迴龍') || dest.includes('蘆洲') || dest.includes('南勢角')) {
-                                linePrefix = 'O'; // 中和新蘆線
-                            } else if (dest.includes('淡水') || dest.includes('象山')) {
-                                linePrefix = 'R'; // 淡水信義線
-                            } else if (t.StationID) {
-                                // 如果目的地無法判斷，使用 StationID 作為備案
-                                if (t.StationID.startsWith('R')) linePrefix = 'R';
-                                else if (t.StationID.startsWith('G')) linePrefix = 'G';
-                                else if (t.StationID.startsWith('O')) linePrefix = 'O';
-                                else if (t.StationID.startsWith('BL')) linePrefix = 'BL';
-                                else if (t.StationID.startsWith('BR')) linePrefix = 'BR';
+                            }
+                            
+                            // 找不到對應路線或非相關路線，淘汰此車輛
+                            if (!linePrefix || !['BR', 'BL', 'R', 'G', 'O'].includes(linePrefix)) {
+                                return null;
                             }
                             
                             return {
-                                LinePrefix: linePrefix, // 精準標註 BL, BR, R, G, O
+                                LinePrefix: linePrefix,
                                 DestinationStationName: { Zh_tw: t.DestinationName },
                                 EstimateTime: this.parseTRTCTime(t.CountDown),
                                 CountDown: t.CountDown,
