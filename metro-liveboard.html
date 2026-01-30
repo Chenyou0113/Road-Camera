@@ -245,7 +245,7 @@
         const UPDATE_INTERVAL_MS = 20000;
         
         let METRO_STATIONS_LOCAL = null;
-        const AppState = { sys: '', sid: '', stations: [], mode: 'live', timer: null };
+        const AppState = { sys: '', sid: '', stations: [], mode: 'live', timer: null, localTicker: null, lastFetchTime: 0, currentTrains: [] };
 
         const UI = {
             toggleTheme() {
@@ -464,6 +464,9 @@
                     const currentStation = AppState.stations.find(s => s.id === AppState.sid);
                     const targetName = currentStation ? currentStation.name.replace('站', '').trim() : "";
                     
+                    // 記錄抓取時間
+                    AppState.lastFetchTime = Date.now();
+
                     const formattedTrains = rawArrivals
                         .filter(t => {
                             const apiStationName = (t.StationName || "");
@@ -545,8 +548,14 @@
                         })
                         .filter(t => t !== null); 
 
+                    // 儲存到全域變數，供每秒更新使用
+                    AppState.currentTrains = formattedTrains;
+
                     document.getElementById('stat-trains').textContent = formattedTrains.length;
                     this.renderLive(formattedTrains, crowdData);
+                    
+                    // 啟動本地倒數
+                    this.startLocalTicker();
                 } catch (e) { console.error("fetchTRTCData error:", e); }
             },
 
@@ -688,7 +697,7 @@
                                             <div class="destination">${(t.DestinationStationName?.Zh_tw) || '終點站'}</div>
                                             <div class="meta">列車編號: ${t.TrainNumber || '--'}</div>
                                         </div>
-                                        <div class="arrival-time">${timeDisplay}</div>
+                                        <div class="arrival-time" data-original="${seconds}" data-raw="${t.CountDown}">${timeDisplay}</div>
                                     </div>
                                     ${congestionHtml}
                                 `;
@@ -721,6 +730,41 @@
                         </div></div>`).join('');
                     return `<div class="timetable-card"><div class="timetable-header">往 ${route.DestinationStationName.Zh_tw}</div>${rows}</div>`;
                 }).join('');
+            },
+
+            // 🔥 新增：啟動本地倒數計時器
+            startLocalTicker() {
+                if (AppState.localTicker) clearInterval(AppState.localTicker);
+                
+                // 每秒執行一次 UI 更新
+                AppState.localTicker = setInterval(() => {
+                    this.updateTimeDisplay();
+                }, 1000);
+            },
+
+            // 🔥 新增：更新時間顯示（本地倒數）
+            updateTimeDisplay() {
+                const now = Date.now();
+                const elapsedSeconds = Math.floor((now - AppState.lastFetchTime) / 1000); // 距離上次抓取過了幾秒
+
+                // 遍歷所有卡片上的時間元素
+                document.querySelectorAll('.arrival-time').forEach(el => {
+                    const originalSec = parseInt(el.dataset.original);
+                    if (isNaN(originalSec)) return;
+
+                    // 計算當前剩餘秒數
+                    let currentSec = originalSec - elapsedSeconds;
+                    
+                    // 如果是 "列車進站" 狀態，或秒數歸零，保持顯示進站中
+                    const rawStatus = el.dataset.raw;
+                    if (rawStatus === '列車進站' || currentSec <= 10) {
+                        el.innerHTML = '<span class="arriving-badge">進站中</span>';
+                    } else {
+                        const mm = String(Math.floor(currentSec / 60)).padStart(2, '0');
+                        const ss = String(currentSec % 60).padStart(2, '0');
+                        el.innerHTML = `<span class="time-number" style="font-size:2rem;">${mm}:${ss}</span>`;
+                    }
+                });
             },
 
             openPIDS() { window.open(`metro-pids.html?sys=${AppState.sys}&sid=${AppState.sid}`, '_blank'); }
