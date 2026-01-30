@@ -662,22 +662,48 @@
                     groups[key].trains.push(t);
                 });
 
+                const hour = new Date().getHours();
+                const isLateNight = (hour >= 0 && hour < 6);
+
                 grid.innerHTML = Object.entries(groups).map(([title, g]) => {
                     const sorted = g.trains.sort((a, b) => a.EstimateTime - b.EstimateTime);
                     const lineColors = { 'GA': '#8fc31f', 'RA': '#fd92a3' };
                     const color = lineColors[g.lp] || AppState.stations.find(s => s.id.startsWith(g.lp))?.line.color || '#0070bd';
+
+                    let contentHTML = sorted.slice(0, 2).map((t, i) => `
+                        <div class="arrival-row">
+                            <div><div class="destination">${t.DestinationStationName.Zh_tw}</div><div class="meta">車號: ${t.TrainNumber || '--'}</div></div>
+                            <div class="arrival-time" data-sec="${t.EstimateTime}" data-raw="${t.RawCountDown}">--:--</div>
+                        </div>
+                        ${i === 0 ? this.generateCongestionHTML(t, crowdData, g.lp) : ''}
+                    `).join('');
+
+                    if (isLateNight && sorted.length === 0) {
+                        contentHTML = `
+                            <div class="arrival-row" style="justify-content: center; padding: 40px; color: var(--text-sub);">
+                                <div style="text-align: center;">
+                                    <i class="fas fa-moon" style="font-size: 2rem; margin-bottom: 10px; display: block;"></i>
+                                    <div class="destination">營運時間已結束</div>
+                                    <div class="meta">末班車已駛離</div>
+                                </div>
+                            </div>`;
+                    }
+
                     return `
                         <div class="card">
                             <div class="card-header" style="background:${color}"><span>${title}</span></div>
-                            ${sorted.slice(0, 2).map((t, i) => `
-                                <div class="arrival-row">
-                                    <div><div class="destination">${t.DestinationStationName.Zh_tw}</div><div class="meta">車號: ${t.TrainNumber || '--'}</div></div>
-                                    <div class="arrival-time" data-sec="${t.EstimateTime}" data-raw="${t.RawCountDown}">--:--</div>
-                                </div>
-                                ${i === 0 ? this.generateCongestionHTML(t, crowdData, g.lp) : ''}
-                            `).join('')}
+                            ${contentHTML}
                         </div>`;
                 }).join('');
+
+                if (isLateNight && Object.keys(groups).length === 0) {
+                    grid.innerHTML = `
+                        <div style="grid-column: 1/-1; background: var(--surface); padding: 60px; border-radius: var(--radius); text-align: center; border: 1px solid var(--border); box-shadow: var(--shadow);">
+                            <i class="fas fa-bed" style="font-size: 3rem; color: var(--text-sub); margin-bottom: 20px;"></i>
+                            <h2 style="font-size: 2rem; font-weight: 900; margin-bottom: 10px;">營運結束</h2>
+                            <p style="color: var(--text-sub); font-size: 1.2rem; font-weight: 700;">目前為非營運時段，末班車已駛離。</p>
+                        </div>`;
+                }
             },
 
             async updateMarquee() {
