@@ -469,20 +469,14 @@
                             const apiStationName = (t.StationName || "");
                             const destName = (t.DestinationName || "");
                             
-                            // ★ 核心修正：徹底清除所有路線標籤、雜訊、多餘空格 ★
+                            // 清洗站名
                             const pureApiName = apiStationName
-                                .replace(/^BR\s*/, '') // 移除開頭的 BR
-                                .replace(/^BL\s*/, '') // 移除開頭的 BL
-                                .replace(/^[RGOA]\s*/, '') // 移除其他路線前綴
-                                .replace(/\sBR$/, '') // 移除結尾的 BR
-                                .replace(/\sBL$/, '') // 移除結尾的 BL
-                                .replace(/\s[RGOA]$/, '') // 移除結尾的其他路線前綴
-                                .replace('站', '')
-                                .replace('臺', '台')
-                                .trim();
+                                .replace(/^BR\s*/, '').replace(/^BL\s*/, '').replace(/^[RGOA]\s*/, '')
+                                .replace(/\sBR$/, '').replace(/\sBL$/, '').replace(/\s[RGOA]$/, '')
+                                .replace('站', '').replace('臺', '台').trim();
                             
-                            // 1. 站名必須相符（基礎過濾）
-                            if (!pureApiName.includes(targetName) && !targetName.includes(pureApiName)) return false;
+                            // ★ 關鍵修正：改成「完全相等」 (===)，防止 "中山" 匹配到 "中山國中" ★
+                            if (pureApiName !== targetName) return false;
                             
                             // 2. 目的地必須是北捷的主要終點站
                             const isMajorDest = ['南港', '動物園', '頂埔', '亞東醫院', '淡水', '象山', '北投', '松山', '新店', '迴龍', '蘆洲'].some(d => destName.includes(d));
@@ -640,24 +634,22 @@
 
                 let groups = {};
                 trains.forEach(t => {
-                    // 1. 提取 ID 或 Prefix (修正高雄捷運等 TDX 系統可能遺失 LinePrefix 的問題)
                     const rawID = t.LinePrefix || t.LineID || "";
-                    const firstChar = (typeof rawID === 'string') ? rawID.charAt(0) : "";
                     
-                    // 2. 查找 LineName (多重容錯處理，並防止物件轉字串 [object Object])
+                    // 1. 查找 LineName
                     const sysLineMap = Core?.globalLineMap?.[AppState.sys] || {};
-                    let lineName = sysLineMap[rawID] || sysLineMap[firstChar] || t.LineName || "未知線路";
-                    
-                    // 如果 LineName 本身是物件 (TDX 常見結構)，導向其 Zh_tw 欄位
+                    let lineName = sysLineMap[rawID] || t.LineName || "未知線路";
                     if (typeof lineName === 'object') lineName = lineName.Zh_tw || "未知線路";
                     
-                    // 3. 獲取顏色 (優先使用資料內附，備選車站關聯色)
-                    const lineInfo = AppState.stations.find(s => s.id.startsWith(firstChar || "NONE"));
+                    // 2. ★ 關鍵修正：使用完整的 rawID (如 BR) 來查找顏色，而不是只用第一個字 ★
+                    // 這樣 BR 就不會被誤判成 BL (因為都是 B 開頭)
+                    const lineInfo = AppState.stations.find(s => s.id.startsWith(rawID)); 
+                    
+                    // 如果找不到，才回退到車站原本顏色
                     const lineColor = t.LineColor || lineInfo?.line?.color || currentStation?.line?.color || '#808080';
 
                     const dest = (t.DestinationStationName?.Zh_tw) || '終點站'; 
                     
-                    // 4. 關鍵：分組標題
                     const key = `[${lineName}] 往 ${dest}`; 
                     if (!groups[key]) {
                         groups[key] = { trains: [], linePrefix: rawID, lineColor: lineColor };
