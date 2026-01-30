@@ -277,8 +277,9 @@
             }
         }
 
-        // 🔥 專門處理 TRTC 資料 (含智慧分流)
-        // 🔥 專業模式：根據北捷營運模式進行月台分流
+        // 🔥 專門處理 TRTC 資料 (月台合併模式)
+        // 🔥 PIDS 專業邏輯：乘客已在月台，只顯示「該月台下一班車」
+        // 🔥 例如：中和新蘆線「往北」月台會交替顯示往迴龍/往蘆洲，取最快到站的那班
         async function fetchTRTCData() {
             const res = await fetch(`${METRO_API_TRTC}/arrival`);
             const rawData = await res.json();
@@ -287,7 +288,7 @@
             const stNameEl = document.getElementById('ui-st-name');
             const targetName = stNameEl.innerText.replace('站', '');
 
-            // 1. 基礎篩選 (ID 優先，站名為輔)
+            // 1. 過濾本站資料 (ID 優先，站名為輔)
             const stationTrains = rawData.filter(t => {
                 if (t.StationID && t.StationID.toUpperCase() === targetStationID) return true;
                 return (t.StationName || "").replace('站', '') === targetName;
@@ -295,8 +296,8 @@
 
             if (stationTrains.length === 0) return [null, null];
 
-            // 2. 定義營運模式對照表 (決定哪邊是上行/第一月台)
-            const TRTC_UPSTREAM = {
+            // 2. 營運模式方向定義 (哪些終點站屬於第一月台/上行)
+            const TRTC_UPSTREAM_DESTS = {
                 'BR': ['南港展覽館'],
                 'R':  ['淡水', '北投', '新北投'],
                 'G':  ['松山'],
@@ -305,13 +306,13 @@
             };
 
             const lineId = targetStationID.replace(/[0-9]/g, '');
-            const upstreamDests = TRTC_UPSTREAM[lineId] || [];
+            const upstreamList = TRTC_UPSTREAM_DESTS[lineId] || [];
 
-            // 3. 轉換並標註方向
+            // 3. 分流並格式化
             const formatted = stationTrains.map(t => {
                 const dest = t.DestinationName.replace('站', '');
-                // 判斷是否為上行
-                const isUpstream = upstreamDests.some(d => dest.includes(d));
+                // ★ 關鍵：判斷這班車的目的地是否屬於「上行」清單
+                const isUpstream = upstreamList.some(d => dest.includes(d));
                 return {
                     DestinationStationName: { Zh_tw: t.DestinationName, En: '' },
                     EstimateTime: parseTRTCTime(t.CountDown),
@@ -321,7 +322,7 @@
                 };
             });
 
-            // 4. 分派給 PIDS 的兩個位置
+            // 4. 合併取最快：每個方向只取第一班最快的車 (模擬真實月台電視)
             const t1 = formatted.filter(t => t.platformSide === 0).sort((a,b)=>a.EstimateTime-b.EstimateTime)[0] || null;
             const t2 = formatted.filter(t => t.platformSide === 1).sort((a,b)=>a.EstimateTime-b.EstimateTime)[0] || null;
 
