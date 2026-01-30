@@ -349,39 +349,66 @@
                 }
             },
 
+            // 產生擁擠度 HTML (修復版：加入 ID 比對 + 顯示灰底)
             generateCongestionHTML(train, crowdData) {
-                // 1. 取得路線 ID (只聲明一次，修復 SyntaxError)
+                // 1. 取得路線代號
                 const lineId = AppState.sid.replace(/[0-9]/g, '');
                 
-                // 2. 環狀線或無資料則不顯示
-                if (lineId === 'Y' || AppState.sys !== 'TRTC' || !crowdData || crowdData.length === 0) return '';
+                // 環狀線(Y) 不支援，直接隱藏
+                if (lineId === 'Y') return '';
 
-                const currentStation = AppState.stations.find(s => s.id === AppState.sid)?.name.replace('站','').replace('臺','台');
+                // 如果沒資料，回傳空字串 (或您可以選擇回傳灰條)
+                if (AppState.sys !== 'TRTC' || !crowdData || crowdData.length === 0) return '';
+
+                // 2. 準備比對參數
+                const currentStationMeta = AppState.stations.find(s => s.id === AppState.sid);
+                const currentStationName = (currentStationMeta?.name || '').replace('站', '').replace('臺', '台').trim();
+                const targetTN = train.TrainNumber ? parseInt(train.TrainNumber, 10) : null;
+
+                // --- 比對策略 (三層防護) ---
                 let match = null;
 
-                // 3. 比對邏輯
-                if (train.TrainNumber) {
-                    const targetTN = parseInt(train.TrainNumber, 10);
-                    match = crowdData.find(c => String(c.TrainNumber).split(',').some(n => parseInt(n, 10) === targetTN));
+                // (A) 優先比對車號 (最準)
+                if (targetTN) {
+                    match = crowdData.find(c => {
+                        const crowdNumbers = String(c.TrainNumber).split(',').map(n => parseInt(n.trim(), 10));
+                        return crowdNumbers.includes(targetTN);
+                    });
                 }
+
+                // (B) 車號失敗，比對 StationID (次準，針對停靠中的車)
                 if (!match) {
-                    match = crowdData.find(c => c.StationName?.replace('BR','').replace('站','').replace('臺','台') === currentStation);
+                    match = crowdData.find(c => c.StationID === AppState.sid);
+                }
+
+                // (C) ID失敗，比對站名 (最後手段，處理 BR 忠孝復興 這種字串)
+                if (!match) {
+                    match = crowdData.find(c => {
+                        const apiStation = (c.StationName || "").replace('BR', '').replace('BL', '').replace('站', '').replace('臺', '台').trim();
+                        return apiStation === currentStationName;
+                    });
                 }
                 
-                if (!match) return '';
-
-                // 4. 渲染燈號
+                // 3. 渲染燈號 (找不到資料 match 為 null 時，顯示灰色)
                 const cars = (lineId === 'BR') ? 4 : 6;
                 let carsHtml = '';
+                
                 for(let i=1; i<=cars; i++) {
-                    const level = match[`Car${i}`] || match[`Cart${i}L`] || 0;
-                    let cls = 'cong-car';
-                    if (level == 1) cls += ' cong-lvl-1';
-                    else if (level == 2) cls += ' cong-lvl-2';
-                    else if (level == 3) cls += ' cong-lvl-3';
-                    else if (level >= 4) cls += ' cong-lvl-4';
+                    let cls = 'cong-car'; // 預設灰色
+                    
+                    if (match) {
+                        // 嘗試抓取各種可能的欄位名稱
+                        const level = match[`Car${i}`] || match[`Cart${i}L`] || 0;
+                        
+                        if (level == 1) cls += ' cong-lvl-1';
+                        else if (level == 2) cls += ' cong-lvl-2';
+                        else if (level == 3) cls += ' cong-lvl-3';
+                        else if (level >= 4) cls += ' cong-lvl-4';
+                    }
+                    
                     carsHtml += `<div class="${cls}"></div>`;
                 }
+
                 return `<div class="cong-label"><span>車廂擁擠度</span><span style="font-size:0.7rem; opacity:0.7">綠➔紅</span></div><div class="congestion-bar">${carsHtml}</div>`;
             },
 
