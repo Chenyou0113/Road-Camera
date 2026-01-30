@@ -290,7 +290,7 @@
                 } catch (error) { console.error(error); }
             },
 
-            // 🔥 Liveboard 專用：處理轉乘站多線路併網 (解決南港展覽館重複問題)
+            // 🔥 Liveboard 專用：嚴格的轉乘站多線路併網邏輯
             async fetchTRTCData() {
                 try {
                     const arrivalRes = await fetch(`${WORKER_URL_TRTC}/arrival`);
@@ -298,7 +298,7 @@
 
                     let crowdData = [];
                     try {
-                        // 為了應對轉乘站，我們必須抓取所有路線的擁擠度 (高運量 + 文湖線)
+                        // 為了應對轉乘站，抓取所有路線的擁擠度
                         const highCapRes = await fetch(`${WORKER_URL_TRTC}/crowdedness/high-capacity`);
                         const wenhuRes = await fetch(`${WORKER_URL_TRTC}/crowdedness/wenhu`);
                         crowdData = [...(await highCapRes.json()), ...(await wenhuRes.json())];
@@ -307,49 +307,70 @@
                     const currentStation = AppState.stations.find(s => s.id === AppState.sid);
                     const targetName = currentStation ? currentStation.name.replace('站', '').trim() : "";
                     
-                    // 1. 定義合法終點站 (用於排除無關路線)
-                    const VALID_LINE_PREFIXES = ['BR', 'BL', 'R', 'G', 'O'];
+                    // 1. 取得目前選擇的路線代號 (例如 "BL")
+                    const currentLinePrefix = AppState.sid.substring(0, 2);
+                    
+                    // 2. 定義轉乘線路 (支援多種轉乘站組合)
+                    let transferLinePrefix = null;
+                    if (currentLinePrefix === 'BR') transferLinePrefix = 'BL';
+                    else if (currentLinePrefix === 'BL') transferLinePrefix = 'BR';
+                    else if (currentLinePrefix === 'R') transferLinePrefix = 'G'; // R線轉G線 (中正紀念堂)
+                    else if (currentLinePrefix === 'G') transferLinePrefix = 'R'; // G線轉R線 (中正紀念堂)
 
-                    // ★★★ 轉乘站專用邏輯：抓取所有站名相符的列車 (不論路線) ★★★
+                    // ★★★ 轉乘站過濾：保留當前線路或轉乘線路的車 ★★★
                     const formattedTrains = rawArrivals
                         .filter(t => {
-                            // 過濾核心：只保留站名相符的車
-                            const apiPureName = (t.StationName || "")
-                                .replace('BR','').replace('BL','').replace('R','').replace('G','').replace('O','').replace('Y','')
-                                .replace('站','').trim();
-                            if (apiPureName !== targetName) return false;
+                            const apiStationName = (t.StationName || "");
+                            const pureApiName = apiStationName.replace('站', '').trim();
                             
-                            // 確保這班車是北捷的有效路線 (排除不相干的資料)
-                            const prefix = t.StationID ? t.StationID.substring(0, 2) : 'BR';
-                            return VALID_LINE_PREFIXES.includes(prefix);
+                            // A. 站名必須相符
+                            if (pureApiName.includes(targetName)) {
+                                
+                                // B. 路線必須是「自己」或「轉乘線」
+                                const tPrefix = t.StationID ? t.StationID.substring(0, 2) : null;
+                                
+                                if (tPrefix && (tPrefix === currentLinePrefix || tPrefix === transferLinePrefix)) return true;
+                                
+                                // C. 如果沒有 StationID，根據 StationName 的標籤判斷 (例如 "BR 忠孝復興")
+                                if (apiStationName.includes(currentLinePrefix) || (transferLinePrefix && apiStationName.includes(transferLinePrefix))) return true;
+                                
+                                // D. 針對沒有任何標籤的純站名，如果目前選的是 BR/BL，則放行
+                                if (transferLinePrefix && !tPrefix && !apiStationName.includes('BR') && !apiStationName.includes('BL')) {
+                                    return true;
+                                }
+                            }
+                            return false;
                         })
                         .map(t => {
-                            // 2. 確定這班車的 LinePrefix (用於顏色和車廂數)
-                            let linePrefix = 'BR'; // 預設文湖線
+                            // 3. 確定這班車的 LinePrefix (用於顏色和車廂數)
+                            let linePrefix = t.StationID ? t.StationID.substring(0, 2) : currentLinePrefix; // 優先使用StationID，否則預設為當前線路
                             
-                            if (t.StationID) {
-                                // 有 StationID 最準確，直接使用
-                                linePrefix = t.StationID.substring(0, 2);
-                            } else {
-                                // 沒有 ID 則根據目的地推斷路線
-                                const dest = t.DestinationName || '';
-                                
-                                // ★ 關鍵修正：板南線特有終點站優先判斷
-                                if (dest.includes('頂埔') || dest.includes('亞東醫院') || dest.includes('南港軟體園區')) {
-                                    linePrefix = 'BL';
-                                }
-                                // 文湖線特有終點站
-                                else if (dest.includes('動物園')) {
-                                    linePrefix = 'BR';
-                                }
-                                // 南港展覽館是共用站，需要其他線索判斷（預設 BR）
-                                else if (dest.includes('南港展覽館')) {
-                                    linePrefix = 'BR'; // 預設文湖線，但實際上需要 StationID 才能準確區分
-                                }
-                                // 其他路線
-                                else if (dest.includes('淡水') || dest.includes('北投')) linePrefix = 'R';
-                                else if (dest.includes('松山') || dest.includes('新店')) linePrefix = 'G';
-                                else if (dest.includes('迴龍') || dest.includes('蘆洲')) linePrefix = 'O';
+                            // 根據目的地強制修正 LinePrefix (確保準確性)
+                            const dest = t.DestinationName || '';
+                            
+                            // 板南線特有終點站
+                            if (dest.includes('頂埔') || dest.includes('亞東醫院') || dest.includes('南港軟體園區')) {
+                                linePrefix = 'BL';
+                            }
+                            // 文湖線特有終點站
+                            else if (dest.includes('動物園')) {
+                                linePrefix = 'BR';
+                            }
+                            // 南港展覽館需要StationID確認（若有StationID且是BL則設為BL）
+                            else if (dest.includes('南港展覽館') && t.StationID?.startsWith('BL')) {
+                                linePrefix = 'BL';
+                            }
+                            // 淡水信義線終點站
+                            else if (dest.includes('淡水') || dest.includes('北投') || dest.includes('新北投') || dest.includes('象山')) {
+                                linePrefix = 'R';
+                            }
+                            // 松山新店線終點站
+                            else if (dest.includes('新店') || dest.includes('松山')) {
+                                linePrefix = 'G';
+                            }
+                            // 中和新蘆線終點站
+                            else if (dest.includes('迴龍') || dest.includes('蘆洲') || dest.includes('南勢角')) {
+                                linePrefix = 'O';
                             }
                             
                             return {
@@ -358,7 +379,7 @@
                                 EstimateTime: this.parseTRTCTime(t.CountDown),
                                 CountDown: t.CountDown,
                                 TrainNumber: t.TrainNumber,
-                                StationID: t.StationID // 保留 ID 供後續過濾
+                                StationID: t.StationID
                             };
                         });
 
@@ -442,18 +463,18 @@
 
                 const currentStation = AppState.stations.find(s => s.id === AppState.sid);
 
-                // --- 核心邏輯：依據路線 + 目的地進行分組 ---
-                // 轉乘站會有多條路線，每條路線都需要獨立卡片
                 let groups = {};
                 trains.forEach(t => {
-                    // 取得路線資訊
+                    // 1. 從 LinePrefix 查找路線名稱 (例如 BR -> 文湖線)
                     const lineInfo = AppState.stations.find(s => s.id.startsWith(t.LinePrefix));
-                    const lineName = lineInfo?.line?.name || t.LinePrefix;
+                    const lineName = lineInfo?.displayLineName || t.LinePrefix;
+                    const lineColor = lineInfo?.line?.color || '#0070bd';
+                    
                     const dest = t.DestinationStationName.Zh_tw; 
                     
-                    // ★ 關鍵：分組標題加上路線名稱，例如：[文湖線] 往 南港展覽館
+                    // 2. 關鍵：分組標題加上路線名稱，例如：[文湖線] 往 南港展覽館
                     const key = `[${lineName}] 往 ${dest}`; 
-                    if (!groups[key]) groups[key] = { trains: [], linePrefix: t.LinePrefix, lineColor: lineInfo?.line?.color || '#0070bd' };
+                    if (!groups[key]) groups[key] = { trains: [], linePrefix: t.LinePrefix, lineColor: lineColor };
                     groups[key].trains.push(t);
                 });
 
