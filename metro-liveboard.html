@@ -290,101 +290,82 @@
                 } catch (error) { console.error(error); }
             },
 
-            // 🔥 Liveboard 專用：嚴格的轉乘站多線路併網邏輯
+            // 🔥 Liveboard 專用：擁擠度數據庫反查 LinePrefix（終極精準方案）
             async fetchTRTCData() {
                 try {
                     const arrivalRes = await fetch(`${WORKER_URL_TRTC}/arrival`);
                     const rawArrivals = await arrivalRes.json();
 
-                    let crowdData = [];
-                    try {
-                        // 為了應對轉乘站，抓取所有路線的擁擠度
-                        const highCapRes = await fetch(`${WORKER_URL_TRTC}/crowdedness/high-capacity`);
-                        const wenhuRes = await fetch(`${WORKER_URL_TRTC}/crowdedness/wenhu`);
-                        crowdData = [...(await highCapRes.json()), ...(await wenhuRes.json())];
-                    } catch(e) {}
+                    // 1. 同時抓取兩種擁擠度數據庫
+                    const highCapRes = await fetch(`${WORKER_URL_TRTC}/crowdedness/high-capacity`);
+                    const highCapCrowd = await highCapRes.json();
+                    
+                    const wenhuRes = await fetch(`${WORKER_URL_TRTC}/crowdedness/wenhu`);
+                    const wenhuCrowd = await wenhuRes.json();
+                    
+                    // 合併成一個大數據庫給 renderLive 用
+                    const crowdData = [...highCapCrowd, ...wenhuCrowd];
 
                     const currentStation = AppState.stations.find(s => s.id === AppState.sid);
                     const targetName = currentStation ? currentStation.name.replace('站', '').trim() : "";
                     
-                    // 1. 取得目前選擇的路線代號 (例如 "BL")
-                    const currentLinePrefix = AppState.sid.substring(0, 2);
-                    
-                    // 2. 定義轉乘線路 (支援多種轉乘站組合)
-                    let transferLinePrefix = null;
-                    if (currentLinePrefix === 'BR') transferLinePrefix = 'BL';
-                    else if (currentLinePrefix === 'BL') transferLinePrefix = 'BR';
-                    else if (currentLinePrefix === 'R') transferLinePrefix = 'G'; // R線轉G線 (中正紀念堂)
-                    else if (currentLinePrefix === 'G') transferLinePrefix = 'R'; // G線轉R線 (中正紀念堂)
-
-                    // ★★★ 轉乘站過濾：保留當前線路或轉乘線路的車 ★★★
                     const formattedTrains = rawArrivals
                         .filter(t => {
+                            // 過濾核心：保留所有站名相符的車 (BL 和 BR 都保留)
                             const apiStationName = (t.StationName || "");
                             const pureApiName = apiStationName.replace('站', '').trim();
-                            
-                            // A. 站名必須相符
                             if (pureApiName.includes(targetName)) {
-                                
-                                // B. 路線必須是「自己」或「轉乘線」
-                                const tPrefix = t.StationID ? t.StationID.substring(0, 2) : null;
-                                
-                                if (tPrefix && (tPrefix === currentLinePrefix || tPrefix === transferLinePrefix)) return true;
-                                
-                                // C. 如果沒有 StationID，根據 StationName 的標籤判斷 (例如 "BR 忠孝復興")
-                                if (apiStationName.includes(currentLinePrefix) || (transferLinePrefix && apiStationName.includes(transferLinePrefix))) return true;
-                                
-                                // D. 針對沒有任何標籤的純站名，如果目前選的是 BR/BL，則放行
-                                if (transferLinePrefix && !tPrefix && !apiStationName.includes('BR') && !apiStationName.includes('BL')) {
-                                    return true;
-                                }
+                                return true;
                             }
                             return false;
                         })
                         .map(t => {
-                            // 3. ★ 修正：使用目的地唯一性確定 LinePrefix (最準確) ★
-                            const dest = t.DestinationName || '';
-                            let linePrefix;
+                            // 2. ★ 核心判斷：用車號去擁擠度數據庫裡反查 LinePrefix ★
+                            let linePrefix = 'BL'; // 預設為高運量 (BL/R/G/O)
+                            const targetTN = t.TrainNumber ? parseInt(t.TrainNumber, 10) : null;
                             
-                            // 優先使用 StationID（最準確）
-                            if (t.StationID) {
-                                linePrefix = t.StationID.substring(0, 2);
-                            }
-                            // 沒有 StationID，根據目的地唯一性判斷
-                            else if (dest.includes('頂埔') || dest.includes('亞東醫院') || dest.includes('南港軟體園區')) {
-                                linePrefix = 'BL'; // 板南線特有
-                            }
-                            else if (dest.includes('動物園')) {
-                                linePrefix = 'BR'; // 文湖線特有
-                            }
-                            else if (dest.includes('淡水') || dest.includes('北投') || dest.includes('新北投') || dest.includes('象山')) {
-                                linePrefix = 'R'; // 淡水信義線
-                            }
-                            else if (dest.includes('新店') || dest.includes('松山')) {
-                                linePrefix = 'G'; // 松山新店線
-                            }
-                            else if (dest.includes('迴龍') || dest.includes('蘆洲') || dest.includes('南勢角')) {
-                                linePrefix = 'O'; // 中和新蘆線
-                            }
-                            else {
-                                // 南港展覽館是共用站，預設為當前選擇的線路
-                                linePrefix = currentLinePrefix;
+                            if (targetTN) {
+                                // 檢查車號是否在文湖線數據庫裡 (解決同目的地判斷)
+                                const isInWenhu = wenhuCrowd.some(c => {
+                                    const crowdNumbers = String(c.TrainNumber).split(',').map(n => parseInt(n.trim(), 10));
+                                    return crowdNumbers.includes(targetTN);
+                                });
+
+                                if (isInWenhu) {
+                                    linePrefix = 'BR';
+                                } else {
+                                    // 確保剩下的高運量車號有在 high-capacity 裡 (排除雜訊)
+                                    const isInHighCap = highCapCrowd.some(c => {
+                                        const crowdNumbers = String(c.TrainNumber).split(',').map(n => parseInt(n.trim(), 10));
+                                        return crowdNumbers.includes(targetTN);
+                                    });
+                                    if (!isInHighCap) {
+                                        linePrefix = 'UNKNOWN'; // 找不到對應的擁擠度資料，視為雜訊
+                                    } else {
+                                        linePrefix = 'BL'; // 確認為高運量 (BL, R, G, O 之一)
+                                    }
+                                }
                             }
                             
-                            // ★ 特殊處理：南港展覽館需要用 StationID 區分 BR/BL
-                            if (dest.includes('南港展覽館') && t.StationID) {
-                                linePrefix = t.StationID.substring(0, 2);
-                            }
+                            // 最終過濾：排除 UNKNOWN 的車輛
+                            if (linePrefix === 'UNKNOWN') return null;
+
+                            // 3. 根據 StationID 修正 LinePrefix (確保顏色對應正確的路線)
+                            if (t.StationID?.startsWith('R')) linePrefix = 'R';
+                            else if (t.StationID?.startsWith('G')) linePrefix = 'G';
+                            else if (t.StationID?.startsWith('O')) linePrefix = 'O';
+                            else if (t.StationID?.startsWith('BL')) linePrefix = 'BL';
                             
                             return {
-                                LinePrefix: linePrefix, // 最終確定是 BR 還是 BL
+                                LinePrefix: linePrefix, // 精準標註 BL, BR, R, G, O
                                 DestinationStationName: { Zh_tw: t.DestinationName },
                                 EstimateTime: this.parseTRTCTime(t.CountDown),
                                 CountDown: t.CountDown,
                                 TrainNumber: t.TrainNumber,
                                 StationID: t.StationID
                             };
-                        });
+                        })
+                        .filter(t => t !== null); // 移除 UNKNOWN 的車輛
 
                     document.getElementById('stat-trains').textContent = formattedTrains.length;
                     this.renderLive(formattedTrains, crowdData);
