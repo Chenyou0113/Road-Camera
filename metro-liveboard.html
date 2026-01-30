@@ -304,12 +304,31 @@
                         }
                     } catch(e) {}
 
-                    // ★★★ 核心修正：針對轉乘站，採用嚴格 StationID 比對 ★★★
-                    // ★★★ 防止板南線的車跑進文湖線，或文湖線的車跑進板南線 ★★★
+                    const currentStation = AppState.stations.find(s => s.id === AppState.sid);
+                    const targetName = currentStation ? currentStation.name.replace('站', '') : "";
+                    const currentLinePrefix = AppState.sid.substring(0, 2); // 例如 "BR" 或 "BL"
+
+                    // ★★★ 相容性最強的篩選邏輯：ID 優先，站名為輔 ★★★
                     const formattedTrains = rawArrivals
                         .filter(t => {
-                            // 只抓取 StationID 完全相符的列車 (例如只要 BR10，排除 BL15)
-                            return t.StationID === AppState.sid;
+                            // 1. 如果有 StationID，優先比對 (最準)
+                            if (t.StationID && t.StationID === AppState.sid) return true;
+                            
+                            // 2. 如果沒有 ID，比對站名 (解決文湖線無 StationID 的問題)
+                            const apiStationName = t.StationName || "";
+                            const pureApiName = apiStationName.replace('站', '').trim();
+
+                            // 檢查站名是否相符 (例如 "動物園" === "動物園")
+                            if (pureApiName === targetName) {
+                                // --- 轉乘站防護邏輯 ---
+                                // 如果 API 站名包含路線標記 (如 "BR 忠孝復興")，則檢查標記是否符合
+                                if (apiStationName.includes('BR') || apiStationName.includes('BL')) {
+                                    return apiStationName.includes(currentLinePrefix);
+                                }
+                                // 如果 API 站名很乾淨 (如 "動物園")，則直接放行
+                                return true;
+                            }
+                            return false;
                         })
                         .map(t => ({
                             StationName: { Zh_tw: t.StationName },
