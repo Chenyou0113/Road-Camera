@@ -290,70 +290,68 @@
                 } catch (error) { console.error(error); }
             },
 
-            // 🔥 Liveboard 專用：擁擠度數據庫反查 LinePrefix（終極精準方案 + 轉乘站邏輯）
+            // 🔥 Liveboard 專用：終極精準方案 - 無預設，強制目的地判定
             async fetchTRTCData() {
                 try {
                     const arrivalRes = await fetch(`${WORKER_URL_TRTC}/arrival`);
                     const rawArrivals = await arrivalRes.json();
 
                     // 1. 同時抓取兩種擁擠度數據庫
-                    const highCapRes = await fetch(`${WORKER_URL_TRTC}/crowdedness/high-capacity`);
-                    const highCapCrowd = await highCapRes.json();
-                    
-                    const wenhuRes = await fetch(`${WORKER_URL_TRTC}/crowdedness/wenhu`);
-                    const wenhuCrowd = await wenhuRes.json();
-                    
-                    // 合併成一個大數據庫給 renderLive 用
-                    const crowdData = [...highCapCrowd, ...wenhuCrowd];
+                    let crowdData = [];
+                    try {
+                        const highCapRes = await fetch(`${WORKER_URL_TRTC}/crowdedness/high-capacity`);
+                        const wenhuRes = await fetch(`${WORKER_URL_TRTC}/crowdedness/wenhu`);
+                        crowdData = [...(await highCapRes.json()), ...(await wenhuRes.json())];
+                    } catch(e) {}
 
                     const currentStation = AppState.stations.find(s => s.id === AppState.sid);
                     const targetName = currentStation ? currentStation.name.replace('站', '').trim() : "";
                     
-                    // 1. 定義允許的線路前綴（北捷五大路線）
-                    const ALLOWED_PREFIXES = ['BL', 'BR', 'R', 'G', 'O'];
-                    
-                    // 🔥 核心數據：目的地對應路線字典
-                    const DEST_TO_LINE = {
-                        '動物園': 'BR', 
-                        '頂埔': 'BL', '亞東醫院': 'BL', '昆陽': 'BL', '永寧': 'BL', '府中': 'BL',
-                        '淡水': 'R', '象山': 'R', '北投': 'R', '大安': 'R', '新北投': 'R', '士林': 'R', '劍潭': 'R',
-                        '松山': 'G', '新店': 'G', '台電大樓': 'G', '小碧潭': 'G', '古亭': 'G',
-                        '迴龍': 'O', '蘆洲': 'O', '南勢角': 'O', '大橋頭': 'O'
-                    };
-                    
-                    const formattedTrains = rawArrivals
-                        .filter(t => {
-                            const apiStationName = (t.StationName || "");
-                            const destName = (t.DestinationName || "");
-                            const pureApiName = apiStationName.replace('站', '').trim();
-                            const tPrefix = t.StationID ? t.StationID.substring(0, 2) : null;
-                            
-                            // A. 站名必須相符（篩選的基礎）
-                            if (!pureApiName.includes(targetName)) return false;
-                            
-                            // B. 排除不相關的路線前綴（如環狀線 Y）
-                            if (tPrefix && !ALLOWED_PREFIXES.includes(tPrefix)) return false;
-                            
-                            // C. 排除可疑的目的地（沒有 StationID 且目的地不是北捷主要站名）
-                            const isMajorDestination = ['淡水', '象山', '新店', '松山', '南港', '動物園', '頂埔', '亞東醫院', '迴龍', '蘆洲'].some(dest => destName.includes(dest));
-                            if (!tPrefix && !isMajorDestination) return false;
-                            
-                            return true; // 站名相符 + 線路合理，就放行
-                        })
+                    // 2. ★ 廣泛過濾：只確保站名相符 + 目的地是北捷的主要站名 ★
+                    const filtered = rawArrivals.filter(t => {
+                        const apiStationName = (t.StationName || "");
+                        const pureApiName = apiStationName.replace('站', '').trim();
+                        const dest = t.DestinationName || "";
+                        
+                        // A. 站名必須相符
+                        if (!pureApiName.includes(targetName)) return false;
+                        
+                        // B. 目的地必須是北捷的主要終點站 (淘汰雜訊)
+                        const isMajorDest = ['南港', '動物園', '頂埔', '亞東醫院', '淡水', '象山', '北投', '松山', '新店', '迴龍', '蘆洲'].some(d => dest.includes(d));
+                        return isMajorDest;
+                    });
+
+                    // 3. ★ 映射到標準格式，強制使用目的地判定 LinePrefix ★
+                    const formattedTrains = filtered
                         .map(t => {
-                            // 2. ★ 核心：優先使用 StationID 判定 LinePrefix，其次使用目的地矯正 ★
-                            let linePrefix = 'BL'; // 預設為 BL（高運量線最多）
-                            const tPrefix = t.StationID ? t.StationID.substring(0, 2) : null;
-                            const dest = (t.DestinationName || "").replace('站', '').trim();
-                            
-                            // 優先級 1：StationID 最可信
-                            if (tPrefix && ALLOWED_PREFIXES.includes(tPrefix)) {
-                                linePrefix = tPrefix;
-                            } 
-                            // 優先級 2：沒有 StationID，使用目的地字典
-                            else {
-                                linePrefix = DEST_TO_LINE[dest] || 'BL'; // 預設 BL
+                            let linePrefix = null; // ★ 不預設任何值 ★
+                            const dest = t.DestinationName || "";
+
+                            // ★ 根據目的地唯一性來判定 LinePrefix (無歧義) ★
+                            if (dest.includes('動物園')) {
+                                linePrefix = 'BR'; // 文湖線獨佔
+                            } else if (dest.includes('頂埔') || dest.includes('亞東醫院')) {
+                                linePrefix = 'BL'; // 板南線獨佔
+                            } else if (dest.includes('淡水') || dest.includes('象山') || dest.includes('北投') || dest.includes('大安')) {
+                                linePrefix = 'R'; // 淡水信義線獨佔
+                            } else if (dest.includes('松山') || dest.includes('新店')) {
+                                linePrefix = 'G'; // 松山新店線獨佔
+                            } else if (dest.includes('迴龍') || dest.includes('蘆洲')) {
+                                linePrefix = 'O'; // 中和新蘆線獨佔
+                            } else if (dest.includes('南港展覽館')) {
+                                // 南港展覽館是共用終點，需要用 StationID 判斷
+                                if (t.StationID?.startsWith('BR')) {
+                                    linePrefix = 'BR';
+                                } else if (t.StationID?.startsWith('BL')) {
+                                    linePrefix = 'BL';
+                                } else {
+                                    // 沒有 StationID，預設為 BL (較多班次)
+                                    linePrefix = 'BL';
+                                }
                             }
+                            
+                            // ★ 如果無法判定 LinePrefix，此車輛淘汰 ★
+                            if (!linePrefix) return null;
                             
                             return {
                                 LinePrefix: linePrefix,
@@ -364,7 +362,7 @@
                                 StationID: t.StationID
                             };
                         })
-                        .filter(t => t !== null); // 過濾無效車輛
+                        .filter(t => t !== null); // 移除無法判定 LinePrefix 的車輛
 
                     document.getElementById('stat-trains').textContent = formattedTrains.length;
                     this.renderLive(formattedTrains, crowdData);
