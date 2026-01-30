@@ -322,39 +322,83 @@
                     
                     const formattedTrains = rawArrivals
                         .filter(t => {
-                            // 放寬過濾：只要站名相符就讓車輛進來（在 map 階段精準判定路線）
                             const apiStationName = (t.StationName || "");
                             const pureApiName = apiStationName.replace('站', '').trim();
-                            return pureApiName.includes(targetName);
+                            
+                            // 1. 站名必須相符
+                            if (!pureApiName.includes(targetName)) return false;
+                            
+                            // 2. ★ 核心過濾：只允許當前線路或轉乘線路通過篩選 ★
+                            const tPrefix = t.StationID ? t.StationID.substring(0, 2) : null;
+                            
+                            // 定義轉乘線路
+                            let allowedPrefixes = [currentLinePrefix];
+                            if (currentLinePrefix === 'BR') allowedPrefixes.push('BL');
+                            else if (currentLinePrefix === 'BL') allowedPrefixes.push('BR');
+                            else if (currentLinePrefix === 'R') allowedPrefixes.push('G');
+                            else if (currentLinePrefix === 'G') allowedPrefixes.push('R');
+                            
+                            // 如果有 StationID，檢查是否在允許的線路列表中
+                            if (tPrefix && !allowedPrefixes.includes(tPrefix)) {
+                                // 台北車站等多線轉乘站例外：R/G/O 線也可以通過
+                                if (!['R', 'G', 'O'].includes(tPrefix)) return false;
+                            }
+                            
+                            // 如果沒有 StationID，檢查站名標籤
+                            if (!tPrefix) {
+                                const hasValidLabel = allowedPrefixes.some(prefix => apiStationName.includes(prefix));
+                                if (!hasValidLabel) return false;
+                            }
+                            
+                            return true;
                         })
                         .map(t => {
-                            // ★ 關鍵修正：直接從字典中查找 LinePrefix ★
-                            const destName = (t.DestinationName || "").replace('站', '').trim();
-                            let linePrefix = DEST_TO_LINE[destName] || null;
+                            // 3. ★ 最終 LinePrefix 修正：端點站獨佔權 + 目的地矯正 ★
+                            let linePrefix = currentLinePrefix; // 預設為當前選擇的線路
+                            const dest = (t.DestinationName || "").replace('站', '').trim();
                             
-                            // 特殊處理：南港展覽館是 BR/BL 共用站
-                            if (destName === '南港展覽館') {
-                                if (t.StationID?.startsWith('BR')) {
-                                    linePrefix = 'BR';
-                                } else if (t.StationID?.startsWith('BL')) {
-                                    linePrefix = 'BL';
-                                } else {
-                                    // 沒有 StationID，用車號反查數據庫
-                                    const targetTN = t.TrainNumber ? parseInt(t.TrainNumber, 10) : null;
-                                    if (targetTN) {
-                                        const isInWenhu = wenhuCrowd.some(c => {
-                                            const crowdNumbers = String(c.TrainNumber).split(',').map(n => parseInt(n.trim(), 10));
-                                            return crowdNumbers.includes(targetTN);
-                                        });
-                                        linePrefix = isInWenhu ? 'BR' : 'BL';
+                            // ★ 端點站獨佔權：在特定端點站，強制矯正目的地的 LinePrefix ★
+                            if (currentStation.id === 'BR01' && dest.includes('南港展覽館')) {
+                                // 動物園站 (BR01) 往南港展覽館的車一定是 BR
+                                linePrefix = 'BR';
+                            } else if (currentStation.id === 'BL23' && dest.includes('南港展覽館')) {
+                                // 南港展覽館站 (BL23) 往南港展覽館可能是折返車
+                                linePrefix = t.StationID?.startsWith('BR') ? 'BR' : 'BL';
+                            } else {
+                                // 一般情況：使用目的地對照表
+                                linePrefix = DEST_TO_LINE[dest] || linePrefix;
+                                
+                                // 南港展覽館特殊處理（共用站）
+                                if (dest === '南港展覽館') {
+                                    if (t.StationID?.startsWith('BR')) {
+                                        linePrefix = 'BR';
+                                    } else if (t.StationID?.startsWith('BL')) {
+                                        linePrefix = 'BL';
                                     } else {
-                                        linePrefix = 'BL'; // 預設為板南線
+                                        // 沒有 StationID，用車號反查數據庫
+                                        const targetTN = t.TrainNumber ? parseInt(t.TrainNumber, 10) : null;
+                                        if (targetTN) {
+                                            const isInWenhu = wenhuCrowd.some(c => {
+                                                const crowdNumbers = String(c.TrainNumber).split(',').map(n => parseInt(n.trim(), 10));
+                                                return crowdNumbers.includes(targetTN);
+                                            });
+                                            linePrefix = isInWenhu ? 'BR' : 'BL';
+                                        }
                                     }
+                                }
+                                
+                                // StationID 備案矯正
+                                if (t.StationID) {
+                                    if (t.StationID.startsWith('R')) linePrefix = 'R';
+                                    else if (t.StationID.startsWith('G')) linePrefix = 'G';
+                                    else if (t.StationID.startsWith('O')) linePrefix = 'O';
+                                    else if (t.StationID.startsWith('BL')) linePrefix = 'BL';
+                                    else if (t.StationID.startsWith('BR')) linePrefix = 'BR';
                                 }
                             }
                             
-                            // 找不到對應路線或非相關路線，淘汰此車輛
-                            if (!linePrefix || !['BR', 'BL', 'R', 'G', 'O'].includes(linePrefix)) {
+                            // 找不到對應路線，淘汰此車輛
+                            if (!['BR', 'BL', 'R', 'G', 'O'].includes(linePrefix)) {
                                 return null;
                             }
                             
