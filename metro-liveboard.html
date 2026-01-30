@@ -311,6 +311,16 @@
                     
                     const currentLinePrefix = AppState.sid.substring(0, 2);
                     
+                    // ★ 定義轉乘站（防止非轉乘站混入其他線路）
+                    const isTransferStation = ['BL15', 'BR10', 'BL23', 'BR24', 'R08', 'G10', 'BL12', 'R10', 'O07', 'O01', 'G01'].includes(AppState.sid);
+                    
+                    // 定義轉乘線路
+                    let transferLinePrefix = null;
+                    if (currentLinePrefix === 'BR') transferLinePrefix = 'BL';
+                    else if (currentLinePrefix === 'BL') transferLinePrefix = 'BR';
+                    else if (currentLinePrefix === 'R') transferLinePrefix = 'G';
+                    else if (currentLinePrefix === 'G') transferLinePrefix = 'R';
+                    
                     // 🔥 核心數據：目的地對應路線字典（確保顏色和車廂數正確）
                     const DEST_TO_LINE = {
                         '動物園': 'BR', '南港展覽館': 'BR', '文湖': 'BR',
@@ -325,32 +335,28 @@
                             const apiStationName = (t.StationName || "");
                             const pureApiName = apiStationName.replace('站', '').trim();
                             
-                            // 1. 站名必須相符
+                            // 1. 站名必須相符（這是篩選的基礎）
                             if (!pureApiName.includes(targetName)) return false;
                             
-                            // 2. ★ 核心過濾：只允許當前線路或轉乘線路通過篩選 ★
-                            const tPrefix = t.StationID ? t.StationID.substring(0, 2) : null;
-                            
-                            // 定義轉乘線路
-                            let allowedPrefixes = [currentLinePrefix];
-                            if (currentLinePrefix === 'BR') allowedPrefixes.push('BL');
-                            else if (currentLinePrefix === 'BL') allowedPrefixes.push('BR');
-                            else if (currentLinePrefix === 'R') allowedPrefixes.push('G');
-                            else if (currentLinePrefix === 'G') allowedPrefixes.push('R');
-                            
-                            // 如果有 StationID，檢查是否在允許的線路列表中
-                            if (tPrefix && !allowedPrefixes.includes(tPrefix)) {
-                                // 台北車站等多線轉乘站例外：R/G/O 線也可以通過
-                                if (!['R', 'G', 'O'].includes(tPrefix)) return false;
+                            // 2. 轉乘站（如忠孝復興）允許當前線路和轉乘線路的車輛通過
+                            if (isTransferStation) {
+                                const tPrefix = t.StationID ? t.StationID.substring(0, 2) : null;
+                                if (tPrefix && (tPrefix === currentLinePrefix || tPrefix === transferLinePrefix)) return true;
+                                if (apiStationName.includes(currentLinePrefix)) return true;
+                                if (transferLinePrefix && apiStationName.includes(transferLinePrefix)) return true;
+                                
+                                // 多線轉乘站（如台北車站）允許 R/G/O 線通過
+                                if (tPrefix && ['R', 'G', 'O'].includes(tPrefix)) return true;
+                                
+                                return false; // 其他不相關的車輛踢掉
                             }
                             
-                            // 如果沒有 StationID，檢查站名標籤
-                            if (!tPrefix) {
-                                const hasValidLabel = allowedPrefixes.some(prefix => apiStationName.includes(prefix));
-                                if (!hasValidLabel) return false;
+                            // 3. ★ 非轉乘站（如動物園 BR01）：只要站名匹配就放行，讓後續邏輯矯正其 LinePrefix ★
+                            if (!isTransferStation) {
+                                return true; // 相信站名，不管 StationID 是什麼
                             }
                             
-                            return true;
+                            return false;
                         })
                         .map(t => {
                             // 3. ★ 最終 LinePrefix 修正：端點站獨佔權 + 目的地矯正 ★
