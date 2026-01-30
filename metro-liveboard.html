@@ -447,6 +447,27 @@
                 } catch (e) { console.error("fetchTRTCData error:", e); }
             },
 
+            // 新增：查詢列車目前實際位置
+            async fetchTrainLocation(trainNumber, elementId) {
+                const metaEl = document.getElementById(elementId);
+                if (!metaEl || !trainNumber || trainNumber === '--') return;
+
+                try {
+                    const res = await fetch(`${WORKER_URL_TRTC}/train-position?carID=${trainNumber}`);
+                    const data = await res.json();
+                    
+                    // 根據 API 結構解析 (Result 或直接 Array)
+                    const trainInfo = (data && typeof data === 'object') ? (data.TrainControlResult?.[0] || data?.[0] || data) : null;
+                    
+                    const location = trainInfo?.StaName;
+                    if (location && location !== 'null' && location !== '') {
+                        metaEl.innerHTML = `<i class="fas fa-location-dot" style="color:#f44336"></i> 目前位於: <strong style="color:var(--text-main)">${location}</strong>`;
+                    }
+                } catch (e) {
+                    console.error("位置查詢失敗:", e);
+                }
+            },
+
             // 產生擁擠度 HTML (修復參數命名與邏輯)
             generateCongestionHTML(train, crowdData, linePrefix) {
                 // 1. 檢查系統與支援度
@@ -505,7 +526,13 @@
                     carsHtml += `<div class="${cls}"></div>`;
                 }
 
-                return `<div class="cong-label"><span>車廂擁擠度</span><span style="font-size:0.7rem; opacity:0.7">綠➔紅</span></div><div class="congestion-bar">${carsHtml}</div>`;
+                return `
+                    <div class="cong-label">
+                        <span><i class="fas fa-chevron-left"></i> 第一節車廂</span>
+                        <span>第 ${cars} 節車廂 <i class="fas fa-chevron-right"></i></span>
+                    </div>
+                    <div class="congestion-bar">${carsHtml}</div>
+                `;
             },
 
             // 🔥 Liveboard 專業邏輯：大廳儀表板模式 - 多線路併網顯示
@@ -547,6 +574,8 @@
                 });
 
                 // 2. 渲染邏輯
+                const updateQueue = [];
+
                 grid.innerHTML = Object.entries(groups).map(([title, group]) => {
                     const sorted = group.trains.sort((a, b) => a.EstimateTime - b.EstimateTime);
                     
@@ -560,6 +589,12 @@
                             </div>
                             ${sorted.slice(0, 3).map((t, idx) => {
                                 const seconds = t.EstimateTime;
+                                const uniqueId = `loc-${t.LinePrefix}-${t.TrainNumber}-${idx}`;
+                                
+                                if (AppState.sys === 'TRTC' && t.TrainNumber) {
+                                    updateQueue.push({ tn: t.TrainNumber, id: uniqueId });
+                                }
+
                                 let timeDisplay = (t.CountDown === '列車進站' || seconds <= 10) 
                                     ? '<span class="arriving-badge">進站中</span>' 
                                     : `<span class="time-number" style="font-size:2rem;">${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}</span>`;
@@ -573,7 +608,7 @@
                                     <div class="arrival-row">
                                         <div>
                                             <div class="destination">${(t.DestinationStationName?.Zh_tw) || '終點站'}</div>
-                                            <div class="meta">${currentStation?.name || '未知站'}</div>
+                                            <div class="meta" id="${uniqueId}">列車編號: ${t.TrainNumber || '--'}</div>
                                         </div>
                                         <div class="arrival-time">${timeDisplay}</div>
                                     </div>
@@ -583,6 +618,9 @@
                         </div>
                     `;
                 }).join('');
+
+                // 啟動非同步位置查詢
+                updateQueue.forEach(item => this.fetchTrainLocation(item.tn, item.id));
             },
 
             renderSchedule(data) {
