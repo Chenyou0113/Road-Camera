@@ -447,34 +447,6 @@
                 } catch (e) { console.error("fetchTRTCData error:", e); }
             },
 
-            // 新增：查詢列車目前實際位置
-            async fetchTrainLocation(trainNumber, elementId) {
-                const metaEl = document.getElementById(elementId);
-                if (!metaEl || !trainNumber || trainNumber === '--') return;
-
-                try {
-                    const res = await fetch(`${WORKER_URL_TRTC}/train-position?carID=${trainNumber}`);
-                    const data = await res.json();
-                    
-                    const trainInfo = (data && typeof data === 'object') ? (data.TrainControlResult?.[0] || data?.[0] || data) : null;
-                    
-                    const staName = trainInfo?.StaName;
-                    const destName = trainInfo?.DestName;
-
-                    if (staName && staName !== 'null' && staName !== '') {
-                        // 狀態 1: 停靠中
-                        metaEl.innerHTML = `<i class="fas fa-location-dot" style="color:#f44336"></i> 目前停靠: <strong style="color:var(--text-main)">${staName}</strong>`;
-                    } else if (destName) {
-                        // 狀態 2: 區間運行中 (當 StaName 為空但有目的地時)
-                        metaEl.innerHTML = `<i class="fas fa-route" style="color:var(--p-500)"></i> 往 ${destName} <span style="opacity:0.8">區間運行中</span>`;
-                    } else {
-                        metaEl.innerHTML = `<i class="fas fa-info-circle"></i> 列車位置: <span style="opacity:0.6">偵測中...</span>`;
-                    }
-                } catch (e) {
-                    console.error("位置查詢失敗:", e);
-                }
-            },
-
             // 產生擁擠度 HTML (修復參數命名與邏輯)
             generateCongestionHTML(train, crowdData, linePrefix) {
                 // 1. 檢查系統與支援度
@@ -581,8 +553,6 @@
                 });
 
                 // 2. 渲染邏輯
-                const updateQueue = [];
-
                 grid.innerHTML = Object.entries(groups).map(([title, group]) => {
                     const sorted = group.trains.sort((a, b) => a.EstimateTime - b.EstimateTime);
                     
@@ -596,12 +566,6 @@
                             </div>
                             ${sorted.slice(0, 3).map((t, idx) => {
                                 const seconds = t.EstimateTime;
-                                const uniqueId = `loc-${t.LinePrefix}-${t.TrainNumber}-${idx}`;
-                                
-                                if (AppState.sys === 'TRTC' && t.TrainNumber) {
-                                    updateQueue.push({ tn: t.TrainNumber, id: uniqueId });
-                                }
-
                                 let timeDisplay = (t.CountDown === '列車進站' || seconds <= 10) 
                                     ? '<span class="arriving-badge">進站中</span>' 
                                     : `<span class="time-number" style="font-size:2rem;">${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}</span>`;
@@ -615,7 +579,7 @@
                                     <div class="arrival-row">
                                         <div>
                                             <div class="destination">${(t.DestinationStationName?.Zh_tw) || '終點站'}</div>
-                                            <div class="meta" id="${uniqueId}">列車編號: ${t.TrainNumber || '--'}</div>
+                                            <div class="meta">列車編號: ${t.TrainNumber || '--'}</div>
                                         </div>
                                         <div class="arrival-time">${timeDisplay}</div>
                                     </div>
@@ -625,9 +589,6 @@
                         </div>
                     `;
                 }).join('');
-
-                // 啟動非同步位置查詢
-                updateQueue.forEach(item => this.fetchTrainLocation(item.tn, item.id));
             },
 
             renderSchedule(data) {
