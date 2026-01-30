@@ -323,32 +323,38 @@
         /* --- ⏳ 進度條 --- */
         .progress-bar-container {
             width: 100%;
-            max-width: 400px;
-            height: 4px;
-            background: rgba(255, 255, 255, 0.15);
-            border-radius: 2px;
-            margin: 15px auto 0 auto;
+            height: 6px;
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 3px;
+            margin: 10px 0 30px 0;
             overflow: hidden;
+            border: 1px solid var(--border);
+        }
+
+        body.dark-mode .progress-bar-container {
+            background: rgba(255, 255, 255, 0.05);
         }
 
         .progress-bar {
             height: 100%;
             width: 100%;
-            background: #4caf50;
+            background: var(--p-500);
             transform-origin: left;
             transform: scaleX(0);
         }
 
         /* --- 🏃 跑馬燈 --- */
-        .marquee-fixed-footer {
-            position: fixed;
-            bottom: 0;
-            left: 0;
+        .marquee-container {
             width: 100%;
-            height: 50px;
-            background: #111;
-            z-index: 1000;
-            border-top: 2px solid var(--p-500);
+            height: 46px;
+            background: var(--surface);
+            border-radius: var(--radius);
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+            overflow: hidden;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
         }
 
         .marquee-section {
@@ -360,12 +366,12 @@
 
         .marquee-text {
             white-space: nowrap;
-            font-size: 1.2rem;
+            font-size: 1.1rem;
             font-weight: 700;
-            color: #fff;
+            color: var(--text-main);
             position: absolute;
             left: 100%;
-            line-height: 50px;
+            line-height: 46px;
         }
     </style>
 </head>
@@ -382,9 +388,6 @@
             <div class="hero-content">
                 <h1>全台捷運智慧儀表板</h1>
                 <p>數位整合監測系統 ‧ 即時數據每 20 秒刷新</p>
-                <div class="progress-bar-container" id="progressBarContainer" style="display:none;">
-                    <div class="progress-bar" id="update-progress"></div>
-                </div>
             </div>
         </div>
     </div>
@@ -394,6 +397,12 @@
             <div class="stat-badge"><span class="val" id="stat-trains">0</span><span class="label">線上列車</span></div>
             <div class="stat-badge"><span class="val" id="stat-stations">0</span><span class="label">車站總數</span></div>
             <div class="stat-badge"><span class="val" style="color:#4caf50">LIVE</span><span class="label">API 連線</span>
+            </div>
+        </div>
+
+        <div class="marquee-container">
+            <div class="marquee-section">
+                <div class="marquee-text" id="ui-marquee">系統載入中...</div>
             </div>
         </div>
 
@@ -412,6 +421,10 @@
                     class="fas fa-road"></i><span>新北捷運</span></div>
         </div>
 
+        <div class="progress-bar-container" id="progressBarContainer" style="display:none;">
+            <div class="progress-bar" id="update-progress"></div>
+        </div>
+
         <div class="control-panel" id="stationSelector" style="display:none;">
             <select id="lineSelect" onchange="Core.onLineChange()"></select>
             <select id="stationSelect" onchange="Core.refresh()"></select>
@@ -423,12 +436,6 @@
         </div>
 
         <main id="board" class="board-grid"></main>
-    </div>
-
-    <div class="marquee-fixed-footer">
-        <div class="marquee-section">
-            <div class="marquee-text" id="ui-marquee">系統載入中...</div>
-        </div>
     </div>
 
     <script>
@@ -448,7 +455,10 @@
 
         const Core = {
             globalLineMap: {
-                'TRTC': { 'BR': '文湖線', 'R': '淡水信義線', 'G': '松山新店線', 'O': '中和新蘆線', 'BL': '板南線', 'Y': '環狀線' },
+                'TRTC': {
+                    'BR': '文湖線', 'R': '淡水信義線', 'G': '松山新店線', 'O': '中和新蘆線', 'BL': '板南線', 'Y': '環狀線',
+                    'GA': '小碧潭線', 'RA': '新北投支線'
+                },
                 'KRTC': { 'R': '紅線', 'O': '橘線' }, 'TMRT': { 'G': '綠線' }, 'TYMC': { 'A': '機場捷運' }
             },
 
@@ -470,7 +480,11 @@
                     const sysData = METRO_STATIONS_LOCAL.systems[sys];
                     rawStations = Object.entries(sysData.stations).map(([id, info]) => ({
                         id, name: info.name,
-                        line: { id: info.lineId, name: sysData.lines[info.lineId]?.name || info.lineId, color: sysData.lines[info.lineId]?.color || '#808080' }
+                        line: {
+                            id: info.lineId,
+                            name: sysData.lines[info.lineId]?.name || info.lineId,
+                            color: ({ 'GA': '#8fc31f', 'RA': '#fd92a3' }[info.lineId]) || sysData.lines[info.lineId]?.color || '#808080'
+                        }
                     }));
                 }
 
@@ -552,13 +566,28 @@
 
                 AppState.lastFetchTime = Date.now();
                 const currentStation = AppState.stations.find(s => s.id === AppState.sid);
-                const targetName = currentStation?.name.replace('站', '');
+                const targetName = currentStation?.name.replace('站', '').trim();
+                const currentLinePrefix = AppState.sid.replace(/[0-9]/g, '');
 
-                const formatted = data.filter(t => t.StationName.includes(targetName)).map(t => {
-                    let prefix = t.DestinationName.includes('動物園') ? 'BR' : 'BL';
-                    if (t.DestinationName.includes('淡水') || t.DestinationName.includes('象山')) prefix = 'R';
-                    if (t.DestinationName.includes('新店') || t.DestinationName.includes('松山')) prefix = 'G';
-                    if (t.DestinationName.includes('南勢角') || t.DestinationName.includes('迴龍')) prefix = 'O';
+                const formatted = data.filter(t => {
+                    const apiName = t.StationName.replace('站', '').trim();
+                    return apiName === targetName;
+                }).map(t => {
+                    let prefix = null;
+                    const dest = t.DestinationName;
+
+                    if (dest.includes('南港展覽館')) {
+                        prefix = (currentLinePrefix === 'BR') ? 'BR' : 'BL';
+                    } else if (dest.includes('動物園')) prefix = 'BR';
+                    else if (dest.includes('頂埔') || dest.includes('亞東醫院') || dest.includes('昆陽') || dest.includes('永寧')) prefix = 'BL';
+                    else if (dest.includes('淡水') || dest.includes('象山') || dest.includes('北投') || dest.includes('大安')) prefix = 'R';
+                    else if (dest.includes('新店') || dest.includes('松山') || dest.includes('台電大樓')) prefix = 'G';
+                    else if (dest.includes('南勢角') || dest.includes('迴龍') || dest.includes('蘆洲')) prefix = 'O';
+                    else if (dest.includes('大坪林') || dest.includes('新北產業園區')) prefix = 'Y';
+                    else if (dest.includes('小碧潭')) prefix = 'GA';
+                    else if (dest.includes('新北投')) prefix = 'RA';
+
+                    if (!prefix) prefix = currentLinePrefix;
 
                     return {
                         LinePrefix: prefix, DestinationStationName: { Zh_tw: t.DestinationName },
@@ -598,7 +627,9 @@
 
             generateCongestionHTML(train, crowdData, linePrefix) {
                 if (linePrefix === 'Y') return '';
-                const cars = linePrefix === 'BR' ? 4 : 6;
+                let cars = 6;
+                if (linePrefix === 'BR') cars = 4;
+                if (linePrefix === 'GA' || linePrefix === 'RA') cars = 3;
                 let match = crowdData.find(c => String(c.TrainNumber).includes(train.TrainNumber));
                 let html = '';
                 for (let i = 1; i <= cars; i++) {
@@ -619,7 +650,8 @@
 
                 grid.innerHTML = Object.entries(groups).map(([title, g]) => {
                     const sorted = g.trains.sort((a, b) => a.EstimateTime - b.EstimateTime);
-                    const color = AppState.stations.find(s => s.id.startsWith(g.lp))?.line.color || '#0070bd';
+                    const lineColors = { 'GA': '#8fc31f', 'RA': '#fd92a3' };
+                    const color = lineColors[g.lp] || AppState.stations.find(s => s.id.startsWith(g.lp))?.line.color || '#0070bd';
                     return `
                         <div class="card">
                             <div class="card-header" style="background:${color}"><span>${title}</span></div>
