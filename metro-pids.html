@@ -278,55 +278,64 @@
         }
 
         // 🔥 專門處理 TRTC 資料 (月台合併模式)
-        // 🔥 PIDS 專業邏輯：乘客已在月台，只顯示「該月台下一班車」
-        // 🔥 例如：中和新蘆線「往北」月台會交替顯示往迴龍/往蘆洲，取最快到站的那班
+        // 🔥 PIDS 專業邏輯：根據北捷營運模式進行月台分流 + 嚴格路線過濾
         async function fetchTRTCData() {
             const res = await fetch(`${METRO_API_TRTC}/arrival`);
             const rawData = await res.json();
             
-            // 取得當前網址參數的車站 ID (例如 BR10)
             const targetStationID = station.toUpperCase().trim();
             const stNameEl = document.getElementById('ui-st-name');
             const targetName = stNameEl.innerText.replace('站', '');
-            const currentLinePrefix = targetStationID.substring(0, 2); // 例如 "BR"
 
-            // 1. ★★★ 相容性篩選：ID 優先，站名為輔 (解決文湖線無 StationID 的問題) ★★★
+            // 1. 判斷當前是哪條線 (R, G, O, BL, BR)
+            let currentLine = '';
+            if (targetStationID.startsWith('BR')) currentLine = 'BR';
+            else if (targetStationID.startsWith('BL')) currentLine = 'BL';
+            else currentLine = targetStationID.substring(0, 1); // R, G, O
+
+            // 2. 定義各路線的合法目的地 (白名單) - 防止轉乘站交叉顯示
+            const VALID_DESTINATIONS = {
+                'BR': ['動物園', '南港展覽館'],
+                'BL': ['南港展覽館', '頂埔', '亞東醫院', '昆陽'],
+                'R':  ['淡水', '象山', '北投', '大安', '新北投'],
+                'G':  ['松山', '新店', '台電大樓', '小碧潭'],
+                'O':  ['迴龍', '南勢角', '蘆洲'],
+                'Y':  ['大坪林', '新北產業園區']
+            };
+            const allowedDests = VALID_DESTINATIONS[currentLine] || [];
+
+            // 3. 嚴格過濾策略
             const stationTrains = rawData.filter(t => {
-                // 優先檢查 StationID
+                // A. 如果 ID 完全吻合，直接放行 (最準)
                 if (t.StationID && t.StationID === targetStationID) return true;
-                
-                // 沒有 ID 則比對站名
-                const apiStationName = t.StationName || "";
-                const pureApiName = apiStationName.replace('站', '').trim();
-                
-                if (pureApiName === targetName) {
-                    // 轉乘站防護：檢查路線標記
-                    if (apiStationName.includes('BR') || apiStationName.includes('BL')) {
-                        return apiStationName.includes(currentLinePrefix);
-                    }
-                    return true;
+
+                // B. 如果沒 ID (或 ID 不符但站名相符)，執行轉乘站防護
+                const apiName = (t.StationName || "").replace('站', '').trim();
+                // 站名必須部分包含目標名 (處理 "BR 南港展覽館" vs "南港展覽館")
+                if (apiName.includes(targetName) || targetName.includes(apiName)) {
+                    const dest = t.DestinationName || "";
+                    // 關鍵：檢查這班車的目的地，是不是屬於這條線的合法終點
+                    return allowedDests.some(d => dest.includes(d));
                 }
                 return false;
             });
 
             if (stationTrains.length === 0) return [null, null];
 
-            // 2. 營運模式方向定義 (哪些終點站屬於第一月台/上行)
+            // 4. 營運模式方向定義 (決定哪邊是第一月台/上行)
             const TRTC_UPSTREAM_DESTS = {
                 'BR': ['南港展覽館'],
                 'R':  ['淡水', '北投', '新北投'],
                 'G':  ['松山'],
                 'O':  ['迴龍', '蘆洲'],
-                'BL': ['南港展覽館']
+                'BL': ['南港展覽館'],
+                'Y':  ['新北產業園區']
             };
+            const upstreamList = TRTC_UPSTREAM_DESTS[currentLine] || [];
 
-            const lineId = targetStationID.replace(/[0-9]/g, '');
-            const upstreamList = TRTC_UPSTREAM_DESTS[lineId] || [];
-
-            // 3. 分流並格式化
+            // 5. 分流並格式化
             const formatted = stationTrains.map(t => {
                 const dest = t.DestinationName.replace('站', '');
-                // ★ 關鍵：判斷這班車的目的地是否屬於「上行」清單
                 const isUpstream = upstreamList.some(d => dest.includes(d));
                 return {
                     DestinationStationName: { Zh_tw: t.DestinationName, En: '' },
@@ -337,7 +346,7 @@
                 };
             });
 
-            // 4. 合併取最快：每個方向只取第一班最快的車 (模擬真實月台電視)
+            // 6. 合併取最快：每個方向只取第一班最快的車
             const t1 = formatted.filter(t => t.platformSide === 0).sort((a,b)=>a.EstimateTime-b.EstimateTime)[0] || null;
             const t2 = formatted.filter(t => t.platformSide === 1).sort((a,b)=>a.EstimateTime-b.EstimateTime)[0] || null;
 
