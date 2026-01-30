@@ -290,13 +290,12 @@
                 } catch (error) { console.error(error); }
             },
 
-            // 🔥 Liveboard 專用：終極精準方案 - 無預設，強制目的地判定
+            // 🔥 最終版：專門處理 TRTC 資料的邏輯 - 穩定版
             async fetchTRTCData() {
                 try {
                     const arrivalRes = await fetch(`${WORKER_URL_TRTC}/arrival`);
                     const rawArrivals = await arrivalRes.json();
 
-                    // 1. 同時抓取兩種擁擠度數據庫
                     let crowdData = [];
                     try {
                         const highCapRes = await fetch(`${WORKER_URL_TRTC}/crowdedness/high-capacity`);
@@ -307,52 +306,53 @@
                     const currentStation = AppState.stations.find(s => s.id === AppState.sid);
                     const targetName = currentStation ? currentStation.name.replace('站', '').trim() : "";
                     
-                    // 2. ★ 廣泛過濾：只確保站名相符 + 目的地是北捷的主要站名 ★
-                    const filtered = rawArrivals.filter(t => {
-                        const apiStationName = (t.StationName || "");
-                        const pureApiName = apiStationName.replace('站', '').trim();
-                        const dest = t.DestinationName || "";
-                        
-                        // A. 站名必須相符
-                        if (!pureApiName.includes(targetName)) return false;
-                        
-                        // B. 目的地必須是北捷的主要終點站 (淘汰雜訊)
-                        const isMajorDest = ['南港', '動物園', '頂埔', '亞東醫院', '淡水', '象山', '北投', '松山', '新店', '迴龍', '蘆洲'].some(d => dest.includes(d));
-                        return isMajorDest;
-                    });
-
-                    // 3. ★ 映射到標準格式，強制使用目的地判定 LinePrefix ★
-                    const formattedTrains = filtered
+                    const formattedTrains = rawArrivals
+                        .filter(t => {
+                            // 1. 廣泛過濾：只篩選出站名相符且是北捷主要路線的車輛
+                            const apiStationName = (t.StationName || "");
+                            const pureApiName = apiStationName.replace('站', '').trim();
+                            const destName = (t.DestinationName || "");
+                            
+                            // 站名必須相符
+                            if (!pureApiName.includes(targetName)) return false; 
+                            
+                            // 目的地必須是北捷的主要終點站
+                            const isMajorDest = ['南港', '動物園', '頂埔', '亞東醫院', '淡水', '象山', '北投', '松山', '新店', '迴龍', '蘆洲'].some(d => destName.includes(d));
+                            return isMajorDest;
+                        })
                         .map(t => {
-                            let linePrefix = null; // ★ 不預設任何值 ★
+                            let linePrefix = null; 
                             const dest = t.DestinationName || "";
 
-                            // ★ 根據目的地唯一性來判定 LinePrefix (無歧義) ★
+                            // 2. ★ 核心修正：目的地矯正 (鐵律) ★
                             if (dest.includes('動物園')) {
-                                linePrefix = 'BR'; // 文湖線獨佔
+                                linePrefix = 'BR'; // 文湖線
                             } else if (dest.includes('頂埔') || dest.includes('亞東醫院')) {
-                                linePrefix = 'BL'; // 板南線獨佔
+                                linePrefix = 'BL'; // 板南線
                             } else if (dest.includes('淡水') || dest.includes('象山') || dest.includes('北投') || dest.includes('大安')) {
-                                linePrefix = 'R'; // 淡水信義線獨佔
+                                linePrefix = 'R'; // 淡水信義線
                             } else if (dest.includes('松山') || dest.includes('新店')) {
-                                linePrefix = 'G'; // 松山新店線獨佔
+                                linePrefix = 'G'; // 松山新店線
                             } else if (dest.includes('迴龍') || dest.includes('蘆洲')) {
-                                linePrefix = 'O'; // 中和新蘆線獨佔
+                                linePrefix = 'O'; // 中和新蘆線
                             } else if (dest.includes('南港展覽館')) {
-                                // 南港展覽館是共用終點，需要用 StationID 判斷
-                                if (t.StationID?.startsWith('BR')) {
+                                // ★ 處理南港展覽館的歧義：優先用 StationID，次優先用當前選線 ★
+                                if (t.StationID?.startsWith('BL')) {
+                                    linePrefix = 'BL';
+                                } else if (t.StationID?.startsWith('BR')) {
                                     linePrefix = 'BR';
-                                } else if (t.StationID?.startsWith('BL')) {
-                                    linePrefix = 'BL';
                                 } else {
-                                    // 沒有 StationID，預設為 BL (較多班次)
-                                    linePrefix = 'BL';
+                                    // 沒有 StationID，使用當前選單的線路來判斷
+                                    // 這確保在忠孝復興選 BR 時，南港展覽館的車會被判定為 BR
+                                    const currentLinePrefix = AppState.sid.substring(0, 2);
+                                    if (currentLinePrefix === 'BR') linePrefix = 'BR';
+                                    else if (currentLinePrefix === 'BL') linePrefix = 'BL';
+                                    else linePrefix = 'BL'; // 預設為 BL（保守估計）
                                 }
                             }
                             
-                            // ★ 如果無法判定 LinePrefix，此車輛淘汰 ★
-                            if (!linePrefix) return null;
-                            
+                            if (!linePrefix) return null; // 淘汰無法判定 LinePrefix 的車輛
+
                             return {
                                 LinePrefix: linePrefix,
                                 DestinationStationName: { Zh_tw: t.DestinationName },
@@ -362,7 +362,7 @@
                                 StationID: t.StationID
                             };
                         })
-                        .filter(t => t !== null); // 移除無法判定 LinePrefix 的車輛
+                        .filter(t => t !== null); 
 
                     document.getElementById('stat-trains').textContent = formattedTrains.length;
                     this.renderLive(formattedTrains, crowdData);
