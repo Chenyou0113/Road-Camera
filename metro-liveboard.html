@@ -309,24 +309,45 @@
                     const formattedTrains = rawArrivals
                         .filter(t => {
                             const apiStationName = (t.StationName || "");
+                            const destName = (t.DestinationName || "");
                             
-                            // ★ 核心修正：徹底清除 API 站名中的所有路線標籤和雜訊 ★
+                            // ★ 核心修正：徹底清除所有路線標籤、雜訊、多餘空格 ★
                             const pureApiName = apiStationName
-                                .replace('BR', '')
-                                .replace('BL', '')
-                                .replace(/^[A-O]\s*/, '') // 移除機捷/其他線的英文前綴
+                                .replace(/^BR\s*/, '') // 移除開頭的 BR
+                                .replace(/^BL\s*/, '') // 移除開頭的 BL
+                                .replace(/^[RGOA]\s*/, '') // 移除其他路線前綴
+                                .replace(/\sBR$/, '') // 移除結尾的 BR
+                                .replace(/\sBL$/, '') // 移除結尾的 BL
+                                .replace(/\s[RGOA]$/, '') // 移除結尾的其他路線前綴
                                 .replace('站', '')
                                 .replace('臺', '台')
                                 .trim();
                             
-                            const destName = (t.DestinationName || "");
-                            
-                            // 1. 站名必須相符
-                            if (!pureApiName.includes(targetName)) return false; 
+                            // 1. 站名必須相符（基礎過濾）
+                            if (!pureApiName.includes(targetName) && !targetName.includes(pureApiName)) return false;
                             
                             // 2. 目的地必須是北捷的主要終點站
                             const isMajorDest = ['南港', '動物園', '頂埔', '亞東醫院', '淡水', '象山', '北投', '松山', '新店', '迴龍', '蘆洲'].some(d => destName.includes(d));
-                            return isMajorDest;
+                            if (!isMajorDest) return false;
+                            
+                            // 3. ★ 端點站嚴格過濾：優先用 StationID，其次相信站名 ★
+                            const currentLinePrefix = AppState.sid.substring(0, 2);
+                            
+                            // A. 如果有 StationID，必須匹配當前站或相關轉乘站
+                            if (t.StationID) {
+                                const trainLinePrefix = t.StationID.substring(0, 2);
+                                // 允許當前線路或轉乘線路
+                                if (trainLinePrefix === currentLinePrefix) return true;
+                                if (currentLinePrefix === 'BR' && trainLinePrefix === 'BL') return true;
+                                if (currentLinePrefix === 'BL' && trainLinePrefix === 'BR') return true;
+                                if (currentLinePrefix === 'R' && trainLinePrefix === 'G') return true;
+                                if (currentLinePrefix === 'G' && trainLinePrefix === 'R') return true;
+                                // 其他線路不符合，過濾掉
+                                return false;
+                            }
+                            
+                            // B. 沒有 StationID，相信站名匹配就放行
+                            return true;
                         })
                         .map(t => {
                             let linePrefix = null; 
