@@ -473,7 +473,7 @@
                     'BR': '文湖線', 'R': '淡水信義線', 'G': '松山新店線', 'O': '中和新蘆線', 'BL': '板南線', 'Y': '環狀線',
                     'GA': '小碧潭線', 'RA': '新北投支線'
                 },
-                'KRTC': { 'R': '紅線', 'O': '橘線' }, 'TMRT': { 'G': '綠線' }, 'TYMC': { 'A': '機場捷運' }
+                'KRTC': { 'R': '紅線', 'RA': '紅線', 'RK': '紅線', 'O': '橘線', 'OT': '橘線' }, 'TMRT': { 'G': '綠線' }, 'TYMC': { 'A': '機場捷運' }
             },
 
             async init() {
@@ -492,17 +492,37 @@
                 let rawStations = [];
                 if (METRO_STATIONS_LOCAL && METRO_STATIONS_LOCAL.systems[sys]) {
                     const sysData = METRO_STATIONS_LOCAL.systems[sys];
-                    rawStations = Object.entries(sysData.stations).map(([id, info]) => ({
-                        id, name: info.name,
-                        line: {
-                            id: info.lineId,
-                            name: sysData.lines[info.lineId]?.name || info.lineId,
-                            color: ({ 'GA': '#8fc31f', 'RA': '#fd92a3' }[info.lineId]) || sysData.lines[info.lineId]?.color || '#808080'
+                    rawStations = Object.entries(sysData.stations).map(([id, info]) => {
+                        let lineId = info.lineId;
+                        // 高捷支線/延駛合併
+                        if (sys === 'KRTC') {
+                            if (['RA', 'RK'].includes(lineId)) lineId = 'R';
+                            if (lineId === 'OT') lineId = 'O';
                         }
-                    }));
+
+                        return {
+                            id, name: info.name,
+                            line: {
+                                id: lineId,
+                                name: sysData.lines[lineId]?.name || lineId,
+                                color: ({ 'GA': '#8fc31f', 'RA': '#fd92a3' }[lineId]) || sysData.lines[lineId]?.color || '#808080'
+                            }
+                        };
+                    });
                 }
 
                 if (!rawStations.length) return;
+
+                // 排序車站以確保顯示順序正確 (例如 A1, A2... 而非 A1, A10...)
+                rawStations.sort((a, b) => {
+                    const getNum = (id) => parseInt(id.replace(/\D/g, '')) || 0;
+                    const getAlpha = (id) => id.replace(/\d/g, '');
+                    const alphaA = getAlpha(a.id);
+                    const alphaB = getAlpha(b.id);
+                    if (alphaA !== alphaB) return alphaA.localeCompare(alphaB);
+                    return getNum(a.id) - getNum(b.id);
+                });
+
                 document.getElementById('stationSelector').style.display = 'flex';
 
                 AppState.stations = rawStations.map(s => {
