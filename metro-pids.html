@@ -71,6 +71,20 @@
             font-weight: 900;
         }
 
+        .st-name-en {
+            font-size: 1.0vw;
+            font-weight: 700;
+            margin-left: 4px;
+            opacity: 0.9;
+        }
+
+        .st-title-group {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            line-height: 1.1;
+        }
+
         .arrival-info {
             flex: 1;
             padding: 1vh 1vw;
@@ -396,7 +410,10 @@
         <div class="sidebar">
             <div class="station-header" id="ui-header">
                 <div class="st-badge" id="ui-st-id">--</div>
-                <div class="st-name-zh" id="ui-st-name">載入中...</div>
+                <div class="st-title-group">
+                    <div class="st-name-zh" id="ui-st-name">載入中...</div>
+                    <div class="st-name-en" id="ui-st-name-en"></div>
+                </div>
             </div>
 
             <div class="arrival-info" id="block-dir0">
@@ -466,6 +483,7 @@
 
         let countdownSecs = { dir0: -1, dir1: -1 };
         const sysColors = { 'TRTC': '#0070bd', 'KRTC': '#f58220', 'TYMC': '#8246af', 'TMRT': '#b2d235', 'NTMC': '#0096cc', 'KLRT': '#008010' };
+        let GLOBAL_STATIONS = null;
 
         function updateClock() {
             const n = new Date();
@@ -486,20 +504,37 @@
 
             Promise.allSettled([
                 METRO_STATIONS.then(data => {
-                    if (data?.systems[system]?.stations[station]) {
-                        const st = data.systems[system].stations[station];
-                        document.getElementById('ui-st-name').innerText = st.name;
-                        const ln = data.systems[system].lines[st.lineId];
-                        let themeColor = ln?.color;
-                        if (system === 'TRTC') {
-                            if (station.startsWith('GA')) themeColor = '#8fc31f';
-                            if (station.startsWith('RA')) themeColor = '#fd92a3';
+                    GLOBAL_STATIONS = data;
+                    if (data?.systems[system]) {
+                        // 尋找車站 (新架構：systems[sys] 是 Array)
+                        const lines = data.systems[system];
+                        let foundStation = null;
+                        let foundLine = null;
+
+                        for (const line of lines) {
+                            const s = line.stations.find(st => st.sid === station);
+                            if (s) {
+                                foundStation = s;
+                                foundLine = line;
+                                break;
+                            }
                         }
-                        if (system === 'KRTC') {
-                            if (station.startsWith('R')) themeColor = '#e3002c';
-                            if (station.startsWith('O')) themeColor = '#f8b61c';
+
+                        if (foundStation) {
+                            document.getElementById('ui-st-name').innerText = foundStation.name_zh;
+                            document.getElementById('ui-st-name-en').innerText = foundStation.name_en; // 確保這裡也有英文
+
+                            let themeColor = foundLine.color;
+                            if (system === 'TRTC') {
+                                if (station.startsWith('GA')) themeColor = '#8fc31f';
+                                if (station.startsWith('RA')) themeColor = '#fd92a3';
+                            }
+                            if (system === 'KRTC') {
+                                if (station.startsWith('R')) themeColor = '#e3002c';
+                                if (station.startsWith('O')) themeColor = '#f8b61c';
+                            }
+                            if (themeColor) document.documentElement.style.setProperty('--theme-color', themeColor);
                         }
-                        if (themeColor) document.documentElement.style.setProperty('--theme-color', themeColor);
                     }
                 }),
                 updateData(),
@@ -567,6 +602,13 @@
                                 nextTrains[0] = sData[0];
                                 nextTrains[1] = sData.length > 1 ? sData[1] : null;
                             }
+                        }
+
+                        // 更新車站英文
+                        if (sData[0].StationName) {
+                            if (sData[0].StationName.En) document.getElementById('ui-st-name-en').innerText = sData[0].StationName.En;
+                            // 針對 KRTC 草衙站與其他可能缺漏
+                            if (station === 'R4A' && system === 'KRTC') document.getElementById('ui-st-name-en').innerText = 'Caoya';
                         }
                     }
                 }
@@ -693,8 +735,45 @@
             destEn.innerText = item.DestinationStationName.En || "Train"; // 英文暫時顯示 Train
 
             let lbText = item.LineID || system.substring(0, 1);
-            if (system === 'KRTC' && (lbText === 'RA' || lbText === 'R')) lbText = 'R';
+            let destID = null;
+
+            // 嘗試尋找車站編號
+            // 嘗試尋找車站編號
+            if (GLOBAL_STATIONS && GLOBAL_STATIONS.systems[system]) {
+                const lines = GLOBAL_STATIONS.systems[system];
+                const destName = item.DestinationStationName.Zh_tw.replace('站', '').trim();
+
+                // 遍歷所有路線的所有車站
+                for (const line of lines) {
+                    // 1. 精確比對
+                    let found = line.stations.find(s => s.name_zh === destName);
+
+                    // 2. 模糊比對
+                    if (!found && system === 'KRTC') {
+                        found = line.stations.find(s => destName.includes(s.name_zh) || s.name_zh.includes(destName));
+                    }
+
+                    if (found) {
+                        destID = found.sid;
+                        break;
+                    }
+                }
+            }
+
+            if (destID) {
+                lbText = destID;
+            } else {
+                // 找不到編號則回退原本邏輯
+                if (system === 'KRTC' && (lbText === 'RA' || lbText === 'R')) lbText = 'R';
+            }
+
             lineBadge.innerText = lbText;
+
+            // 字體大小自動調整
+            if (lbText.length >= 4) lineBadge.style.fontSize = '1.0vw';
+            else if (lbText.length >= 3) lineBadge.style.fontSize = '1.2vw';
+            else lineBadge.style.fontSize = '1.5vw';
+
             lineBadge.style.background = item.LineColor || "#808080";
 
             const estimateTime = item.EstimateTime != null ? item.EstimateTime : 0;
