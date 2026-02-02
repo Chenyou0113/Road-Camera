@@ -99,28 +99,73 @@ self.addEventListener('fetch', (event) => {
                 if (cached) {
                     // 背景更新策略（Stale-While-Revalidate）
                     fetch(event.request).then(response => {
-                        caches.open(CACHE_NAME).then(cache => {
-                            cache.put(event.request, response);
-                        });
-                    }).catch(() => {});
+                        if (response && response.status === 200) {
+                            caches.open(CACHE_NAME).then(cache => {
+                                cache.put(event.request, response);
+                            });
+                        }
+                    }).catch(() => {
+                        // 背景更新失敗時，保留現有緩存
+                    });
                     return cached;
                 }
                 
                 // 無緩存：從網路獲取並緩存
-                return fetch(event.request).then(response => {
-                    const responseClone = response.clone();
-                    caches.open(CACHE_NAME).then(cache => {
-                        cache.put(event.request, responseClone);
+                return fetch(event.request)
+                    .then(response => {
+                        // 只緩存成功的回應（200-299）
+                        if (!response || response.status < 200 || response.status >= 300) {
+                            return response;
+                        }
+                        const responseClone = response.clone();
+                        caches.open(CACHE_NAME).then(cache => {
+                            cache.put(event.request, responseClone);
+                        });
+                        return response;
+                    })
+                    .catch(error => {
+                        console.warn('[Service Worker] 無法獲取資源:', event.request.url, error);
+                        // 如果是 HTML 請求且無緩存，返回一個簡單的離線頁面
+                        if (url.pathname.endsWith('.html')) {
+                            return new Response(
+                                '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>離線</title></head><body style="font-family:sans-serif;text-align:center;padding:20px;"><h1>資源無法載入</h1><p>請檢查網路連線或檔案是否存在。</p><a href="/">返回首頁</a></body></html>',
+                                {
+                                    status: 503,
+                                    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+                                }
+                            );
+                        }
+                        throw error;
                     });
-                    return response;
-                });
             })
         );
         return;
     }
     
     // 🔥 其他請求：直接從網路獲取
-    event.respondWith(fetch(event.request));
+    event.respondWith(
+        fetch(event.request)
+            .catch(error => {
+                console.warn('[Service Worker] 網路請求失敗:', event.request.url, error);
+                // 嘗試從緩存中取得
+                return caches.match(event.request)
+                    .then(cached => {
+                        if (cached) {
+                            return cached;
+                        }
+                        // 如果是導航請求（HTML），返回離線頁面
+                        if (event.request.mode === 'navigate') {
+                            return caches.match('/index.html').catch(() => 
+                                new Response(
+                                    '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>離線</title></head><body style="font-family:sans-serif;text-align:center;padding:20px;"><h1>網路連線失敗</h1><p>無法連接到伺服器。</p></body></html>',
+                                    { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+                                )
+                            );
+                        }
+                        throw error;
+                    });
+            })
+    );
 });
 
 // 💬 消息處理：支持緩存清除指令

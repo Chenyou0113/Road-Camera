@@ -31,7 +31,7 @@
         .pids-wrapper {
             display: grid;
             grid-template-columns: 24% 76%;
-            grid-template-rows: 90% 10%;
+            grid-template-rows: 1fr 80px;
             width: 100%;
             height: 100%;
             background-color: #f0f0f0;
@@ -251,9 +251,52 @@
             color: #5a9fd4;
         }
 
+        .time-marquee-section {
+            background: #000;
+            color: #fff;
+            padding: 0;
+            display: grid;
+            grid-template-columns: calc(24% / 3.5) 1fr;
+            height: 80px;
+            border-top: 2px solid #ccc;
+            grid-column: 1/3;
+        }
+
+        .clock-section {
+            background: #d32f2f;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.2vw;
+            font-weight: 900;
+            font-family: 'Roboto', sans-serif;
+            padding: 0 5px;
+            white-space: nowrap;
+            line-height: 1.2;
+        }
+
+        .marquee-section {
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            padding: 0;
+            position: relative;
+            width: 100%;
+        }
+
+        .marquee-text {
+            white-space: nowrap;
+            font-size: 1.7vw;
+            font-weight: 700;
+            position: absolute;
+            left: 100%;
+            will-change: transform;
+        }
+
         .main-display {
             display: grid;
-            grid-template-rows: 1fr 130px;
+            grid-template-rows: 1fr;
             background-color: #000;
             position: relative;
         }
@@ -368,44 +411,6 @@
             width: 100%;
         }
 
-        .footer {
-            grid-column: 1/3;
-            display: grid;
-            grid-template-columns: 24% 76%;
-            background: #1a1a1a;
-            color: #fff;
-        }
-
-        .clock-section {
-            background: #d32f2f;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-size: 2.2vw;
-            font-weight: 900;
-            font-family: 'Roboto', sans-serif;
-        }
-
-        .marquee-section {
-            overflow: hidden;
-            display: flex;
-            align-items: center;
-            padding: 0;
-            position: relative;
-            /* 必須為相對定位 */
-            width: 100%;
-        }
-
-        .marquee-text {
-            white-space: nowrap;
-            font-size: 1.7vw;
-            font-weight: 700;
-            position: absolute;
-            /* 必須為絕對定位供 JS 控制 */
-            left: 100%;
-            will-change: transform;
-        }
-
         @keyframes pulse {
 
             0%,
@@ -476,9 +481,10 @@
             }
 
             .line-badge-small {
-                font-size: 0.85rem;
-                min-width: 45px;
-                padding: 2px 6px;
+                font-size: 1.2rem;
+                min-width: 60px;
+                padding: 4px 10px;
+                border-radius: 6px;
             }
 
             .dest-zh {
@@ -589,6 +595,17 @@
                 font-size: 1.1rem;
                 line-height: 40px;
             }
+
+            .time-marquee-section {
+                height: 60px;
+                grid-template-columns: 80px 1fr;
+            }
+
+            .clock-section {
+                height: 60px;
+                font-size: 1.4rem;
+                padding: 0;
+            }
         }
     </style>
 </head>
@@ -615,6 +632,7 @@
                 <div class="dest-en" id="dir0-en"></div>
                 <!-- 這裡的時間框會用來顯示「末班車已駛離」 -->
                 <div class="time-box" id="dir0-time">-- : --</div>
+                <div class="congestion-box" id="cong-dir0"></div>
             </div>
 
             <div class="arrival-info secondary" id="block-dir1">
@@ -625,6 +643,7 @@
                 </div>
                 <div class="dest-en" id="dir1-en"></div>
                 <div class="time-box" id="dir1-time">-- : --</div>
+                <div class="congestion-box" id="cong-dir1"></div>
             </div>
 
             <div class="weather-box">
@@ -645,10 +664,9 @@
                     allow="autoplay; encrypted-media">
                 </iframe>
             </div>
-            <div class="congestion-area"></div>
         </div>
 
-        <div class="footer">
+        <div class="time-marquee-section">
             <div class="clock-section" id="clock">00:00</div>
             <div class="marquee-section">
                 <div class="marquee-text" id="ui-marquee">TPASS 2.0 公運常客優惠正式上線！搭越多回饋越多...</div>
@@ -678,15 +696,17 @@
         function updateClock() {
             const n = new Date();
             const d = `${String(n.getMonth() + 1).padStart(2, '0')}/${String(n.getDate()).padStart(2, '0')}`;
-            const t = n.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit' }).toUpperCase();
-            document.getElementById('clock').innerText = `${d} ${t}`;
+            const h = String(n.getHours()).padStart(2, '0');
+            const m = String(n.getMinutes()).padStart(2, '0');
+            const s = String(n.getSeconds()).padStart(2, '0');
+            document.getElementById('clock').innerHTML = `<div>${d}</div><div>${h}:${m}:${s}</div>`;
         }
 
         async function init() {
             // 非北捷系統隱藏擁擠度區塊並調整版面
             if (system !== 'TRTC') {
-                document.querySelector('.congestion-area').style.display = 'none';
-                document.querySelector('.main-display').style.gridTemplateRows = '1fr';
+                document.getElementById('cong-dir0').classList.add('hidden');
+                document.getElementById('cong-dir1').classList.add('hidden');
             }
 
             document.documentElement.style.setProperty('--theme-color', sysColors[system] || '#333');
@@ -1045,12 +1065,14 @@
         // 👥 更新擁擠度資訊 (TRTC 專用 - 全新邏輯)
         async function updateCongestion(nextTrains) {
             if (system !== 'TRTC') {
-                document.querySelector('.congestion-area').innerHTML = `<div class="cong-no-data">本系統暫無擁擠度資訊</div>`;
+                document.getElementById('cong-dir0').classList.add('hidden');
+                document.getElementById('cong-dir1').classList.add('hidden');
                 return;
             }
 
             if (!nextTrains[0] && !nextTrains[1]) {
-                document.querySelector('.congestion-area').innerHTML = `<div class="cong-no-data">待列車進站後顯示擁擠度</div>`;
+                document.getElementById('cong-dir0').innerHTML = `<div style="text-align:center; color:#999; padding:5px;">待列車進站後顯示擁擠度</div>`;
+                document.getElementById('cong-dir1').innerHTML = `<div style="text-align:center; color:#999; padding:5px;">待列車進站後顯示擁擠度</div>`;
                 return;
             }
 
@@ -1058,9 +1080,10 @@
             let lineId = station.replace(/[0-9]/g, '');
             if (system === 'KRTC' && lineId === 'RA') lineId = 'R';
 
-            // ★★★ 如果是環狀線(Y)，顯示特定提示並跳出 ★★★
+            // ★★★ 如果是環狀線(Y)，隱藏擁擠度 ★★★
             if (lineId === 'Y') {
-                document.querySelector('.congestion-area').innerHTML = `<div class="cong-no-data">環狀線目前不提供擁擠度資訊</div>`;
+                document.getElementById('cong-dir0').classList.add('hidden');
+                document.getElementById('cong-dir1').classList.add('hidden');
                 return;
             }
 
@@ -1070,8 +1093,6 @@
                 if (lineId === 'BR') {
                     endpoint = '/crowdedness/wenhu';
                 } else if (lineId === 'Y') {
-                    // ★★★ 環狀線：目前北捷公開 API 中擁擠度可能不在這 7 項中 ★★★
-                    // 但我們預留邏輯，若未來有資料可直接顯示
                     endpoint = '/crowdedness/high-capacity';
                 } else {
                     endpoint = '/crowdedness/high-capacity';
@@ -1081,14 +1102,14 @@
                 let data = await res.json();
 
                 if (data.error || !Array.isArray(data)) {
-                    document.querySelector('.congestion-area').innerHTML = `<div class="cong-no-data">目前無擁擠度訊號</div>`;
+                    document.getElementById('cong-dir0').innerHTML = `<div style="text-align:center; color:#999; padding:5px;">目前無擁擠度訊號</div>`;
+                    document.getElementById('cong-dir1').innerHTML = `<div style="text-align:center; color:#999; padding:5px;">目前無擁擠度訊號</div>`;
                     return;
                 }
 
                 const stNameEl = document.getElementById('ui-st-name');
                 const currentStationName = stNameEl.innerText.replace('站', '').replace('臺', '台').trim();
 
-                let html = '';
                 // ★★★ 關鍵修改：文湖線(BR) 與 環狀線(Y) 都是 4 節車廂；支線為 3 節 ★★★
                 let carCount = 6;
                 if (lineId === 'BR' || lineId === 'Y') carCount = 4;
@@ -1096,7 +1117,12 @@
 
                 [0, 1].forEach(idx => {
                     const train = nextTrains[idx];
-                    if (!train) return;
+                    const congContainer = idx === 0 ? document.getElementById('cong-dir0') : document.getElementById('cong-dir1');
+
+                    if (!train) {
+                        congContainer.innerHTML = '';
+                        return;
+                    }
 
                     // --- 策略 A：車號比對 ---
                     let match = null;
@@ -1122,14 +1148,14 @@
                     if (match) {
                         for (let i = 1; i <= carCount; i++) {
                             const level = match[`Car${i}`] || match[`Cart${i}L`] || 0;
-                            let cls = 'cong-car';
+                            let cls = 'cong-car-inline';
 
                             if (level == 1) cls += ' cong-lvl-1';
                             else if (level == 2) cls += ' cong-lvl-2';
                             else if (level == 3) cls += ' cong-lvl-3';
                             else if (level >= 4) cls += ' cong-lvl-4';
 
-                            if (!level) cls = 'cong-car'; // 無資料顯示灰色
+                            if (!level) cls = 'cong-car-inline'; // 無資料顯示灰色
 
                             // 🔥 修正：加入車廂號碼 i
                             barsHtml += `<div class="${cls}">${i}</div>`;
@@ -1137,22 +1163,20 @@
                     } else {
                         // 灰色狀態也要有數字
                         for (let i = 1; i <= carCount; i++) {
-                            barsHtml += `<div class="cong-car">${i}</div>`;
+                            barsHtml += `<div class="cong-car-inline">${i}</div>`;
                         }
                     }
 
-                    html += `
-                        <div class="cong-row">
-                            <div class="cong-label">
-                                <span style="background:${train.LineColor}; width:12px; height:12px; border-radius:50%; display:inline-block;"></span>
+                    congContainer.innerHTML = `
+                        <div class="cong-row-inline">
+                            <div class="cong-label-inline">
+                                <span style="background:${train.LineColor}; width:10px; height:10px; border-radius:50%; display:inline-block;"></span>
                                 ${label}
                             </div>
-                            <div class="cong-bar-container">${barsHtml}</div>
+                            <div class="cong-bar-inline">${barsHtml}</div>
                         </div>
                     `;
                 });
-
-                document.querySelector('.congestion-area').innerHTML = html || `<div class="cong-no-data">接收擁擠度訊號中...</div>`;
 
             } catch (e) {
                 console.error("擁擠度更新失敗", e);
