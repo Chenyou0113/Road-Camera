@@ -490,19 +490,46 @@
                 document.querySelectorAll('.sys-card').forEach(c => c.classList.toggle('active', c.dataset.sys === sys));
 
                 let rawStations = [];
-                if (METRO_STATIONS_LOCAL && METRO_STATIONS_LOCAL.systems[sys]) {
+                if (METRO_STATIONS_LOCAL && METRO_STATIONS_LOCAL.systems && METRO_STATIONS_LOCAL.systems[sys]) {
                     const sysData = METRO_STATIONS_LOCAL.systems[sys];
-                    rawStations = Object.entries(sysData.stations).map(([id, info]) => ({
-                        id, name: info.name,
-                        line: {
-                            id: info.lineId,
-                            name: sysData.lines[info.lineId]?.name || info.lineId,
-                            color: ({ 'GA': '#8fc31f', 'RA': '#fd92a3' }[info.lineId]) || sysData.lines[info.lineId]?.color || '#808080'
-                        }
-                    }));
+                    
+                    // 處理陣列格式（線路陣列）
+                    if (Array.isArray(sysData)) {
+                        sysData.forEach(line => {
+                            if (line.stations && Array.isArray(line.stations)) {
+                                line.stations.forEach(station => {
+                                    rawStations.push({
+                                        id: station.sid,
+                                        name: station.name_zh,
+                                        nameEn: station.name_en,
+                                        line: {
+                                            id: line.line_id,
+                                            name: line.name_zh,
+                                            color: line.color || '#808080'
+                                        }
+                                    });
+                                });
+                            }
+                        });
+                    } 
+                    // 處理物件格式（舊格式，以防萬一）
+                    else if (sysData.stations && typeof sysData.stations === 'object') {
+                        rawStations = Object.entries(sysData.stations).map(([id, info]) => ({
+                            id, name: info.name,
+                            line: {
+                                id: info.lineId,
+                                name: sysData.lines && sysData.lines[info.lineId] ? sysData.lines[info.lineId].name : info.lineId,
+                                color: ({ 'GA': '#8fc31f', 'RA': '#fd92a3' }[info.lineId]) || (sysData.lines && sysData.lines[info.lineId] ? sysData.lines[info.lineId].color : '#808080')
+                            }
+                        }));
+                    }
                 }
 
-                if (!rawStations.length) return;
+                if (!rawStations.length) {
+                    console.warn(`No stations found for system: ${sys}`);
+                    return;
+                }
+                
                 document.getElementById('stationSelector').style.display = 'flex';
 
                 AppState.stations = rawStations.map(s => {
