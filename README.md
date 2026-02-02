@@ -1,179 +1,128 @@
-# Road Camera System 🚗
+# 🇹🇼 Taiwan Traffic & Environment Monitor
+> **全台交通與環境監控系統 ‧ 旗艦版**
 
-台灣監視器畫面查詢系統 - 整合高速公路、省道、水利署等多源監控影像
+這是一個整合台灣全方位交通、公共運輸與環境資訊的即時監控儀表板。從高速公路路況、捷運列車動態 (PIDS)，到地震速報與水情監測，提供一站式的視覺化數據服務。
 
-## 功能特點
+![Version](https://img.shields.io/badge/Version-2.0.0-blue.svg)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+![Status](https://img.shields.io/badge/Status-Active-success.svg)
 
-- 📹 **多源監控整合**：高速公路、省道、市區道路、水利署、監控影像等
-- 🌙 **深色模式**：全網站支援暗黑主題
-- 📍 **實時查詢**：使用交通部 TDX API 獲取最新監控影像
-- 📊 **多種檢視**：不同道路類型的專用顯示頁面
-- ⚡ **快速響應**：靜態網站 + Cloudflare CDN 加速
-- 🔒 **安全設計**：所有 API 密鑰存儲在 Cloudflare 環境中
+## ✨ 核心功能
 
-## 支援頁面
+### 🚅 軌道交通智慧顯示 (Metro & Rail)
+本系統內建強大的軌道交通資訊整合功能，支援 PIDS (旅客資訊顯示系統) 模擬與即時動態看板。
 
-| 頁面 | 說明 |
-|------|------|
-| [highway.html](highway.html) | 高速公路監控 |
-| [expressway.html](expressway.html) | 快速道路監控 |
-| [road.html](road.html) | 省道監控 |
-| [city.html](city.html) | 市區道路監控 |
-| [water-cctv.html](water-cctv.html) | 水利署監控 |
-| [dashboard.html](dashboard.html) | 整合儀表板 |
-| [weather.html](weather.html) | 天氣和氣象資訊 |
-| [earthquake_report.html](earthquake_report.html) | 地震速報 |
+- **捷運智慧儀表板 (Metro Liveboard)** `metro-liveboard.html`
+  - 支援全台捷運系統：**北捷、高捷、桃捷、中捷、新北捷、輕軌**。
+  - **即時資訊**：顯示列車倒數、車廂擁擠度、營運狀態。
+  - **PIDS 模擬器**：`metro-pids.html` 完美還原北捷/高捷月台顯示器介面 (支援 TPASS 2.0 風格)。
+  
+- **雙鐵資訊系統**
+  - **台鐵 PIDS**：`tra-pids.html` 模擬台鐵月台旅客資訊顯示器，包含跑馬燈與列車動態。
+  - **高鐵 PIDS**：`thsr_pids.html` 高鐵風格的列車資訊看板。
+  - **機場航班**：`airport_liveboard.html` 整合機場航班資訊。
 
-## 快速開始
+### 📹 即時影像監控 (CCTV)
+整合多個政府單位的公開監視器資料，提供地圖化與列表化的檢視介面。
 
-### 本機開發
+- **公路監控**：國道 (`highway.html`)、快速道路 (`expressway.html`)、省道 (`road.html`)。
+- **市區道路**：`city.html` 涵蓋全台主要縣市的重要路口監控。
+- **特色功能**：全站支援深色模式 (Dark Mode)、地圖定位檢視、關鍵字快速篩選。
 
-```bash
-# 1. 安裝依賴
-npm install
+### 🌩️ 環境與防災監控 (Environment)
+整合中央氣象署 (CWA) 與水利署 Open Data，建立防災與環境監測中心。
 
-# 2. 啟動本機伺服器
-npm run start
-
-# 3. 開啟瀏覽器訪問
-# http://localhost:8000
-```
-
-### 環境設定
-
-#### 本機開發環境
-
-1. 複製 `.env.example` 為 `.env.local`
-2. 填入 API 密鑰：
-   ```dotenv
-   TDX_CLIENT_ID=your_client_id
-   TDX_CLIENT_SECRET=your_client_secret
-   CWA_API_KEY=your_cwa_api_key
-   ```
-3. **重要**：提交 Git 前請移除 `.env.local`，該檔案已在 `.gitignore` 中
-
-#### 線上部署（推薦）
-
-在 [Cloudflare Dashboard](https://dash.cloudflare.com/) 設定環境變數：
-
-1. 進入 **Pages** > 選擇專案 > **Settings** > **Environment variables**
-2. 新增以下環境變數：
-   - `TDX_CLIENT_ID`
-   - `TDX_CLIENT_SECRET`
-   - `CWA_API_KEY`
-
-這樣所有 API 密鑰會安全地存儲在 Cloudflare，不會暴露在前端代碼中。
-
-## 部署
-
-### 部署到 Cloudflare Pages
-
-```bash
-# 安裝 Wrangler CLI
-npm install -g @cloudflare/wrangler
-
-# 登入 Cloudflare
-wrangler auth login
-
-# 部署
-npm run deploy:pages
-
-# 或進行本機預覽
-npm run deploy:preview
-```
-
-### GitHub Pages（簡單模式）
-
-1. 推送到 GitHub
-2. 進入 Repository Settings > Pages
-3. 選擇 Deploy from a branch
-4. 選擇分支（通常是 `main`）
-
-## API 端點
-
-| 端點 | 說明 |
-|------|------|
-| `/api/token` | 申請 TDX Token（Cloudflare Pages Function） |
-| `/api/get-cameras` | 獲取監控影像列表 |
-| `/api/weather-proxy` | 天氣資訊代理 |
-| `/api/weather-stations` | 氣象站資訊 |
-
-## 項目結構
-
-```
-├── index.html                 # 主頁
-├── highway.html              # 高速公路頁面
-├── expressway.html           # 快速道路頁面
-├── road.html                 # 省道頁面
-├── city.html                 # 市區道路頁面
-├── water-cctv.html          # 水利署監控頁面
-├── dashboard.html            # 整合儀表板
-├── functions/                # Cloudflare Pages Functions
-│   ├── api/token.js         # Token 申請端點
-│   ├── api/get-cameras.js   # 監控影像列表端點
-│   └── ...
-├── scripts/                  # 部署和開發腳本
-├── assets/                   # 靜態資源（圖片、CSS 等）
-└── docs/                     # 文檔集合
-```
-
-## 開發指南
-
-### 新增監控影像頁面
-
-1. 在根目錄建立新的 HTML 檔案（如 `my-camera.html`）
-2. 引入 JavaScript 模組並初始化地圖
-3. 更新 `index.html` 的導航連結
-
-### 修改樣式
-
-CSS 主要位於各 HTML 檔案內的 `<style>` 標籤，支援深色模式自動切換。
-
-### 測試功能
-
-```bash
-npm run test              # 系統狀態測試
-npm run test:filter      # 過濾邏輯測試
-npm run test:mileage     # 里程測試
-npm run test:image       # 影像測試
-```
-
-## 安全性
-
-- ✅ 所有 API 密鑰存儲在 Cloudflare 環境變數中
-- ✅ `.env` 檔案已加入 `.gitignore`
-- ✅ 前端代碼不包含任何敏感信息
-- ✅ CORS 安全檢查已啟用
-
-## 故障排除
-
-### Token 申請失敗
-- 檢查 Cloudflare Dashboard 中是否設定了 `TDX_CLIENT_ID` 和 `TDX_CLIENT_SECRET`
-- 確認 TDX API 帳號狀態是否正常
-
-### 影像無法載入
-- 檢查網路連接
-- 確認監控鏡頭的 ID 是否正確
-- 檢查瀏覽器控制台的錯誤訊息
-
-### 樣式問題
-- 清除瀏覽器快取（Ctrl+F5）
-- 檢查深色模式設定
-
-## 貢獻
-
-歡迎提交 Issue 或 Pull Request！
-
-## 許可證
-
-MIT License - 查看 [LICENSE](LICENSE) 詳情
-
-## 相關資源
-
-- [交通部 TDX API 文檔](https://tdx.transportdata.tw/)
-- [Cloudflare Pages 文檔](https://developers.cloudflare.com/pages/)
-- [中央氣象署開放資料](https://opendata.cwa.gov.tw/)
+- **天氣雷達**：`rainfall-radar.html` 即時雷達迴波圖與降雨預測。
+- **地震速報**：`earthquake_report.html` 強震即時警報與歷史地震查詢。
+- **水情看板**：`water.html` 整合水庫蓄水量、河川水位影像與淹水感測器。
+- **空氣品質**：`air-quality.html` 全台空氣品質指標 (AQI) 監測。
 
 ---
 
-**最後更新**：2025年12月26日
+## 🚀 快速開始 (Quick Start)
+
+本專案為靜態網頁架構 (Static Site)，可直接在瀏覽器運行，或使用本地伺服器預覽。
+
+### 1. 安裝工具 (選用)
+雖然是靜態網頁，但我們提供了開發與部署工具 (Wrangler)。
+
+```bash
+npm install
+```
+
+### 2. 啟動開發伺服器
+使用下列指令啟動本地伺服器 (Port 8000)：
+
+```bash
+npm run start
+```
+*系統將自動嘗試使用 python, php 或 npx serve 啟動伺服器。*
+
+### 3. 開啟網頁
+瀏覽器訪問：`http://localhost:8000`
+
+---
+
+## 🛠️ 部署指南 (Deployment)
+
+本專案針對 **Cloudflare Pages** 進行了最佳化配置。
+
+### 使用 Wrangler CLI 部署
+
+```bash
+# 登入 Cloudflare
+npx wrangler login
+
+# 部署到 Cloudflare Pages
+npm run deploy:pages
+```
+
+### 環境變數設定 (Environment Variables)
+為了正常使用 TDX (交通部) 與 CWA (氣象署) API，請務必在 Cloudflare Pages 後台設定以下環境變數：
+
+| 變數名稱 | 說明 |
+|----------|------|
+| `TDX_CLIENT_ID` | TDX API Client ID |
+| `TDX_CLIENT_SECRET` | TDX API Client Secret |
+| `CWA_API_KEY` | 中央氣象署 API Key |
+
+---
+
+## 📂 資料維護
+
+### 捷運站點資料庫
+本系統使用本地 JSON 檔案來維護全台捷運站點對照表，以加速載入並減少 API 依賴。
+
+- **檔案路徑**：`metro-stations-raw.json`
+- **結構說明**：
+  ```json
+  {
+    "systems": {
+      "TRTC": [ ... ], // 台北捷運
+      "KRTC": [ ... ]  // 高雄捷運 (含輕軌)
+    }
+  }
+  ```
+- **更新方式**：若有新站點開通，請直接更新此 JSON 檔案中的站點列表 (ID, 中英文站名)。
+
+---
+
+## 📝 頁面索引
+
+| 分類 | 檔案名稱 | 用途 |
+|------|----------|------|
+| **核心** | `index.html` | 系統首頁與導航 |
+| **捷運** | `metro-liveboard.html` | 全台捷運整合儀表板 |
+| | `metro-pids.html` | 捷運月台顯示器模擬 |
+| **鐵路** | `tra-pids.html` | 台鐵月台顯示器 |
+| | `thsr_pids.html` | 高鐵旅客資訊顯示 |
+| **路況** | `highway.html` | 高速公路路況 |
+| | `city.html` | 縣市道路路況 |
+| **防災** | `earthquake_report.html` | 地震速報 |
+| | `water.html` | 水情監視 |
+
+---
+
+## 📄 授權 (License)
+
+MIT License. Copyright (c) 2026 Road Camera System Team.
