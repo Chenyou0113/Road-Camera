@@ -468,13 +468,8 @@
         };
 
         const Core = {
-            globalLineMap: {
-                'TRTC': {
-                    'BR': '文湖線', 'R': '淡水信義線', 'G': '松山新店線', 'O': '中和新蘆線', 'BL': '板南線', 'Y': '環狀線',
-                    'GA': '小碧潭線', 'RA': '新北投支線'
-                },
-                'KRTC': { 'R': '紅線', 'O': '橘線' }, 'TMRT': { 'G': '綠線' }, 'TYMC': { 'A': '機場捷運' }
-            },
+            // globalLineMap removed
+
 
             async init() {
                 try {
@@ -490,52 +485,54 @@
                 document.querySelectorAll('.sys-card').forEach(c => c.classList.toggle('active', c.dataset.sys === sys));
 
                 let rawStations = [];
-                if (METRO_STATIONS_LOCAL && METRO_STATIONS_LOCAL.systems && METRO_STATIONS_LOCAL.systems[sys]) {
-                    const sysData = METRO_STATIONS_LOCAL.systems[sys];
-                    
-                    // 處理陣列格式（線路陣列）
-                    if (Array.isArray(sysData)) {
-                        sysData.forEach(line => {
-                            if (line.stations && Array.isArray(line.stations)) {
-                                line.stations.forEach(station => {
-                                    rawStations.push({
-                                        id: station.sid,
-                                        name: station.name_zh,
-                                        nameEn: station.name_en,
-                                        line: {
-                                            id: line.line_id,
-                                            name: line.name_zh,
-                                            color: line.color || '#808080'
-                                        }
-                                    });
-                                });
-                            }
-                        });
-                    } 
-                    // 處理物件格式（舊格式，以防萬一）
-                    else if (sysData.stations && typeof sysData.stations === 'object') {
-                        rawStations = Object.entries(sysData.stations).map(([id, info]) => ({
-                            id, name: info.name,
+                if (METRO_STATIONS_LOCAL && METRO_STATIONS_LOCAL.systems[sys]) {
+                    const sysData = METRO_STATIONS_LOCAL.systems[sys]; // Array of lines
+                    rawStations = sysData.flatMap(line => {
+                        let lineId = line.line_id;
+                        // 高捷支線/延駛合併
+                        if (sys === 'KRTC') {
+                            if (['RA', 'RK'].includes(lineId)) lineId = 'R';
+                            if (lineId === 'OT') lineId = 'O';
+                        }
+
+                        return line.stations.map(s => ({
+                            id: s.sid,
+                            name: s.name_zh,
                             line: {
-                                id: info.lineId,
-                                name: sysData.lines && sysData.lines[info.lineId] ? sysData.lines[info.lineId].name : info.lineId,
-                                color: ({ 'GA': '#8fc31f', 'RA': '#fd92a3' }[info.lineId]) || (sysData.lines && sysData.lines[info.lineId] ? sysData.lines[info.lineId].color : '#808080')
+                                id: lineId,
+                                name: line.name_zh,
+                                color: (sys === 'TRTC' ? ({ 'GA': '#8fc31f', 'RA': '#fd92a3' }[line.line_id]) : null) || line.color || '#808080'
                             }
                         }));
-                    }
+                    });
                 }
 
-                if (!rawStations.length) {
-                    console.warn(`No stations found for system: ${sys}`);
-                    return;
-                }
-                
+                if (!rawStations.length) return;
+
+                // 排序車站以確保顯示順序正確
+                rawStations.sort((a, b) => {
+                    const getNum = (id) => parseInt(id.replace(/\D/g, '')) || 0;
+                    const getAlpha = (id) => id.replace(/\d/g, '');
+                    const alphaA = getAlpha(a.id);
+                    const alphaB = getAlpha(b.id);
+
+                    // 高捷紅線特殊處理：從岡山往小港 (RK1 -> R24 -> ... -> R3)
+                    if (sys === 'KRTC' && (alphaA.startsWith('R') || alphaA === 'RK') && (alphaB.startsWith('R') || alphaB === 'RK')) {
+                        // 如果一個是 RK 一個是 R，RK 應該在前面
+                        if (alphaA === 'RK' && alphaB !== 'RK') return -1;
+                        if (alphaA !== 'RK' && alphaB === 'RK') return 1;
+                        // 同類別則數字由大到小
+                        return getNum(b.id) - getNum(a.id);
+                    }
+
+                    if (alphaA !== alphaB) return alphaA.localeCompare(alphaB);
+                    return getNum(a.id) - getNum(b.id);
+                });
+
                 document.getElementById('stationSelector').style.display = 'flex';
 
                 AppState.stations = rawStations.map(s => {
-                    const sysMap = this.globalLineMap[sys] || {};
-                    const mappedName = sysMap[s.line.id] || s.line.name;
-                    return { ...s, displayLineName: mappedName };
+                    return { ...s, displayLineName: s.line.name };
                 });
 
                 document.getElementById('stat-stations').textContent = AppState.stations.length;
@@ -548,6 +545,7 @@
                 const selectedLineName = document.getElementById('lineSelect').value;
                 const filtered = AppState.stations.filter(s => s.displayLineName === selectedLineName);
                 document.getElementById('stationSelect').innerHTML = filtered.map(s => `<option value="${s.id}">${s.name} (${s.id})</option>`).join('');
+
                 this.refresh();
             },
 
@@ -562,6 +560,16 @@
                 if (AppState.timer) clearInterval(AppState.timer);
                 AppState.sid = document.getElementById('stationSelect').value;
                 if (!AppState.sid) return;
+
+                // 更新 PIDS 按鈕顏色
+                const currentStation = AppState.stations.find(s => s.id === AppState.sid);
+                if (currentStation) {
+                    const pidsBtn = document.querySelector('.btn-pids');
+                    if (pidsBtn) {
+                        pidsBtn.style.backgroundColor = currentStation.line.color;
+                    }
+                }
+
                 this.fetchData();
                 if (AppState.mode === 'live') {
                     this.startProgressBar();
