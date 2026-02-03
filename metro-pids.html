@@ -151,7 +151,7 @@
             font-weight: 700;
         }
 
-        /* --- 時間框樣式優化 --- */
+        /* 🚥 燈號顏色邏輯 - 桌面版 */
         .time-box {
             background-color: var(--theme-color);
             color: white;
@@ -165,21 +165,27 @@
             width: 95%;
             align-self: center;
             box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.2);
-            transition: 0.3s;
-            /* 確保文字垂直置中 */
+            transition: background-color 0.4s ease;
             display: flex;
             align-items: center;
             justify-content: center;
             min-height: 6vh;
         }
 
-        .time-box.arriving {
-            background-color: #d32f2f;
-            animation: pulse 1s infinite;
+        /* 1. 很久進站 (> 60秒)：顯示藍色 */
+        .time-box.status-normal {
+            background-color: #0070bd !important; /* 標準捷運藍 */
         }
 
-        .time-box.approaching {
-            background-color: #f58220;
+        /* 2. 剩下一分鐘 (41~60秒)：顯示橘色 */
+        .time-box.status-warning {
+            background-color: #f58220 !important; /* 橘色 */
+        }
+
+        /* 3. 進站中 (<= 40秒)：顯示紅色 + 閃爍 */
+        .time-box.status-danger {
+            background-color: #d32f2f !important; /* 紅色 */
+            animation: pids-pulse 1s infinite;
         }
 
         /* 🔥 末班車已駛離 (字體縮小以塞入框內) */
@@ -419,6 +425,12 @@
             }
         }
 
+        /* 🚥 PIDS 閃爍動畫 (進站中狀態) */
+        @keyframes pids-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.8; }
+        }
+
         /* 📱 手機版響應式設計 */
         @media (max-width: 768px) {
             .pids-wrapper {
@@ -635,16 +647,15 @@
             }
 
             .countdown-label {
-                /* 倒數框：基礎樣式與顏色階段 */
-                
-                /* 預設狀態 (120秒以上)：深灰色 */
-                background-color: #444 !important;
+                /* 倒數框：基礎樣式
+                預設狀態要被 status-normal/warning/danger 覆蓋 */
                 color: #fff !important;
                 
-                font-size: 1.8rem !important; /* 字體稍縮，確保「進站中」三個字不擠 */
+                /* 稍微調小一點點，確保「進站中」能橫排塞下 */
+                font-size: 1.8rem !important;
                 font-weight: 900;
-                height: 58px;
-                min-width: 110px;
+                min-width: 105px;
+                height: 55px;
                 border-radius: 8px;
                 display: flex !important;
                 align-items: center;
@@ -656,25 +667,27 @@
                 flex-shrink: 0;
             }
             
-            /* 接近中 (41-120秒)：橘色 */
-            .countdown-label.approaching {
-                background-color: #f58220 !important;
+            /* 1. 很久進站 (> 60秒)：顯示藍色 */
+            .countdown-label.status-normal {
+                background-color: #0070bd !important; /* 標準捷運藍 */
             }
             
-            /* 進站中 (40秒以下)：紅色 + 閃爍 */
-            .countdown-label.arriving {
-                background-color: #d32f2f !important;
-                animation: pulse-mobile 1s infinite;
+            /* 2. 剩下一分鐘 (41~60秒)：顯示橘色 */
+            .countdown-label.status-warning {
+                background-color: #f58220 !important; /* 橘色 */
             }
-
-            @keyframes pulse-mobile {
-                0%, 100% { opacity: 1; }
-                50% { opacity: 0.8; }
+            
+            /* 3. 進站中 (<= 40秒)：顯示紅色 + 閃爍 */
+            .countdown-label.status-danger {
+                background-color: #d32f2f !important; /* 紅色 */
+                animation: pids-pulse 1s infinite;
             }
 
             .dest-zh {
-                /* 調小字體，確保 6 個中文字能完整顯示（包含「站」字） */
+                /* 站名：字體設為 1.55rem 確保 6 個字能完整顯示 */
                 font-size: 1.55rem !important;
+                white-space: nowrap;
+                overflow: visible;
                 font-weight: 900;
                 color: #000;
                 line-height: 1.2;
@@ -1457,207 +1470,157 @@
         }
 
         function renderTime(idx) {
-            const el = document.getElementById(`dir${idx}-time`);
-            const countdownLabel = document.getElementById(`countdown-${idx}`);
+            const el = document.getElementById(`dir${idx}-time`); // 桌面版
+            const countdownLabel = document.getElementById(`countdown-${idx}`); // 手機版
             const s = countdownSecs[`dir${idx}`];
 
             if (s == null || isNaN(s) || s < 0) {
-                const status = getOfflineStatus();
-                if (el) {
-                    el.innerText = status.timeText;
-                    el.className = status.timeClass;
-                }
+                const offline = getOfflineStatus();
                 if (countdownLabel) {
-                    countdownLabel.innerText = "倒數時間";
+                    countdownLabel.innerText = "---";
+                    countdownLabel.className = "countdown-label";
+                }
+                if (el) {
+                    el.innerText = offline.timeText;
+                    el.className = "time-box";
                 }
                 return;
             }
 
-            let timeText, className, labelClass;
+            let timeText, stateClass;
+
+            // --- 判定邏輯修正 ---
             if (s <= 40) {
+                // 🚨 階段一：進站中 (40秒內) -> 紅色
                 timeText = "進站中";
-                className = "time-box arriving";
-                labelClass = "countdown-label arriving";
+                stateClass = "status-danger";
             } else if (s <= 120) {
-                // 顯示 MM : SS (加上前導零)
-                const m = String(Math.floor(s / 60)).padStart(2, '0');
+                // 🚨 階段二：兩分鐘內 (41-120秒) -> 橘色
+                const m = Math.floor(s / 60);
                 const secs = String(s % 60).padStart(2, '0');
                 timeText = `${m}:${secs}`;
-                className = "time-box approaching";
-                labelClass = "countdown-label approaching";
+                stateClass = "status-warning";
             } else {
-                // 顯示 MM : SS (加上前導零)
-                const m = String(Math.floor(s / 60)).padStart(2, '0');
+                // 🚨 階段三：很久 (超過120秒) -> 藍色
+                const m = Math.floor(s / 60);
                 const secs = String(s % 60).padStart(2, '0');
                 timeText = `${m}:${secs}`;
-                className = "time-box";
-                labelClass = "countdown-label";
+                stateClass = "status-normal";
             }
 
-            // 📱 手機版：更新倒數標籤（含狀態class）
+            // 更新手機版 UI 與 Class
             if (countdownLabel) {
                 countdownLabel.innerText = timeText;
-                countdownLabel.className = labelClass;
+                countdownLabel.className = `countdown-label ${stateClass}`;
             }
-            
-            // 🖥️ 桌面版：更新原有時間框
+
+            // 更新桌面版 UI 與 Class
             if (el) {
                 el.innerText = timeText;
-                el.className = className;
+                el.className = `time-box ${stateClass}`;
             }
         }
+        }
 
-        // 👥 更新擁擠度資訊 (TRTC 專用 - 全新邏輯)
+        // 👥 強化版擁擠度更新邏輯
         async function updateCongestion(nextTrains) {
+            // 1. 基本檢查
+            const area = document.querySelector('.congestion-area');
             if (system !== 'TRTC') {
-                // 隱藏桌面版擁擠度
-                document.querySelector('.congestion-area').innerHTML = `<div class="cong-no-data">本系統暫無擁擠度資訊</div>`;
-                // 隱藏手機版擁擠度
-                document.getElementById('mobile-cong-0').style.display = 'none';
-                document.getElementById('mobile-cong-1').style.display = 'none';
+                area.innerHTML = `<div class="cong-no-data">本系統暫無擁擠度資訊</div>`;
+                [0, 1].forEach(i => document.getElementById(`mobile-cong-${i}`).style.display = 'none');
                 return;
             }
 
             if (!nextTrains[0] && !nextTrains[1]) {
-                document.querySelector('.congestion-area').innerHTML = `<div class="cong-no-data">待列車進站後顯示擁擠度</div>`;
-                document.getElementById('mobile-cong-0').style.display = 'none';
-                document.getElementById('mobile-cong-1').style.display = 'none';
+                area.innerHTML = `<div class="cong-no-data">待列車進站後顯示擁擠度</div>`;
                 return;
             }
 
-            // 取得路線代號
+            // 2. 取得路線類型
             let lineId = station.replace(/[0-9]/g, '');
-            if (system === 'KRTC' && lineId === 'RA') lineId = 'R';
-
-            // ★★★ 如果是環狀線(Y)，顯示特定提示並跳出 ★★★
             if (lineId === 'Y') {
-                document.querySelector('.congestion-area').innerHTML = `<div class="cong-no-data">環狀線目前不提供擁擠度資訊</div>`;
-                document.getElementById('mobile-cong-0').style.display = 'none';
-                document.getElementById('mobile-cong-1').style.display = 'none';
+                area.innerHTML = `<div class="cong-no-data">環狀線暫不提供擁擠度訊號</div>`;
                 return;
             }
 
             try {
-                let endpoint = '';
-
-                if (lineId === 'BR') {
-                    endpoint = '/crowdedness/wenhu';
-                } else if (lineId === 'Y') {
-                    endpoint = '/crowdedness/high-capacity';
-                } else {
-                    endpoint = '/crowdedness/high-capacity';
-                }
-
+                const endpoint = lineId === 'BR' ? '/crowdedness/wenhu' : '/crowdedness/high-capacity';
                 const res = await fetch(`${METRO_API_TRTC}${endpoint}`);
-                let data = await res.json();
+                const data = await res.json();
 
-                if (data.error || !Array.isArray(data)) {
-                    document.querySelector('.congestion-area').innerHTML = `<div class="cong-no-data">目前無擁擠度訊號</div>`;
-                    document.getElementById('mobile-cong-0').style.display = 'none';
-                    document.getElementById('mobile-cong-1').style.display = 'none';
-                    return;
-                }
+                if (!Array.isArray(data)) throw new Error("API Data Error");
 
-                const stNameEl = document.getElementById('ui-st-name');
-                const currentStationName = stNameEl.innerText.replace('站', '').replace('臺', '台').trim();
+                // 🎯 關鍵優化：標準化目前站名 (統一將「臺」轉為「台」，並去掉「站」)
+                const currentStRaw = document.getElementById('ui-st-name').innerText;
+                const currentStName = currentStRaw.replace('站', '').replace('臺', '台').trim();
 
-                let html = '';
-                let carCount = 6;
-                if (lineId === 'BR' || lineId === 'Y') carCount = 4;
-                if (lineId === 'GA' || lineId === 'RA') carCount = 3;
+                let desktopHtml = '';
+                let carCount = (lineId === 'BR' || lineId === 'Y') ? 4 : (lineId === 'GA' || lineId === 'RA' ? 3 : 6);
 
-                // 🔥 手機版擁擠度更新
                 [0, 1].forEach(idx => {
                     const train = nextTrains[idx];
-                    const mobileContainer = document.getElementById(`mobile-cong-${idx}`);
-                    const mobileBars = document.getElementById(`mobile-cong-bars-${idx}`);
-                    
-                    if (!train) {
-                        mobileContainer.style.display = 'none';
-                        return;
-                    }
+                    if (!train) return;
 
-                    // 車號比對邏輯
+                    // 🎯 找尋匹配的擁擠度資料
                     let match = null;
+                    
+                    // A. 優先用車號比對
                     if (train.TrainNumber) {
                         const targetTN = parseInt(train.TrainNumber, 10);
                         match = data.find(c => {
-                            const crowdNumbers = String(c.TrainNumber).split(',').map(n => parseInt(n.trim(), 10));
-                            return crowdNumbers.includes(targetTN);
+                            const crowdNums = String(c.TrainNumber).split(',').map(n => parseInt(n.trim(), 10));
+                            return crowdNums.includes(targetTN);
                         });
                     }
 
-                    // 站名比對備案
+                    // B. 如果車號對不到，改用站名比對 (API 的站名也要標準化)
                     if (!match) {
                         match = data.find(c => {
-                            const apiStation = (c.StationName || "").replace('BR', '').replace('站', '').replace('臺', '台').trim();
-                            return apiStation === currentStationName;
+                            const apiStName = (c.StationName || "").replace('BR', '').replace('站', '').replace('臺', '台').trim();
+                            return apiStName === currentStName;
                         });
                     }
 
-                    let mobileBarsHtml = '';
-                    if (match) {
-                        for (let i = 1; i <= carCount; i++) {
-                            const level = match[`Car${i}`] || match[`Cart${i}L`] || 0;
-                            let cls = 'mobile-cong-car';
-
-                            if (level == 1) cls += ' cong-lvl-1';
-                            else if (level == 2) cls += ' cong-lvl-2';
-                            else if (level == 3) cls += ' cong-lvl-3';
-                            else if (level >= 4) cls += ' cong-lvl-4';
-
-                            mobileBarsHtml += `<div class="${cls}">${i}</div>`;
-                        }
-                        mobileContainer.style.display = 'block';
-                    } else {
-                        // 灰色狀態
-                        for (let i = 1; i <= carCount; i++) {
-                            mobileBarsHtml += `<div class="mobile-cong-car">${i}</div>`;
-                        }
-                        mobileContainer.style.display = 'block';
-                    }
-
-                    mobileBars.innerHTML = mobileBarsHtml;
-
-                    // 桌面版邏輯（保持原有）
-                    const label = `往 ${train.DestinationStationName.Zh_tw}`;
+                    // 🛠️ 建立車廂 HTML
                     let barsHtml = '';
+                    for (let i = 1; i <= carCount; i++) {
+                        // 讀取擁擠度等級 (高運量是 Car1, 文湖線是 Cart1L)
+                        const level = match ? (match[`Car${i}`] || match[`Cart${i}L`] || 0) : 0;
+                        let lvlClass = '';
+                        if (level == 1) lvlClass = 'cong-lvl-1';
+                        else if (level == 2) lvlClass = 'cong-lvl-2';
+                        else if (level == 3) lvlClass = 'cong-lvl-3';
+                        else if (level >= 4) lvlClass = 'cong-lvl-4';
 
-                    if (match) {
-                        for (let i = 1; i <= carCount; i++) {
-                            const level = match[`Car${i}`] || match[`Cart${i}L`] || 0;
-                            let cls = 'cong-car';
-
-                            if (level == 1) cls += ' cong-lvl-1';
-                            else if (level == 2) cls += ' cong-lvl-2';
-                            else if (level == 3) cls += ' cong-lvl-3';
-                            else if (level >= 4) cls += ' cong-lvl-4';
-
-                            barsHtml += `<div class="${cls}">${i}</div>`;
-                        }
-                    } else {
-                        for (let i = 1; i <= carCount; i++) {
-                            barsHtml += `<div class="cong-car">${i}</div>`;
-                        }
+                        // 如果沒資料 (level 0)，預設就是灰色 cong-car
+                        barsHtml += `<div class="cong-car ${lvlClass}">${i}</div>`;
                     }
 
-                    html += `
+                    // 更新手機版 (如果剛好有打開的話)
+                    const mobileBars = document.getElementById(`mobile-cong-bars-${idx}`);
+                    if (mobileBars) {
+                        mobileBars.innerHTML = barsHtml.replace(/cong-car/g, 'mobile-cong-car');
+                        document.getElementById(`mobile-cong-${idx}`).style.display = 'block';
+                    }
+
+                    // 累積電腦版 HTML
+                    desktopHtml += `
                         <div class="cong-row">
                             <div class="cong-label">
-                                <span style="background:${train.LineColor}; width:12px; height:12px; border-radius:50%; display:inline-block;"></span>
-                                ${label}
+                                <span style="background:${train.LineColor}; width:12px; height:12px; border-radius:50%; display:inline-block; margin-right:8px;"></span>
+                                往 ${train.DestinationStationName.Zh_tw.replace('站','')}
                             </div>
                             <div class="cong-bar-container">${barsHtml}</div>
                         </div>
                     `;
                 });
 
-                document.querySelector('.congestion-area').innerHTML = html || `<div class="cong-no-data">接收擁擠度訊號中...</div>`;
+                area.innerHTML = desktopHtml || `<div class="cong-no-data">接收訊號中...</div>`;
 
             } catch (e) {
-                console.error("擁擠度更新失敗", e);
-                document.getElementById('mobile-cong-0').style.display = 'none';
-                document.getElementById('mobile-cong-1').style.display = 'none';
+                console.error("Congestion update failed:", e);
+                area.innerHTML = `<div class="cong-no-data">無法取得擁擠度資料</div>`;
             }
         }
 
