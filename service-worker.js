@@ -209,4 +209,4 @@ self.addEventListener('notificationclick', (event) => {
     );
 });
 
-console.log('[Service Worker] 已載入 - 台鐵PIDS v1.0.0');
+console.log('[Service Worker] 已載入 - PIDS v1.0.0');
