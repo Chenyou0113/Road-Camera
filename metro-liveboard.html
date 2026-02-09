@@ -586,12 +586,26 @@
                 try {
                     if (AppState.sys === 'TRTC' && AppState.mode === 'live') {
                         await this.fetchTRTCData();
-                    } else {
-                        const res = await fetch(`${WORKER_URL_TDX}/${AppState.mode === 'live' ? 'liveboard' : 'schedule'}?sys=${AppState.sys}&sid=${AppState.sid}`);
-                        const data = await res.json();
-                        this.renderLive(data, []);
+                        return;
                     }
-                } catch (e) { console.error(e); }
+
+                    const endpoint = AppState.mode === 'live' ? 'liveboard' : 'schedule';
+                    const res = await fetch(`${WORKER_URL_TDX}/${endpoint}?sys=${AppState.sys}&sid=${AppState.sid}`);
+                    const data = await res.json();
+
+                    // --- 修正重點：判斷資料來源 ---
+                    let finalArray = [];
+                    if (AppState.mode === 'schedule') {
+                        finalArray = data.Timetables || []; // 取得物件內的 Timetables 陣列
+                    } else {
+                        finalArray = Array.isArray(data) ? data : []; // 即時模式通常直接就是陣列
+                    }
+
+                    this.renderLive(finalArray, []);
+                } catch (e) { 
+                    console.error("Fetch error:", e);
+                    document.getElementById('board').innerHTML = `<div class="card" style="padding:20px;">資料載入失敗</div>`;
+                }
             },
 
             async fetchTRTCData() {
@@ -686,12 +700,22 @@
 
             renderLive(trains, crowdData) {
                 const grid = document.getElementById('board');
+                
+                // 安全檢查：如果不是陣列，就強制轉成空陣列避免報錯
+                if (!Array.isArray(trains)) {
+                    console.error("Expected array but got:", trains);
+                    trains = [];
+                }
+
                 let groups = {};
                 trains.forEach(t => {
+                    // 時刻表模式與即時模式的欄位名稱可能不同，做相容處理
+                    const destName = t.DestinationStationName?.Zh_tw || t.DestinationName || "未知方向";
                     let lp = t.LinePrefix || t.LineID || AppState.sid.replace(/[0-9]/g, '');
                     // 高捷支線併入主線顯示
                     if (AppState.sys === 'KRTC' && lp === 'RA') lp = 'R';
-                    const key = `[${lp}] 往 ${t.DestinationStationName.Zh_tw}`;
+                    
+                    const key = `[${lp}] 往 ${destName}`;
                     if (!groups[key]) groups[key] = { trains: [], lp: lp };
                     groups[key].trains.push(t);
                 });
@@ -700,17 +724,40 @@
                 const isLateNight = (hour >= 0 && hour < 6);
 
                 grid.innerHTML = Object.entries(groups).map(([title, g]) => {
-                    const sorted = g.trains.sort((a, b) => a.EstimateTime - b.EstimateTime);
+                    // 排序：時刻表用 DepartureTime 排序，即時用 EstimateTime 排序
+                    const sorted = g.trains.sort((a, b) => {
+                        if (AppState.mode === 'schedule') {
+                            return (a.DepartureTime || "").localeCompare(b.DepartureTime || "");
+                        }
+                        return (a.EstimateTime || 0) - (b.EstimateTime || 0);
+                    });
+
                     const lineColors = { 'GA': '#8fc31f', 'RA': '#fd92a3' };
                     const color = lineColors[g.lp] || AppState.stations.find(s => s.id.startsWith(g.lp))?.line.color || '#0070bd';
 
-                    let contentHTML = sorted.slice(0, 2).map((t, i) => `
-                        <div class="arrival-row">
-                            <div><div class="destination">${t.DestinationStationName.Zh_tw}</div><div class="meta">車號: ${t.TrainNumber || '--'}</div></div>
-                            <div class="arrival-time" data-sec="${t.EstimateTime}" data-raw="${t.RawCountDown}">--:--</div>
-                        </div>
-                        ${i === 0 ? this.generateCongestionHTML(t, crowdData, g.lp) : ''}
-                    `).join('');
+                    let contentHTML = sorted.slice(0, (AppState.mode === 'schedule' ? 10 : 2)).map((t, i) => { // 時刻表可以顯示多一點
+                        let timeDisplay = "";
+                        
+                        if (AppState.mode === 'live') {
+                            // 即時模式：顯示倒數
+                            timeDisplay = `<div class="arrival-time" data-sec="${t.EstimateTime}" data-raw="${t.RawCountDown}">--:--</div>`;
+                        } else {
+                            // 時刻表模式：顯示 HH:mm
+                            const timeStr = t.DepartureTime || t.ArrivalTime || "--:--";
+                            timeDisplay = `<div class="time-number" style="font-size:2rem;">${timeStr.substring(0, 5)}</div>`;
+                        }
+
+                        return `
+                            <div class="arrival-row">
+                                <div>
+                                    <div class="destination">${t.DestinationStationName?.Zh_tw || t.DestinationName || '未知'}</div>
+                                    <div class="meta">車次: ${t.TrainNo || t.TrainNumber || '--'}</div>
+                                </div>
+                                ${timeDisplay}
+                            </div>
+                            ${(i === 0 && AppState.sys === 'TRTC' && AppState.mode === 'live') ? this.generateCongestionHTML(t, crowdData, g.lp) : ''}
+                        `;
+                    }).join('');
 
                     if (isLateNight && sorted.length === 0) {
                         contentHTML = `
@@ -723,20 +770,15 @@
                             </div>`;
                     }
 
-                    return `
-                        <div class="card">
-                            <div class="card-header" style="background:${color}"><span>${title}</span></div>
-                            ${contentHTML}
-                        </div>`;
+                    return `<div class="card"><div class="card-header" style="background:${color}"><span>${title}</span></div>${contentHTML}</div>`;
                 }).join('');
 
-                if (isLateNight && Object.keys(groups).length === 0) {
-                    grid.innerHTML = `
-                        <div style="grid-column: 1/-1; background: var(--surface); padding: 60px; border-radius: var(--radius); text-align: center; border: 1px solid var(--border); box-shadow: var(--shadow);">
-                            <i class="fas fa-bed" style="font-size: 3rem; color: var(--text-sub); margin-bottom: 20px;"></i>
-                            <h2 style="font-size: 2rem; font-weight: 900; margin-bottom: 10px;">營運結束</h2>
-                            <p style="color: var(--text-sub); font-size: 1.2rem; font-weight: 700;">目前為非營運時段，末班車已駛離。</p>
-                        </div>`;
+                // 如果沒資料的顯示
+                if (Object.keys(groups).length === 0) {
+                    grid.innerHTML = `<div style="grid-column: 1/-1; text-align: center; padding: 50px;">
+                        <i class="fas fa-info-circle" style="font-size:3rem; color:var(--text-sub);"></i>
+                        <p style="margin-top:15px; font-weight:700;">暫無班次資料</p>
+                    </div>`;
                 }
             },
 
