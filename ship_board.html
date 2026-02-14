@@ -52,20 +52,55 @@
             align-items: center;
             gap: 10px;
         }
-        select { 
+        .controls-container {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .control-group {
+            flex: 1;
+            min-width: 200px;
+        }
+        
+        .control-label {
+            display: block;
+            color: #94a3b8;
+            font-size: 0.85rem;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+        
+        select, input { 
             background: var(--card); 
             color: white; 
             border: 1px solid var(--accent); 
             padding: 10px; 
             border-radius: 10px; 
             width: 100%; 
-            max-width: 300px; 
             font-size: 1rem;
             cursor: pointer;
             transition: all 0.3s;
         }
-        select:hover {
+        
+        input {
+            cursor: text;
+        }
+        
+        select:hover, input:hover {
             border-color: #0ea5e9;
+        }
+        
+        select:focus, input:focus {
+            outline: none;
+            border-color: #0ea5e9;
+            box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
+        }
+        
+        input::placeholder {
+            color: #64748b;
         }
         .grid { 
             display: grid; 
@@ -144,9 +179,26 @@
         <h2><i class="fas fa-anchor"></i> 港口即時航班看板</h2>
     </nav>
 
-    <select id="portSelect" onchange="renderBoard()">
-        <option value="">載入中...</option>
-    </select>
+    <div class="controls-container">
+        <div class="control-group">
+            <label class="control-label"><i class="fas fa-map-marker-alt"></i> 縣市篩選</label>
+            <select id="cityFilter" onchange="filterPorts()">
+                <option value="">全部縣市</option>
+            </select>
+        </div>
+        
+        <div class="control-group">
+            <label class="control-label"><i class="fas fa-search"></i> 搜尋港口</label>
+            <input type="text" id="searchInput" placeholder="輸入港口名稱..." oninput="filterPorts()">
+        </div>
+        
+        <div class="control-group">
+            <label class="control-label"><i class="fas fa-ship"></i> 選擇港口</label>
+            <select id="portSelect" onchange="renderBoard()">
+                <option value="">載入中...</option>
+            </select>
+        </div>
+    </div>
 
     <div class="grid">
         <div class="card arrival">
@@ -171,38 +223,66 @@
                         <th>時間</th>
                         <th>船名</th>
                         <th>目的地</th>
-                        <th>狀態</th>
+                        CityFilter();
+                populate<th>狀態</th>
                     </tr>
                 </thead>
                 <tbody id="depBody"></tbody>
             </table>
         </div>
     </div>
-
-    <script>
-        let dataCache = null;
-        let portsData = null;
+縣市篩選選單
+        function populateCityFilter() {
+            const cityFilter = document.getElementById('cityFilter');
+            cityFilter.innerHTML = '<option value="">全部縣市</option>';
+            
+            // 取得所有不重複的城市
+            const cities = [...new Set(portsData.map(port => port.city))];
+            
+            // 台灣城市優先，然後是中國港口
+            const taiwanCities = cities.filter(city => !city.includes('省')).sort();
+            const chinaCities = cities.filter(city => city.includes('省')).sort();
+            const sortedCities = [...taiwanCities, ...chinaCities];
+            
+            sortedCities.forEach(city => {
+                const option = document.createElement('option');
+                option.value = city;
+                option.textContent = city;
+                cityFilter.appendChild(option);
+            });
+        }
         
-        // 載入港口清單
-        async function loadPorts() {
-            try {
-                const res = await fetch('ports.json');
-                portsData = await res.json();
-                populatePortSelect();
-            } catch (e) {
-                console.error('載入港口清單失敗:', e);
-                document.getElementById('portSelect').innerHTML = '<option value="">⚠️ 無法載入港口清單</option>';
-            }
+        // 過濾並填充港口下拉選單
+        function filterPorts() {
+            const cityFilter = document.getElementById('cityFilter').value;
+            const searchText = document.getElementById('searchInput').value.toLowerCase().trim();
+            
+            // 過濾港口
+            let filteredPorts = portsData.filter(port => {
+                const matchCity = !cityFilter || port.city === cityFilter;
+                const matchSearch = !searchText || 
+                    port.name.toLowerCase().includes(searchText) ||
+                    port.city.toLowerCase().includes(searchText) ||
+                    port.id.toLowerCase().includes(searchText);
+                return matchCity && matchSearch;
+            });
+            
+            populatePortSelect(filteredPorts);
         }
         
         // 填充港口下拉選單（按城市分組）
-        function populatePortSelect() {
+        function populatePortSelect(ports = portsData) {
             const select = document.getElementById('portSelect');
             select.innerHTML = '';
             
+            if (ports.length === 0) {
+                select.innerHTML = '<option value="">查無符合的港口</option>';
+                return;
+            }
+            
             // 按城市分組
             const groupedPorts = {};
-            portsData.forEach(port => {
+            ports.forEach(port => {
                 const city = port.city;
                 if (!groupedPorts[city]) {
                     groupedPorts[city] = [];
@@ -216,6 +296,24 @@
             const sortedCities = [...taiwanCities, ...chinaCities];
             
             // 生成選項
+            sortedCities.forEach(city => {
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = city;
+                
+                groupedPorts[city].forEach(port => {
+                    const option = document.createElement('option');
+                    option.value = port.id;
+                    option.textContent = port.name;
+                    optgroup.appendChild(option);
+                });
+                
+                select.appendChild(optgroup);
+            });
+            
+            // 預設選擇第一個港口
+            if (ports.length > 0) {
+                select.value = ports[0].id;
+                renderBoard()
             sortedCities.forEach(city => {
                 const optgroup = document.createElement('optgroup');
                 optgroup.label = city;
