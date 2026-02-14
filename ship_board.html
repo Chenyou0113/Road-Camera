@@ -145,11 +145,7 @@
     </nav>
 
     <select id="portSelect" onchange="renderBoard()">
-        <option value="TWMZG">澎湖馬公港</option>
-        <option value="TWKEL">基隆港</option>
-        <option value="TWKHH">高雄港</option>
-        <option value="TWDNK">東港漁港</option>
-        <option value="TWGNI">綠島南寮</option>
+        <option value="">載入中...</option>
     </select>
 
     <div class="grid">
@@ -185,6 +181,60 @@
 
     <script>
         let dataCache = null;
+        let portsData = null;
+        
+        // 載入港口清單
+        async function loadPorts() {
+            try {
+                const res = await fetch('ports.json');
+                portsData = await res.json();
+                populatePortSelect();
+            } catch (e) {
+                console.error('載入港口清單失敗:', e);
+                document.getElementById('portSelect').innerHTML = '<option value="">⚠️ 無法載入港口清單</option>';
+            }
+        }
+        
+        // 填充港口下拉選單（按城市分組）
+        function populatePortSelect() {
+            const select = document.getElementById('portSelect');
+            select.innerHTML = '';
+            
+            // 按城市分組
+            const groupedPorts = {};
+            portsData.forEach(port => {
+                const city = port.city;
+                if (!groupedPorts[city]) {
+                    groupedPorts[city] = [];
+                }
+                groupedPorts[city].push(port);
+            });
+            
+            // 台灣城市優先，然後是中國港口
+            const taiwanCities = Object.keys(groupedPorts).filter(city => !city.includes('省')).sort();
+            const chinaCities = Object.keys(groupedPorts).filter(city => city.includes('省')).sort();
+            const sortedCities = [...taiwanCities, ...chinaCities];
+            
+            // 生成選項
+            sortedCities.forEach(city => {
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = city;
+                
+                groupedPorts[city].forEach(port => {
+                    const option = document.createElement('option');
+                    option.value = port.id;
+                    option.textContent = port.name;
+                    optgroup.appendChild(option);
+                });
+                
+                select.appendChild(optgroup);
+            });
+            
+            // 預設選擇第一個港口
+            if (portsData.length > 0) {
+                select.value = portsData[0].id;
+            }
+        }
         
         async function loadData() {
             try {
@@ -253,7 +303,11 @@
             }
         }
         
-        loadData();
+        // 初始化
+        (async function init() {
+            await loadPorts();
+            await loadData();
+        })();
     </script>
 </body>
 </html>
