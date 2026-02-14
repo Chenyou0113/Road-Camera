@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>航運即時看板 | 臺灣天氣視界</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root { 
+            --bg: #0f172a; 
+            --card: #1e293b; 
+            --accent: #06b6d4; 
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body { 
+            background: var(--bg); 
+            color: white; 
+            font-family: "Microsoft JhengHei", sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+        }
+        nav { 
+            margin-bottom: 20px; 
+            display: flex; 
+            align-items: center; 
+            gap: 20px;
+            background: rgba(15, 23, 42, 0.95);
+            padding: 15px 25px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        .back-btn { 
+            color: white; 
+            text-decoration: none; 
+            font-weight: bold; 
+            border: 1px solid #334155; 
+            padding: 8px 15px; 
+            border-radius: 20px;
+            transition: all 0.3s;
+        }
+        .back-btn:hover {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        h2 {
+            font-size: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        select { 
+            background: var(--card); 
+            color: white; 
+            border: 1px solid var(--accent); 
+            padding: 10px; 
+            border-radius: 10px; 
+            width: 100%; 
+            max-width: 300px; 
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        select:hover {
+            border-color: #0ea5e9;
+        }
+        .grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); 
+            gap: 20px; 
+            margin-top: 20px; 
+        }
+        .card { 
+            background: var(--card); 
+            border-radius: 15px; 
+            overflow: hidden; 
+            border: 1px solid #334155;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            transition: all 0.3s;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 50px rgba(0,0,0,0.3);
+        }
+        .card h3 { 
+            margin: 0; 
+            padding: 15px; 
+            text-align: center;
+            font-size: 1.2rem;
+        }
+        .arrival h3 { 
+            background: linear-gradient(135deg, #166534, #22c55e);
+        }
+        .departure h3 { 
+            background: linear-gradient(135deg, #991b1b, #ef4444);
+        }
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+        }
+        th, td { 
+            padding: 12px; 
+            text-align: left; 
+            border-bottom: 1px solid #334155; 
+            font-size: 0.9rem; 
+        }
+        th { 
+            color: #94a3b8;
+            background: rgba(0,0,0,0.2);
+        }
+        tr:hover {
+            background: rgba(6, 182, 212, 0.1);
+        }
+        .no-data {
+            text-align: center;
+            padding: 40px 20px;
+            color: #94a3b8;
+            font-size: 0.95rem;
+        }
+        @media (max-width: 500px) { 
+            .grid { 
+                grid-template-columns: 1fr; 
+            }
+            body {
+                padding: 10px;
+            }
+            nav {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+            h2 {
+                font-size: 1.2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 首頁</a>
+        <h2><i class="fas fa-anchor"></i> 港口即時航班看板</h2>
+    </nav>
+
+    <select id="portSelect" onchange="renderBoard()">
+        <option value="TWMZG">澎湖馬公港</option>
+        <option value="TWKEL">基隆港</option>
+        <option value="TWKHH">高雄港</option>
+        <option value="TWDNK">東港漁港</option>
+        <option value="TWGNI">綠島南寮</option>
+    </select>
+
+    <div class="grid">
+        <div class="card arrival">
+            <h3>🚢 進港 Arrivals</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>時間</th>
+                        <th>船名</th>
+                        <th>來源</th>
+                        <th>狀態</th>
+                    </tr>
+                </thead>
+                <tbody id="arrBody"></tbody>
+            </table>
+        </div>
+        <div class="card departure">
+            <h3>🛫 出港 Departures</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>時間</th>
+                        <th>船名</th>
+                        <th>目的地</th>
+                        <th>狀態</th>
+                    </tr>
+                </thead>
+                <tbody id="depBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let dataCache = null;
+        
+        async function loadData() {
+            try {
+                const res = await fetch('https://tdx-shipping-worker.weacamm.org/live-board');
+                dataCache = await res.json();
+                renderBoard();
+            } catch (e) {
+                console.error('載入資料失敗:', e);
+                document.getElementById('arrBody').innerHTML = '<tr><td colspan="4" class="no-data">⚠️ 資料載入失敗，請稍後重試</td></tr>';
+                document.getElementById('depBody').innerHTML = '<tr><td colspan="4" class="no-data">⚠️ 資料載入失敗，請稍後重試</td></tr>';
+            }
+        }
+        
+        function renderBoard() {
+            if(!dataCache) return;
+            
+            const pid = document.getElementById('portSelect').value;
+            const port = dataCache.ShipLiveBoardses.find(p => p.PortID === pid);
+            const arrBody = document.getElementById('arrBody');
+            const depBody = document.getElementById('depBody');
+            
+            arrBody.innerHTML = ''; 
+            depBody.innerHTML = '';
+            
+            if(port) {
+                // 進港資料
+                if(port.ArrivalLiveBoards && port.ArrivalLiveBoards.length > 0) {
+                    port.ArrivalLiveBoards.forEach(item => {
+                        const time = item.ScheduledArrivalTime ? item.ScheduledArrivalTime.slice(11,16) : '--:--';
+                        const vesselName = item.VesselName?.Zh_tw || item.VesselName?.En || '未知';
+                        const fromPort = item.DeparturePortName?.ZhTw || item.DeparturePortName?.En || '未知';
+                        const remark = item.ArrivalRemark || '準時';
+                        
+                        arrBody.innerHTML += `<tr>
+                            <td>${time}</td>
+                            <td>${vesselName}</td>
+                            <td>${fromPort}</td>
+                            <td>${remark}</td>
+                        </tr>`;
+                    });
+                } else {
+                    arrBody.innerHTML = '<tr><td colspan="4" class="no-data">目前無進港船班資料</td></tr>';
+                }
+                
+                // 出港資料
+                if(port.DepartureLiveBoards && port.DepartureLiveBoards.length > 0) {
+                    port.DepartureLiveBoards.forEach(item => {
+                        const time = item.ScheduledDepartureTime ? item.ScheduledDepartureTime.slice(11,16) : '--:--';
+                        const vesselName = item.VesselName?.Zh_tw || item.VesselName?.En || '未知';
+                        const toPort = item.ArrivalPortName?.ZhTw || item.ArrivalPortName?.En || '未知';
+                        const remark = item.DepartureRemark || '準時';
+                        
+                        depBody.innerHTML += `<tr>
+                            <td>${time}</td>
+                            <td>${vesselName}</td>
+                            <td>${toPort}</td>
+                            <td>${remark}</td>
+                        </tr>`;
+                    });
+                } else {
+                    depBody.innerHTML = '<tr><td colspan="4" class="no-data">目前無出港船班資料</td></tr>';
+                }
+            } else {
+                arrBody.innerHTML = '<tr><td colspan="4" class="no-data">找不到該港口資料</td></tr>';
+                depBody.innerHTML = '<tr><td colspan="4" class="no-data">找不到該港口資料</td></tr>';
+            }
+        }
+        
+        loadData();
+    </script>
+</body>
+</html>

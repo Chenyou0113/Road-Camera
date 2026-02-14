@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>即時海圖 | 臺灣天氣視界</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { 
+            margin: 0; 
+            background: #0f172a; 
+            color: white; 
+            font-family: 'Microsoft JhengHei', sans-serif; 
+        }
+        nav { 
+            background: rgba(15, 23, 42, 0.95); 
+            padding: 15px 25px; 
+            display: flex; 
+            align-items: center; 
+            border-bottom: 1px solid #1e40af; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        .back-btn { 
+            color: white; 
+            text-decoration: none; 
+            margin-right: 20px; 
+            font-weight: bold; 
+            transition: all 0.3s;
+        }
+        .back-btn:hover {
+            color: #06b6d4;
+        }
+        .nav-title {
+            font-size: 1.2rem; 
+            font-weight: 700;
+        }
+        #map { 
+            height: calc(100vh - 60px); 
+            width: 100%; 
+        }
+        .ship-arrow {
+            width: 0; 
+            height: 0; 
+            border-left: 8px solid transparent; 
+            border-right: 8px solid transparent;
+            border-bottom: 18px solid #06b6d4;
+            filter: drop-shadow(0 0 4px rgba(255,255,255,0.5));
+        }
+        .leaflet-popup-content {
+            color: #333;
+        }
+        .leaflet-popup-content b {
+            font-size: 1.1rem;
+        }
+        @media (max-width: 768px) {
+            nav {
+                padding: 12px 15px;
+            }
+            .nav-title {
+                font-size: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 返回首頁</a>
+        <div class="nav-title"><i class="fas fa-ship"></i> 全臺即時海圖 (AIS)</div>
+    </nav>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map').setView([23.5, 120.8], 7);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+        }).addTo(map);
+
+        let shipLayer = L.layerGroup().addTo(map);
+
+        async function updateShips() {
+            try {
+                const res = await fetch('https://tdx-shipping-worker.weacamm.org/positions');
+                const ships = await res.json();
+                shipLayer.clearLayers();
+
+                ships.forEach(ship => {
+                    if (!ship.Lat || !ship.Lon) return;
+                    const icon = L.divIcon({
+                        className: 'ship-icon',
+                        html: `<div class="ship-arrow" style="transform: rotate(${ship.COG || 0}deg);"></div>`,
+                        iconSize: [16, 20], 
+                        iconAnchor: [8, 10]
+                    });
+                    const marker = L.marker([ship.Lat, ship.Lon], { icon: icon }).addTo(shipLayer);
+                    marker.bindPopup(`
+                        <div style="color:#333">
+                            <b style="font-size:1.1rem">${ship.VesselNameZh || ship.VesselName || '未知船隻'}</b><hr>
+                            MMSI: ${ship.MMSI}<br>
+                            速度: ${ship.SOG || 0} kts<br>
+                            航向: ${ship.COG || 0}°<br>
+                            更新: ${new Date(ship.UpdateTime).toLocaleTimeString()}
+                        </div>
+                    `);
+                });
+            } catch (e) { 
+                console.error('更新船隻資料失敗:', e); 
+            }
+        }
+        
+        updateShips();
+        setInterval(updateShips, 30000);
+    </script>
+</body>
+</html>
