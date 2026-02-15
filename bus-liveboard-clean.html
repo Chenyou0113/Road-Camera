@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台灣公車即時動態追蹤系統 - 專業版</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body { 
+            font-family: 'Noto Sans TC', sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            height: 100vh;
+            background: #f5f7fa;
+        }
+        
+        #controls { 
+            padding: 15px 20px; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; 
+            display: flex; 
+            gap: 12px; 
+            flex-wrap: wrap; 
+            align-items: center;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        #controls strong {
+            font-size: 1.2rem;
+            font-weight: 900;
+        }
+        
+        #main { display: flex; flex: 1; overflow: hidden; }
+        
+        #stop-list { 
+            width: 350px; 
+            overflow-y: auto; 
+            background: white;
+            border-right: 2px solid #e5e7eb;
+            padding: 15px;
+        }
+        
+        #map { flex: 1; }
+        
+        .stop-item { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            padding: 12px; 
+            background: white; 
+            margin-bottom: 8px; 
+            border-radius: 8px; 
+            border-left: 5px solid #bdc3c7;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        
+        .stop-name { font-weight: 700; color: #1f2937; }
+        
+        .arrival-time { 
+            padding: 6px 12px; 
+            border-radius: 6px; 
+            font-size: 14px; 
+            font-weight: 900; 
+            min-width: 70px; 
+            text-align: center;
+        }
+        
+        .time-now { background: #ef4444; color: white; animation: pulse 1.5s infinite; }
+        .time-soon { background: #f59e0b; color: white; }
+        .time-wait { background: #10b981; color: white; }
+        .time-none { background: #9ca3af; color: white; }
+
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+
+        /* 车辆图标样式 */
+        .bus-marker-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .bus-icon-wrapper {
+            background: linear-gradient(135deg, #d63031 0%, #e17055 100%);
+            color: white;
+            border-radius: 50%;
+            width: 42px;
+            height: 42px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 3px solid white;
+            box-shadow: 0 4px 12px rgba(214, 48, 49, 0.6);
+        }
+        
+        .bus-icon-wrapper i { font-size: 20px; }
+        
+        .bus-plate-label {
+            background: rgba(45, 52, 54, 0.9);
+            color: white;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-top: 3px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        /* 公车详细信息弹窗样式 */
+        .bus-popup { min-width: 200px; }
+        
+        .bus-popup-header {
+            background: linear-gradient(135deg, #d63031 0%, #e17055 100%);
+            color: white;
+            padding: 12px;
+            border-radius: 8px 8px 0 0;
+            font-weight: 900;
+            text-align: center;
+            margin: -16px -20px 12px -20px;
+            font-size: 1.1rem;
+        }
+        
+        .bus-info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .bus-info-label { color: #6b7280; font-size: 13px; }
+        .bus-info-value { font-weight: 700; color: #1f2937; font-size: 14px; }
+        
+        .bus-popup-footer {
+            font-size: 11px;
+            color: #9ca3af;
+            text-align: center;
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        input, select, button { padding: 8px 12px; border-radius: 6px; border: none; font-weight: bold; }
+        button { background: #10b981; color: white; cursor: pointer; }
+        button:hover { background: #059669; }
+    </style>
+</head>
+<body>
+
+<div id="controls">
+    <strong><i class="fas fa-bus"></i> 公車追蹤系統</strong>
+    <select id="category">
+        <option value="CityBus">市區公車</option>
+        <option value="InterCity">公路客運</option>
+    </select>
+    <select id="city">
+        <option value="Taipei">台北市</option>
+        <option value="NewTaipei">新北市</option>
+        <option value="Taichung">台中市</option>
+        <option value="Kaohsiung">高雄市</option>
+    </select>
+    <input type="text" id="routeNum" placeholder="路線號碼" value="307">
+    <select id="direction">
+        <option value="0">去程</option>
+        <option value="1">返程</option>
+    </select>
+    <button onclick="startTracking()"><i class="fas fa-play"></i> 開始追蹤</button>
+    <span id="update-status" style="font-size: 12px;"></span>
+</div>
+
+<div id="main">
+    <div id="stop-list">
+        <div style="text-align:center; padding:50px; color:#9ca3af;">
+            <i class="fas fa-map-marked-alt" style="font-size: 3rem;"></i>
+            <p>輸入路線開始追蹤</p>
+        </div>
+    </div>
+    <div id="map"></div>
+</div>
+
+<script>
+    const WORKER_URL = 'https://bus-worker.weacamm.org/';
+    let map, stopMarkers = [], busMarkers = [], currentRouteLine = null;
+    let pollingTimer = null;
+    let currentStops = [];
+
+    // 初始化地图
+    map = L.map('map').setView([25.0475, 121.5173], 13);
+    L.tileLayer('https://{s}.tile.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap | CartoDB | TDX'
+    }).addTo(map);
+
+    async function startTracking() {
+        const category = document.getElementById('category').value;
+        const city = document.getElementById('city').value;
+        const route = document.getElementById('routeNum').value.trim();
+        const direction = document.getElementById('direction').value;
+
+        if (!route) return alert('請輸入路線號碼');
+
+        document.getElementById('update-status').innerText = '⏳ 載入中...';
+
+        try {
+            const stopListInfo = await fetchStops(category, city, route, direction);
+            if (!stopListInfo || stopListInfo.length === 0) {
+                alert('查無此路線');
+                return;
+            }
+
+            currentStops = stopListInfo;
+            renderStops(stopListInfo, route, direction);
+            
+            try {
+                await drawRouteShape(city, route, category, direction);
+            } catch (e) {
+                console.log('無法繪製路線:', e);
+            }
+
+            if (pollingTimer) clearInterval(pollingTimer);
+            fetchLiveUpdate(category, city, route, direction);
+            pollingTimer = setInterval(() => fetchLiveUpdate(category, city, route, direction), 20000);
+        } catch (err) {
+            console.error(err);
+            alert('載入失敗: ' + err.message);
+        }
+    }
+
+    function renderStops(stops, routeName, direction) {
+        const container = document.getElementById('stop-list');
+        container.innerHTML = `<div style="background:#667eea;color:white;padding:10px;border-radius:8px;margin-bottom:10px;font-weight:900;text-align:center;">${routeName} - ${direction==0?'去程':'返程'}</div>`;
+        
+        stopMarkers.forEach(m => map.removeLayer(m));
+        stopMarkers = [];
+
+        stops.forEach((stop, idx) => {
+            const item = document.createElement('div');
+            item.className = 'stop-item';
+            item.id = `stop-${stop.uid}`;
+            item.innerHTML = `<span class="stop-name">${stop.name}</span><span class="arrival-time time-none">--</span>`;
+            container.appendChild(item);
+
+            const marker = L.circleMarker([stop.lat, stop.lon], {
+                radius: 6, color: '#667eea', fillColor: 'white', fillOpacity: 1, weight: 2
+            }).addTo(map).bindPopup(`<b>${stop.name}</b>`);
+            
+            stopMarkers.push(marker);
+        });
+
+        if (stops.length > 0) {
+            const bounds = L.latLngBounds(stops.map(s => [s.lat, s.lon]));
+            map.fitBounds(bounds, { padding: [50, 50] });
+        }
+    }
+
+    async function fetchLiveUpdate(category, city, route, direction) {
+        try {
+            const res = await fetch(`${WORKER_URL}?category=${category}&city=${city}&route=${route}`);
+            const data = await res.json();
+
+            // 更新到站时间
+            for (const [key, val] of Object.entries(data.estimates || {})) {
+                const [estDir, stopUID] = key.split('_');
+                if (estDir !== direction) continue;
+                const el = document.querySelector(`#stop-${stopUID} .arrival-time`);
+                if (el) {
+                    let text = "--", cls = "time-none";
+                    if (val.sec !== null && val.sec !== undefined) {
+                        if (val.sec < 60) { text = "進站中"; cls = "time-now"; }
+                        else if (val.sec < 180) { text = "將到站"; cls = "time-soon"; }
+                        else { text = Math.floor(val.sec / 60) + "分"; cls = "time-wait"; }
+                    }
+                    el.innerText = text;
+                    el.className = `arrival-time ${cls}`;
+                }
+            }
+
+            // 更新车辆位置
+            updateBusPositions(data.buses || [], direction);
+
+            document.getElementById('update-status').innerText = '✅ ' + new Date().toLocaleTimeString();
+        } catch (err) {
+            document.getElementById('update-status').innerText = '⚠️ 連線異常';
+        }
+    }
+
+    function updateBusPositions(buses, direction) {
+        busMarkers.forEach(m => map.removeLayer(m));
+        busMarkers = [];
+
+        if (!buses || buses.length === 0) return;
+
+        buses.filter(b => b.dir == direction).forEach(bus => {
+            const azimuth = bus.azi || 0;
+            
+            const busIcon = L.divIcon({
+                className: '',
+                html: `<div class="bus-marker-container"><div class="bus-icon-wrapper" style="transform: rotate(${azimuth}deg);"><i class="fas fa-location-arrow"></i></div><div class="bus-plate-label">${bus.plate || '未知'}</div></div>`,
+                iconSize: [45, 60],
+                iconAnchor: [22, 30]
+            });
+            
+            const marker = L.marker([bus.lat, bus.lon], { icon: busIcon }).addTo(map);
+            
+            const statusColor = (bus.status === 0 || bus.status === undefined) ? '#10b981' : '#ef4444';
+            const statusText = (bus.status === 0 || bus.status === undefined) ? '正常' : '異常';
+            const directionText = bus.dir == 0 ? '去程' : '返程';
+            
+            const popupHtml = `<div class="bus-popup"><div class="bus-popup-header"><i class="fas fa-bus"></i> ${bus.plate || '未知'}</div><div class="bus-info-row"><span class="bus-info-label">行駛方向</span><span class="bus-info-value">${directionText}</span></div><div class="bus-info-row"><span class="bus-info-label">車頭朝向</span><span class="bus-info-value">${azimuth}°</span></div><div class="bus-info-row"><span class="bus-info-label">運行狀態</span><span class="bus-info-value" style="color:${statusColor};">${statusText}</span></div><div class="bus-popup-footer">更新: ${new Date().toLocaleTimeString()}</div></div>`;
+            
+            marker.bindPopup(popupHtml);
+            busMarkers.push(marker);
+        });
+    }
+
+    async function fetchStops(category, city, route, direction) {
+        const url = `${WORKER_URL}?action=info&category=${category}&city=${city}&route=${route}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('API Error');
+        const data = await res.json();
+        const routeInfo = Array.isArray(data) ? data.find(r => r.Direction == direction) : data;
+        if (!routeInfo || !routeInfo.Stops) throw new Error('No data');
+        
+        return routeInfo.Stops.map(s => ({
+            uid: s.StopUID,
+            name: s.StopName?.Zh_tw || s.StopName,
+            lat: s.StopPosition?.PositionLat || s.StopPosition?.Lat,
+            lon: s.StopPosition?.PositionLon || s.StopPosition?.Lon
+        }));
+    }
+
+    async function drawRouteShape(city, route, category, direction) {
+        if (currentRouteLine) map.removeLayer(currentRouteLine);
+        
+        const res = await fetch(`${WORKER_URL}?action=shape&city=${city}&route=${route}&category=${category}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data || data.length === 0) return;
+        
+        const targetRoute = data.find(item => item.Direction == direction) || data[0];
+        if (!targetRoute || !targetRoute.Geometry) return;
+        
+        const coords = parseWKT(targetRoute.Geometry);
+        if (coords.length > 0) {
+            currentRouteLine = L.polyline(coords, { 
+                color: '#667eea', 
+                weight: 5, 
+                opacity: 0.7
+            }).addTo(map);
+        }
+    }
+
+    function parseWKT(wkt) {
+        if (!wkt) return [];
+        const raw = wkt.replace(/.*LINESTRING\s*\(/i, "").replace(/\)[^)]*$/, "").trim();
+        return raw.split(",").map(pair => {
+            const coords = pair.trim().split(/\s+/);
+            if (coords.length >= 2) {
+                const lon = parseFloat(coords[0]);
+                const lat = parseFloat(coords[1]);
+                if (!isNaN(lat) && !isNaN(lon)) return [lat, lon];
+            }
+            return null;
+        }).filter(c => c !== null);
+    }
+
+    window.addEventListener('beforeunload', () => {
+        if (pollingTimer) clearInterval(pollingTimer);
+    });
+</script>
+
+</body>
+</html>
