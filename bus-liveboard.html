@@ -539,7 +539,23 @@
         <option value="PenghuCounty">澎湖縣</option>
         <option value="LienchiangCounty">連江縣</option>
     </select>
-    <input type="text" id="routeNum" placeholder="輸入路線切換單一路線模式">
+    <div style="position: relative; flex: 1;">
+        <input type="text" id="routeNum" placeholder="📍 輸入路線 (如 307、敦化...)" style="width: 100%;" oninput="filterRoutes()">
+        <!-- 搜尋建議下拉菜單 -->
+        <div id="route-suggestions" style="
+            position: absolute; 
+            width: 100%; 
+            max-height: 250px; 
+            overflow-y: auto; 
+            background: white; 
+            z-index: 2000; 
+            display: none; 
+            border: 2px solid #667eea; 
+            border-top: none;
+            border-radius: 0 0 6px 6px;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+        "></div>
+    </div>
     <select id="direction">
         <option value="0">去程</option>
         <option value="1">返程</option>
@@ -602,6 +618,11 @@
     let fareBufferZones = []; // 儲存完整票價分段資訊
     let currentZoomLevel = 12; // 當前地圖縮放級別
     let vehicleCache = {}; // 車輛規格快取（避免重複查詢）
+    
+    // 🆕 搜尋建議系統
+    let allRoutesCache = []; // 所有路線的本地快取
+    const ROUTE_CACHE_KEY = 'tdx_routes_cache'; // localStorage 鍵名
+    const ROUTE_CACHE_EXPIRE = 24 * 60 * 60 * 1000; // 24 小時過期
 
     // 熱門路線配置（會自動載入這些路線的車輛）
     const POPULAR_ROUTES = [
@@ -629,6 +650,8 @@
     // 頁面載入時自動顯示熱門路線的車輛
     window.addEventListener('DOMContentLoaded', () => {
         console.log('🚀 啟動探索模式：載入熱門路線車輛...');
+        // 🆕 非同步載入所有路線供搜尋建議使用（不阻塞主流程）
+        loadAllRoutes();
         loadPopularRoutesBuses();
         // 每 30 秒更新一次所有車輛位置
         setInterval(loadPopularRoutesBuses, 30000);
@@ -1040,6 +1063,10 @@
         allBusMarkers.forEach(m => map.removeLayer(m));
         allBusMarkers = [];
         
+        // 清除探索模式的站點標記
+        stopMarkers.forEach(m => map.removeLayer(m));
+        stopMarkers = [];
+        
         const category = document.getElementById('category').value;
         const city = document.getElementById('city').value;
         const route = document.getElementById('routeNum').value.trim();
@@ -1078,12 +1105,37 @@
                 return;
             }
 
+            // 3. 檢查是否有另一個方向
+            let hasBothDirections = false;
+            let otherDirectionStops = null;
+            try {
+                const otherDir = direction === '0' ? '1' : '0';
+                otherDirectionStops = await fetchStops(category, city, route, otherDir);
+                if (otherDirectionStops && otherDirectionStops.length > 0) {
+                    hasBothDirections = true;
+                }
+            } catch (e) {
+                hasBothDirections = false;
+            }
+
+            // 4. 保存兩個方向的資訊供後續使用
+            window.route_directions = {
+                current: direction,
+                stops0: direction === '0' ? stopListInfo : otherDirectionStops,
+                stops1: direction === '1' ? stopListInfo : otherDirectionStops,
+                hasBoth: hasBothDirections,
+                route: route,
+                category: category,
+                city: city
+            };
+
             currentStops = stopListInfo;
-            renderStops(stopListInfo, route, direction);
+            renderStops(stopListInfo, route, direction, category, city, hasBothDirections, otherDirectionStops);
             
             // 嘗試繪製路線線型（可選功能）
             try {
                 await drawRouteShape(city, route, category);
+
             } catch (e) {
                 console.log('無法繪製路線線型:', e);
             }
@@ -1149,7 +1201,7 @@
         }
     }
 
-    function renderStops(stops, routeName, direction) {
+    function renderStops(stops, routeName, direction, category, city, hasBothDirections = false, otherDirectionStops = null) {
         const container = document.getElementById('stop-list');
         const directionText = direction === '0' ? '去程' : '返程';
         
@@ -1169,8 +1221,28 @@
             `;
         }
         
+        // 建立方向選擇卡（如果有両個方向）
+        let directionTabsHTML = '';
+        if (hasBothDirections) {
+            directionTabsHTML = `
+                <div style="display: flex; gap: 8px; margin-bottom: 12px; padding: 0;">
+                    <button class="direction-tab" id="tab-dir0" 
+                            onclick="switchDirectionTab('0')" 
+                            style="flex: 1; padding: 10px; background: ${direction === '0' ? '#667eea' : '#e5e7eb'}; color: ${direction === '0' ? 'white' : '#6b7280'}; border: none; border-radius: 6px; cursor: pointer; font-weight: ${direction === '0' ? '700' : '600'}; font-size: 0.95rem; transition: all 0.2s;">
+                        ➡️ 去程
+                    </button>
+                    <button class="direction-tab" id="tab-dir1" 
+                            onclick="switchDirectionTab('1')" 
+                            style="flex: 1; padding: 10px; background: ${direction === '1' ? '#667eea' : '#e5e7eb'}; color: ${direction === '1' ? 'white' : '#6b7280'}; border: none; border-radius: 6px; cursor: pointer; font-weight: ${direction === '1' ? '700' : '600'}; font-size: 0.95rem; transition: all 0.2s;">
+                        ⬅️ 返程
+                    </button>
+                </div>
+            `;
+        }
+        
         container.innerHTML = `
             ${fareInfoHTML}
+            ${directionTabsHTML}
             <div class="route-header">
                 <i class="fas fa-route"></i> ${routeName} ${directionText}
                 <div style="font-size: 0.9rem; font-weight: 600; margin-top: 4px; opacity: 0.9;">
@@ -1204,18 +1276,35 @@
             `;
             container.appendChild(div);
 
-            // 加到地圖 - 緩衝區站點用金色標記
+            // 加到地圖 - 使用 L.divIcon 顯示數字標記
             const markerColor = isInBuffer ? '#f1c40f' : '#667eea';
+            const stopNumber = stop.sequence || (index + 1);
             
-            const marker = L.circleMarker([stop.lat, stop.lon], { 
-                radius: isInBuffer ? 9 : 7, 
-                color: markerColor,
-                fillColor: markerColor,
-                fillOpacity: isInBuffer ? 1 : 0.8,
-                weight: isInBuffer ? 3 : 2
-            })
+            const busIcon = L.divIcon({
+                html: `
+                    <div style="
+                        background: ${markerColor};
+                        color: white;
+                        border: 3px solid white;
+                        border-radius: 50%;
+                        width: 32px;
+                        height: 32px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-weight: 700;
+                        font-size: 14px;
+                        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+                    ">${stopNumber}</div>
+                `,
+                className: '',
+                iconSize: [32, 32],
+                iconAnchor: [16, 16]
+            });
+            
+            const marker = L.marker([stop.lat, stop.lon], { icon: busIcon })
                 .bindPopup(`
-                    <b>${stop.sequence || (index + 1)}. ${stop.name}</b>
+                    <b>${stopNumber}. ${stop.name}</b>
                     ${isInBuffer ? '<br><span style="color: #f39c12; font-weight: 700;">🎫 分段緩衝區</span>' : ''}
                     <br><small>點擊查看經過路線</small>
                 `);
@@ -1303,31 +1392,73 @@
     }
     
     /**
+     * 切換路線方向選項卡
+     */
+    async function switchDirectionTab(newDirection) {
+        if (!window.route_directions) return;
+        
+        const dir = window.route_directions;
+        
+        // 更新當前方向標記
+        dir.current = newDirection;
+        
+        // 獲取新方向的站點
+        const stops = newDirection === '0' ? dir.stops0 : dir.stops1;
+        
+        // 更新當前站點
+        currentStops = stops;
+        
+        // 重新查詢票價資訊（針對新方向）
+        try {
+            await fetchFareInfo(dir.category, dir.city, dir.route, newDirection);
+        } catch (e) {
+            console.log('無法取得新方向的票價資訊:', e);
+        }
+        
+        // 重新渲染站點顯示
+        renderStops(stops, dir.route, newDirection, dir.category, dir.city, dir.hasBoth, null);
+        
+        // 啟動新方向的動態資料更新
+        if (pollingTimer) clearInterval(pollingTimer);
+        fetchDynamicData(dir.category, dir.city, dir.route, newDirection);
+        pollingTimer = setInterval(() => fetchDynamicData(dir.category, dir.city, dir.route, newDirection), 20000);
+        
+        console.log(`🔄 切換至 ${newDirection === '0' ? '去程' : '返程'}`);
+    }
+    
+    /**
      * 根據地圖縮放級別控制站牌標記的顯示/隱藏
      * 
-     * 縮放級別 >= 14 時顯示所有站牌
-     * 縮放級別 < 14 時只顯示緩衝區站牌（分段點）
+     * 在單一路線模式下：縮放級別 >= 15 時顯示所有站牌
+     * 在探索模式下：不顯示站牌標記（避免地圖擁擠）
      */
     function updateStopMarkersVisibility() {
-        const SHOW_ALL_STOPS_ZOOM = 14; // 顯示所有站牌的最小縮放級別
+        const SHOW_ALL_STOPS_ZOOM = 15; // 顯示所有站牌的最小縮放級別
         
         stopMarkers.forEach(marker => {
             const isBufferStop = marker._isBufferStop || false;
             
-            // 如果是緩衝區站牌，總是顯示
-            // 如果不是緩衝區站牌，只在高縮放級別顯示
-            if (isBufferStop || currentZoomLevel >= SHOW_ALL_STOPS_ZOOM) {
-                if (!map.hasLayer(marker)) {
-                    marker.addTo(map);
+            // 在單一路線模式下：根據縮放級別決定是否顯示
+            if (!isExploreMode) {
+                // 只在縮放級別 >= 15 時顯示
+                if (currentZoomLevel >= SHOW_ALL_STOPS_ZOOM) {
+                    if (!map.hasLayer(marker)) {
+                        marker.addTo(map);
+                    }
+                } else {
+                    if (map.hasLayer(marker)) {
+                        map.removeLayer(marker);
+                    }
                 }
             } else {
+                // 探索模式下，總是不顯示站牌標記（不要擁擠地圖）
                 if (map.hasLayer(marker)) {
                     map.removeLayer(marker);
                 }
             }
         });
         
-        console.log(`🗺️ 縮放級別 ${currentZoomLevel}: ${currentZoomLevel >= SHOW_ALL_STOPS_ZOOM ? '顯示所有站牌' : '僅顯示緩衝區站牌'}`);
+        console.log(`🗺️ 縮放級別 ${currentZoomLevel}: ${!isExploreMode && currentZoomLevel >= SHOW_ALL_STOPS_ZOOM ? '顯示所有站牌' : '隱藏站牌'}`);
     }
 
     function updateArrivalTimes(estimates, direction) {
@@ -1804,6 +1935,163 @@
 
         return coordinates;
     }
+    
+    // ============================================================
+    // 🆕 搜尋建議系統 - 核心函式
+    // ============================================================
+    
+    /**
+     * 從 Worker 載入所有路線並使用 localStorage 快取
+     */
+    async function loadAllRoutes() {
+        try {
+            // 1. 檢查 localStorage 中是否有有效的快取
+            const cachedData = localStorage.getItem(ROUTE_CACHE_KEY);
+            if (cachedData) {
+                const { timestamp, data } = JSON.parse(cachedData);
+                if (Date.now() - timestamp < ROUTE_CACHE_EXPIRE) {
+                    allRoutesCache = data;
+                    console.log(`📚 從 localStorage 載入 ${allRoutesCache.length} 條路線快取`);
+                    return;
+                }
+            }
+            
+            // 2. 如果快取過期或不存在，從 Worker 獲取
+            console.log('📡 正在從 Worker 獲取所有路線...');
+            const startTime = Date.now();
+            const res = await fetch(`${WORKER_URL}?action=list_all`);
+            
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            
+            const routes = await res.json();
+            allRoutesCache = routes;
+            
+            // 3. 儲存到 localStorage
+            localStorage.setItem(ROUTE_CACHE_KEY, JSON.stringify({
+                timestamp: Date.now(),
+                data: routes
+            }));
+            
+            const loadTime = Date.now() - startTime;
+            console.log(`✅ 成功加載 ${routes.length} 條路線 (耗時 ${loadTime}ms)`);
+        } catch (e) {
+            console.error(`❌ loadAllRoutes 失敗: ${e.message}`);
+            // 降級：使用現有的 POPULAR_ROUTES 作為備用
+            allRoutesCache = [];
+            POPULAR_ROUTES.forEach(item => {
+                item.routes.forEach(name => {
+                    allRoutesCache.push({
+                        n: name,
+                        c: item.city,
+                        t: 'CityBus'
+                    });
+                });
+            });
+            console.log(`⚠️ 使用備用路線列表 (${allRoutesCache.length} 條)`);
+        }
+    }
+    
+    /**
+     * 實施本地搜尋與過濾
+     */
+    function filterRoutes() {
+        const input = document.getElementById('routeNum').value.trim();
+        const suggestionsContainer = document.getElementById('route-suggestions');
+        
+        if (input.length === 0) {
+            suggestionsContainer.style.display = 'none';
+            return;
+        }
+        
+        // 在本地快取中模糊搜尋（支援中文、英文、數字混合）
+        const matches = allRoutesCache.filter(route => {
+            const routeName = route.n.toLowerCase();
+            const searchTerm = input.toLowerCase();
+            return routeName.includes(searchTerm);
+        }).slice(0, 12); // 最多顯示 12 條結果
+        
+        if (matches.length > 0) {
+            // 生成建議選單 HTML
+            suggestionsContainer.innerHTML = matches.map((route, idx) => `
+                <div class="suggestion-item" 
+                     style="
+                        padding: 12px 16px; 
+                        cursor: pointer; 
+                        border-bottom: 1px solid #f0f0f0;
+                        transition: background-color 0.15s;
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                     "
+                     onmouseover="this.style.backgroundColor='#f5f5ff'"
+                     onmouseout="this.style.backgroundColor='transparent'"
+                     onclick="selectRoute('${route.n}', '${route.c}', '${route.t}')">
+                    <div>
+                        <div style="font-weight: 600; color: #1f2937; font-size: 0.95rem;">
+                            ${route.n} 
+                            ${route.desc ? '<span style="color: #999; font-size: 0.85rem;">- ' + route.desc + '</span>' : ''}
+                        </div>
+                        <div style="font-size: 0.8rem; color: #9ca3af; margin-top: 2px;">
+                            ${route.t === 'InterCityBus' ? '🚌 客運' : '🚌 公交'} · ${route.c}
+                        </div>
+                    </div>
+                    <span style="background: #667eea; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.75rem; font-weight: 700;">
+                        ${idx + 1}/${matches.length}
+                    </span>
+                `).join('');
+            suggestionsContainer.style.display = 'block';
+        } else {
+            suggestionsContainer.innerHTML = `
+                <div style="padding: 16px; text-align: center; color: #9ca3af;">
+                    <i class="fas fa-search"></i> 
+                    <div style="margin-top: 8px; font-size: 0.95rem;">
+                        找不到符合「${input}」的路線
+                    </div>
+                    <div style="margin-top: 8px; font-size: 0.85rem; opacity: 0.8;">
+                        💡 嘗試輸入路線號或站名
+                    </div>
+                </div>
+            `;
+            suggestionsContainer.style.display = 'block';
+        }
+    }
+    
+    /**
+     * 選擇路線時觸發
+     */
+    function selectRoute(name, city, category) {
+        // 填入搜尋框
+        document.getElementById('routeNum').value = name;
+        document.getElementById('city').value = city;
+        document.getElementById('category').value = category === 'InterCityBus' ? 'InterCity' : 'CityBus';
+        
+        // 隱藏建議菜單
+        document.getElementById('route-suggestions').style.display = 'none';
+        
+        console.log(`✨ 已選擇路線: ${name} (${city})`);
+        
+        // 觸發追蹤
+        startTracking();
+    }
+    
+    /**
+     * 清除 localStorage 快取（用於手動重新整理）
+     */
+    window.clearRouteCache = function() {
+        localStorage.removeItem(ROUTE_CACHE_KEY);
+        allRoutesCache = [];
+        console.log('✅ 路線快取已清除');
+        loadAllRoutes();
+        alert('✅ 路線快取已清除，系統將重新加載');
+    };
+    
+    // 隱藏建議菜單時的事件委派
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.suggestion-item') && 
+            e.target.id !== 'routeNum') {
+            document.getElementById('route-suggestions').style.display = 'none';
+        }
+    });
     
     // 切換到指定路線（從站牌 popup 點擊路線時觸發）
     window.switchToRoute = function(routeName) {
