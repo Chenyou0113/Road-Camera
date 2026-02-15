@@ -267,6 +267,7 @@
             left: 50%;
             bottom: 20px;
             transform: translateX(-50%);
+            overflow: visible; /* 確保太陽不會被切掉 */
         }
 
         .mini-time-labels {
@@ -1078,34 +1079,31 @@
         /* 太陽旋轉的容器，圓心設在半圓底部 */
         .sun-icon-wrapper {
             position: absolute;
-            width: 100%;
-            height: 100%;
-            left: 0;
+            width: 2px; /* 縮小寬度作為旋轉軸心線 */
+            height: 120px; /* 長度等於半圓半徑 */
+            left: 50%; /* 居中 */
             bottom: 0;
-            transform-origin: 50% 100%; /* 旋轉中心在底部中間 */
-            transform: rotate(-90deg); /* 預設在最左邊 (日出) */
-            transition: transform 1.5s cubic-bezier(0.4, 0, 0.2, 1);
+            margin-left: -1px; /* 居中修正 */
+            transform-origin: bottom center; /* 以底部中點旋轉 */
+            transform: rotate(-90deg); /* 初始位置：日出 */
+            transition: transform 2s cubic-bezier(0.34, 1.56, 0.64, 1); /* 增加彈性效果 */
+            z-index: 5;
         }
 
         .sun-icon {
             position: absolute;
-            left: -15px; /* 修正圖示中心點 */
-            bottom: -15px; /* 修正圖示中心點 */
-            font-size: 2rem;
+            top: -15px; /* 讓太陽剛好壓在虛線上 (15px 是半徑) */
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 1.8rem;
             color: #FDB813;
-            filter: drop-shadow(0 0 10px rgba(253, 184, 19, 0.5));
-            background: white;
-            border-radius: 50%;
-            width: 30px;
-            height: 30px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            animation: sun-glow 3s infinite alternate;
+            filter: drop-shadow(0 0 15px rgba(253, 184, 19, 0.8));
+            /* 移除原本的 background 和 border，讓它乾淨顯示 */
+            background: none !important;
             transition: all 0.5s ease; /* 平滑過渡 */
         }
         
-        body.dark-mode .sun-icon { background: #1e293b; }
+        body.dark-mode .sun-icon { background: none !important; }
 
         @keyframes sun-glow {
             0%, 100% { 
@@ -2229,71 +2227,61 @@
 
         // 3. 計算並更新太陽圖形位置
         function updateSunVisuals(sunriseStr, sunsetStr) {
+            // 1. 取得當前時間 (確保使用本地時間)
             const now = new Date();
+            const nowM = now.getHours() * 60 + now.getMinutes();
+            
             const currentStr = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
             const currentTimeEl = document.getElementById('currentTime');
             if (currentTimeEl) currentTimeEl.textContent = currentStr;
 
-            // 時間轉分鐘
             const getMins = (t) => {
+                if (!t || !t.includes(':')) return 0;
                 const [h, m] = t.split(':').map(Number);
                 return h * 60 + m;
             };
 
-            const nowM = getMins(currentStr);
             const riseM = getMins(sunriseStr);
             const setM = getMins(sunsetStr);
 
-            // 計算日照長度
+            if (riseM === 0 || setM === 0) return;
+
+            // 2. 計算日照長度文字
             const dayLenMins = setM - riseM;
             const h = Math.floor(dayLenMins / 60);
             const m = dayLenMins % 60;
             const durationEl = document.getElementById('dayLightDuration');
             if (durationEl) durationEl.textContent = `今日日照長度：${h} 小時 ${m} 分鐘`;
 
-            // 計算角度 (-90度 ~ 90度)
-            let degree = -90;
+            // 3. 計算角度 (-90度 到 90度)
+            let degree = -90; // 預設日出位置
             const sunWrapper = document.getElementById('sunIconWrapper');
             if (!sunWrapper) return;
             const sunIcon = sunWrapper.querySelector('.sun-icon');
 
             if (nowM <= riseM) {
-                // 還沒日出 (左底)
-                degree = -90;
-                if (sunIcon) {
-                    sunIcon.style.opacity = '0'; // 晚上太陽消失
-                    sunIcon.style.filter = 'none';
-                    sunIcon.style.backgroundColor = '#ccc';
-                }
+                degree = -90; // 還沒日出
+                if (sunIcon) sunIcon.style.opacity = '0';
             } else if (nowM >= setM) {
-                // 已經日落 (右底)
-                degree = 90;
-                if (sunIcon) {
-                    sunIcon.style.opacity = '0'; // 晚上太陽消失
-                    sunIcon.style.filter = 'none';
-                    sunIcon.style.backgroundColor = '#ccc';
-                }
+                degree = 90;  // 已經日落
+                if (sunIcon) sunIcon.style.opacity = '0';
             } else {
-                // 白天中
+                // 白天：計算百分比
                 const elapsed = nowM - riseM;
                 const percent = elapsed / dayLenMins; // 0.0 ~ 1.0
                 degree = -90 + (percent * 180);
                 if (sunIcon) {
                     sunIcon.style.opacity = '1';
-                    sunIcon.style.backgroundColor = 'white';
-                    
-                    // 根據時間調整亮度，中午最亮
-                    const midday = (riseM + setM) / 2;
-                    const brightness = 1 - (Math.abs(nowM - midday) / (midday - riseM));
-                    const glowIntensity = 10 + (brightness * 15);
-                    sunIcon.style.filter = `drop-shadow(0 0 ${glowIntensity}px rgba(253, 184, 19, ${0.6 + brightness * 0.3}))`;
+                    // 強化中午發光感 (percent 越靠近 0.5 越亮)
+                    const glow = 10 + (Math.sin(percent * Math.PI) * 20);
+                    sunIcon.style.filter = `drop-shadow(0 0 ${glow}px rgba(253, 184, 19, 0.9))`;
                 }
             }
 
-            // 設定旋轉
-            setTimeout(() => {
+            // 4. 套用旋轉 (加上一點延遲確保 DOM 已渲染)
+            requestAnimationFrame(() => {
                 sunWrapper.style.transform = `rotate(${degree}deg)`;
-            }, 100);
+            });
         }
 
         // 2. 抓取並整理全臺測站資料 (包含自動站與局屬站)
