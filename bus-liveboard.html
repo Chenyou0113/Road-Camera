@@ -623,6 +623,7 @@
     let allRoutesCache = []; // 所有路線的本地快取
     const ROUTE_CACHE_KEY = 'tdx_routes_cache'; // localStorage 鍵名
     const ROUTE_CACHE_EXPIRE = 24 * 60 * 60 * 1000; // 24 小時過期
+    let searchTimer = null; // ⏱️ Debounce 計時器（防止頻繁查詢 D1）
 
     // 熱門路線配置（會自動載入這些路線的車輛）
     const POPULAR_ROUTES = [
@@ -1215,13 +1216,20 @@
         let fareInfoHTML = '';
         if (fareBufferZones.length > 0) {
             const zone = fareBufferZones[0];
-            const originName = zone.FareBufferZoneOrigin?.OriginStopName?.Zh_tw || '起點';
-            const destName = zone.FareBufferZoneDestination?.DestinationStopName?.Zh_tw || '終點';
+            // 優先使用新的 startName/endName，再退而求其次用嵌套結構
+            const originName = zone.startName || 
+                              zone.FareBufferZoneOrigin?.OriginStopName?.Zh_tw || 
+                              zone.FareBufferZoneOrigin?.OriginStopName?.En ||
+                              '起點';
+            const destName = zone.endName ||
+                            zone.FareBufferZoneDestination?.DestinationStopName?.Zh_tw ||
+                            zone.FareBufferZoneDestination?.DestinationStopName?.En ||
+                            '終點';
             fareInfoHTML = `
                 <div class="fare-info-banner">
                     <i class="fas fa-coins"></i> 分段收費路線
                     <div style="font-size: 0.85rem; margin-top: 4px; opacity: 0.9;">
-                        緩衝區：${originName} ↔ ${destName}
+                        緩衝區：<strong>${originName}</strong> ↔ <strong>${destName}</strong>
                     </div>
                 </div>
             `;
@@ -1612,33 +1620,48 @@
             
             bufferStops = [];
             fareBufferZones = [];
-            
-            if (data.length > 0 && data[0].SectionFares) {
-                const routeFare = data.find(f => f.RouteID) || data[0];
+
+            if (data && data.length > 0 && data[0].SectionFares) {
+                const section = data[0].SectionFares;
                 
-                if (routeFare.SectionFares && routeFare.SectionFares.length > 0) {
-                    routeFare.SectionFares.forEach(section => {
-                        if (section.BufferZones && section.BufferZones.length > 0) {
-                            section.BufferZones.forEach(zone => {
-                                // 只處理當前方向的緩衝區
-                                if (zone.Direction == direction || zone.Direction === undefined) {
-                                    if (zone.FareBufferZoneOrigin?.OriginStopUID) {
-                                        bufferStops.push(zone.FareBufferZoneOrigin.OriginStopUID);
-                                    }
-                                    if (zone.FareBufferZoneDestination?.DestinationStopUID) {
-                                        bufferStops.push(zone.FareBufferZoneDestination.DestinationStopUID);
-                                    }
-                                    fareBufferZones.push(zone);
-                                }
-                            });
+                // 使用 .find() 精確定位當前方向的緩衝區
+                const currentZone = section.BufferZones && section.BufferZones.find(z => z.Direction == direction);
+
+                if (currentZone) {
+                    try {
+                        const startName = currentZone.FareBufferZoneOrigin?.OriginStopName?.Zh_tw || 
+                                        currentZone.FareBufferZoneOrigin?.OriginStopName?.En ||
+                                        '起點';
+                        const endName = currentZone.FareBufferZoneDestination?.DestinationStopName?.Zh_tw ||
+                                       currentZone.FareBufferZoneDestination?.DestinationStopName?.En ||
+                                       '終點';
+                        
+                        // 存入全域變數，以便在渲染站牌清單時對應顏色
+                        if (currentZone.FareBufferZoneOrigin?.OriginStopUID) {
+                            bufferStops.push(currentZone.FareBufferZoneOrigin.OriginStopUID);
                         }
-                    });
+                        if (currentZone.FareBufferZoneDestination?.DestinationStopUID) {
+                            bufferStops.push(currentZone.FareBufferZoneDestination.DestinationStopUID);
+                        }
+                        fareBufferZones.push({
+                            startName: startName,
+                            endName: endName,
+                            ...currentZone
+                        });
+                        
+                        console.log(`✅ 票價緩衝區: ${startName} ↔ ${endName}`);
+                        console.log('🎫 緩衝區 UID:', bufferStops);
+                    } catch (e) {
+                        console.error('❌ 解析站名失敗:', e);
+                    }
+                } else {
+                    console.log('ℹ️ 此方向無分段收費');
                 }
+            } else {
+                console.log('ℹ️ 查無分段票價資料，可能為一段票');
             }
-            
-            console.log('🎫 緩衝區站點:', bufferStops);
         } catch (e) {
-            console.error('票價資訊查詢失敗:', e);
+            console.error('❌ 票價資訊查詢失敗:', e);
             bufferStops = [];
             fareBufferZones = [];
         }
@@ -2030,11 +2053,12 @@
     }
 
     /**
-     * 🎯 嶄新搜尋邏輯：改由 D1 資料庫提供搜尋結果（企業級架構）
-     * ✨ 優勢：
-     *   1. ✅ 完全解決 429 錯誤 - 不再查詢 TDX API
-     *   2. ⚡ 超快速度 - SQLite LIKE 搜尋毫秒級
-     *   3. 📊 結構化資料 - 自動獲取起訖站資訊
+     * 🔍 智慧搜尋：企業級路線推薦系統
+     * ✨ 特色：
+     *   1. ✅ 完全解決 429 錯誤 - 搜尋由 D1 提供，零 TDX API 消耗
+     *   2. ⚡ Debounce 優化 - 延遲 300ms 查詢，減輕伺服器負荷
+     *   3. 📊 全台無縣市限制 - 一次搜尋遍歷全台灣所有路線
+     *   4. 🎯 智慧結果排序 - 自動顯示起訖站資訊助用戶快速識別
      */
     async function filterRoutes() {
         const input = document.getElementById('routeNum').value.trim();
@@ -2045,86 +2069,96 @@
             return;
         }
 
-        // 顯示搜尋狀態
-        suggestionsContainer.innerHTML = `
-            <div style="padding: 12px 16px; text-align: center; color: #667eea;">
-                <i class="fas fa-spinner fa-spin"></i> 搜尋中...
-            </div>
-        `;
-        suggestionsContainer.style.display = 'block';
+        // ⏱️ Debounce：使用者停止輸入 300ms 後才查詢 D1
+        // 這樣能有效降低頻繁查詢對伺服器的負擔
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(async () => {
+            // 顯示搜尋狀態
+            suggestionsContainer.innerHTML = `
+                <div style="padding: 12px 16px; text-align: center; color: #667eea;">
+                    <i class="fas fa-spinner fa-spin"></i> 正在查詢全台路線...
+                </div>
+            `;
+            suggestionsContainer.style.display = 'block';
 
-        try {
-            // 🔍 從 D1 資料庫搜尋 (毫秒級響應)
-            const response = await fetch(`${WORKER_URL}?action=list_all&search=${encodeURIComponent(input)}`);
-            
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
+            try {
+                // 🔍 從 D1 資料庫搜尋 (毫秒級響應，不消耗 TDX API quota)
+                const response = await fetch(`${WORKER_URL}?action=list_all&search=${encodeURIComponent(input)}`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
 
-            const matches = await response.json();
+                const matches = await response.json();
 
-            if (matches && matches.length > 0) {
-                // ✨ 生成建議選單 - 垂直堆疊，最多 4 個
-                suggestionsContainer.innerHTML = matches.slice(0, 4).map((route, idx) => {
-                    const cityName = translateCity(route.city);
-                    const departure = route.departure || '起站';
-                    const arrival = route.destination || '終站';
-                    
-                    return `
-                    <div class="suggestion-item" 
-                         style="
-                            padding: 10px 14px; 
-                            cursor: pointer; 
-                            border-bottom: 1px solid #fafafa;
-                            transition: background-color 0.2s;
-                            display: block;
-                            font-size: 0.9rem;
-                         "
-                         onmouseover="this.style.backgroundColor='#f5f5ff'"
-                         onmouseout="this.style.backgroundColor='transparent'"
-                         onclick="selectRoute('${route.name}', '${route.city}', '${route.type}')">
-                        <div style="font-weight: 700; color: #1f2937; font-size: 0.95rem; margin-bottom: 4px;">
-                            ${route.name}
+                if (matches && matches.length > 0) {
+                    // ✨ 生成建議選單 - 最多 4 個，垂直堆疊
+                    suggestionsContainer.innerHTML = matches.slice(0, 4).map((route, idx) => {
+                        const cityName = translateCity(route.city);
+                        const departure = route.departure || '起站';
+                        const arrival = route.destination || '終站';
+                        const typeIcon = route.type === 'InterCity' ? '🚌 跨縣市' : '🚌 公車';
+                        
+                        return `
+                        <div class="suggest-item" 
+                             style="
+                                padding: 12px 15px; 
+                                cursor: pointer; 
+                                border-bottom: 1px solid #f0f0f0;
+                                transition: background 0.2s;
+                                display: block;
+                             "
+                             onmouseover="this.style.background='#f8f9fa'"
+                             onmouseout="this.style.background='white'"
+                             onclick="selectRoute('${route.name}', '${route.city}', '${route.type}')">
+                            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
+                                <strong style="font-size: 1.1rem; color: #2c3e50;">${route.name}</strong>
+                                <span style="font-size: 0.75rem; background: #667eea; color: white; padding: 2px 8px; border-radius: 10px; margin-left: 8px; white-space: nowrap;">
+                                    ${cityName}
+                                </span>
+                            </div>
+                            <div style="font-size: 0.85rem; color: #7f8c8d; margin-bottom: 4px;">
+                                <i class="fas fa-map-marker-alt" style="margin-right: 4px; font-size: 0.75rem;"></i>
+                                ${departure} <span style="color: #bdc3c7;">➔</span> ${arrival}
+                            </div>
+                            <div style="font-size: 0.75rem; color: #95a5a6;">
+                                ${typeIcon}
+                            </div>
                         </div>
-                        <div style="font-size: 0.80rem; color: #666; margin-bottom: 3px;">
-                            ${departure} <span style="color: #ccc;">→</span> ${arrival}
+                        `;
+                    }).join('');
+                    suggestionsContainer.style.display = 'block';
+                    console.log(`✅ 找到 ${matches.length} 條符合的路線`);
+                } else {
+                    suggestionsContainer.innerHTML = `
+                        <div style="padding: 20px 15px; text-align: center; color: #9ca3af;">
+                            <i class="fas fa-search" style="font-size: 1.5rem; margin-bottom: 8px; display: block;"></i>
+                            <div style="font-size: 0.95rem; margin-bottom: 8px;">
+                                找不到符合「<strong>${input}</strong>」的路線
+                            </div>
+                            <div style="font-size: 0.80rem; opacity: 0.8;">
+                                💡 試試看輸入其他路線號或站名
+                            </div>
                         </div>
-                        <div style="font-size: 0.75rem; color: #9ca3af;">
-                            ${route.type === 'InterCity' ? '🚌 客運' : '🚌 公車'} · ${cityName}
-                        </div>
-                    </div>
                     `;
-                }).join('');
-                suggestionsContainer.style.display = 'block';
-            } else {
+                    suggestionsContainer.style.display = 'block';
+                }
+            } catch (e) {
+                console.error('❌ D1 搜尋失敗:', e.message);
                 suggestionsContainer.innerHTML = `
-                    <div style="padding: 16px; text-align: center; color: #9ca3af;">
-                        <i class="fas fa-search" style="font-size: 1.5rem;"></i> 
-                        <div style="margin-top: 8px; font-size: 0.95rem;">
-                            找不到符合「${input}」的路線
+                    <div style="padding: 20px 15px; text-align: center; color: #e74c3c;">
+                        <i class="fas fa-exclamation-circle" style="font-size: 1.5rem; margin-bottom: 8px; display: block;"></i>
+                        <div style="font-size: 0.95rem; margin-bottom: 8px;">
+                            搜尋服務暫時無法使用
                         </div>
-                        <div style="margin-top: 8px; font-size: 0.85rem; opacity: 0.8;">
-                            💡 嘗試輸入路線號、起點或終點站名
+                        <div style="font-size: 0.80rem; opacity: 0.8;">
+                            🔧 請確保已執行初始化: <code>?action=sync_db</code>
                         </div>
                     </div>
                 `;
                 suggestionsContainer.style.display = 'block';
             }
-        } catch (e) {
-            console.error('❌ D1 搜尋失敗:', e.message);
-            suggestionsContainer.innerHTML = `
-                <div style="padding: 16px; text-align: center; color: #e74c3c;">
-                    <i class="fas fa-exclamation-circle" style="font-size: 1.5rem;"></i>
-                    <div style="margin-top: 8px; font-size: 0.95rem;">
-                        搜尋服務暫時無法使用
-                    </div>
-                    <div style="margin-top: 8px; font-size: 0.85rem; opacity: 0.8;">
-                        請稍後重試 | 請確保已執行初始化: <code>?action=sync_db</code>
-                    </div>
-                </div>
-            `;
-            suggestionsContainer.style.display = 'block';
-        }
+        }, 300); // ⏱️ 延遲 300ms 執行查詢
     }
     
     /**

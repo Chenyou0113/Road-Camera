@@ -86,21 +86,70 @@
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 const json = await response.json();
                 
+                console.log('📊 API 原始資料:', json);
+                console.log('📊 API 頂層鍵:', Object.keys(json));
+                
                 // 🔥 萬能資料解析邏輯
                 let locations = [];
                 
                 // 1. 標準格式 (records.location)
                 if (json.records && json.records.location) {
                     locations = json.records.location;
+                    console.log('✅ 使用標準格式 (records.location)');
                 }
                 // 2. 變體格式 (cwaopendata.dataset.location)
                 else if (json.cwaopendata && json.cwaopendata.dataset && json.cwaopendata.dataset.location) {
                     locations = json.cwaopendata.dataset.location;
+                    console.log('✅ 使用變體格式 (cwaopendata.dataset.location)');
                 }
-                // 3. 容錯處理：可能是單一物件
+                // 3. 新格式檢查：可能是 result.records.location
+                else if (json.result && json.result.records && json.result.records.location) {
+                    locations = json.result.records.location;
+                    console.log('✅ 使用新結構格式 (result.records.location)');
+                }
+                // 4. 容錯處理：可能是單一物件
                 if (!Array.isArray(locations) && locations) locations = [locations];
 
-                if (locations.length === 0) throw new Error("API 回傳結構不符或無資料");
+                console.log('📍 解析後的 locations:', locations);
+                
+                // ⚠️ 如果 locations 為空，顯示詳細的調試資訊
+                if (!locations || locations.length === 0) {
+                    console.warn('⚠️ ========== 調試資訊 ==========');
+                    console.warn('locations 為空或未找到');
+                    console.warn('JSON 完整結構:', JSON.stringify(json, null, 2));
+                    
+                    // 檢查各種可能的路徑
+                    console.warn('json.records:', json.records);
+                    console.warn('json.cwaopendata:', json.cwaopendata);
+                    if (json.cwaopendata) {
+                        console.warn('json.cwaopendata.dataset:', json.cwaopendata.dataset);
+                        if (json.cwaopendata.dataset) {
+                            console.warn('json.cwaopendata.dataset keys:', Object.keys(json.cwaopendata.dataset));
+                        }
+                    }
+                    console.warn('==============================');
+                    
+                    // 友善的錯誤提示
+                    const errorMsg = `
+                        ⚠️ 天氣預報資料暫時無法取得
+                        <br><small>API 返回空資料，可能原因：</small>
+                        <br><small>1. CWA 氣象署 API 服務中斷</small>
+                        <br><small>2. 代理伺服器連接異常</small>
+                        <br><small>3. 資料更新中...</small>
+                        <br><small>請稍後重新整理頁面</small>
+                    `;
+                    errorEl.innerHTML = errorMsg;
+                    errorEl.style.display = 'block';
+                    loading.style.display = 'none';
+                    return;
+                }
+
+                // 驗證第一個 location 有必要欄位
+                if (!locations[0].locationName || !locations[0].weatherElement) {
+                    console.error('❌ 第一個 location 結構不符:', locations[0]);
+                    console.log('可用欄位:', Object.keys(locations[0]));
+                    throw new Error("縣市資料結構不符，缺少 locationName 或 weatherElement");
+                }
 
                 // 排序縣市 (北->南->東->離島)
                 const cityOrder = ["基隆市", "臺北市", "新北市", "桃園市", "新竹市", "新竹縣", "苗栗縣", "臺中市", "彰化縣", "南投縣", "雲林縣", "嘉義市", "嘉義縣", "臺南市", "高雄市", "屏東縣", "宜蘭縣", "花蓮縣", "臺東縣", "澎湖縣", "金門縣", "連江縣"];
@@ -112,11 +161,21 @@
                 });
 
                 // 渲染
-                container.innerHTML = locations.map(loc => renderCard(loc)).join('');
+                const cards = locations.map(loc => {
+                    try {
+                        return renderCard(loc);
+                    } catch (err) {
+                        console.error(` 渲染失敗 (${loc.locationName}):`, err);
+                        return '';
+                    }
+                }).join('');
+                
+                container.innerHTML = cards;
                 loading.style.display = 'none';
+                console.log('✅ 預報載入成功');
 
             } catch (e) {
-                console.error("Fetch Error:", e);
+                console.error("❌ Fetch Error:", e);
                 loading.style.display = 'none';
                 errorEl.textContent = `⚠️ 無法載入預報資料: ${e.message}`;
                 errorEl.style.display = 'block';
