@@ -1,6 +1,6 @@
 // ============================================
 // 台灣公車即時追蹤系統 - Cloudflare Worker
-// 完整版 - 支援所有 TDX Bus API
+// 終極除錯版 - 完整錯誤處理與診斷
 // ============================================
 
 export default {
@@ -38,11 +38,47 @@ export default {
     };
 
     try {
+      // 1. 檢查環境變數
+      if (!env.TDX_CLIENT_ID || !env.TDX_CLIENT_SECRET) {
+        return new Response(JSON.stringify({ 
+          error: "環境變數設定錯誤", 
+          message: "缺少 TDX_CLIENT_ID 或 TDX_CLIENT_SECRET，請到 Cloudflare 後台設定" 
+        }), { 
+          status: 500,
+          headers: corsHeaders 
+        });
+      }
+
       const token = await getTDXToken(env);
       const baseUrl = 'https://tdx.transportdata.tw/api/basic/v2/Bus';
       const authHeader = { 
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json' 
+      };
+      const encodedRoute = route ? encodeURIComponent(route) : '';
+
+      // ============================================
+      // 安全抓取函式：處理 404 和錯誤回應
+      // ============================================
+      const safeFetch = async (apiUrl) => {
+        const res = await fetch(apiUrl, { headers: authHeader });
+        const text = await res.text();
+        
+        // 404 代表找不到資料，回傳空陣列而非報錯
+        if (res.status === 404) {
+          console.log('⚠️ TDX 404: 找不到資料');
+          return [];
+        }
+        
+        if (!res.ok) {
+          throw new Error(`TDX API 報錯 (${res.status}): ${text.substring(0, 200)}`);
+        }
+        
+        try {
+          return JSON.parse(text);
+        } catch (e) {
+          throw new Error(`TDX 回應格式錯誤: ${text.substring(0, 100)}`);
+        }
       };
 
       // ============================================
@@ -50,9 +86,9 @@ export default {
       // ============================================
       const getPath = (apiType) => {
         if (category === 'InterCity') {
-          return `/${apiType}/InterCity/${route || ''}`;
+          return `/${apiType}/InterCity/${encodedRoute}`;
         }
-        return `/${apiType}/City/${city}/${route || ''}`;
+        return `/${apiType}/City/${city}/${encodedRoute}`;
       };
 
       // ============================================
@@ -102,7 +138,30 @@ export default {
       }
 
       // ============================================
-      // 功能 3: 反查站點經過的路線 (action=stop_info)
+      // 功能 3: 取得路線票價資訊 (action=fare)
+      // ============================================
+      if (action === 'fare') {
+        const apiUrl = `${baseUrl}${getPath('RouteFare')}?$format=JSON`;
+        console.log('💰 [FARE] 查詢票價:', apiUrl);
+        
+        const response = await fetch(apiUrl, { headers: authHeader });
+        
+        if (!response.ok) {
+          throw new Error(`TDX API 錯誤: ${response.status}`);
+        }
+        
+        const data = await response.text();
+        
+        return new Response(data, {
+          headers: {
+            ...corsHeaders,
+            'Cache-Control': 'public, max-age=86400' // 票價資料可快取 24 小時
+          }
+        });
+      }
+
+      // ============================================
+      // 功能 4: 反查站點經過的路線 (action=stop_info)
       // ============================================
       if (action === 'stop_info') {
         if (!stopName) {

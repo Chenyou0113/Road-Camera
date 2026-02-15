@@ -95,6 +95,104 @@
             margin-right: 10px;
         }
         
+        /* 票價分段樣式 */
+        .fare-info-banner {
+            background: linear-gradient(135deg, #f1c40f 0%, #f39c12 100%);
+            color: #2c3e50;
+            padding: 12px 16px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            font-weight: 700;
+            font-size: 0.95rem;
+            text-align: center;
+            box-shadow: 0 3px 8px rgba(241, 196, 15, 0.3);
+            border: 2px solid #f39c12;
+        }
+        
+        .fare-info-banner i {
+            margin-right: 6px;
+        }
+        
+        /* 緩衝區站牌特殊樣式 */
+        .stop-item.in-buffer {
+            border-left-color: #f1c40f;
+            background: linear-gradient(to right, #fffdf0 0%, #ffffff 100%);
+            box-shadow: 0 2px 10px rgba(241, 196, 15, 0.15);
+        }
+        
+        .buffer-tag {
+            background: linear-gradient(135deg, #f1c40f 0%, #f39c12 100%);
+            color: #2c3e50;
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            margin-left: 6px;
+            font-weight: 700;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+            border: 1px solid #f39c12;
+        }
+        
+        .fare-section-start {
+            border-top: 3px dashed #f1c40f;
+            padding-top: 8px;
+            margin-top: 8px;
+        }
+        
+        .fare-section-end {
+            border-bottom: 3px dashed #f1c40f;
+            padding-bottom: 8px;
+            margin-bottom: 8px;
+        }
+        
+        /* 票價分段樣式 */
+        .fare-info-banner {
+            background: linear-gradient(135deg, #f1c40f 0%, #f39c12 100%);
+            color: #2c3e50;
+            padding: 12px 16px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            font-weight: 700;
+            font-size: 0.95rem;
+            text-align: center;
+            box-shadow: 0 3px 8px rgba(241, 196, 15, 0.3);
+            border: 2px solid #f39c12;
+        }
+        
+        .fare-info-banner i {
+            margin-right: 6px;
+        }
+        
+        /* 緩衝區站牌特殊樣式 */
+        .stop-item.in-buffer {
+            border-left-color: #f1c40f;
+            background: linear-gradient(to right, #fffdf0 0%, #ffffff 100%);
+            box-shadow: 0 2px 10px rgba(241, 196, 15, 0.15);
+        }
+        
+        .buffer-tag {
+            background: linear-gradient(135deg, #f1c40f 0%, #f39c12 100%);
+            color: #2c3e50;
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            margin-left: 6px;
+            font-weight: 700;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+            border: 1px solid #f39c12;
+        }
+        
+        .fare-section-start {
+            border-top: 3px dashed #f1c40f;
+            padding-top: 8px;
+            margin-top: 8px;
+        }
+        
+        .fare-section-end {
+            border-bottom: 3px dashed #f1c40f;
+            padding-bottom: 8px;
+            margin-bottom: 8px;
+        }
+        
         .arrival-time { 
             padding: 8px 14px; 
             border-radius: 8px; 
@@ -500,6 +598,9 @@
     let currentRouteLine = null; // 路線線型圖層
     let allBusMarkers = []; // 所有路線的車輛標記
     let isExploreMode = true; // 探索模式（顯示所有車輛）
+    let bufferStops = []; // 儲存緩衝區站牌 UID
+    let fareBufferZones = []; // 儲存完整票價分段資訊
+    let currentZoomLevel = 12; // 當前地圖縮放級別
 
     // 熱門路線配置（會自動載入這些路線的車輛）
     const POPULAR_ROUTES = [
@@ -516,6 +617,13 @@
         maxZoom: 19,
         crossOrigin: true
     }).addTo(map);
+    
+    // 監聽地圖縮放級別變化，控制站牌顯示
+    map.on('zoomend', function() {
+        currentZoomLevel = map.getZoom();
+        console.log('🔍 當前縮放級別:', currentZoomLevel);
+        updateStopMarkersVisibility();
+    });
 
     // 頁面載入時自動顯示熱門路線的車輛
     window.addEventListener('DOMContentLoaded', () => {
@@ -781,7 +889,10 @@
         `;
 
         try {
-            // 1. 抓取站牌列表 (靜態資料)
+            // 1. 先查詢票價資訊（如果有分段收費）
+            await fetchFareInfo(category, city, route, direction);
+            
+            // 2. 抓取站牌列表 (靜態資料)
             const stopListInfo = await fetchStops(category, city, route, direction);
             if (!stopListInfo || stopListInfo.length === 0) {
                 document.getElementById('stop-list').innerHTML = `
@@ -869,7 +980,24 @@
         const container = document.getElementById('stop-list');
         const directionText = direction === '0' ? '去程' : '返程';
         
+        // 票價分段橫幅
+        let fareInfoHTML = '';
+        if (fareBufferZones.length > 0) {
+            const zone = fareBufferZones[0];
+            const originName = zone.FareBufferZoneOrigin?.OriginStopName?.Zh_tw || '起點';
+            const destName = zone.FareBufferZoneDestination?.DestinationStopName?.Zh_tw || '終點';
+            fareInfoHTML = `
+                <div class="fare-info-banner">
+                    <i class="fas fa-coins"></i> 分段收費路線
+                    <div style="font-size: 0.85rem; margin-top: 4px; opacity: 0.9;">
+                        緩衝區：${originName} ↔ ${destName}
+                    </div>
+                </div>
+            `;
+        }
+        
         container.innerHTML = `
+            ${fareInfoHTML}
             <div class="route-header">
                 <i class="fas fa-route"></i> ${routeName} ${directionText}
                 <div style="font-size: 0.9rem; font-weight: 600; margin-top: 4px; opacity: 0.9;">
@@ -883,28 +1011,45 @@
         stopMarkers = [];
 
         stops.forEach((stop, index) => {
+            // 判斷是否為緩衝區內站牌
+            const isInBuffer = bufferStops.includes(stop.uid);
+            const isBufferStart = isInBuffer && bufferStops.indexOf(stop.uid) === 0;
+            const isBufferEnd = isInBuffer && bufferStops.indexOf(stop.uid) === bufferStops.length - 1;
+            
             const div = document.createElement('div');
-            div.className = 'stop-item';
+            div.className = 'stop-item' + (isInBuffer ? ' in-buffer' : '');
+            if (isBufferStart) div.classList.add('fare-section-start');
+            if (isBufferEnd) div.classList.add('fare-section-end');
             div.id = `stop-${stop.uid}`;
             div.innerHTML = `
                 <div style="display: flex; align-items: center;">
-                    <span class="stop-sequence">${index + 1}</span>
+                    <span class="stop-sequence">${stop.sequence || (index + 1)}</span>
                     <span class="stop-name">${stop.name}</span>
+                    ${isInBuffer ? '<span class="buffer-tag">緩衝區</span>' : ''}
                 </div>
                 <span class="arrival-time time-none">讀取中</span>
             `;
             container.appendChild(div);
 
-            // 加到地圖
+            // 加到地圖 - 緩衝區站點用金色標記
+            const markerColor = isInBuffer ? '#f1c40f' : '#667eea';
+            
             const marker = L.circleMarker([stop.lat, stop.lon], { 
-                radius: 7, 
-                color: '#667eea',
-                fillColor: '#667eea',
-                fillOpacity: 0.8,
-                weight: 2
+                radius: isInBuffer ? 9 : 7, 
+                color: markerColor,
+                fillColor: markerColor,
+                fillOpacity: isInBuffer ? 1 : 0.8,
+                weight: isInBuffer ? 3 : 2
             })
-                .bindPopup(`<b>${index + 1}. ${stop.name}</b><br><small>點擊查看經過路線</small>`)
-                .addTo(map);
+                .bindPopup(`
+                    <b>${stop.sequence || (index + 1)}. ${stop.name}</b>
+                    ${isInBuffer ? '<br><span style="color: #f39c12; font-weight: 700;">🎫 分段緩衝區</span>' : ''}
+                    <br><small>點擊查看經過路線</small>
+                `);
+            
+            // 記錄站牌索引，用於縮放控制
+            marker._stopIndex = index;
+            marker._isBufferStop = isInBuffer;
             
             // 綁定點擊事件：查詢經過此站的所有路線
             marker.on('click', async () => {
@@ -969,6 +1114,8 @@
                 }
             });
             
+            // 將標記加到地圖上（初始可能隱藏，由縮放級別控制）
+            marker.addTo(map);
             stopMarkers.push(marker);
         });
 
@@ -977,6 +1124,37 @@
             const bounds = L.latLngBounds(stops.map(s => [s.lat, s.lon]));
             map.fitBounds(bounds, { padding: [50, 50] });
         }
+        
+        // 初始化站牌可見性（基於當前縮放級別）
+        updateStopMarkersVisibility();
+    }
+    
+    /**
+     * 根據地圖縮放級別控制站牌標記的顯示/隱藏
+     * 
+     * 縮放級別 >= 14 時顯示所有站牌
+     * 縮放級別 < 14 時只顯示緩衝區站牌（分段點）
+     */
+    function updateStopMarkersVisibility() {
+        const SHOW_ALL_STOPS_ZOOM = 14; // 顯示所有站牌的最小縮放級別
+        
+        stopMarkers.forEach(marker => {
+            const isBufferStop = marker._isBufferStop || false;
+            
+            // 如果是緩衝區站牌，總是顯示
+            // 如果不是緩衝區站牌，只在高縮放級別顯示
+            if (isBufferStop || currentZoomLevel >= SHOW_ALL_STOPS_ZOOM) {
+                if (!map.hasLayer(marker)) {
+                    marker.addTo(map);
+                }
+            } else {
+                if (map.hasLayer(marker)) {
+                    map.removeLayer(marker);
+                }
+            }
+        });
+        
+        console.log(`🗺️ 縮放級別 ${currentZoomLevel}: ${currentZoomLevel >= SHOW_ALL_STOPS_ZOOM ? '顯示所有站牌' : '僅顯示緩衝區站牌'}`);
     }
 
     function updateArrivalTimes(estimates, direction) {
@@ -1103,39 +1281,113 @@
         return '未知方向';
     }
 
-    // 輔助函式：抓取站牌 (透過 Worker)
-    async function fetchStops(category, city, route, direction) {
+    /**
+     * 查詢路線票價分段資訊
+     */
+    async function fetchFareInfo(category, city, route, direction) {
         try {
-            const url = `${WORKER_URL}?action=info&category=${category}&city=${city}&route=${encodeURIComponent(route)}`;
+            const url = `${WORKER_URL}?action=fare&category=${category}&city=${city}&route=${encodeURIComponent(route)}`;
+            console.log('💰 查詢票價資訊:', url);
             const res = await fetch(url);
             
             if (!res.ok) {
-                throw new Error('無法取得路線資訊，請檢查 Worker 設定');
+                console.log('⚠️ 無票價資訊');
+                bufferStops = [];
+                fareBufferZones = [];
+                return;
             }
             
             const data = await res.json();
+            console.log('💰 票價資料:', data);
             
-            // 處理不同的回傳格式
-            let routeInfo;
-            if (Array.isArray(data)) {
-                routeInfo = data.find(r => r.Direction == direction);
-            } else if (data.Direction !== undefined) {
-                routeInfo = data.Direction == direction ? data : null;
+            bufferStops = [];
+            fareBufferZones = [];
+            
+            if (data.length > 0 && data[0].SectionFares) {
+                const routeFare = data.find(f => f.RouteID) || data[0];
+                
+                if (routeFare.SectionFares && routeFare.SectionFares.length > 0) {
+                    routeFare.SectionFares.forEach(section => {
+                        if (section.BufferZones && section.BufferZones.length > 0) {
+                            section.BufferZones.forEach(zone => {
+                                // 只處理當前方向的緩衝區
+                                if (zone.Direction == direction || zone.Direction === undefined) {
+                                    if (zone.FareBufferZoneOrigin?.OriginStopUID) {
+                                        bufferStops.push(zone.FareBufferZoneOrigin.OriginStopUID);
+                                    }
+                                    if (zone.FareBufferZoneDestination?.DestinationStopUID) {
+                                        bufferStops.push(zone.FareBufferZoneDestination.DestinationStopUID);
+                                    }
+                                    fareBufferZones.push(zone);
+                                }
+                            });
+                        }
+                    });
+                }
             }
             
-            if (!routeInfo || !routeInfo.Stops) {
-                throw new Error('查無此方向的路線資料');
+            console.log('🎫 緩衝區站點:', bufferStops);
+        } catch (e) {
+            console.error('票價資訊查詢失敗:', e);
+            bufferStops = [];
+            fareBufferZones = [];
+        }
+    }
+    
+    // 輔助函式：抓取站牌 (透過 Worker) - 終極除錯版
+    async function fetchStops(category, city, route, direction) {
+        const url = `${WORKER_URL}?action=info&category=${category}&city=${city}&route=${encodeURIComponent(route)}`;
+        try {
+            console.log('📍 正在請求站牌資訊:', url);
+            const res = await fetch(url);
+            const data = await res.json();
+            
+            console.log('📦 Worker 回傳原始資料:', data); // 關鍵除錯資訊
+            
+            // 🚨 關鍵：檢查 Worker 是否回傳了封裝過的錯誤訊息
+            if (data.error) {
+                throw new Error(`Worker 錯誤: ${data.message || data.error}`);
             }
+
+            // 檢查是否為空陣列（找不到路線）
+            if (!Array.isArray(data) || data.length === 0) {
+                throw new Error(`TDX 找不到路線「${route}」的資料，請確認號碼是否正確。\n💡 建議測試：台北市 307、262、敦化幹線`);
+            }
+
+            // 尋找對應方向
+            let routeInfo = data.find(r => r.Direction == direction);
+            
+            if (!routeInfo) {
+                // 如果找不到該方向，可能該路線是循環線（只有去程）
+                console.warn(`⚠️ 找不到方向 ${direction}，嘗試自動載入第一筆資料`);
+                console.log('📋 可用方向列表:', data.map(d => `方向${d.Direction}: ${d.RouteName?.Zh_tw || '未知路線'}`));
+                
+                if (data[0] && data[0].Stops) {
+                    routeInfo = data[0];
+                    // 同步修正介面上的下拉選單，避免誤導
+                    document.getElementById('direction').value = data[0].Direction;
+                    console.log(`✅ 已自動切換至方向 ${data[0].Direction}`);
+                } else {
+                    throw new Error('路線資料格式異常，無法解析站牌資訊');
+                }
+            }
+            
+            if (!routeInfo.Stops || routeInfo.Stops.length === 0) {
+                throw new Error('此路線在 TDX 資料庫中無站牌資料');
+            }
+            
+            console.log(`✅ 成功載入 ${routeInfo.Stops.length} 個站牌`);
             
             return routeInfo.Stops.map(s => ({
                 uid: s.StopUID,
-                name: s.StopName?.Zh_tw || s.StopName,
+                name: s.StopName?.Zh_tw || s.StopName || '未命名站牌',
                 lat: s.StopPosition?.PositionLat || s.StopPosition?.Lat,
-                lon: s.StopPosition?.PositionLon || s.StopPosition?.Lon
+                lon: s.StopPosition?.PositionLon || s.StopPosition?.Lon,
+                sequence: s.StopSequence // 官方站序
             }));
         } catch (e) {
-            console.error('取得站牌失敗:', e);
-            throw new Error('無法取得站牌資訊，請確認 Worker 是否支援 action=info 參數');
+            console.error('❌ fetchStops 失敗:', e);
+            throw e; // 丟出給 startTracking 的 UI 顯示
         }
     }
 
