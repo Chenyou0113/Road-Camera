@@ -183,26 +183,106 @@
             box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
         }
         
-        /* 地圖上的公車圖標 */
-        .bus-marker {
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        /* 地圖上的公車圖標 - 升級版帶方向箭頭 */
+        .bus-marker-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .bus-icon-wrapper {
+            background: linear-gradient(135deg, #d63031 0%, #e17055 100%);
             color: white;
-            padding: 6px;
             border-radius: 50%;
-            width: 36px;
-            height: 36px;
+            width: 42px;
+            height: 42px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 18px;
             border: 3px solid white;
-            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.6);
-            animation: bounce 2s infinite;
+            box-shadow: 0 4px 12px rgba(214, 48, 49, 0.6);
+            transition: all 0.3s ease;
+            animation: pulse-bus 2s infinite;
         }
         
-        @keyframes bounce {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-8px); }
+        .bus-icon-wrapper:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 16px rgba(214, 48, 49, 0.8);
+        }
+        
+        .bus-icon-wrapper i {
+            font-size: 20px;
+        }
+        
+        .bus-plate-label {
+            background: rgba(45, 52, 54, 0.9);
+            color: white;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-top: 3px;
+            font-weight: 700;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+            white-space: nowrap;
+        }
+        
+        @keyframes pulse-bus {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.05); opacity: 0.9; }
+        }
+        
+        /* 公車詳細資訊彈窗樣式 */
+        .bus-popup {
+            min-width: 200px;
+            font-family: 'Noto Sans TC', sans-serif;
+        }
+        
+        .bus-popup-header {
+            background: linear-gradient(135deg, #d63031 0%, #e17055 100%);
+            color: white;
+            padding: 12px;
+            border-radius: 8px 8px 0 0;
+            font-weight: 900;
+            text-align: center;
+            margin: -16px -20px 12px -20px;
+            font-size: 1.1rem;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .bus-info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .bus-info-row:last-of-type {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+        
+        .bus-info-label {
+            color: #6b7280;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        
+        .bus-info-value {
+            font-weight: 700;
+            color: #1f2937;
+            font-size: 14px;
+        }
+        
+        .bus-popup-footer {
+            font-size: 11px;
+            color: #9ca3af;
+            text-align: center;
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid #e5e7eb;
         }
         
         /* Leaflet Popup 自訂樣式 */
@@ -370,10 +450,11 @@
     let currentStops = [];
     let currentRouteLine = null; // 路線線型圖層
 
-    // 初始化地圖
+    // 初始化地圖 (使用 CartoDB Light 底圖，視覺更清爽)
     map = L.map('map').setView([23.5, 121], 8);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors | 資料來源: TDX'
+    L.tileLayer('https://{s}.tile.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '© OpenStreetMap | CartoDB | TDX',
+        maxZoom: 19
     }).addTo(map);
 
     async function startTracking() {
@@ -615,6 +696,17 @@
         }
     }
 
+    /**
+     * 更新公車位置（升級版）
+     * 
+     * 新功能：
+     * - 帶方向箭頭的旋轉圖標（根據方位角 azi 自動旋轉）
+     * - 車牌標籤顯示在圖標下方
+     * - 精美的詳細資訊彈窗
+     * 
+     * @param {Array} buses - 公車位置陣列
+     * @param {string} direction - 當前選擇的方向（去程/返程）
+     */
     function updateBusPositions(buses, direction) {
         busMarkers.forEach(m => map.removeLayer(m));
         busMarkers = [];
@@ -622,24 +714,91 @@
         if (!buses || buses.length === 0) return;
 
         buses.filter(b => b.dir == direction).forEach(bus => {
+            // 計算方向角度（如果沒有 azi，預設為 0）
+            const azimuth = bus.azi || 0;
+            
+            // 建立自訂旋轉箭頭圖標
             const busIcon = L.divIcon({
-                html: `<div class="bus-marker">🚌</div>`,
                 className: '',
-                iconSize: [36, 36],
-                iconAnchor: [18, 18]
+                html: `
+                    <div class="bus-marker-container">
+                        <div class="bus-icon-wrapper" style="transform: rotate(${azimuth}deg);">
+                            <i class="fas fa-location-arrow"></i>
+                        </div>
+                        <div class="bus-plate-label">${bus.plate || '未知'}</div>
+                    </div>
+                `,
+                iconSize: [45, 60],
+                iconAnchor: [22, 30]
             });
             
-            const marker = L.marker([bus.lat, bus.lon], { icon: busIcon })
-                .bindPopup(`
-                    <div style="text-align: center;">
-                        <b>🚌 車輛資訊</b><br>
-                        車牌: ${bus.plate || '未知'}<br>
-                        方向: ${bus.dir == 0 ? '去程' : '返程'}
+            const marker = L.marker([bus.lat, bus.lon], { icon: busIcon }).addTo(map);
+            
+            // 建立詳細資訊彈窗
+            const statusColor = (bus.status === 0 || bus.status === undefined) ? '#10b981' : '#ef4444';
+            const statusText = (bus.status === 0 || bus.status === undefined) ? '正常行駛' : '狀態異常';
+            const directionText = bus.dir == 0 ? '去程 ➡️' : '返程 ⬅️';
+            
+            // 將方位角轉換為方向文字
+            const directionName = getDirectionName(azimuth);
+            
+            const popupHtml = `
+                <div class="bus-popup">
+                    <div class="bus-popup-header">
+                        <i class="fas fa-bus"></i> ${bus.plate || '未知車牌'}
                     </div>
-                `)
-                .addTo(map);
+                    <div class="bus-info-row">
+                        <span class="bus-info-label"><i class="fas fa-route"></i> 行駛方向</span>
+                        <span class="bus-info-value">${directionText}</span>
+                    </div>
+                    <div class="bus-info-row">
+                        <span class="bus-info-label"><i class="fas fa-compass"></i> 車頭朝向</span>
+                        <span class="bus-info-value">${directionName} (${azimuth}°)</span>
+                    </div>
+                    <div class="bus-info-row">
+                        <span class="bus-info-label"><i class="fas fa-circle-check"></i> 運行狀態</span>
+                        <span class="bus-info-value" style="color: ${statusColor};">${statusText}</span>
+                    </div>
+                    <div class="bus-info-row">
+                        <span class="bus-info-label"><i class="fas fa-map-marker-alt"></i> 座標位置</span>
+                        <span class="bus-info-value" style="font-size: 11px;">${bus.lat.toFixed(5)}, ${bus.lon.toFixed(5)}</span>
+                    </div>
+                    <div class="bus-popup-footer">
+                        <i class="fas fa-clock"></i> 更新時間: ${new Date().toLocaleTimeString('zh-TW')}
+                    </div>
+                </div>
+            `;
+            
+            marker.bindPopup(popupHtml);
             busMarkers.push(marker);
         });
+    }
+    
+    /**
+     * 將方位角轉換為方向文字
+     * @param {number} azimuth - 方位角 (0-360度)
+     * @returns {string} 方向文字
+     */
+    function getDirectionName(azimuth) {
+        const directions = [
+            { name: '正北 ⬆️', min: 0, max: 22.5 },
+            { name: '東北 ↗️', min: 22.5, max: 67.5 },
+            { name: '正東 ➡️', min: 67.5, max: 112.5 },
+            { name: '東南 ↘️', min: 112.5, max: 157.5 },
+            { name: '正南 ⬇️', min: 157.5, max: 202.5 },
+            { name: '西南 ↙️', min: 202.5, max: 247.5 },
+            { name: '正西 ⬅️', min: 247.5, max: 292.5 },
+            { name: '西北 ↖️', min: 292.5, max: 337.5 },
+            { name: '正北 ⬆️', min: 337.5, max: 360 }
+        ];
+        
+        for (const dir of directions) {
+            if (azimuth >= dir.min && azimuth < dir.max) {
+                return dir.name;
+            }
+        }
+        
+        return '未知方向';
     }
 
     // 輔助函式：抓取站牌 (透過 Worker)
