@@ -618,6 +618,7 @@
     let fareBufferZones = []; // 儲存完整票價分段資訊
     let currentZoomLevel = 12; // 當前地圖縮放級別
     let vehicleCache = {}; // 車輛規格快取（避免重複查詢）
+    let highlightedBuses = []; // 記錄當前高亮的車輛標記
     
     // 🆕 搜尋建議系統
     let allRoutesCache = []; // 所有路線的本地快取
@@ -1427,12 +1428,67 @@
             return;
         }
         
+        // 清除之前高亮的車輛
+        highlightedBuses.forEach(marker => {
+            if (marker._icon) {
+                marker._icon.style.filter = '';
+            }
+        });
+        highlightedBuses = [];
+        
         // 地圖平滑移動到該站點，縮放級別設為 17（適合查看單個站點）
         map.setView([stop.lat, stop.lon], 17, { animate: true, duration: 0.8 });
         
-        // 尋找並打開該站的 Popup
+        /**
+         * 🚌 檢測該站點附近是否有車輛（半徑 60 米內）
+         */
+        const NEARBY_RADIUS_KM = 0.06; // 60 米
+        const nearbyBuses = [];
+        
+        // 檢查所有車輛標記
+        busMarkers.forEach(marker => {
+            const busLatLng = marker.getLatLng();
+            const distance = map.distance([stop.lat, stop.lon], [busLatLng.lat, busLatLng.lng]) / 1000; // 轉換為公里
+            if (distance <= NEARBY_RADIUS_KM) {
+                nearbyBuses.push({ marker, distance });
+            }
+        });
+        
+        // 距離近的車輛優先顯示
+        nearbyBuses.sort((a, b) => a.distance - b.distance);
+        
+        // 尋找該站的 Popup 並更新內容
         stopMarkers.forEach(marker => {
             if (marker.getLatLng().lat === stop.lat && marker.getLatLng().lng === stop.lon) {
+                // 如果有附近的車輛，添加到 Popup
+                if (nearbyBuses.length > 0) {
+                    const currentContent = marker.getPopup().getContent();
+                    const vehiclesInfo = `<div style="padding:10px 0; border-top:2px solid #f59e0b; margin-top:8px;">
+                        <i class="fas fa-bus" style="color:#ef4444; margin-right:6px;"></i> 
+                        <strong style="color:#ef4444;">有 ${nearbyBuses.length} 台車在此站點附近</strong>
+                        ${nearbyBuses.slice(0, 3).map((item, idx) => {
+                            const dist = (item.distance * 1000).toFixed(0);
+                            return `<div style="padding:4px 0; font-size:0.85rem; color:#666;">
+                                ${idx + 1}. 距離 ~<strong>${dist}</strong> 公尺
+                            </div>`;
+                        }).join('')}
+                    </div>`;
+                    
+                    marker.getPopup().setContent(currentContent + vehiclesInfo);
+                    
+                    // 高亮附近的車輛
+                    nearbyBuses.forEach(item => {
+                        highlightedBuses.push(item.marker);
+                        if (item.marker._icon) {
+                            item.marker._icon.style.filter = 'brightness(1.4) drop-shadow(0 0 10px #fbbf24)';
+                        }
+                    });
+                    
+                    console.log(`🚌 該站點附近有 ${nearbyBuses.length} 台車停靠`);
+                } else {
+                    console.log(`❌ 該站點附近沒有車輛`);
+                }
+                
                 marker.openPopup();
             }
         });
