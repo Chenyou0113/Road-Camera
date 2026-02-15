@@ -601,6 +601,7 @@
     let bufferStops = []; // 儲存緩衝區站牌 UID
     let fareBufferZones = []; // 儲存完整票價分段資訊
     let currentZoomLevel = 12; // 當前地圖縮放級別
+    let vehicleCache = {}; // 車輛規格快取（避免重複查詢）
 
     // 熱門路線配置（會自動載入這些路線的車輛）
     const POPULAR_ROUTES = [
@@ -801,12 +802,13 @@
         
         const marker = L.marker([bus.lat, bus.lon], { icon: busIcon }).addTo(map);
         
+        // 初始 Popup（點擊後才載入詳細資訊）
         const statusColor = (bus.status === 0 || bus.status === undefined) ? '#10b981' : '#ef4444';
         const statusText = (bus.status === 0 || bus.status === undefined) ? '正常行駛' : '狀態異常';
         const directionText = bus.dir == 0 ? '去程 ➡️' : '返程 ⬅️';
         const directionName = getDirectionName(azimuth);
         
-        const popupHtml = `
+        const basicPopupHtml = `
             <div class="bus-popup">
                 <div class="bus-popup-header" style="background: linear-gradient(135deg, ${markerColor} 0%, ${markerColor}dd 100%);">
                     <i class="fas fa-bus"></i> ${routeName} ${bus.plate ? '(' + bus.plate + ')' : ''}
@@ -827,13 +829,22 @@
                     <span class="bus-info-label"><i class="fas fa-circle-check"></i> 運行狀態</span>
                     <span class="bus-info-value" style="color: ${statusColor};">${statusText}</span>
                 </div>
-                <div class="bus-popup-footer">
-                    <i class="fas fa-clock"></i> ${new Date().toLocaleTimeString('zh-TW')}
+                <div style="text-align:center; padding:10px; color:#667eea; font-size:0.85rem;">
+                    <i class="fas fa-hand-pointer"></i> 點擊查看車輛詳細規格
                 </div>
             </div>
         `;
         
-        marker.bindPopup(popupHtml);
+        marker.bindPopup(basicPopupHtml);
+        
+        // 綁定點擊事件：動態載入車輛詳細資訊
+        marker.on('popupopen', () => {
+            // 只在 popup 打開時才查詢詳細資訊（避免重複查詢）
+            if (!marker._detailsLoaded) {
+                getBusDetailHtml(bus, marker, routeName, cityName, markerColor);
+                marker._detailsLoaded = true; // 標記已載入
+            }
+        });
         
         if (isExploreMode) {
             allBusMarkers.push(marker);
@@ -857,6 +868,168 @@
             'Taoyuan': '桃園市'
         };
         return cityNames[cityCode] || cityCode;
+    }
+    
+    /**
+     * 獲取車輛詳細規格資訊並更新 Popup
+     * @param {Object} bus - 車輛基本資料
+     * @param {Object} marker - Leaflet 標記物件
+     * @param {string} routeName - 路線名稱
+     * @param {string} cityName - 城市代碼
+     * @param {string} markerColor - 標記顏色
+     */
+    async function getBusDetailHtml(bus, marker, routeName, cityName, markerColor) {
+        const statusColor = (bus.status === 0 || bus.status === undefined) ? '#10b981' : '#ef4444';
+        const statusText = (bus.status === 0 || bus.status === undefined) ? '正常行駛' : '狀態異常';
+        const directionText = bus.dir == 0 ? '去程 ➡️' : '返程 ⬅️';
+        const directionName = getDirectionName(bus.azi || 0);
+        
+        // 1. 先顯示載入狀態
+        const loadingHtml = `
+            <div class="bus-popup">
+                <div class="bus-popup-header" style="background: linear-gradient(135deg, ${markerColor} 0%, ${markerColor}dd 100%);">
+                    <i class="fas fa-bus"></i> ${routeName} ${bus.plate ? '(' + bus.plate + ')' : ''}
+                </div>
+                <div class="bus-info-row">
+                    <span class="bus-info-label"><i class="fas fa-map-marked-alt"></i> 城市</span>
+                    <span class="bus-info-value">${getCityName(cityName)}</span>
+                </div>
+                <div class="bus-info-row">
+                    <span class="bus-info-label"><i class="fas fa-route"></i> 行駛方向</span>
+                    <span class="bus-info-value">${directionText}</span>
+                </div>
+                <div style="padding:15px; text-align:center; color:#667eea;">
+                    <i class="fas fa-spinner fa-spin" style="font-size:1.5rem;"></i>
+                    <div style="margin-top:8px; font-size:0.9rem;">查詢車輛規格...</div>
+                </div>
+            </div>`;
+        marker.setPopupContent(loadingHtml);
+        
+        try {
+            // 2. 檢查快取
+            let vehicleData = vehicleCache[bus.plate];
+            
+            if (!vehicleData) {
+                // 向 Worker 查詢車輛規格
+                const category = document.getElementById('category').value;
+                const city = document.getElementById('city').value;
+                const res = await fetch(`${WORKER_URL}?action=vehicle&plate=${bus.plate}&category=${category}&city=${city}`);
+                vehicleData = await res.json();
+                
+                // 快取結果
+                if (vehicleData && vehicleData.length > 0) {
+                    vehicleCache[bus.plate] = vehicleData;
+                    console.log('✅ 已快取車輛規格:', bus.plate);
+                }
+            } else {
+                console.log('📦 使用快取的車輛規格:', bus.plate);
+            }
+            
+            let details = "";
+            if (vehicleData && vehicleData.length > 0) {
+                const v = vehicleData[0];
+                
+                // 解析出廠年份
+                const buyYear = v.PurchaseTime ? new Date(v.PurchaseTime).getFullYear() : '未知';
+                
+                // 轉換車輛等級 (參考 PDF 第 156 頁)
+                const vClassMap = { 
+                    1: "大型巴士", 
+                    2: "中型巴士", 
+                    3: "小型巴士", 
+                    4: "雙層巴士", 
+                    5: "雙節巴士" 
+                };
+                const vClass = vClassMap[v.VehicleClass] || "一般巴士";
+                
+                // 營運業者名稱對照
+                const operatorName = v.OperatorName?.Zh_tw || v.OperatorCode || '未知業者';
+                
+                // 準備配備圖示
+                const features = [];
+                if (v.IsElectric === 1) features.push('<span style="background:#2ecc71; color:white; padding:3px 8px; border-radius:4px; font-size:0.8rem; display:inline-block; margin:2px;">⚡ 電動車</span>');
+                if (v.IsLowFloor === 1) features.push('<span style="background:#3498db; color:white; padding:3px 8px; border-radius:4px; font-size:0.8rem; display:inline-block; margin:2px;">♿ 低地板</span>');
+                if (v.HasLiftOrRamp === 1) features.push('<span style="background:#9b59b6; color:white; padding:3px 8px; border-radius:4px; font-size:0.8rem; display:inline-block; margin:2px;">🦽 升降設備</span>');
+                if (v.HasWifi === 1) features.push('<span style="background:#f1c40f; color:#2c3e50; padding:3px 8px; border-radius:4px; font-size:0.8rem; display:inline-block; margin:2px; font-weight:700;">📶 WiFi</span>');
+                
+                details = `
+                    <hr style="border:none; border-top:2px solid #e5e7eb; margin:10px 0;">
+                    <div style="padding:0 5px;">
+                        <div class="bus-info-row">
+                            <span class="bus-info-label"><i class="fas fa-building"></i> 營運業者</span>
+                            <span class="bus-info-value">${operatorName}</span>
+                        </div>
+                        <div class="bus-info-row">
+                            <span class="bus-info-label"><i class="fas fa-bus-simple"></i> 車輛類型</span>
+                            <span class="bus-info-value">${vClass}</span>
+                        </div>
+                        <div class="bus-info-row">
+                            <span class="bus-info-label"><i class="fas fa-calendar-alt"></i> 出廠年份</span>
+                            <span class="bus-info-value">${buyYear} 年</span>
+                        </div>
+                        ${features.length > 0 ? `
+                        <div style="margin-top:10px; padding:8px; background:#f8f9fa; border-radius:6px;">
+                            <div style="font-size:0.85rem; color:#6b7280; margin-bottom:5px; font-weight:600;">
+                                <i class="fas fa-star"></i> 車輛配備
+                            </div>
+                            <div style="line-height:1.8;">${features.join(' ')}</div>
+                        </div>` : ''}
+                    </div>
+                `;
+            } else {
+                details = `
+                    <hr style="border:none; border-top:2px solid #e5e7eb; margin:10px 0;">
+                    <div style="text-align:center; color:#9ca3af; padding:15px; font-size:0.9rem;">
+                        <i class="fas fa-info-circle"></i> 暫無此車輛的詳細規格資料
+                    </div>
+                `;
+            }
+            
+            // 3. 組合最終 Popup 內容
+            const finalHtml = `
+                <div class="bus-popup">
+                    <div class="bus-popup-header" style="background: linear-gradient(135deg, ${markerColor} 0%, ${markerColor}dd 100%);">
+                        <i class="fas fa-bus"></i> ${routeName} ${bus.plate ? '(' + bus.plate + ')' : ''}
+                    </div>
+                    <div class="bus-info-row">
+                        <span class="bus-info-label"><i class="fas fa-map-marked-alt"></i> 城市</span>
+                        <span class="bus-info-value">${getCityName(cityName)}</span>
+                    </div>
+                    <div class="bus-info-row">
+                        <span class="bus-info-label"><i class="fas fa-route"></i> 行駛方向</span>
+                        <span class="bus-info-value">${directionText}</span>
+                    </div>
+                    <div class="bus-info-row">
+                        <span class="bus-info-label"><i class="fas fa-compass"></i> 車頭朝向</span>
+                        <span class="bus-info-value">${directionName} (${bus.azi || 0}°)</span>
+                    </div>
+                    <div class="bus-info-row">
+                        <span class="bus-info-label"><i class="fas fa-circle-check"></i> 運行狀態</span>
+                        <span class="bus-info-value" style="color: ${statusColor};">${statusText}</span>
+                    </div>
+                    ${details}
+                    <div class="bus-popup-footer" style="background:#f8f9fa; padding:8px; text-align:center; font-size:0.75rem; color:#9ca3af; border-top:1px solid #e5e7eb;">
+                        <i class="fas fa-database"></i> 資料來源：TDX | <i class="fas fa-clock"></i> ${new Date().toLocaleTimeString('zh-TW')}
+                    </div>
+                </div>
+            `;
+            marker.setPopupContent(finalHtml);
+            
+        } catch (e) {
+            console.error('❌ 獲取車輛詳細資訊失敗:', e);
+            marker.setPopupContent(`
+                <div class="bus-popup">
+                    <div class="bus-popup-header" style="background: #e74c3c;">
+                        <i class="fas fa-exclamation-triangle"></i> 讀取失敗
+                    </div>
+                    <div style="padding:15px; text-align:center; color:#e74c3c;">
+                        <i class="fas fa-times-circle" style="font-size:2rem;"></i>
+                        <div style="margin-top:8px;">無法載入車輛詳細資訊</div>
+                        <div style="font-size:0.8rem; color:#95a5a6; margin-top:5px;">${e.message}</div>
+                    </div>
+                </div>
+            `);
+        }
     }
 
     async function startTracking() {
