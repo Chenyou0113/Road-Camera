@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台灣公車即時動態追蹤系統</title>
+    <!-- Leaflet 地圖套件 -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body { 
+            font-family: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            height: 100vh;
+            background: #f5f7fa;
+        }
+        
+        #controls { 
+            padding: 20px; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; 
+            display: flex; 
+            gap: 12px; 
+            flex-wrap: wrap; 
+            align-items: center;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        #controls strong {
+            font-size: 1.3rem;
+            font-weight: 900;
+            margin-right: 10px;
+        }
+        
+        #main { 
+            display: flex; 
+            flex: 1; 
+            overflow: hidden; 
+        }
+        
+        #stop-list { 
+            width: 380px; 
+            overflow-y: auto; 
+            background: #ffffff;
+            border-right: 2px solid #e5e7eb;
+            padding: 15px;
+        }
+        
+        #map { 
+            flex: 1; 
+            position: relative;
+        }
+        
+        .stop-item { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            padding: 14px 16px; 
+            background: white; 
+            margin-bottom: 8px; 
+            border-radius: 12px; 
+            border-left: 5px solid #bdc3c7;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .stop-item:hover {
+            transform: translateX(4px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        }
+        
+        .stop-name { 
+            font-weight: 700; 
+            color: #1f2937;
+            font-size: 1.05rem;
+        }
+        
+        .stop-sequence {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 26px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            margin-right: 10px;
+        }
+        
+        .arrival-time { 
+            padding: 8px 14px; 
+            border-radius: 8px; 
+            font-size: 15px; 
+            font-weight: 900; 
+            min-width: 80px; 
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        /* 時間顏色 */
+        .time-now { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; animation: pulse 1.5s infinite; }
+        .time-soon { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; }
+        .time-wait { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; }
+        .time-none { background: #9ca3af; color: white; }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        input, select, button { 
+            padding: 10px 14px; 
+            border-radius: 8px; 
+            border: none;
+            font-family: 'Noto Sans TC', sans-serif;
+            font-size: 0.95rem;
+        }
+        
+        input, select {
+            background: rgba(255,255,255,0.95);
+            color: #1f2937;
+            font-weight: 600;
+        }
+        
+        button { 
+            background: #10b981;
+            color: white; 
+            cursor: pointer;
+            font-weight: 700;
+            transition: all 0.3s;
+            padding: 10px 24px;
+        }
+        
+        button:hover { 
+            background: #059669;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+        
+        #update-status {
+            background: rgba(255,255,255,0.2);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #9ca3af;
+        }
+        
+        .empty-state i {
+            font-size: 4rem;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+        
+        .empty-state h3 {
+            font-size: 1.3rem;
+            margin-bottom: 8px;
+            color: #6b7280;
+        }
+        
+        .route-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 15px;
+            text-align: center;
+            font-weight: 900;
+            font-size: 1.2rem;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+        
+        /* 地圖上的公車圖標 */
+        .bus-marker {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+            padding: 6px;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            border: 3px solid white;
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.6);
+            animation: bounce 2s infinite;
+        }
+        
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-8px); }
+        }
+        
+        /* Leaflet Popup 自訂樣式 */
+        .leaflet-popup-content-wrapper {
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+        }
+        
+        .leaflet-popup-content {
+            margin: 16px;
+            font-family: 'Noto Sans TC', sans-serif;
+        }
+        
+        .popup-stop-title {
+            font-size: 1.2rem;
+            font-weight: 900;
+            color: #667eea;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .popup-routes-container {
+            max-height: 180px;
+            overflow-y: auto;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 8px;
+            padding: 4px;
+        }
+        
+        .popup-routes-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .popup-routes-container::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+        
+        .popup-route-badge {
+            display: inline-flex;
+            align-items: center;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .popup-route-badge:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(16, 185, 129, 0.3);
+            background: linear-gradient(135deg, #059669 0%, #047857 100%);
+        }
+        
+        .popup-loading {
+            text-align: center;
+            padding: 20px;
+            color: #9ca3af;
+        }
+        
+        .popup-error {
+            text-align: center;
+            padding: 20px;
+            color: #ef4444;
+        }
+        
+        /* 響應式設計 */
+        @media (max-width: 768px) {
+            #main { flex-direction: column; }
+            #stop-list { width: 100%; max-height: 40%; }
+            #controls { padding: 12px; }
+            #controls strong { display: block; width: 100%; margin-bottom: 8px; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="controls">
+    <strong><i class="fas fa-bus"></i> 公車即時追蹤系統</strong>
+    <select id="category">
+        <option value="CityBus">市區公車</option>
+        <option value="InterCity">公路客運</option>
+    </select>
+    <select id="city">
+        <option value="Taipei">台北市</option>
+        <option value="NewTaipei">新北市</option>
+        <option value="Taoyuan">桃園市</option>
+        <option value="Taichung">台中市</option>
+        <option value="Tainan">台南市</option>
+        <option value="Kaohsiung">高雄市</option>
+        <option value="Keelung">基隆市</option>
+        <option value="Hsinchu">新竹市</option>
+        <option value="HsinchuCounty">新竹縣</option>
+        <option value="MiaoliCounty">苗栗縣</option>
+        <option value="ChanghwaCounty">彰化縣</option>
+        <option value="NantouCounty">南投縣</option>
+        <option value="YunlinCounty">雲林縣</option>
+        <option value="ChiayiCounty">嘉義縣</option>
+        <option value="Chiayi">嘉義市</option>
+        <option value="PingtungCounty">屏東縣</option>
+        <option value="YilanCounty">宜蘭縣</option>
+        <option value="HualienCounty">花蓮縣</option>
+        <option value="TaitungCounty">台東縣</option>
+        <option value="KinmenCounty">金門縣</option>
+        <option value="PenghuCounty">澎湖縣</option>
+        <option value="LienchiangCounty">連江縣</option>
+    </select>
+    <input type="text" id="routeNum" placeholder="輸入路線, 如 307" value="307">
+    <select id="direction">
+        <option value="0">去程</option>
+        <option value="1">返程</option>
+    </select>
+    <button onclick="startTracking()"><i class="fas fa-play"></i> 開始追蹤</button>
+    <span id="update-status"></span>
+</div>
+
+<div id="main">
+    <div id="stop-list">
+        <div class="empty-state">
+            <i class="fas fa-map-marked-alt"></i>
+            <h3>歡迎使用公車追蹤系統</h3>
+            <p>請選擇縣市、輸入路線號碼後按下「開始追蹤」</p>
+        </div>
+    </div>
+    <div id="map"></div>
+</div>
+
+<script>
+    const WORKER_URL = 'https://bus-worker.weacamm.org/';
+    let map, stopMarkers = [], busMarkers = [];
+    let pollingTimer = null;
+    let currentStops = [];
+    let currentRouteLine = null; // 路線線型圖層
+
+    // 初始化地圖
+    map = L.map('map').setView([23.5, 121], 8);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors | 資料來源: TDX'
+    }).addTo(map);
+
+    async function startTracking() {
+        const category = document.getElementById('category').value;
+        const city = document.getElementById('city').value;
+        const route = document.getElementById('routeNum').value.trim();
+        const direction = document.getElementById('direction').value;
+
+        if (!route) {
+            alert('⚠️ 請輸入路線號碼');
+            return;
+        }
+
+        // 顯示載入狀態
+        document.getElementById('stop-list').innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-spinner fa-spin"></i>
+                <h3>正在載入路線資訊...</h3>
+            </div>
+        `;
+
+        try {
+            // 1. 抓取站牌列表 (靜態資料)
+            const stopListInfo = await fetchStops(category, city, route, direction);
+            if (!stopListInfo || stopListInfo.length === 0) {
+                document.getElementById('stop-list').innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <h3>查無此路線</h3>
+                        <p>請確認路線號碼是否正確</p>
+                    </div>
+                `;
+                return;
+            }
+
+            currentStops = stopListInfo;
+            renderStops(stopListInfo, route, direction);
+            
+            // 嘗試繪製路線線型（可選功能）
+            try {
+                await drawRouteShape(city, route, category);
+            } catch (e) {
+                console.log('無法繪製路線線型:', e);
+            }
+
+            // 2. 啟動定時輪詢 (每 20 秒呼叫一次 Worker)
+            if (pollingTimer) clearInterval(pollingTimer);
+            fetchDynamicData(category, city, route, direction);
+            pollingTimer = setInterval(() => fetchDynamicData(category, city, route, direction), 20000);
+        } catch (err) {
+            console.error('啟動追蹤失敗:', err);
+            document.getElementById('stop-list').innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-times-circle"></i>
+                    <h3>載入失敗</h3>
+                    <p>${err.message}</p>
+                </div>
+            `;
+        }
+    }
+
+    // 抓取動態資料 (呼叫 Worker)
+    async function fetchDynamicData(category, city, route, direction) {
+        document.getElementById('update-status').innerHTML = '<i class="fas fa-sync fa-spin"></i> 更新中...';
+        try {
+            const url = `${WORKER_URL}?category=${category}&city=${city}&route=${encodeURIComponent(route)}`;
+            const res = await fetch(url);
+            
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+            
+            const data = await res.json();
+
+            updateArrivalTimes(data.estimates, direction);
+            updateBusPositions(data.buses, direction);
+            
+            const now = new Date();
+            document.getElementById('update-status').innerHTML = 
+                `<i class="fas fa-check-circle"></i> 最後更新: ${now.toLocaleTimeString('zh-TW', {hour: '2-digit', minute: '2-digit', second: '2-digit'})}`;
+        } catch (err) {
+            console.error('動態資料取得失敗:', err);
+            document.getElementById('update-status').innerHTML = '<i class="fas fa-exclamation-triangle"></i> 連線失敗';
+        }
+    }
+
+    function renderStops(stops, routeName, direction) {
+        const container = document.getElementById('stop-list');
+        const directionText = direction === '0' ? '去程' : '返程';
+        
+        container.innerHTML = `
+            <div class="route-header">
+                <i class="fas fa-route"></i> ${routeName} ${directionText}
+                <div style="font-size: 0.9rem; font-weight: 600; margin-top: 4px; opacity: 0.9;">
+                    共 ${stops.length} 站
+                </div>
+            </div>
+        `;
+        
+        // 清除地圖舊 Marker
+        stopMarkers.forEach(m => map.removeLayer(m));
+        stopMarkers = [];
+
+        stops.forEach((stop, index) => {
+            const div = document.createElement('div');
+            div.className = 'stop-item';
+            div.id = `stop-${stop.uid}`;
+            div.innerHTML = `
+                <div style="display: flex; align-items: center;">
+                    <span class="stop-sequence">${index + 1}</span>
+                    <span class="stop-name">${stop.name}</span>
+                </div>
+                <span class="arrival-time time-none">讀取中</span>
+            `;
+            container.appendChild(div);
+
+            // 加到地圖
+            const marker = L.circleMarker([stop.lat, stop.lon], { 
+                radius: 7, 
+                color: '#667eea',
+                fillColor: '#667eea',
+                fillOpacity: 0.8,
+                weight: 2
+            })
+                .bindPopup(`<b>${index + 1}. ${stop.name}</b><br><small>點擊查看經過路線</small>`)
+                .addTo(map);
+            
+            // 綁定點擊事件：查詢經過此站的所有路線
+            marker.on('click', async () => {
+                marker.bindPopup('<div class="popup-loading"><i class="fas fa-spinner fa-spin"></i><br>查詢路線中...</div>').openPopup();
+                
+                const city = document.getElementById('city').value;
+                const category = document.getElementById('category').value;
+                
+                try {
+                    const routes = await fetchStopRoutes(city, stop.name, category);
+                    
+                    let popupContent = `
+                        <div style="min-width: 220px;">
+                            <div class="popup-stop-title">
+                                <i class="fas fa-map-marker-alt"></i>
+                                <span>${stop.name}</span>
+                            </div>
+                            <hr style="margin: 10px 0; border: none; border-top: 2px solid #e5e7eb;">
+                            <div style="font-weight: 700; font-size: 0.95rem; color: #6b7280; margin-bottom: 6px;">
+                                <i class="fas fa-bus"></i> 經過的路線 (${routes.length})
+                            </div>
+                            <div class="popup-routes-container">
+                    `;
+                    
+                    if (routes.length === 0) {
+                        popupContent += `
+                            <div style="color: #9ca3af; text-align: center; padding: 20px; width: 100%;">
+                                <i class="fas fa-info-circle"></i><br>
+                                暫無路線資料
+                            </div>
+                        `;
+                    } else {
+                        routes.forEach(routeName => {
+                            popupContent += `
+                                <span class="popup-route-badge" 
+                                      onclick="switchToRoute('${routeName.replace(/'/g, "\\'")}')"
+                                      title="點擊切換到 ${routeName} 路線">
+                                    ${routeName}
+                                </span>
+                            `;
+                        });
+                    }
+                    
+                    popupContent += `
+                            </div>
+                            <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; font-size: 0.75rem; color: #9ca3af; text-align: center;">
+                                💡 點擊路線號碼可快速切換
+                            </div>
+                        </div>
+                    `;
+                    
+                    marker.setPopupContent(popupContent);
+                } catch (e) {
+                    console.error('查詢路線失敗:', e);
+                    marker.setPopupContent(`
+                        <div class="popup-error">
+                            <i class="fas fa-times-circle"></i><br>
+                            無法取得路線資訊<br>
+                            <small>${e.message}</small>
+                        </div>
+                    `);
+                }
+            });
+            
+            stopMarkers.push(marker);
+        });
+
+        // 調整地圖視角以顯示所有站牌
+        if (stops.length > 0) {
+            const bounds = L.latLngBounds(stops.map(s => [s.lat, s.lon]));
+            map.fitBounds(bounds, { padding: [50, 50] });
+        }
+    }
+
+    function updateArrivalTimes(estimates, direction) {
+        // 先將所有站牌設為無資料
+        currentStops.forEach(stop => {
+            const el = document.querySelector(`#stop-${stop.uid} .arrival-time`);
+            if (el) {
+                el.innerText = '未發車';
+                el.className = 'arrival-time time-none';
+            }
+        });
+
+        // 更新有資料的站牌
+        for (const [key, value] of Object.entries(estimates)) {
+            const [dir, stopUID] = key.split('_');
+            if (dir !== direction) continue;
+
+            const el = document.querySelector(`#stop-${stopUID} .arrival-time`);
+            if (!el) continue;
+
+            let text = '';
+            let statusClass = 'time-wait';
+
+            if (value.sec === null || value.sec === undefined) {
+                text = (value.status === 1) ? '未發車' : '末班已過';
+                statusClass = 'time-none';
+            } else if (value.sec < 60) {
+                text = '進站中';
+                statusClass = 'time-now';
+            } else if (value.sec < 180) {
+                text = '將到站';
+                statusClass = 'time-soon';
+            } else {
+                const mins = Math.floor(value.sec / 60);
+                text = `${mins} 分`;
+                statusClass = 'time-wait';
+            }
+
+            el.innerText = text;
+            el.className = `arrival-time ${statusClass}`;
+        }
+    }
+
+    function updateBusPositions(buses, direction) {
+        busMarkers.forEach(m => map.removeLayer(m));
+        busMarkers = [];
+
+        if (!buses || buses.length === 0) return;
+
+        buses.filter(b => b.dir == direction).forEach(bus => {
+            const busIcon = L.divIcon({
+                html: `<div class="bus-marker">🚌</div>`,
+                className: '',
+                iconSize: [36, 36],
+                iconAnchor: [18, 18]
+            });
+            
+            const marker = L.marker([bus.lat, bus.lon], { icon: busIcon })
+                .bindPopup(`
+                    <div style="text-align: center;">
+                        <b>🚌 車輛資訊</b><br>
+                        車牌: ${bus.plate || '未知'}<br>
+                        方向: ${bus.dir == 0 ? '去程' : '返程'}
+                    </div>
+                `)
+                .addTo(map);
+            busMarkers.push(marker);
+        });
+    }
+
+    // 輔助函式：抓取站牌 (透過 Worker)
+    async function fetchStops(category, city, route, direction) {
+        try {
+            const url = `${WORKER_URL}?action=info&category=${category}&city=${city}&route=${encodeURIComponent(route)}`;
+            const res = await fetch(url);
+            
+            if (!res.ok) {
+                throw new Error('無法取得路線資訊，請檢查 Worker 設定');
+            }
+            
+            const data = await res.json();
+            
+            // 處理不同的回傳格式
+            let routeInfo;
+            if (Array.isArray(data)) {
+                routeInfo = data.find(r => r.Direction == direction);
+            } else if (data.Direction !== undefined) {
+                routeInfo = data.Direction == direction ? data : null;
+            }
+            
+            if (!routeInfo || !routeInfo.Stops) {
+                throw new Error('查無此方向的路線資料');
+            }
+            
+            return routeInfo.Stops.map(s => ({
+                uid: s.StopUID,
+                name: s.StopName?.Zh_tw || s.StopName,
+                lat: s.StopPosition?.PositionLat || s.StopPosition?.Lat,
+                lon: s.StopPosition?.PositionLon || s.StopPosition?.Lon
+            }));
+        } catch (e) {
+            console.error('取得站牌失敗:', e);
+            throw new Error('無法取得站牌資訊，請確認 Worker 是否支援 action=info 參數');
+        }
+    }
+
+    // 查詢站牌有哪些路線經過
+    async function fetchStopRoutes(city, stopName, category) {
+        try {
+            const url = `${WORKER_URL}?action=stop_info&city=${city}&name=${encodeURIComponent(stopName)}`;
+            const res = await fetch(url);
+            
+            if (!res.ok) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+            
+            const data = await res.json();
+            return data.routes || [];
+        } catch (e) {
+            console.error('取得站牌路線失敗:', e);
+            return [];
+        }
+    }
+    
+    // 繪製路線線型
+    async function drawRouteShape(city, route, category) {
+        // 清除舊的路線
+        if (currentRouteLine) {
+            map.removeLayer(currentRouteLine);
+            currentRouteLine = null;
+        }
+        
+        try {
+            const url = `${WORKER_URL}?action=shape&city=${city}&route=${encodeURIComponent(route)}&category=${category}`;
+            const res = await fetch(url);
+            
+            if (!res.ok) return;
+            
+            const data = await res.json();
+            
+            if (!data || data.length === 0) return;
+            
+            // 處理可能有多個方向的線型（去/返程）
+            const direction = document.getElementById('direction').value;
+            let targetGeometry = null;
+            
+            // 嘗試找到對應方向的線型
+            if (data.length > 1) {
+                const directionItem = data.find(item => item.Direction == direction);
+                targetGeometry = directionItem?.Geometry || data[0]?.Geometry;
+            } else {
+                targetGeometry = data[0]?.Geometry;
+            }
+            
+            if (!targetGeometry) return;
+            
+            const coordinates = parseWktLineString(targetGeometry);
+            
+            if (coordinates.length > 0) {
+                currentRouteLine = L.polyline(coordinates, { 
+                    color: '#667eea', 
+                    weight: 5, 
+                    opacity: 0.7,
+                    dashArray: '10, 5',
+                    lineJoin: 'round',
+                    lineCap: 'round'
+                }).addTo(map);
+                
+                // 在路線上加上箭頭指示方向
+                const decorator = L.polylineDecorator || null;
+                if (decorator) {
+                    decorator(currentRouteLine, {
+                        patterns: [{
+                            offset: 25,
+                            repeat: 100,
+                            symbol: L.Symbol.arrowHead({
+                                pixelSize: 12,
+                                polygon: false,
+                                pathOptions: { stroke: true, weight: 2, color: '#667eea' }
+                            })
+                        }]
+                    }).addTo(map);
+                }
+            }
+        } catch (e) {
+            console.log('繪製路線失敗:', e);
+        }
+    }
+    
+    // ============================================
+    // 📍 座標格式解析器
+    // ============================================
+    
+    /**
+     * 解析 TDX API 回傳的路線座標
+     * 
+     * TDX 提供兩種座標格式：
+     * 1. Geometry (WKT格式): "LINESTRING (121.5 25.0, 121.51 25.01, ...)"
+     *    - 優點：人類可讀，容易除錯
+     *    - 缺點：資料量較大
+     * 
+     * 2. EncodedPolyline (Google壓縮格式): "afpVwCwahdV..."
+     *    - 優點：資料量小，節省流量
+     *    - 缺點：需要解碼，看起來像亂碼
+     * 
+     * 本函式優先使用 Geometry，如果不存在則嘗試解碼 EncodedPolyline
+     */
+    function parseRouteGeometry(routeData) {
+        // 優先使用 Geometry (WKT 格式)
+        if (routeData.Geometry) {
+            return parseWktLineString(routeData.Geometry);
+        }
+        
+        // 備用方案：解碼 EncodedPolyline
+        if (routeData.EncodedPolyline) {
+            return decodePolyline(routeData.EncodedPolyline);
+        }
+        
+        console.warn('路線資料中沒有找到 Geometry 或 EncodedPolyline');
+        return [];
+    }
+    
+    /**
+     * 解析 WKT LINESTRING 格式（優化版）
+     * 
+     * WKT 範例: "LINESTRING (121.565 25.065, 121.566 25.066, ...)"
+     * 每個座標對是 "經度 緯度" 的格式
+     */
+    function parseWktLineString(wkt) {
+        try {
+            if (!wkt || typeof wkt !== 'string') return [];
+            
+            // 支援多種 WKT 格式: LINESTRING, MULTILINESTRING
+            let coordString = wkt;
+            
+            // 處理 LINESTRING
+            if (wkt.toUpperCase().includes('LINESTRING')) {
+                coordString = wkt.replace(/.*LINESTRING\s*\(/i, "").replace(/\)[^)]*$/, "").trim();
+            }
+            
+            // 處理 MULTILINESTRING (取第一段)
+            if (wkt.toUpperCase().includes('MULTILINESTRING')) {
+                const match = wkt.match(/\(\(([^)]+)\)\)/);
+                if (match) coordString = match[1];
+            }
+            
+            // 解析座標對
+            const pairs = coordString.split(",").map(p => p.trim()).filter(p => p);
+            
+            return pairs.map(pair => {
+                // 支援空格或 tab 分隔
+                const coords = pair.trim().split(/\s+/);
+                if (coords.length >= 2) {
+                    const lon = parseFloat(coords[0]);
+                    const lat = parseFloat(coords[1]);
+                    // 驗證經緯度範圍（台灣區域：北緯21-26度，東經119-122度）
+                    if (!isNaN(lat) && !isNaN(lon) && 
+                        lat >= 21 && lat <= 26 && 
+                        lon >= 119 && lon <= 122) {
+                        return [lat, lon]; // Leaflet 使用 [緯度, 經度] 順序
+                    }
+                }
+                return null;
+            }).filter(coord => coord !== null);
+        } catch (e) {
+            console.error('❌ 解析 WKT 失敗:', e);
+            console.log('📄 原始資料前100字:', wkt?.substring(0, 100));
+            return [];
+        }
+    }
+    
+    /**
+     * 解碼 Google EncodedPolyline 格式（選用）
+     * 
+     * EncodedPolyline 範例: "afpVwCwahdV~iB..." (看起來像亂碼)
+     * 這是 Google Maps 的座標壓縮演算法，可大幅減少資料傳輸量
+     * 
+     * 如果需要使用此功能，請在 HTML 引入解碼庫：
+     * <script src="https://unpkg.com/@mapbox/polyline@1.1.1/src/polyline.js"></script>
+     */
+    function decodePolyline(encoded) {
+        try {
+            // 檢查是否有引入 polyline 解碼庫
+            if (typeof polyline !== 'undefined' && polyline.decode) {
+                const decoded = polyline.decode(encoded);
+                console.log('✅ 成功解碼 EncodedPolyline，共', decoded.length, '個座標點');
+                return decoded; // 已經是 [lat, lon] 格式
+            }
+            
+            // 手動解碼實作（簡化版）
+            console.warn('⚠️ 未找到 polyline 解碼庫，使用手動解碼');
+            return decodePolylineManual(encoded);
+        } catch (e) {
+            console.error('❌ 解碼 EncodedPolyline 失敗:', e);
+            return [];
+        }
+    }
+    
+    /**
+     * 手動實作 EncodedPolyline 解碼（不依賴外部庫）
+     * 基於 Google Polyline Algorithm
+     */
+    function decodePolylineManual(encoded) {
+        const coordinates = [];
+        let index = 0;
+        let lat = 0;
+        let lng = 0;
+
+        while (index < encoded.length) {
+            let shift = 0;
+            let result = 0;
+            let byte;
+
+            // 解碼緯度
+            do {
+                byte = encoded.charCodeAt(index++) - 63;
+                result |= (byte & 0x1f) << shift;
+                shift += 5;
+            } while (byte >= 0x20);
+            const deltaLat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+            lat += deltaLat;
+
+            shift = 0;
+            result = 0;
+
+            // 解碼經度
+            do {
+                byte = encoded.charCodeAt(index++) - 63;
+                result |= (byte & 0x1f) << shift;
+                shift += 5;
+            } while (byte >= 0x20);
+            const deltaLng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+            lng += deltaLng;
+
+            coordinates.push([lat / 1e5, lng / 1e5]);
+        }
+
+        return coordinates;
+    }
+    
+    // 切換到指定路線（從站牌 popup 點擊路線時觸發）
+    window.switchToRoute = function(routeName) {
+        document.getElementById('routeNum').value = routeName;
+        startTracking();
+    };
+    
+    // 頁面載入完成後的處理
+    window.addEventListener('beforeunload', () => {
+        if (pollingTimer) clearInterval(pollingTimer);
+    });
+</script>
+
+</body>
+</html>
