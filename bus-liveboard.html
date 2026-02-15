@@ -1992,7 +1992,39 @@
     }
     
     /**
-     * 實施本地搜尋與過濾
+     * 🌍 城市代碼轉中文名稱
+     */
+    function translateCity(cityCode) {
+        const cityMap = {
+            'Taipei': '台北市',
+            'NewTaipei': '新北市',
+            'Taoyuan': '桃園市',
+            'Taichung': '台中市',
+            'Tainan': '台南市',
+            'Kaohsiung': '高雄市',
+            'Keelung': '基隆市',
+            'Hsinchu': '新竹市',
+            'HsinchuCounty': '新竹縣',
+            'MiaoliCounty': '苗栗縣',
+            'ChanghwaCounty': '彰化縣',
+            'NantouCounty': '南投縣',
+            'YunlinCounty': '雲林縣',
+            'ChiayiCounty': '嘉義縣',
+            'Chiayi': '嘉義市',
+            'PingtungCounty': '屏東縣',
+            'YilanCounty': '宜蘭縣',
+            'HualienCounty': '花蓮縣',
+            'TaitungCounty': '台東縣',
+            'KinmenCounty': '金門縣',
+            'PenghuCounty': '澎湖縣',
+            'LienchiangCounty': '連江縣',
+            'InterCity': '跨縣市'
+        };
+        return cityMap[cityCode] || cityCode;
+    }
+
+    /**
+     * 實施本地搜尋與過濾 - 顯示起訖站資訊
      */
     function filterRoutes() {
         const input = document.getElementById('routeNum').value.trim();
@@ -2003,52 +2035,68 @@
             return;
         }
         
-        // 在本地快取中模糊搜尋（支援中文、英文、數字混合）
+        // 在本地快取中模糊搜尋（路線號、起點、終點都支援）
         const matches = allRoutesCache.filter(route => {
-            const routeName = route.n.toLowerCase();
             const searchTerm = input.toLowerCase();
-            return routeName.includes(searchTerm);
-        }).slice(0, 12); // 最多顯示 12 條結果
+            const routeName = (route.n || '').toLowerCase();
+            const departure = (route.d || '').toLowerCase();
+            const arrival = (route.a || '').toLowerCase();
+            
+            return routeName.includes(searchTerm) || 
+                   departure.includes(searchTerm) || 
+                   arrival.includes(searchTerm);
+        }).slice(0, 15); // 最多顯示 15 條結果
         
         if (matches.length > 0) {
-            // 生成建議選單 HTML
-            suggestionsContainer.innerHTML = matches.map((route, idx) => `
+            // 生成建議選單 HTML - 新格式：路線號 (起點 - 終點) [城市]
+            suggestionsContainer.innerHTML = matches.map((route, idx) => {
+                const cityName = translateCity(route.c);
+                const departure = route.d || '起站';
+                const arrival = route.a || '終站';
+                const displayText = `${route.n} (${departure} - ${arrival}) [${cityName}]`;
+                
+                return `
                 <div class="suggestion-item" 
                      style="
-                        padding: 12px 16px; 
+                        padding: 14px 16px; 
                         cursor: pointer; 
                         border-bottom: 1px solid #f0f0f0;
-                        transition: background-color 0.15s;
+                        transition: background-color 0.2s;
                         display: flex;
                         justify-content: space-between;
                         align-items: center;
+                        font-size: 0.95rem;
                      "
                      onmouseover="this.style.backgroundColor='#f5f5ff'"
                      onmouseout="this.style.backgroundColor='transparent'"
                      onclick="selectRoute('${route.n}', '${route.c}', '${route.t}')">
-                    <div>
-                        <div style="font-weight: 600; color: #1f2937; font-size: 0.95rem;">
-                            ${route.n} 
-                            ${route.desc ? '<span style="color: #999; font-size: 0.85rem;">- ' + route.desc + '</span>' : ''}
+                    <div style="flex: 1; min-width: 0;">
+                        <div style="font-weight: 700; color: #1f2937; font-size: 1rem; word-break: break-word;">
+                            ${route.n}
                         </div>
-                        <div style="font-size: 0.8rem; color: #9ca3af; margin-top: 2px;">
-                            ${route.t === 'InterCityBus' ? '🚌 客運' : '🚌 公交'} · ${route.c}
+                        <div style="font-size: 0.85rem; color: #666; margin-top: 4px; word-break: break-word;">
+                            ${departure} <span style="color: #999;">→</span> ${arrival}
+                        </div>
+                        <div style="font-size: 0.80rem; color: #9ca3af; margin-top: 2px;">
+                            ${route.t === 'InterCity' ? '🚌 跨縣市客運' : '🚌 公車'} · ${cityName}
                         </div>
                     </div>
-                    <span style="background: #667eea; color: white; padding: 2px 8px; border-radius: 3px; font-size: 0.75rem; font-weight: 700;">
+                    <span style="background: #667eea; color: white; padding: 4px 10px; border-radius: 3px; font-size: 0.75rem; font-weight: 700; margin-left: 10px; white-space: nowrap;">
                         ${idx + 1}/${matches.length}
                     </span>
-                `).join('');
+                </div>
+                `;
+            }).join('');
             suggestionsContainer.style.display = 'block';
         } else {
             suggestionsContainer.innerHTML = `
                 <div style="padding: 16px; text-align: center; color: #9ca3af;">
-                    <i class="fas fa-search"></i> 
+                    <i class="fas fa-search" style="font-size: 1.5rem;"></i> 
                     <div style="margin-top: 8px; font-size: 0.95rem;">
                         找不到符合「${input}」的路線
                     </div>
                     <div style="margin-top: 8px; font-size: 0.85rem; opacity: 0.8;">
-                        💡 嘗試輸入路線號或站名
+                        💡 嘗試輸入路線號、起點或終點站名
                     </div>
                 </div>
             `;
@@ -2063,12 +2111,19 @@
         // 填入搜尋框
         document.getElementById('routeNum').value = name;
         document.getElementById('city').value = city;
-        document.getElementById('category').value = category === 'InterCityBus' ? 'InterCity' : 'CityBus';
+        
+        // 處理 category 轉換 (InterCity -> InterCity, CityBus -> CityBus)
+        const categorySelect = document.getElementById('category');
+        if (category === 'InterCity') {
+            categorySelect.value = 'InterCity';
+        } else {
+            categorySelect.value = 'CityBus';
+        }
         
         // 隱藏建議菜單
         document.getElementById('route-suggestions').style.display = 'none';
         
-        console.log(`✨ 已選擇路線: ${name} (${city})`);
+        console.log(`✨ 已選擇路線: ${name} (${translateCity(city)} - ${category})`);
         
         // 觸發追蹤
         startTracking();
