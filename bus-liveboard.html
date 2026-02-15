@@ -339,6 +339,31 @@
 </div>
 
 <script>
+    /*
+     * ============================================
+     * 台灣公車即時追蹤系統 - 技術說明
+     * ============================================
+     * 
+     * 【座標格式說明】
+     * TDX API 提供兩種路線座標格式：
+     * 
+     * 1. Geometry (WKT格式) ✅ 目前使用
+     *    範例: "LINESTRING (121.565 25.065, 121.566 25.066, ...)"
+     *    - 優點：人類可讀，容易除錯，無需額外套件
+     *    - 缺點：資料量較大（約 5-10KB）
+     * 
+     * 2. EncodedPolyline (Google壓縮格式) 🔧 已實作但未啟用
+     *    範例: "afpVwCwahdV~iB..." (看起來像亂碼)
+     *    - 優點：資料量極小（約 1-2KB），節省 80% 流量
+     *    - 缺點：需要解碼演算法（已內建手動解碼函式）
+     * 
+     * 💡 如需啟用 EncodedPolyline 支援：
+     *    只需確保 Worker 回傳的資料包含 EncodedPolyline 欄位即可，
+     *    系統會自動偵測並使用手動解碼函式處理。
+     * 
+     * ============================================
+     */
+    
     const WORKER_URL = 'https://bus-worker.weacamm.org/';
     let map, stopMarkers = [], busMarkers = [];
     let pollingTimer = null;
@@ -671,7 +696,18 @@
         }
     }
     
-    // 繪製路線線型
+    /**
+     * 繪製路線線型在地圖上
+     * 
+     * 會自動處理以下情況：
+     * - TDX 回傳多個方向（去程/返程）時，自動選擇當前方向
+     * - 支援 Geometry (WKT) 和 EncodedPolyline 兩種格式
+     * - 用漸層藍紫色繪製路線，增加虛線效果提升辨識度
+     * 
+     * @param {string} city - 城市代碼 (如 'Taipei')
+     * @param {string} route - 路線編號 (如 '307')
+     * @param {string} category - 類別 ('CityBus' 或 'InterCity')
+     */
     async function drawRouteShape(city, route, category) {
         // 清除舊的路線
         if (currentRouteLine) {
@@ -683,56 +719,52 @@
             const url = `${WORKER_URL}?action=shape&city=${city}&route=${encodeURIComponent(route)}&category=${category}`;
             const res = await fetch(url);
             
-            if (!res.ok) return;
+            if (!res.ok) {
+                console.log('⚠️ 無法取得路線線型資料 (HTTP ' + res.status + ')');
+                return;
+            }
             
             const data = await res.json();
             
-            if (!data || data.length === 0) return;
+            if (!data || data.length === 0) {
+                console.log('⚠️ 此路線沒有提供線型資料');
+                return;
+            }
             
             // 處理可能有多個方向的線型（去/返程）
             const direction = document.getElementById('direction').value;
-            let targetGeometry = null;
+            let targetRoute = null;
             
             // 嘗試找到對應方向的線型
             if (data.length > 1) {
-                const directionItem = data.find(item => item.Direction == direction);
-                targetGeometry = directionItem?.Geometry || data[0]?.Geometry;
+                targetRoute = data.find(item => item.Direction == direction) || data[0];
             } else {
-                targetGeometry = data[0]?.Geometry;
+                targetRoute = data[0];
             }
             
-            if (!targetGeometry) return;
+            if (!targetRoute) return;
             
-            const coordinates = parseWktLineString(targetGeometry);
+            // 使用智能解析器（自動判斷是 Geometry 還是 EncodedPolyline）
+            const coordinates = parseRouteGeometry(targetRoute);
             
             if (coordinates.length > 0) {
+                console.log(`✅ 成功解析路線線型，共 ${coordinates.length} 個座標點`);
+                
                 currentRouteLine = L.polyline(coordinates, { 
-                    color: '#667eea', 
-                    weight: 5, 
-                    opacity: 0.7,
-                    dashArray: '10, 5',
-                    lineJoin: 'round',
-                    lineCap: 'round'
+                    color: '#667eea',        // 藍紫色
+                    weight: 5,               // 線條粗細
+                    opacity: 0.7,            // 透明度
+                    dashArray: '10, 5',      // 虛線樣式
+                    lineJoin: 'round',       // 圓角
+                    lineCap: 'round'         // 端點圓角
                 }).addTo(map);
                 
-                // 在路線上加上箭頭指示方向
-                const decorator = L.polylineDecorator || null;
-                if (decorator) {
-                    decorator(currentRouteLine, {
-                        patterns: [{
-                            offset: 25,
-                            repeat: 100,
-                            symbol: L.Symbol.arrowHead({
-                                pixelSize: 12,
-                                polygon: false,
-                                pathOptions: { stroke: true, weight: 2, color: '#667eea' }
-                            })
-                        }]
-                    }).addTo(map);
-                }
+                console.log('🗺️ 路線已繪製到地圖上');
+            } else {
+                console.warn('⚠️ 座標解析結果為空');
             }
         } catch (e) {
-            console.log('繪製路線失敗:', e);
+            console.error('❌ 繪製路線失敗:', e);
         }
     }
     
