@@ -153,6 +153,30 @@
             font-weight: 600;
         }
         
+        .city-legend {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            font-size: 0.8rem;
+            align-items: center;
+        }
+        
+        .city-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background: rgba(255,255,255,0.2);
+            padding: 4px 10px;
+            border-radius: 6px;
+        }
+        
+        .city-legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 2px solid white;
+        }
+        
         .empty-state {
             text-align: center;
             padding: 60px 20px;
@@ -370,6 +394,25 @@
 
 <div id="controls">
     <strong><i class="fas fa-bus"></i> 公車即時追蹤系統</strong>
+    <div class="city-legend">
+        <span style="opacity: 0.8;">城市：</span>
+        <div class="city-legend-item">
+            <div class="city-legend-color" style="background: #667eea;"></div>
+            <span>台北</span>
+        </div>
+        <div class="city-legend-item">
+            <div class="city-legend-color" style="background: #10b981;"></div>
+            <span>新北</span>
+        </div>
+        <div class="city-legend-item">
+            <div class="city-legend-color" style="background: #f59e0b;"></div>
+            <span>台中</span>
+        </div>
+        <div class="city-legend-item">
+            <div class="city-legend-color" style="background: #ef4444;"></div>
+            <span>高雄</span>
+        </div>
+    </div>
     <select id="category">
         <option value="CityBus">市區公車</option>
         <option value="InterCity">公路客運</option>
@@ -398,21 +441,27 @@
         <option value="PenghuCounty">澎湖縣</option>
         <option value="LienchiangCounty">連江縣</option>
     </select>
-    <input type="text" id="routeNum" placeholder="輸入路線, 如 307" value="307">
+    <input type="text" id="routeNum" placeholder="輸入路線切換單一路線模式">
     <select id="direction">
         <option value="0">去程</option>
         <option value="1">返程</option>
     </select>
-    <button onclick="startTracking()"><i class="fas fa-play"></i> 開始追蹤</button>
+    <button onclick="startTracking()"><i class="fas fa-search"></i> 追蹤路線</button>
     <span id="update-status"></span>
 </div>
 
 <div id="main">
     <div id="stop-list">
         <div class="empty-state">
-            <i class="fas fa-map-marked-alt"></i>
-            <h3>歡迎使用公車追蹤系統</h3>
-            <p>請選擇縣市、輸入路線號碼後按下「開始追蹤」</p>
+            <i class="fas fa-spinner fa-spin"></i>
+            <h3>🌏 探索模式</h3>
+            <p>正在載入全台熱門路線車輛...</p>
+            <div style="margin-top: 15px; font-size: 0.85rem; color: #9ca3af;">
+                <p>💡 <strong>提示：</strong></p>
+                <p>• 地圖會自動顯示各城市車輛</p>
+                <p>• 點擊車輛查看詳細資訊</p>
+                <p>• 輸入路線號可切換單一路線模式</p>
+            </div>
         </div>
     </div>
     <div id="map"></div>
@@ -449,16 +498,267 @@
     let pollingTimer = null;
     let currentStops = [];
     let currentRouteLine = null; // 路線線型圖層
+    let allBusMarkers = []; // 所有路線的車輛標記
+    let isExploreMode = true; // 探索模式（顯示所有車輛）
+
+    // 熱門路線配置（會自動載入這些路線的車輛）
+    const POPULAR_ROUTES = [
+        { city: 'Taipei', routes: ['307', '紅5', '棕1', '藍5', '617', '敦化幹線', '信義幹線'] },
+        { city: 'NewTaipei', routes: ['藍37', '綠2', '橘20', '842'] },
+        { city: 'Taichung', routes: ['300', '301', '302', '303', '304', '305'] },
+        { city: 'Kaohsiung', routes: ['紅51', '紅52', '紅53', '橘1', '橘7'] }
+    ];
 
     // 初始化地圖（修复 SSL 证书错误：使用稳定的 OpenStreetMap 标准服务器）
-    map = L.map('map').setView([23.5, 121], 8);
+    map = L.map('map').setView([25.0475, 121.5173], 12); // 預設台北市
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | TDX',
         maxZoom: 19,
         crossOrigin: true
     }).addTo(map);
 
+    // 頁面載入時自動顯示熱門路線的車輛
+    window.addEventListener('DOMContentLoaded', () => {
+        console.log('🚀 啟動探索模式：載入熱門路線車輛...');
+        loadPopularRoutesBuses();
+        // 每 30 秒更新一次所有車輛位置
+        setInterval(loadPopularRoutesBuses, 30000);
+    });
+
+    /**
+     * 載入熱門路線的所有車輛（探索模式）
+     */
+    async function loadPopularRoutesBuses() {
+        console.log('🔄 更新探索模式車輛位置...');
+        document.getElementById('update-status').innerHTML = '<i class="fas fa-sync fa-spin"></i> 載入全台車輛...';
+        
+        // 更新側邊欄狀態
+        document.getElementById('stop-list').innerHTML = `
+            <div class="route-header">
+                <i class="fas fa-globe"></i> 探索模式
+                <div style="font-size: 0.9rem; font-weight: 600; margin-top: 4px; opacity: 0.9;">
+                    正在載入熱門路線...
+                </div>
+            </div>
+        `;
+        
+        // 清除舊的車輛標記
+        allBusMarkers.forEach(m => map.removeLayer(m));
+        allBusMarkers = [];
+        
+        let totalBuses = 0;
+        const promises = [];
+        const routeStats = {}; // 記錄每條路線的車輛數
+        
+        // 並行載入所有城市的熱門路線
+        for (const cityGroup of POPULAR_ROUTES) {
+            for (const route of cityGroup.routes) {
+                promises.push(
+                    fetchRouteBuses('CityBus', cityGroup.city, route)
+                        .then(buses => {
+                            if (buses && buses.length > 0) {
+                                const key = `${cityGroup.city}-${route}`;
+                                routeStats[key] = buses.length;
+                                buses.forEach(bus => {
+                                    createBusMarker(bus, route, cityGroup.city, true);
+                                    totalBuses++;
+                                });
+                            }
+                        })
+                        .catch(err => console.warn(`⚠️ ${cityGroup.city} ${route} 載入失敗:`, err))
+                );
+            }
+        }
+        
+        await Promise.all(promises);
+        
+        // 更新側邊欄顯示路線統計
+        updateExploreSidebar(routeStats, totalBuses);
+        
+        document.getElementById('update-status').innerHTML = 
+            `<i class="fas fa-globe"></i> 探索模式 | 🚌 ${totalBuses} 台車輛運行中 | ${new Date().toLocaleTimeString('zh-TW')}`;
+        
+        console.log(`✅ 探索模式：已顯示 ${totalBuses} 台車輛`);
+    }
+
+    /**
+     * 更新探索模式側邊欄
+     */
+    function updateExploreSidebar(routeStats, totalBuses) {
+        const container = document.getElementById('stop-list');
+        
+        let html = `
+            <div class="route-header">
+                <i class="fas fa-globe"></i> 探索模式
+                <div style="font-size: 0.9rem; font-weight: 600; margin-top: 4px; opacity: 0.9;">
+                    共 ${totalBuses} 台車輛運行中
+                </div>
+            </div>
+            <div style="padding: 10px; background: #f9fafb; border-radius: 8px; margin-bottom: 10px;">
+                <div style="font-size: 0.9rem; color: #6b7280; margin-bottom: 8px;">
+                    <i class="fas fa-info-circle"></i> <strong>如何使用：</strong>
+                </div>
+                <ul style="font-size: 0.85rem; color: #6b7280; margin-left: 20px;">
+                    <li>點擊地圖上的車輛查看詳情</li>
+                    <li>不同顏色代表不同城市</li>
+                    <li>輸入路線號可切換單一路線</li>
+                </ul>
+            </div>
+        `;
+        
+        // 按城市分組顯示路線
+        const cityGroups = {};
+        for (const [key, count] of Object.entries(routeStats)) {
+            const [city, route] = key.split('-');
+            if (!cityGroups[city]) cityGroups[city] = [];
+            cityGroups[city].push({ route, count });
+        }
+        
+        for (const [city, routes] of Object.entries(cityGroups)) {
+            const cityColors = {
+                'Taipei': '#667eea',
+                'NewTaipei': '#10b981',
+                'Taichung': '#f59e0b',
+                'Kaohsiung': '#ef4444'
+            };
+            const color = cityColors[city] || '#9ca3af';
+            const cityName = getCityName(city);
+            
+            html += `
+                <div style="background: white; padding: 12px; border-radius: 8px; margin-bottom: 8px; border-left: 4px solid ${color};">
+                    <div style="font-weight: 700; color: ${color}; margin-bottom: 8px; font-size: 1rem;">
+                        ${cityName}
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+            `;
+            
+            routes.forEach(({ route, count }) => {
+                html += `
+                    <span style="background: ${color}; color: white; padding: 4px 10px; border-radius: 6px; font-size: 0.85rem; font-weight: 600;">
+                        ${route} (${count})
+                    </span>
+                `;
+            });
+            
+            html += `
+                    </div>
+                </div>
+            `;
+        }
+        
+        container.innerHTML = html;
+    }
+
+    /**
+     * 獲取指定路線的車輛資料
+     */
+    async function fetchRouteBuses(category, city, route) {
+        try {
+            const url = `${WORKER_URL}?category=${category}&city=${city}&route=${encodeURIComponent(route)}`;
+            const res = await fetch(url);
+            if (!res.ok) return [];
+            const data = await res.json();
+            return data.buses || [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    /**
+     * 創建車輛標記（可用於單一路線或探索模式）
+     */
+    function createBusMarker(bus, routeName, cityName, isExploreMode = false) {
+        const azimuth = bus.azi || 0;
+        const cityColors = {
+            'Taipei': '#667eea',
+            'NewTaipei': '#10b981',
+            'Taichung': '#f59e0b',
+            'Kaohsiung': '#ef4444'
+        };
+        const markerColor = isExploreMode ? (cityColors[cityName] || '#d63031') : '#d63031';
+        
+        const busIcon = L.divIcon({
+            className: '',
+            html: `
+                <div class="bus-marker-container">
+                    <div class="bus-icon-wrapper" style="transform: rotate(${azimuth}deg); background: linear-gradient(135deg, ${markerColor} 0%, ${markerColor}dd 100%);">
+                        <i class="fas fa-location-arrow"></i>
+                    </div>
+                    ${isExploreMode ? `<div class="bus-plate-label" style="background: ${markerColor};">${routeName}</div>` : `<div class="bus-plate-label">${bus.plate || '未知'}</div>`}
+                </div>
+            `,
+            iconSize: [45, 60],
+            iconAnchor: [22, 30]
+        });
+        
+        const marker = L.marker([bus.lat, bus.lon], { icon: busIcon }).addTo(map);
+        
+        const statusColor = (bus.status === 0 || bus.status === undefined) ? '#10b981' : '#ef4444';
+        const statusText = (bus.status === 0 || bus.status === undefined) ? '正常行駛' : '狀態異常';
+        const directionText = bus.dir == 0 ? '去程 ➡️' : '返程 ⬅️';
+        const directionName = getDirectionName(azimuth);
+        
+        const popupHtml = `
+            <div class="bus-popup">
+                <div class="bus-popup-header" style="background: linear-gradient(135deg, ${markerColor} 0%, ${markerColor}dd 100%);">
+                    <i class="fas fa-bus"></i> ${routeName} ${bus.plate ? '(' + bus.plate + ')' : ''}
+                </div>
+                <div class="bus-info-row">
+                    <span class="bus-info-label"><i class="fas fa-map-marked-alt"></i> 城市</span>
+                    <span class="bus-info-value">${getCityName(cityName)}</span>
+                </div>
+                <div class="bus-info-row">
+                    <span class="bus-info-label"><i class="fas fa-route"></i> 行駛方向</span>
+                    <span class="bus-info-value">${directionText}</span>
+                </div>
+                <div class="bus-info-row">
+                    <span class="bus-info-label"><i class="fas fa-compass"></i> 車頭朝向</span>
+                    <span class="bus-info-value">${directionName} (${azimuth}°)</span>
+                </div>
+                <div class="bus-info-row">
+                    <span class="bus-info-label"><i class="fas fa-circle-check"></i> 運行狀態</span>
+                    <span class="bus-info-value" style="color: ${statusColor};">${statusText}</span>
+                </div>
+                <div class="bus-popup-footer">
+                    <i class="fas fa-clock"></i> ${new Date().toLocaleTimeString('zh-TW')}
+                </div>
+            </div>
+        `;
+        
+        marker.bindPopup(popupHtml);
+        
+        if (isExploreMode) {
+            allBusMarkers.push(marker);
+        } else {
+            busMarkers.push(marker);
+        }
+        
+        return marker;
+    }
+
+    /**
+     * 獲取城市中文名稱
+     */
+    function getCityName(cityCode) {
+        const cityNames = {
+            'Taipei': '台北市',
+            'NewTaipei': '新北市',
+            'Taichung': '台中市',
+            'Tainan': '台南市',
+            'Kaohsiung': '高雄市',
+            'Taoyuan': '桃園市'
+        };
+        return cityNames[cityCode] || cityCode;
+    }
+
     async function startTracking() {
+        // 切換到單一路線模式
+        isExploreMode = false;
+        
+        // 清除探索模式的車輛
+        allBusMarkers.forEach(m => map.removeLayer(m));
+        allBusMarkers = [];
+        
         const category = document.getElementById('category').value;
         const city = document.getElementById('city').value;
         const route = document.getElementById('routeNum').value.trim();
@@ -466,6 +766,9 @@
 
         if (!route) {
             alert('⚠️ 請輸入路線號碼');
+            // 重新啟動探索模式
+            isExploreMode = true;
+            loadPopularRoutesBuses();
             return;
         }
 
@@ -718,7 +1021,7 @@
     }
 
     /**
-     * 更新公車位置（升級版）
+     * 更新公車位置（升級版）- 用於單一路線模式
      * 
      * 新功能：
      * - 帶方向箭頭的旋轉圖標（根據方位角 azi 自動旋轉）
@@ -729,70 +1032,48 @@
      * @param {string} direction - 當前選擇的方向（去程/返程）
      */
     function updateBusPositions(buses, direction) {
+        // 只在單一路線模式下運作
+        if (isExploreMode) return;
+        
+        console.log('🚌 開始更新車輛位置（單一路線模式）');
+        console.log('   總車輛數:', buses ? buses.length : 0);
+        console.log('   篩選方向:', direction === '0' ? '去程' : '返程');
+        
+        // 清除舊的車輛標記
         busMarkers.forEach(m => map.removeLayer(m));
         busMarkers = [];
 
-        if (!buses || buses.length === 0) return;
+        if (!buses || buses.length === 0) {
+            console.warn('⚠️ 沒有車輛資料');
+            return;
+        }
 
-        buses.filter(b => b.dir == direction).forEach(bus => {
-            // 計算方向角度（如果沒有 azi，預設為 0）
-            const azimuth = bus.azi || 0;
-            
-            // 建立自訂旋轉箭頭圖標
-            const busIcon = L.divIcon({
-                className: '',
-                html: `
-                    <div class="bus-marker-container">
-                        <div class="bus-icon-wrapper" style="transform: rotate(${azimuth}deg);">
-                            <i class="fas fa-location-arrow"></i>
-                        </div>
-                        <div class="bus-plate-label">${bus.plate || '未知'}</div>
-                    </div>
-                `,
-                iconSize: [45, 60],
-                iconAnchor: [22, 30]
+        // 篩選符合方向的車輛
+        const filteredBuses = buses.filter(b => b.dir == direction);
+        console.log(`   符合方向的車輛: ${filteredBuses.length} 台`);
+
+        if (filteredBuses.length === 0) {
+            console.warn('⚠️ 該方向目前沒有車輛運行');
+            return;
+        }
+
+        // 獲取當前路線和城市
+        const route = document.getElementById('routeNum').value.trim();
+        const city = document.getElementById('city').value;
+
+        filteredBuses.forEach((bus, index) => {
+            console.log(`   車輛 ${index + 1}:`, {
+                車牌: bus.plate,
+                緯度: bus.lat,
+                經度: bus.lon,
+                方位角: bus.azi,
+                方向: bus.dir === 0 ? '去程' : '返程'
             });
-            
-            const marker = L.marker([bus.lat, bus.lon], { icon: busIcon }).addTo(map);
-            
-            // 建立詳細資訊彈窗
-            const statusColor = (bus.status === 0 || bus.status === undefined) ? '#10b981' : '#ef4444';
-            const statusText = (bus.status === 0 || bus.status === undefined) ? '正常行駛' : '狀態異常';
-            const directionText = bus.dir == 0 ? '去程 ➡️' : '返程 ⬅️';
-            
-            // 將方位角轉換為方向文字
-            const directionName = getDirectionName(azimuth);
-            
-            const popupHtml = `
-                <div class="bus-popup">
-                    <div class="bus-popup-header">
-                        <i class="fas fa-bus"></i> ${bus.plate || '未知車牌'}
-                    </div>
-                    <div class="bus-info-row">
-                        <span class="bus-info-label"><i class="fas fa-route"></i> 行駛方向</span>
-                        <span class="bus-info-value">${directionText}</span>
-                    </div>
-                    <div class="bus-info-row">
-                        <span class="bus-info-label"><i class="fas fa-compass"></i> 車頭朝向</span>
-                        <span class="bus-info-value">${directionName} (${azimuth}°)</span>
-                    </div>
-                    <div class="bus-info-row">
-                        <span class="bus-info-label"><i class="fas fa-circle-check"></i> 運行狀態</span>
-                        <span class="bus-info-value" style="color: ${statusColor};">${statusText}</span>
-                    </div>
-                    <div class="bus-info-row">
-                        <span class="bus-info-label"><i class="fas fa-map-marker-alt"></i> 座標位置</span>
-                        <span class="bus-info-value" style="font-size: 11px;">${bus.lat.toFixed(5)}, ${bus.lon.toFixed(5)}</span>
-                    </div>
-                    <div class="bus-popup-footer">
-                        <i class="fas fa-clock"></i> 更新時間: ${new Date().toLocaleTimeString('zh-TW')}
-                    </div>
-                </div>
-            `;
-            
-            marker.bindPopup(popupHtml);
-            busMarkers.push(marker);
+
+            createBusMarker(bus, route, city, false);
         });
+
+        console.log(`✅ 已在地圖上標記 ${filteredBuses.length} 台車輛`);
     }
     
     /**
