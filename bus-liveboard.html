@@ -432,6 +432,85 @@
             color: #10b981;
         }
 
+        /* --- Map Popup (InfoWindow) --- */
+        .bus-popup {
+            min-width: 220px;
+            font-family: 'Noto Sans TC', sans-serif;
+            overflow: hidden;
+            border-radius: 8px;
+            margin: -8px -10px; /* 抵消 Google Maps 預設 padding */
+        }
+
+        .bus-popup-header {
+            background: #e14d43;
+            color: white;
+            padding: 10px;
+            text-align: center;
+            font-size: 1.1rem;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .bus-popup-body {
+            padding: 10px;
+            background: white;
+        }
+
+        .bus-popup-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .bus-popup-row:last-child { border-bottom: none; }
+
+        .bus-popup-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #475569;
+            font-size: 0.9rem;
+            font-weight: 700;
+        }
+
+        .bus-popup-label i {
+            width: 16px;
+            text-align: center;
+            color: #64748b;
+        }
+
+        .bus-popup-value {
+            color: #1e293b;
+            font-size: 0.95rem;
+            font-weight: 900;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .bus-popup-footer {
+            padding: 10px;
+            text-align: center;
+            border-top: 2px solid #f1f5f9;
+            background: #fff;
+        }
+
+        .bus-popup-link {
+            color: #3b82f6;
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
         /* --- Empty States --- */
         .empty-view {
             display: flex;
@@ -599,17 +678,21 @@
         }
         
         debounceTimer = setTimeout(async () => {
+            // 優先嘗試車牌搜尋
+            if (await handleSearchPlate(val)) {
+                suggestionsBox.style.display = 'none';
+                return;
+            }
+
             try {
-                // 呼叫 Worker 搜尋
+                // 呼叫 Worker 搜尋 (不篩選縣市，顯示所有匹配結果)
                 const res = await fetch(`${WORKER_URL}?action=list_all&search=${encodeURIComponent(val)}`);
                 const routes = await res.json();
                 
                 const routeArray = Array.isArray(routes) ? routes : (routes && Array.isArray(routes.data) ? routes.data : []);
                 
-                // 前端過濾縣市 (Worker 可能回傳全台符合的)
-                const filtered = routeArray.filter(r => r.city === currentData.city || r.type === 'InterCity');
-                
-                renderSuggestions(filtered.slice(0, 10)); // 取前10筆
+                // 顯示前10筆匹配結果，不再進行縣市篩選
+                renderSuggestions(routeArray.slice(0, 10)); 
             } catch (err) {
                 console.error('Search failed', err);
             }
@@ -625,9 +708,14 @@
             <div class="suggest-item" onclick="loadRoute('${r.name}', '${r.city}', '${r.type}')">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <strong>${r.name}</strong>
-                    <span style="font-size:0.8rem; background:${r.type === 'InterCity' ? '#f59e0b' : '#2563eb'}; color:white; padding:2px 6px; border-radius:4px;">
-                        ${r.type === 'InterCity' ? '客運' : '市區'}
-                    </span>
+                    <div style="display:flex; gap:4px;">
+                        <span style="font-size:0.7rem; background:#64748b; color:white; padding:1px 5px; border-radius:3px;">
+                            ${r.city || '全台'}
+                        </span>
+                        <span style="font-size:0.7rem; background:${r.type === 'InterCity' ? '#f59e0b' : '#2563eb'}; color:white; padding:1px 5px; border-radius:3px;">
+                            ${r.type === 'InterCity' ? '客運' : '市區'}
+                        </span>
+                    </div>
                 </div>
                 <div class="meta">
                     <span>${r.departure || '起點'} <i class="fas fa-arrow-right"></i> ${r.destination || '終點'}</span>
@@ -885,12 +973,15 @@
             });
 
             if (nearbyBus) {
-                const plate = nearbyBus.plate || nearbyBus.PlateNumb || '公車';
-                // 擴展詳細資訊
+                const plate = nearbyBus.PlateNumb || nearbyBus.plate || '公車';
                 const operator = nearbyBus.OperatorName?.Zh_tw || '客運公司';
                 const year = nearbyBus.ManufactureYear || '2022';
-                const isLowFloor = nearbyBus.BusType === 1 || true; // 預設低底盤
-                const hasWifi = Math.random() > 0.5; // 模擬資料
+                
+                // 使用提供的車輛規格欄位
+                const isLowFloor = nearbyBus.IsLowFloor === 1;
+                const hasWifi = nearbyBus.HasWifi === 1;
+                const isElectric = nearbyBus.IsElectric === 1;
+                const hasLift = nearbyBus.HasLiftOrRamp === 1;
 
                 busEl.innerHTML = `
                     <div class="bus-badge"><i class="fas fa-bus"></i><span>${plate}</span></div>
@@ -900,7 +991,8 @@
                             <span class="bus-year">${year}年車</span>
                         </div>
                         <div class="bus-equipments">
-                            <i class="fas fa-wheelchair ${isLowFloor ? 'active' : ''}" title="低底盤"></i>
+                            <i class="fas fa-bolt ${isElectric ? 'active' : ''}" title="電動公車"></i>
+                            <i class="fas fa-wheelchair ${isLowFloor || hasLift ? 'active' : ''}" title="低底盤/斜道"></i>
                             <i class="fas fa-wifi ${hasWifi ? 'active' : ''}" title="WiFi"></i>
                             <i class="fas fa-plug active" title="充電插座"></i>
                         </div>
@@ -959,21 +1051,30 @@
             map.fitBounds(bounds);
         }
 
-        // 2. Draw Stops (Small Dots)
+        // 2. Draw Stops (Small Dots with Order Numbers)
         const stops = currentData.stops[dir];
-        stops.forEach(stop => {
+        const bufferStops = renderFareInfo(dir);
+        
+        stops.forEach((stop, idx) => {
+            const isBuffer = bufferStops.start === stop.StopName.Zh_tw || bufferStops.end === stop.StopName.Zh_tw;
             const marker = new google.maps.Marker({
                 position: { lat: stop.StopPosition.PositionLat, lng: stop.StopPosition.PositionLon },
                 map: map,
                 icon: {
                     path: google.maps.SymbolPath.CIRCLE,
-                    scale: 4,
-                    fillColor: 'white',
+                    scale: 9,
+                    fillColor: isBuffer ? '#f59e0b' : 'white',
                     fillOpacity: 1,
-                    strokeColor: '#6b7280',
+                    strokeColor: isBuffer ? '#d97706' : '#6b7280',
                     strokeWeight: 2
                 },
-                zIndex: 1
+                label: {
+                    text: (idx + 1).toString(),
+                    color: isBuffer ? 'white' : "#4b5563",
+                    fontSize: "10px",
+                    fontWeight: "800"
+                },
+                zIndex: isBuffer ? 2 : 1
             });
             // Info Window
             const infoWindow = new google.maps.InfoWindow({
@@ -1020,27 +1121,71 @@
             });
             
             // Bus Details InfoWindow
-            const plate = bus.plate || '未知車號';
+            const plate = bus.PlateNumb || bus.plate || '未知車號';
             const operator = bus.OperatorName?.Zh_tw || '客運公司';
-            const year = bus.ManufactureYear || '2022';
-            const speed = bus.speed || 0;
+            const azimuth = bus.azi || 0;
+            const directionText = currentData.direction === 0 ? '去程' : '返程';
             
-            const infoContent = `
-                <div style="padding:8px; min-width:140px; font-family: sans-serif;">
-             quickSwitchRoute(routeName) {
-        // 使用現有的 loadRoute 邏輯
-        // 預設為目前縣市與類型，若為跨縣市會由 loadRoute 內部處理
-        loadRoute(routeName, currentData.city, currentData.type);
-    }
+            // 規格資料 (來自使用者提供之實體欄位)
+            const isElectric = bus.IsElectric === 1;
+            const isLowFloor = bus.IsLowFloor === 1 || bus.VehicleType === 1;
+            const hasWifi = bus.HasWifi === 1;
 
-    function        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                        <span style="font-weight:bold; color:#2563eb; font-size:1rem;">${plate}</span>
-                        <span style="font-size:0.7rem; background:#f1f5f9; padding:1px 4px; border-radius:3px;">${year}</span>
+            // 城市名稱轉換
+            const cityMap = {
+                'Taipei': '臺北市', 'NewTaipei': '新北市', 'Taoyuan': '桃園市', 
+                'Taichung': '臺中市', 'Tainan': '臺南市', 'Kaohsiung': '高雄市',
+                'Keelung': '基隆市', 'Hsinchu': '新竹市', 'HsinchuCounty': '新竹縣',
+                'MiaoliCounty': '苗栗縣', 'ChanghuaCounty': '彰化縣', 'NantouCounty': '南投縣',
+                'YunlinCounty': '雲林縣', 'ChiayiCounty': '嘉義縣', 'Chiayi': '嘉義市',
+                'PingtungCounty': '屏東縣', 'YilanCounty': '宜蘭縣', 'HualienCounty': '花蓮縣',
+                'TaitungCounty': '臺東縣', 'PenghuCounty': '澎湖縣', 'KinmenCounty': '金門縣',
+                'LienchiangCounty': '連江縣'
+            };
+            const cityName = cityMap[currentData.city] || currentData.city;
+
+            // 轉換方位角為文字
+            const getDirName = (deg) => {
+                const dirs = ['北', '東北', '東', '東南', '南', '西南', '西', '西北'];
+                return dirs[Math.round(deg / 45) % 8];
+            };
+
+            const infoContent = `
+                <div class="bus-popup">
+                    <div class="bus-popup-header">
+                        <i class="fas fa-bus"></i> ${currentData.route} (${plate})
                     </div>
-                    <div style="font-size:0.85rem; color:#475569; margin-bottom:4px;">${operator}</div>
-                    <div style="font-size:0.8rem; border-top:1px solid #e2e8f0; padding-top:4px; display:flex; justify-content:space-between;">
-                        <span>速度: ${speed} km/h</span>
-                        <span style="color:#10b981;"><i class="fas fa-wheelchair"></i> <i class="fas fa-wifi"></i></span>
+                    <div class="bus-popup-body">
+                        <div class="bus-popup-row">
+                            <div class="bus-popup-label"><i class="fas fa-map-marked-alt"></i> 城市</div>
+                            <div class="bus-popup-value">${cityName}</div>
+                        </div>
+                        <div class="bus-popup-row">
+                            <div class="bus-popup-label"><i class="fas fa-route"></i> 行駛方向</div>
+                            <div class="bus-popup-value">
+                                ${directionText} <i class="fas fa-arrow-alt-circle-right" style="color:#3b82f6"></i>
+                            </div>
+                        </div>
+                        <div class="bus-popup-row">
+                            <div class="bus-popup-label"><i class="fas fa-compass"></i> 車頭朝向</div>
+                            <div class="bus-popup-value">
+                                ${getDirName(azimuth)} <i class="fas fa-long-arrow-alt-up" style="color:#3b82f6; transform:rotate(${azimuth}deg)"></i> (${azimuth}°)
+                            </div>
+                        </div>
+                        <div class="bus-popup-row">
+                            <div class="bus-popup-label"><i class="fas fa-info-circle"></i> 車輛服務</div>
+                            <div class="bus-popup-value">
+                                <i class="fas fa-bolt" style="color:${isElectric ? '#10b981' : '#cbd5e1'}" title="電動車"></i>
+                                <i class="fas fa-wheelchair" style="color:${isLowFloor ? '#10b981' : '#cbd5e1'}" title="低底盤"></i>
+                                <i class="fas fa-wifi" style="color:${hasWifi ? '#10b981' : '#cbd5e1'}" title="WiFi"></i>
+                                <i class="fas fa-plug" style="color:#10b981" title="USB充電"></i>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="bus-popup-footer">
+                        <a href="javascript:void(0)" onclick="handleSearchPlate('${plate}')" class="bus-popup-link">
+                            <i class="fas fa-hand-point-up" style="margin-right:5px"></i> 點擊追蹤此車輛運行路徑
+                        </a>
                     </div>
                 </div>
             `;
@@ -1052,6 +1197,35 @@
     }
 
     // --- Helpers ---
+    async function quickSwitchRoute(routeName) {
+        // 優化切換邏輯：先搜尋以確保跨縣市正確
+        try {
+            const res = await fetch(`${WORKER_URL}?action=list_all&search=${encodeURIComponent(routeName)}`);
+            const routes = await res.json();
+            const routeArray = Array.isArray(routes) ? routes : (routes && Array.isArray(routes.data) ? routes.data : []);
+            const match = routeArray.find(r => r.name === routeName) || routeArray[0];
+            if (match) {
+                loadRoute(match.name, match.city, match.type);
+                return;
+            }
+        } catch (e) {}
+        loadRoute(routeName, currentData.city, currentData.type);
+    }
+
+    async function handleSearchPlate(val) {
+        if (/^[A-Z0-9]{3}-?[A-Z0-9]{3,4}$/i.test(val)) {
+            try {
+                const res = await fetch(`${WORKER_URL}?action=vehicle&plate=${val.toUpperCase()}`);
+                const data = await res.json();
+                if (data && data.RouteName) {
+                    loadRoute(data.RouteName.Zh_tw, data.City, data.Category);
+                    return true;
+                }
+            } catch (e) {}
+        }
+        return false;
+    }
+
     function focusMap(lat, lng) {
         map.panTo({ lat, lng });
         map.setZoom(16);
