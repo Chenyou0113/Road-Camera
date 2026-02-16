@@ -68,17 +68,18 @@
             flex-direction: column;
             align-items: flex-start; 
             padding: 14px 16px; 
-            background: white; 
+            background: linear-gradient(to right, #f8f9fc 0%, #ffffff 100%); 
             margin-bottom: 8px; 
             border-radius: 12px; 
             border-left: 5px solid #0066cc;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 2px 8px rgba(0, 102, 204, 0.08);
+            transition: transform 0.2s, box-shadow 0.2s, background 0.2s;
         }
         
         .stop-item:hover {
             transform: translateX(4px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+            box-shadow: 0 4px 12px rgba(0, 102, 204, 0.16);
+            background: linear-gradient(to right, #f0f4ff 0%, #f8f9fc 100%);
         }
         
         .stop-name { 
@@ -164,13 +165,31 @@
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             margin-top: 8px;
             width: 100%;
+            display: inline-block;
         }
         
-        /* 時間顏色 (保留) */
-        .time-now { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: white; animation: pulse 1.5s infinite; }
-        .time-soon { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; }
-        .time-wait { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; }
-        .time-none { background: #9ca3af; color: white; }
+        /* 時間顏色 - 改進對比度 */
+        .time-now { 
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); 
+            color: white; 
+            animation: pulse 1.5s infinite;
+            font-size: 16px;
+        }
+        .time-soon { 
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); 
+            color: white; 
+            font-size: 15px;
+        }
+        .time-wait { 
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%); 
+            color: white; 
+            font-size: 14px;
+        }
+        .time-none { 
+            background: linear-gradient(135deg, #9ca3af 0%, #6b7280 100%); 
+            color: white; 
+            font-size: 13px;
+        }
 
         @keyframes pulse {
             0%, 100% { transform: scale(1); }
@@ -384,13 +403,13 @@
         }
         
         .popup-routes-container {
-            max-height: 180px;
+            max-height: 300px;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 8px;
             margin-top: 8px;
-            padding: 4px;
+            padding: 4px 0;
         }
         
         .popup-routes-container::-webkit-scrollbar {
@@ -403,29 +422,29 @@
         }
         
         .popup-route-badge {
-            display: flex;
-            align-items: center;
+            display: inline-block;
             background: linear-gradient(135deg, #0066cc 0%, #004fa8 100%);
             color: white;
-            padding: 8px 12px;
-            border-radius: 8px;
-            font-size: 13px;
+            padding: 10px 12px;
+            border-radius: 6px;
+            font-size: 14px;
             font-weight: 700;
             cursor: pointer;
             transition: all 0.2s;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            width: 100%;
-            text-align: left;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
+            text-align: center;
+            min-width: 60px;
+            max-width: 100%;
+            word-break: break-word;
             box-sizing: border-box;
+            border: 2px solid transparent;
         }
         
         .popup-route-badge:hover {
-            transform: translateX(4px);
-            box-shadow: 0 4px 8px rgba(0, 102, 204, 0.3);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 102, 204, 0.4);
             background: linear-gradient(135deg, #004fa8 0%, #003d82 100%);
+            border-color: white;
         }
         
         .popup-loading {
@@ -658,8 +677,16 @@
         lon = parseFloat(lon);
         
         if (isNaN(lat) || isNaN(lon) || !isFinite(lat) || !isFinite(lon)) {
-            console.warn('⚠️ 跳過無效坐標:', { lat, lon, object: markerObject });
+            console.warn('⚠️ 坐標格式無效:', { lat, lon, markerObject });
             return null; // 返回 null 避免創建無效標記
+        }
+        
+        // 檢查台灣邊界 (緯度: 21-26, 經度: 119-122)
+        if (lat < 21 || lat > 26 || lon < 119 || lon > 122) {
+            if (isBus) {
+                console.warn(`⚠️ 公交車超出台灣邊界: (${lat}, ${lon}), 車牌: ${markerObject.plate || 'N/A'}`);
+            }
+            return null;
         }
         
         const position = { lat: lat, lng: lon };
@@ -684,20 +711,28 @@
             markerColor = isExploreMode ? (cityColors[bus.city] || '#d63031') : '#d63031';
 
             const plateText = isExploreMode ? bus.route : (bus.plate || '未知');
-            const iconHtml = `
-                <div class="bus-marker-container">
-                    <div class="bus-icon-wrapper" style="transform: rotate(${azimuth}deg); background: linear-gradient(135deg, ${markerColor} 0%, ${markerColor}dd 100%);">
-                        <i class="fas fa-location-arrow"></i>
-                    </div>
-                    <div class="bus-plate-label" style="background: ${markerColor};">${plateText}</div>
-                </div>
+            
+            // 使用 SVG 渲染公交車標記（比 Base64 HTML 更可靠）
+            const busIconSvg = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="45" height="60" viewBox="0 0 45 60">
+                    <!-- 車身 -->
+                    <rect x="6" y="15" width="33" height="22" rx="2" fill="${markerColor}" stroke="white" stroke-width="1.5"/>
+                    <!-- 方向箭頭（指向上方） -->
+                    <polygon points="22.5,5 18,14 27,14" fill="${markerColor}" stroke="white" stroke-width="1.5"/>
+                    <!-- 輪子 -->
+                    <circle cx="12" cy="38" r="3" fill="${markerColor}"/>
+                    <circle cx="33" cy="38" r="3" fill="${markerColor}"/>
+                    <!-- 車牌標籤 -->
+                    <rect x="4" y="42" width="37" height="14" rx="2" fill="${markerColor}" stroke="white" stroke-width="1"/>
+                    <text x="22.5" y="53" text-anchor="middle" font-size="10" font-weight="700" fill="white">${plateText.substring(0, 6)}</text>
+                </svg>
             `;
 
             iconConfig = {
-                url: 'data:text/html;charset=utf-8;base64,' + btoa(iconHtml), // 技巧：將 HTML 轉為 Data URL 圖片
+                url: 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(busIconSvg),
                 scaledSize: new google.maps.Size(45, 60),
                 origin: new google.maps.Point(0, 0),
-                anchor: new google.maps.Point(22, 30) // 錨點調整
+                anchor: new google.maps.Point(22, 30)
             };
         } else { // 站牌標記
             const stop = markerObject;
@@ -724,8 +759,17 @@
         const marker = new google.maps.Marker({
             position: position,
             icon: iconConfig,
-            map: map,
+            map: map || null,  // 如果 map 未初始化，先設為 null
         });
+        
+        if (!marker) {
+            console.warn(`⚠️ Marker 創建失敗，可能是 map 未初始化`);
+            return null;
+        }
+        
+        if (isBus && isExploreMode) {
+            console.log(`✅ 公交車標記已添加: 坐標 (${lat}, ${lon}), 地圖已初始化: ${!!map}`);
+        }
         
         return marker;
     }
@@ -863,13 +907,15 @@
                                     if (!bus.lat && bus.Latitude) bus.lat = bus.Latitude;
                                     if (!bus.lon && bus.Longitude) bus.lon = bus.Longitude;
                                     
+                                    console.log(`🚌 創建 ${route} 車輛標記: 坐標 (${bus.lat}, ${bus.lon}), 車牌 ${bus.plate}`);
+                                    
                                     const marker = createGoogleMarker(bus.lat, bus.lon, '', bus, true, true);
                                     if (marker) { // 僅在坐標有效時才綁定事件
                                         setupMarkerClickListener(marker, bus, route, cityGroup.city, null, true);
                                         mapAllBusMarkers.push(marker);
                                         totalBuses++;
                                     } else {
-                                        console.warn(`⚠️ ${route} 車輛坐標無效:`, { lat: bus.lat, lon: bus.lon, bus });
+                                        console.warn(`⚠️ ${route} 車輛標記創建失敗: (${bus.lat}, ${bus.lon})`);
                                     }
                                 });
                             }
@@ -1305,15 +1351,13 @@
             const routes = data.routes || [];
             
             let popupContent = `
-                <div style="min-width: 300px; max-width: 350px;">
-                    <div class="popup-stop-title">
+                <div style="width: 320px; padding: 12px; box-sizing: border-box;">
+                    <div class="popup-stop-title" style="margin-bottom: 10px; word-break: break-word;">
                         <i class="fas fa-map-marker-alt"></i>
                         <span>${stopName}</span>
                     </div>
-                    <hr style="margin: 10px 0; border: none; border-top: 2px solid #e5e7eb;">
-                    <div style="font-weight: 700; font-size: 0.95rem; color: #6b7280; margin-bottom: 6px;">
-                        <i class="fas fa-bus"></i> 經過的路線 (${routes.length})
-                    </div>
+                    <hr style="margin: 8px 0; border: none; border-top: 1px solid #e5e7eb;">
+                    <div style="font-weight: 700; font-size: 0.9rem; color: #4b5563; margin: 8px 0;">經過的路線 (${routes.length})</div>
                     <div class="popup-routes-container">
             `;
             
@@ -1331,9 +1375,11 @@
                 });
             }
             
-            popupContent += `<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e5e7eb; font-size: 0.75rem; color: #9ca3af; text-align: center;">💡 點擊路線號碼可快速切換</div></div>`;
+            popupContent += `</div>
+                    <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid #e5e7eb; font-size: 0.75rem; color: #9ca3af; text-align: center;">點擊路線可快速追蹤</div>
+                </div>`;
             
-            infoWindow.setContent(`<div style="margin:-16px;">${popupContent}</div>`); // Google InfoWindow 需要移除邊界
+            infoWindow.setContent(popupContent); // Google InfoWindow 需要移除邊界
         } catch (e) {
             console.error('取得站牌路線失敗:', e);
             infoWindow.setContent(`<div class="popup-error" style="padding:20px;"><i class="fas fa-times-circle"></i><br>無法取得路線資訊<br><small>${e.message}</small></div>`);
