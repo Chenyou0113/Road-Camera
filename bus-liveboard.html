@@ -1160,7 +1160,7 @@
                     </div>
                     <div class="stop-popup-grid">
                         ${mockRoutes.map(r => `
-                            <button class="stop-popup-btn" onclick="quickSwitchRoute('${r}')">${r}</button>
+                            <button class="stop-popup-btn" onclick="event.stopPropagation(); event.preventDefault(); quickSwitchRoute('${r}')">${r}</button>
                         `).join('')}
                     </div>
                     <div class="stop-popup-footer">
@@ -1283,17 +1283,34 @@
 
     // --- Helpers ---
     async function quickSwitchRoute(routeName) {
-        // 優化切換邏輯：先搜尋以確保跨縣市正確
+        // 優化切換邏輯：優先尋找當前城市的路線，避免跳到其他縣市
         try {
             const res = await fetch(`${WORKER_URL}?action=list_all&search=${encodeURIComponent(routeName)}`);
             const routes = await res.json();
             const routeArray = Array.isArray(routes) ? routes : (routes && Array.isArray(routes.data) ? routes.data : []);
-            const match = routeArray.find(r => r.name === routeName) || routeArray[0];
+            
+            // 1. 優先尋找：名稱完全一致 且 城市也一致
+            let match = routeArray.find(r => r.name === routeName && r.city === currentData.city);
+            
+            // 2. 次要尋找：如果是台北/新北，互相視為同一區域
+            if (!match && (currentData.city === 'Taipei' || currentData.city === 'NewTaipei')) {
+                match = routeArray.find(r => r.name === routeName && (r.city === 'Taipei' || r.city === 'NewTaipei'));
+            }
+
+            // 3. 備案：名稱完全一致的任何城市
+            if (!match) {
+                match = routeArray.find(r => r.name === routeName);
+            }
+
+            // 4. 最後手段：搜尋結果的第一筆
+            if (!match) match = routeArray[0];
+
             if (match) {
                 loadRoute(match.name, match.city, match.type);
                 return;
             }
         } catch (e) {}
+        // 如果 API 搜尋失敗，保險起見留在原城市載入
         loadRoute(routeName, currentData.city, currentData.type);
     }
 
