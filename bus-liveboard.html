@@ -865,6 +865,7 @@
         stops: {}, // { 0: [...], 1: [...] }
         info: {}   // 儲存原始 info 供 tab 顯示
     };
+    let vehicleMap = {}; // 用來儲存車牌對應的詳細資料 (年份、設備)
     let refreshInterval;
 
     // --- Google Maps Init ---
@@ -953,6 +954,34 @@
     });
 
     // --- Core: Load Route Data ---
+    async function loadVehicleData(city, type) {
+        // 如果已經載入過該城市的資料，就略過 (節省流量)
+        if (vehicleMap[city]) return;
+
+        try {
+            // 呼叫 Worker 取得該縣市所有車輛資料 (建立車牌對照表)
+            const res = await fetch(`${WORKER_URL}?action=vehicle&city=${city}`);
+            const data = await res.json();
+            
+            // 建立快取：Key=車牌, Value=資料
+            vehicleMap[city] = {};
+            if (Array.isArray(data)) {
+                data.forEach(v => {
+                    vehicleMap[city][v.PlateNumb] = {
+                        year: v.ManufactureYear || (v.PurchaseTime ? v.PurchaseTime.substring(0, 4) : '不詳'),
+                        isLowFloor: v.IsLowFloor === 1,
+                        hasWifi: v.HasWifi === 1,
+                        isElectric: v.IsElectric === 1 || v.VehicleType === 1,
+                        hasLift: v.HasLiftOrRamp === 1
+                    };
+                });
+            }
+            console.log(`已載入 ${city} 共 ${data.length || 0} 筆車輛字典資料`);
+        } catch (e) {
+            console.error("車籍字典載入失敗:", e);
+        }
+    }
+
     async function loadRoute(name, city, type) {
         // UI Reset
         suggestionsBox.style.display = 'none';
@@ -966,6 +995,9 @@
         currentData.route = name;
         currentData.city = city;
         currentData.type = type;
+
+        // 背景載入該城市的車輛字典 (不 await)
+        loadVehicleData(city, type);
 
         try {
             // 平行載入: 1.站點資料(info) 2.路線形狀(shape) 3.票價(fare)
@@ -1227,21 +1259,23 @@
                 if (nearbyBus.OperatorName?.Zh_tw) {
                     operator = nearbyBus.OperatorName.Zh_tw;
                 } else if (currentData.info && currentData.info[currentData.direction]?.Operators) {
-                    // 從該路線的營運業者清單中尋找
                     const ops = currentData.info[currentData.direction].Operators;
                     if (Array.isArray(ops) && ops.length > 0) {
                         operator = ops[0].OperatorName?.Zh_tw || '客運公司';
                     }
                 }
                 
-                // 優化：嘗試從多個可能欄位抓取年份 (ManufactureYear 或 VehicleInfo.ManufactureYear)
-                const year = nearbyBus.ManufactureYear || nearbyBus.VehicleInfo?.ManufactureYear || '不詳';
-                
-                // 使用提供的車輛規格欄位
-                const isLowFloor = nearbyBus.IsLowFloor === 1 || nearbyBus.VehicleInfo?.IsLowFloor === 1;
-                const hasWifi = nearbyBus.HasWifi === 1 || nearbyBus.VehicleInfo?.HasWifi === 1;
-                const isElectric = nearbyBus.IsElectric === 1 || nearbyBus.VehicleType === 1;
-                const hasLift = nearbyBus.HasLiftOrRamp === 1 || nearbyBus.VehicleInfo?.HasLiftOrRamp === 1;
+                // --- 查閱車籍字典獲取精確資料 ---
+                const plate = nearbyBus.PlateNumb || nearbyBus.plate || '---';
+                const cityRegistry = vehicleMap[currentData.city] || {};
+                const vReg = cityRegistry[plate] || {};
+
+                // 優先使用字典資料，否則使用 API 即時資料
+                const year = vReg.year || nearbyBus.ManufactureYear || nearbyBus.VehicleInfo?.ManufactureYear || '不詳';
+                const isLowFloor = vReg.isLowFloor || nearbyBus.IsLowFloor === 1 || nearbyBus.VehicleInfo?.IsLowFloor === 1;
+                const hasWifi = vReg.hasWifi || nearbyBus.HasWifi === 1 || nearbyBus.VehicleInfo?.HasWifi === 1;
+                const isElectric = vReg.isElectric || nearbyBus.IsElectric === 1 || nearbyBus.VehicleType === 1;
+                const hasLift = vReg.hasLift || nearbyBus.HasLiftOrRamp === 1 || nearbyBus.VehicleInfo?.HasLiftOrRamp === 1;
 
                 busEl.innerHTML = `
                     <div class="bus-badge"><i class="fas fa-bus"></i><span>${plate}</span></div>
@@ -1418,14 +1452,17 @@
             // Bus Details InfoWindow
             const plate = bus.PlateNumb || bus.plate || '未知車號';
             const operator = bus.OperatorName?.Zh_tw || '客運公司';
-            const year = bus.ManufactureYear || bus.VehicleInfo?.ManufactureYear || '不詳';
+
+            // --- 查閱車籍字典獲取精確資料 ---
+            const cityRegistry = vehicleMap[currentData.city] || {};
+            const vReg = cityRegistry[plate] || {};
+
+            const year = vReg.year || bus.ManufactureYear || bus.VehicleInfo?.ManufactureYear || '不詳';
+            const isElectric = vReg.isElectric || bus.IsElectric === 1 || bus.VehicleType === 1;
+            const isLowFloor = vReg.isLowFloor || bus.IsLowFloor === 1 || bus.VehicleInfo?.IsLowFloor === 1;
+            const hasWifi = vReg.hasWifi || bus.HasWifi === 1 || bus.VehicleInfo?.HasWifi === 1;
+
             const azimuth = bus.azi || 0;
-            const directionText = currentData.direction === 0 ? '去程' : '返程';
-            
-            // 規格資料 (來自使用者提供之實體欄位)
-            const isElectric = bus.IsElectric === 1 || bus.VehicleType === 1;
-            const isLowFloor = bus.IsLowFloor === 1 || bus.VehicleInfo?.IsLowFloor === 1;
-            const hasWifi = bus.HasWifi === 1 || bus.VehicleInfo?.HasWifi === 1;
 
             // 城市名稱轉換
             const cityMap = {
