@@ -461,8 +461,10 @@
                 const res = await fetch(`${WORKER_URL}?action=list_all&search=${encodeURIComponent(val)}`);
                 const routes = await res.json();
                 
+                const routeArray = Array.isArray(routes) ? routes : (routes && Array.isArray(routes.data) ? routes.data : []);
+                
                 // 前端過濾縣市 (Worker 可能回傳全台符合的)
-                const filtered = routes.filter(r => r.city === currentData.city || r.type === 'InterCity');
+                const filtered = routeArray.filter(r => r.city === currentData.city || r.type === 'InterCity');
                 
                 renderSuggestions(filtered.slice(0, 10)); // 取前10筆
             } catch (err) {
@@ -521,8 +523,11 @@
             ]);
 
             // 處理 Info (站點)
-            const dir0 = infoRes.find(d => d.Direction == 0);
-            const dir1 = infoRes.find(d => d.Direction == 1);
+            const infoList = Array.isArray(infoRes) ? infoRes : 
+                            (infoRes && typeof infoRes === 'object' && Array.isArray(infoRes.data) ? infoRes.data : []);
+            
+            const dir0 = infoList.find(d => d.Direction == 0);
+            const dir1 = infoList.find(d => d.Direction == 1);
             
             currentData.stops = {
                 0: dir0 ? dir0.Stops : [],
@@ -536,17 +541,21 @@
             document.getElementById('tab-1').style.display = dir1 ? 'block' : 'none';
 
             // 處理 Shape (地圖線型)
-            currentData.shapes = shapeRes; // 儲存起來 switchDirection 用
+            currentData.shapes = Array.isArray(shapeRes) ? shapeRes : [];
 
             // 處理 Fare (票價)
-            currentData.fare = fareRes;
+            currentData.fare = Array.isArray(fareRes) ? fareRes : [];
 
             // 預設載入方向 0
             switchDirection(0);
 
         } catch (e) {
-            alert('載入失敗，請重試');
             console.error(e);
+            if (e.message && (e.message.includes('429') || e.message.includes('rate limit'))) {
+                alert('⚠️ TDX API 流量限制中，請稍候再試');
+            } else {
+                alert('載入失敗，請重試');
+            }
         } finally {
             document.getElementById('loading').style.display = 'none';
         }
@@ -596,14 +605,15 @@
         // 立即抓即時資料
         refreshLiveData();
         
-        // 設定定時器
+        // 設定定時器 (增加到 20 秒以避免觸發 429 限制)
         if (refreshInterval) clearInterval(refreshInterval);
-        refreshInterval = setInterval(refreshLiveData, 15000);
+        refreshInterval = setInterval(refreshLiveData, 20000);
     }
 
     // --- Live Data Refresh ---
     async function refreshLiveData() {
         const icon = document.getElementById('refresh-icon');
+        const updateTimeEl = document.getElementById('update-time');
         icon.classList.add('fa-spin');
 
         try {
@@ -612,9 +622,25 @@
             const res = await fetch(url);
             const data = await res.json();
             
+            // 處理 429 Rate Limit 或其他 Worker 錯誤
+            if (data.error || res.status === 429) {
+                console.error('Rate limited or Worker error:', data.message || 'Unknown error');
+                updateTimeEl.innerText = '⚠️ 頻率過快';
+                updateTimeEl.style.color = '#ef4444';
+                // 如果是 429, 自動延長下一次抓取時間
+                if (res.status === 429 || (data.message && data.message.includes('429'))) {
+                    clearInterval(refreshInterval);
+                    refreshInterval = setInterval(refreshLiveData, 40000); // 延長到 40 秒
+                }
+                return;
+            }
+
+            // 恢復正常顏色
+            updateTimeEl.style.color = '';
+            
             // 更新 UI 時間
             const now = new Date();
-            document.getElementById('update-time').innerText = now.toTimeString().substring(0, 5);
+            updateTimeEl.innerText = now.toTimeString().substring(0, 5);
 
             // 更新站牌時間 (estimates)
             const estimates = data.estimates || {};
@@ -625,6 +651,7 @@
 
         } catch (e) {
             console.error('Update failed', e);
+            updateTimeEl.innerText = '⚠️ 連線錯誤';
         } finally {
             setTimeout(() => icon.classList.remove('fa-spin'), 1000);
         }
