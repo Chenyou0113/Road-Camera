@@ -91,6 +91,13 @@
             flex: 1;
         }
         
+        .bus-plate-info {
+            font-size: 0.8rem;
+            color: #0066cc;
+            font-weight: 600;
+            min-height: 18px;
+        }
+        
         .stop-sequence {
             display: inline-block;
             background: #0066cc;
@@ -1093,10 +1100,13 @@
             div.id = `stop-${stop.uid}`;
             div.style.cursor = 'pointer'; 
             div.innerHTML = `
-                <div style="display: flex; align-items: center; width: 100%; margin-bottom: 6px;">
+                <div style="display: flex; align-items: center; width: 100%; margin-bottom: 8px; gap: 10px;">
                     <span class="stop-sequence">${stop.sequence || (index + 1)}</span>
-                    <span class="stop-name" style="margin-bottom: 0;">${stop.name}</span>
-                    ${isInBuffer ? '<span class="buffer-tag" style="margin-left: auto;">緩衝區</span>' : ''}
+                    <div style="flex: 1;">
+                        <div class="stop-name" style="margin-bottom: 4px;">${stop.name}</div>
+                        <div class="bus-plate-info" style="font-size: 0.8rem; color: #9ca3af; height: 18px; min-height: 18px;">-- 無車資訊 --</div>
+                    </div>
+                    ${isInBuffer ? '<span class="buffer-tag">緩衝區</span>' : ''}
                 </div>
                 <span class="arrival-time time-none">讀取中</span>
             `;
@@ -1364,7 +1374,11 @@
             if (routes.length === 0) {
                 popupContent += `<div style="color: #9ca3af; text-align: center; padding: 20px; width: 100%;"><i class="fas fa-info-circle"></i><br>暫無路線資料</div>`;
             } else {
-                routes.forEach(routeName => {
+                const displayLimit = 8;  // 只顯示前 8 條路線
+                const displayedRoutes = routes.slice(0, displayLimit);
+                const hiddenCount = Math.max(0, routes.length - displayLimit);
+                
+                displayedRoutes.forEach(routeName => {
                     popupContent += `
                         <span class="popup-route-badge" 
                               onclick="switchToRoute('${routeName.replace(/'/g, "\\'")}')"
@@ -1373,6 +1387,10 @@
                         </span>
                     `;
                 });
+                
+                if (hiddenCount > 0) {
+                    popupContent += `<div style="font-size: 0.8rem; color: #9ca3af; text-align: center; margin-top: 8px; padding: 8px; background: #f3f4f6; border-radius: 6px;"> + ${hiddenCount} 條其他路線</div>`;
+                }
             }
             
             popupContent += `</div>
@@ -1509,21 +1527,29 @@
             });
     }
 
-    function updateArrivalTimes(estimates, direction) { /* ... (邏輯不變) ... */
+    function updateArrivalTimes(estimates, direction) { /* 更新到站時間和車號 */
         currentStops.forEach(stop => {
             const el = document.querySelector(`#stop-${stop.uid} .arrival-time`);
+            const plateInfo = document.querySelector(`#stop-${stop.uid} .bus-plate-info`);
             if (el) {
                 el.innerText = '未發車';
                 el.className = 'arrival-time time-none';
             }
+            if (plateInfo) {
+                plateInfo.innerText = '-- 無車資訊 --';
+            }
         });
+        
         for (const [key, value] of Object.entries(estimates)) {
             const [dir, stopUID] = key.split('_');
             if (dir !== direction) continue;
             const el = document.querySelector(`#stop-${stopUID} .arrival-time`);
+            const plateInfo = document.querySelector(`#stop-${stopUID} .bus-plate-info`);
             if (!el) continue;
+            
             let text = '';
             let statusClass = 'time-wait';
+            
             if (value.sec === null || value.sec === undefined) {
                 text = (value.status === 1) ? '未發車' : '末班已過';
                 statusClass = 'time-none';
@@ -1538,8 +1564,14 @@
                 text = `${mins} 分`;
                 statusClass = 'time-wait';
             }
+            
             el.innerText = text;
             el.className = `arrival-time ${statusClass}`;
+            
+            // 更新車號信息
+            if (plateInfo && value.plate) {
+                plateInfo.innerText = ` ${value.plate}`;
+            }
         }
     }
     
