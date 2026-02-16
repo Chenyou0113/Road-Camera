@@ -1111,35 +1111,16 @@
                     </div>
                     <div class="col-info">
                         <div class="stop-name">${s.StopName.Zh_tw}${bufferHtml}</div>
-                        <div class="stop-routes" id="routes-${s.StopUID}">
-                            <!-- 這裡會由 JS 動態填入行經路線 -->
-                        </div>
+                        <!-- 取消自動載入路線，改為點擊地圖顯示 -->
+                        <div class="stop-routes" id="routes-${s.StopUID}"></div>
                         <div id="bus-${s.StopUID}"></div>
                     </div>
                 </div>
             `;
         }).join('');
 
-        // 填充即時行經路線資料
-        stops.forEach(async (s) => {
-            const routesDiv = document.getElementById(`routes-${s.StopUID}`);
-            if (!routesDiv) return;
-
-            try {
-                const url = `${WORKER_URL}?action=stop_info&name=${encodeURIComponent(s.StopName.Zh_tw)}&city=${currentData.city}&category=${currentData.type}`;
-                const res = await fetch(url);
-                const data = await res.json();
-                const routes = (data.routes || []).filter(r => r !== currentData.route).slice(0, 5); // 顯示前5條
-                
-                if (routes.length > 0) {
-                    routesDiv.innerHTML = routes.map(r => `
-                        <span class="stop-route-pill" onclick="event.stopPropagation(); quickSwitchRoute('${r}')">${r}</span>
-                    `).join('');
-                }
-            } catch (e) {
-                console.error('Fetch stop routes failed', e);
-            }
-        });
+        // [移除] 這裡原本會自動抓取所有站點的行經路線，導致 429 錯誤
+        // 改為 Lazy Load: 使用者點擊地圖站牌時才觸發 fetchRealStopRoutes
 
         // 畫靜態地圖 (線 + 點)
         drawStaticMap(dir);
@@ -1391,40 +1372,60 @@
     }
 
     async function fetchRealStopRoutes(stopName, infoWindow) {
+        // 使用 sessionStorage 快取，減少 API 壓力 (解決 429 關鍵修正)
+        const cacheKey = `stop_${currentData.city}_${stopName}`;
+        
+        // 嘗試從本地快取讀取
+        let routes = [];
         try {
-            // 呼叫 Worker 查詢經過此站的路線
-            const url = `${WORKER_URL}?action=stop_info&name=${encodeURIComponent(stopName)}&city=${currentData.city}&category=${currentData.type}`;
-            const res = await fetch(url);
-            const data = await res.json();
-            
-            const routes = data.routes || [];
-            
-            // 產生彈窗內容
-            let content = `
-                <div class="stop-popup">
-                    <div class="stop-popup-header">
-                        <i class="fas fa-map-marker-alt"></i>
-                        <h3>${stopName}</h3>
-                    </div>
-                    <div class="stop-popup-section-title">
-                        <i class="fas fa-bus"></i> 經過的路線 (${routes.length})
-                    </div>
-                    <div class="stop-popup-grid">
-                        ${routes.length > 0 ? routes.map(r => `
-                            <button class="stop-popup-btn" onclick="event.stopPropagation(); event.preventDefault(); quickSwitchRoute('${r}')">${r}</button>
-                        `).join('') : '<span style="grid-column: span 3; text-align:center; color:#999;">無其他路線資料</span>'}
-                    </div>
-                    <div class="stop-popup-footer">
-                        <i class="fas fa-lightbulb"></i> 點擊路線號碼可快速切換
-                    </div>
-                </div>
-            `;
-            
-            infoWindow.setContent(content);
+            const cached = sessionStorage.getItem(cacheKey);
+            if (cached) {
+                routes = JSON.parse(cached);
+                console.log(`從快取讀取 ${stopName} 路線資料`);
+            }
+        } catch(e) { console.error('Cache read error', e); }
 
-        } catch (e) {
-            infoWindow.setContent(`<div style="padding:10px; color:red;">查詢失敗</div>`);
+        // 若無快取，則發送請求
+        if (!routes || routes.length === 0) {
+            try {
+                // 呼叫 Worker 查詢經過此站的路線
+                const url = `${WORKER_URL}?action=stop_info&name=${encodeURIComponent(stopName)}&city=${currentData.city}&category=${currentData.type}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                routes = data.routes || [];
+                
+                // 寫入快取
+                if (routes.length > 0) {
+                    sessionStorage.setItem(cacheKey, JSON.stringify(routes));
+                }
+            } catch (e) {
+                infoWindow.setContent(`<div style="padding:10px; color:red;">查詢失敗</div>`);
+                return;
+            }
         }
+            
+        // 產生彈窗內容 (Grid Layout)
+        let content = `
+            <div class="stop-popup">
+                <div class="stop-popup-header">
+                    <i class="fas fa-map-marker-alt"></i>
+                    <h3>${stopName}</h3>
+                </div>
+                <div class="stop-popup-section-title">
+                    <i class="fas fa-bus"></i> 經過的路線 (${routes.length})
+                </div>
+                <div class="stop-popup-grid">
+                    ${routes.length > 0 ? routes.map(r => `
+                        <button class="stop-popup-btn" onclick="event.stopPropagation(); event.preventDefault(); quickSwitchRoute('${r}')">${r}</button>
+                    `).join('') : '<span style="grid-column: span 3; text-align:center; color:#999;">無其他路線資料</span>'}
+                </div>
+                <div class="stop-popup-footer">
+                    <i class="fas fa-lightbulb"></i> 點擊路線號碼可快速切換
+                </div>
+            </div>
+        `;
+        
+        infoWindow.setContent(content);
     }
 
     function updateBusesMap(buses) {
@@ -1575,6 +1576,7 @@
     async function handleSearchPlate(val) {
         if (/^[A-Z0-9]{3}-?[A-Z0-9]{3,4}$/i.test(val)) {
             try {
+                // 修正 Worker 網址調用
                 const res = await fetch(`${WORKER_URL}?action=vehicle&plate=${val.toUpperCase()}`);
                 const data = await res.json();
                 if (data && data.RouteName) {
@@ -1587,8 +1589,19 @@
     }
 
     function focusMap(lat, lng) {
-        map.panTo({ lat, lng });
+        const pos = { lat, lng };
+        map.panTo(pos);
         map.setZoom(16);
+
+        // 也在地圖上打開對應的站點彈窗 (觸發 lazy load)
+        const marker = mapMarkers.stops.find(m => {
+            const mPos = m.getPosition();
+            return Math.abs(mPos.lat() - lat) < 0.00001 && Math.abs(mPos.lng() - lng) < 0.00001;
+        });
+
+        if (marker) {
+            new google.maps.event.trigger(marker, 'click');
+        }
     }
 
     function renderFareInfo(dir) {
