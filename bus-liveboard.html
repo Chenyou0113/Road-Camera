@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>台灣公車通 - 智慧即時動態</title>
+    <title>臺灣公車通 - 智慧即時動態</title>
     
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1088,15 +1088,24 @@
             `;
         }).join('');
 
-        // 填充模擬的行經路線 (實際應從 API 取得)
-        stops.forEach(s => {
+        // 填充即時行經路線資料
+        stops.forEach(async (s) => {
             const routesDiv = document.getElementById(`routes-${s.StopUID}`);
-            if (routesDiv) {
-                // 模擬 2-4 條行經該站的其他路線
-                const mockRoutes = ['299', '652', '藍2', '604'].filter(r => r !== currentData.route).slice(0, Math.floor(Math.random()*3)+1);
-                routesDiv.innerHTML = mockRoutes.map(r => `
-                    <span class="stop-route-pill" onclick="event.stopPropagation(); quickSwitchRoute('${r}')">${r}</span>
-                `).join('');
+            if (!routesDiv) return;
+
+            try {
+                const url = `${WORKER_URL}?action=stop_info&name=${encodeURIComponent(s.StopName.Zh_tw)}&city=${currentData.city}&category=${currentData.type}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                const routes = (data.routes || []).filter(r => r !== currentData.route).slice(0, 5); // 顯示前5條
+                
+                if (routes.length > 0) {
+                    routesDiv.innerHTML = routes.map(r => `
+                        <span class="stop-route-pill" onclick="event.stopPropagation(); quickSwitchRoute('${r}')">${r}</span>
+                    `).join('');
+                }
+            } catch (e) {
+                console.error('Fetch stop routes failed', e);
             }
         });
 
@@ -1225,20 +1234,21 @@
                     }
                 }
                 
-                const year = nearbyBus.ManufactureYear || '2022';
+                // 優化：嘗試從多個可能欄位抓取年份 (ManufactureYear 或 VehicleInfo.ManufactureYear)
+                const year = nearbyBus.ManufactureYear || nearbyBus.VehicleInfo?.ManufactureYear || '不詳';
                 
                 // 使用提供的車輛規格欄位
-                const isLowFloor = nearbyBus.IsLowFloor === 1;
-                const hasWifi = nearbyBus.HasWifi === 1;
-                const isElectric = nearbyBus.IsElectric === 1;
-                const hasLift = nearbyBus.HasLiftOrRamp === 1;
+                const isLowFloor = nearbyBus.IsLowFloor === 1 || nearbyBus.VehicleInfo?.IsLowFloor === 1;
+                const hasWifi = nearbyBus.HasWifi === 1 || nearbyBus.VehicleInfo?.HasWifi === 1;
+                const isElectric = nearbyBus.IsElectric === 1 || nearbyBus.VehicleType === 1;
+                const hasLift = nearbyBus.HasLiftOrRamp === 1 || nearbyBus.VehicleInfo?.HasLiftOrRamp === 1;
 
                 busEl.innerHTML = `
                     <div class="bus-badge"><i class="fas fa-bus"></i><span>${plate}</span></div>
                     <div class="bus-details-card">
                         <div class="bus-header">
                             <span class="bus-operator">${operator}</span>
-                            <span class="bus-year">${year}年車</span>
+                            <span class="bus-year">${year}${year !== '不詳' ? '年車' : ''}</span>
                         </div>
                         <div class="bus-equipments">
                             <i class="fas fa-bolt ${isElectric ? 'active' : ''}" title="電動公車"></i>
@@ -1312,51 +1322,70 @@
                 map: map,
                 icon: {
                     path: google.maps.SymbolPath.CIRCLE,
-                    scale: 9,
-                    fillColor: isBuffer ? '#f59e0b' : 'white',
+                    scale: 3, // 稍微縮小一點
+                    fillColor: 'white',
                     fillOpacity: 1,
-                    strokeColor: isBuffer ? '#d97706' : '#6b7280',
+                    strokeColor: isBuffer ? '#f59e0b' : '#6b7280',
                     strokeWeight: 2
-                },
-                label: {
-                    text: (idx + 1).toString(),
-                    color: isBuffer ? 'white' : "#4b5563",
-                    fontSize: "10px",
-                    fontWeight: "800"
                 },
                 zIndex: isBuffer ? 2 : 1
             });
-            // Info Window
-            const mockRoutes = ['299', '652', '藍2', '604', '232', '611', '212', '270', '263', '202'].filter(r => r !== currentData.route).slice(0, Math.floor(Math.random()*8)+3);
-            if (!mockRoutes.includes(currentData.route)) mockRoutes.unshift(currentData.route); // 包含目前路線
 
-            const stopInfoContent = `
+            // 【修改重點】：點擊時才去呼叫 API 查詢真實路線
+            const infoWindow = new google.maps.InfoWindow();
+            marker.addListener('click', () => {
+                // 先顯示 Loading
+                infoWindow.setContent(`
+                    <div style="padding:10px; text-align:center;">
+                        <div style="font-weight:bold; margin-bottom:5px;">${stop.StopName.Zh_tw}</div>
+                        <i class="fas fa-spinner fa-spin"></i> 正在查詢行經路線...
+                    </div>
+                `);
+                infoWindow.open(map, marker);
+                
+                // 呼叫真實查詢
+                fetchRealStopRoutes(stop.StopName.Zh_tw, infoWindow);
+            });
+            
+            mapMarkers.stops.push(marker);
+        });
+    }
+
+    async function fetchRealStopRoutes(stopName, infoWindow) {
+        try {
+            // 呼叫 Worker 查詢經過此站的路線
+            const url = `${WORKER_URL}?action=stop_info&name=${encodeURIComponent(stopName)}&city=${currentData.city}&category=${currentData.type}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            
+            const routes = data.routes || [];
+            
+            // 產生彈窗內容
+            let content = `
                 <div class="stop-popup">
                     <div class="stop-popup-header">
                         <i class="fas fa-map-marker-alt"></i>
-                        <h3>${stop.StopName.Zh_tw}</h3>
+                        <h3>${stopName}</h3>
                     </div>
                     <div class="stop-popup-section-title">
-                        <i class="fas fa-bus"></i> 經過的路線 (${mockRoutes.length})
+                        <i class="fas fa-bus"></i> 經過的路線 (${routes.length})
                     </div>
                     <div class="stop-popup-grid">
-                        ${mockRoutes.map(r => `
+                        ${routes.length > 0 ? routes.map(r => `
                             <button class="stop-popup-btn" onclick="event.stopPropagation(); event.preventDefault(); quickSwitchRoute('${r}')">${r}</button>
-                        `).join('')}
+                        `).join('') : '<span style="grid-column: span 3; text-align:center; color:#999;">無其他路線資料</span>'}
                     </div>
                     <div class="stop-popup-footer">
                         <i class="fas fa-lightbulb"></i> 點擊路線號碼可快速切換
                     </div>
                 </div>
             `;
-
-            const infoWindow = new google.maps.InfoWindow({
-                content: stopInfoContent
-            });
-            marker.addListener('click', () => infoWindow.open(map, marker));
             
-            mapMarkers.stops.push(marker);
-        });
+            infoWindow.setContent(content);
+
+        } catch (e) {
+            infoWindow.setContent(`<div style="padding:10px; color:red;">查詢失敗</div>`);
+        }
     }
 
     function updateBusesMap(buses) {
@@ -1389,13 +1418,14 @@
             // Bus Details InfoWindow
             const plate = bus.PlateNumb || bus.plate || '未知車號';
             const operator = bus.OperatorName?.Zh_tw || '客運公司';
+            const year = bus.ManufactureYear || bus.VehicleInfo?.ManufactureYear || '不詳';
             const azimuth = bus.azi || 0;
             const directionText = currentData.direction === 0 ? '去程' : '返程';
             
             // 規格資料 (來自使用者提供之實體欄位)
-            const isElectric = bus.IsElectric === 1;
-            const isLowFloor = bus.IsLowFloor === 1 || bus.VehicleType === 1;
-            const hasWifi = bus.HasWifi === 1;
+            const isElectric = bus.IsElectric === 1 || bus.VehicleType === 1;
+            const isLowFloor = bus.IsLowFloor === 1 || bus.VehicleInfo?.IsLowFloor === 1;
+            const hasWifi = bus.HasWifi === 1 || bus.VehicleInfo?.HasWifi === 1;
 
             // 城市名稱轉換
             const cityMap = {
@@ -1425,6 +1455,10 @@
                         <div class="bus-popup-row">
                             <div class="bus-popup-label"><i class="fas fa-map-marked-alt"></i> 城市</div>
                             <div class="bus-popup-value">${cityName}</div>
+                        </div>
+                        <div class="bus-popup-row">
+                            <div class="bus-popup-label"><i class="fas fa-calendar-alt"></i> 出廠年份</div>
+                            <div class="bus-popup-value">${year}${year !== '不詳' ? ' 年' : ''}</div>
                         </div>
                         <div class="bus-popup-row">
                             <div class="bus-popup-label"><i class="fas fa-route"></i> 行駛方向</div>
@@ -1624,21 +1658,33 @@
         
         title.innerHTML = `<i class="fas fa-clock"></i> <span>${currentData.route} 時刻表</span>`;
         
-        let content = '<div style="background:#f8fafc; padding:15px; border-radius:12px; margin-bottom:15px; border:1px solid #e2e8f0;">';
         const info = currentData.info && currentData.info[currentData.direction];
+        let content = '<div style="background:#f8fafc; padding:15px; border-radius:12px; margin-bottom:15px; border:1px solid #e2e8f0;">';
         
-        if (info) {
-            const first = info.SubRoutes?.[0]?.FirstBusTime || '05:30';
-            const last = info.SubRoutes?.[0]?.LastBusTime || '22:00';
+        if (info && info.SubRoutes && info.SubRoutes.length > 0) {
+            const sub = info.SubRoutes[0];
+            const weekdayFirst = sub.FirstBusTime || '--:--';
+            const weekdayLast = sub.LastBusTime || '--:--';
+            const holidayFirst = sub.HolidayFirstBusTime || weekdayFirst;
+            const holidayLast = sub.HolidayLastBusTime || weekdayLast;
+            
+            // 班距處理
+            const peak = sub.PeakHeadway || '彈性發車';
+            const offPeak = sub.OffPeakHeadway || '彈性發車';
             
             content += `
-                <div class="timetable-row"><strong>首班車時間</strong> <span style="font-weight:800; color:var(--primary)">${first}</span></div>
-                <div class="timetable-row"><strong>末班車時間</strong> <span style="font-weight:800; color:var(--danger)">${last}</span></div>
-                <div class="timetable-row"><strong>尖峰班距</strong> <span>7-10 分鐘</span></div>
-                <div class="timetable-row"><strong>離峰班距</strong> <span>15-20 分鐘</span></div>
+                <div style="font-weight: 800; color: #64748b; font-size: 0.85rem; margin-bottom: 8px; border-left: 4px solid var(--primary); padding-left: 8px;">發車時間</div>
+                <div class="timetable-row"><strong>平日首班</strong> <span style="font-weight:800; color:var(--primary)">${weekdayFirst}</span></div>
+                <div class="timetable-row"><strong>平日末班</strong> <span style="font-weight:800; color:var(--danger)">${weekdayLast}</span></div>
+                <div class="timetable-row"><strong>假日首班</strong> <span style="font-weight:800; color:var(--primary)">${holidayFirst}</span></div>
+                <div class="timetable-row"><strong>假日末班</strong> <span style="font-weight:800; color:var(--danger)">${holidayLast}</span></div>
+                
+                <div style="font-weight: 800; color: #64748b; font-size: 0.85rem; margin-top: 15px; margin-bottom: 8px; border-left: 4px solid var(--accent); padding-left: 8px;">班距資訊</div>
+                <div class="timetable-row"><strong>尖峰班距</strong> <span>${peak} ${isNaN(peak) ? '' : '分鐘'}</span></div>
+                <div class="timetable-row"><strong>離峰班距</strong> <span>${offPeak} ${isNaN(offPeak) ? '' : '分鐘'}</span></div>
             `;
         } else {
-            content += '<p style="text-align:center; color:#94a3b8; padding:20px;">暫未載入路線資料</p>';
+            content += '<p style="text-align:center; color:#94a3b8; padding:20px;">暫未載入詳細時刻資料</p>';
         }
         content += '</div>';
         content += '<p style="font-size:0.8rem; color:#64748b; text-align:center; margin:0;">※ 實際到站時間受路況影響，請參考即時動態</p>';
@@ -1658,20 +1704,43 @@
         let content = '<div class="fare-detail">';
         if (currentData.fare && currentData.fare.length > 0) {
             const f = currentData.fare[0];
+            const sectionFares = f.SectionFares || [];
+            
+            // 抓取全票票價 (通常是第一筆)
+            const mainFare = sectionFares.find(sf => sf.FareName?.Zh_tw?.includes('全票')) || sectionFares[0];
+            
             content += `
-                <div style="text-align:center; padding:10px 0;">
-                    <span style="font-size:0.9rem; color:#64748b;">全票票價</span><br>
-                    <span class="fare-price">$${f.SectionFares?.[0]?.Fare || 15} TWD</span>
+                <div style="text-align:center; padding:10px 0; background: #f0fdf4; border-radius: 12px; border: 1px solid #dcfce7; margin-bottom: 20px;">
+                    <span style="font-size:0.9rem; color:#166534; font-weight: 700;">全票票價</span><br>
+                    <span class="fare-price">$${mainFare?.Fare || '--'} TWD</span>
                 </div>
-                <div style="background:#fff7ed; padding:15px; border-radius:15px; border:1px solid #fed7aa; margin-top:15px;">
+                <div style="background:#fff7ed; padding:15px; border-radius:15px; border:1px solid #fed7aa;">
+                    <div style="font-weight: 800; color: #9a3412; font-size: 0.95rem; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
+                        <i class="fas fa-file-invoice-dollar"></i> 收費說明
+                    </div>
                     <p style="margin:0; font-size:0.9rem; color:#9a3412; line-height:1.6;">
-                        <strong>收費方式:</strong> ${f.FareDescription || '段次計費'}<br>
-                        <strong>分段資訊:</strong> ${f.SectionFares?.[0]?.SectionDescription || '依公車業者公告為準'}
+                        <strong>計費方式:</strong> ${f.FareDescription || '段次計費'}<br>
+                        <strong>分段資訊:</strong> ${mainFare?.SectionDescription || '依公車業者公告為準'}
                     </p>
                 </div>
             `;
+            
+            // 如果有多種票價類型 (半票、軍警等)
+            if (sectionFares.length > 1) {
+                content += '<div style="margin-top: 15px;">';
+                content += '<div style="font-size: 0.85rem; font-weight: 800; color: #64748b; margin-bottom: 8px;">其他票種</div>';
+                sectionFares.slice(1, 4).forEach(sf => {
+                    content += `
+                        <div class="timetable-row" style="font-size: 0.85rem;">
+                            <span>${sf.FareName?.Zh_tw || '其他'}</span>
+                            <span style="font-weight: 700;">$${sf.Fare}</span>
+                        </div>
+                    `;
+                });
+                content += '</div>';
+            }
         } else {
-            content += '<p style="text-align:center; color:#94a3b8; padding:20px;">暫無電子票價資訊</p>';
+            content += '<p style="text-align:center; color:#94a3b8; padding:20px;">暫未載入詳細電子票價資訊</p>';
         }
         content += '</div>';
         
