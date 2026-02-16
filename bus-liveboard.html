@@ -1707,47 +1707,59 @@
         }
     }
 
-    function showTimetableModal() {
+    async function showTimetableModal() {
         const modal = document.getElementById('modal-overlay');
         const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
         
-        title.innerHTML = `<i class="fas fa-clock"></i> <span>${currentData.route} 時刻表</span>`;
-        
-        const info = currentData.info && currentData.info[currentData.direction];
-        let content = '<div style="background:#f8fafc; padding:15px; border-radius:12px; margin-bottom:15px; border:1px solid #e2e8f0;">';
-        
-        if (info && info.SubRoutes && info.SubRoutes.length > 0) {
-            const sub = info.SubRoutes[0];
-            const weekdayFirst = sub.FirstBusTime || '--:--';
-            const weekdayLast = sub.LastBusTime || '--:--';
-            const holidayFirst = sub.HolidayFirstBusTime || weekdayFirst;
-            const holidayLast = sub.HolidayLastBusTime || weekdayLast;
-            
-            // 班距處理
-            const peak = sub.PeakHeadway || '彈性發車';
-            const offPeak = sub.OffPeakHeadway || '彈性發車';
-            
-            content += `
-                <div style="font-weight: 800; color: #64748b; font-size: 0.85rem; margin-bottom: 8px; border-left: 4px solid var(--primary); padding-left: 8px;">發車時間</div>
-                <div class="timetable-row"><strong>平日首班</strong> <span style="font-weight:800; color:var(--primary)">${weekdayFirst}</span></div>
-                <div class="timetable-row"><strong>平日末班</strong> <span style="font-weight:800; color:var(--danger)">${weekdayLast}</span></div>
-                <div class="timetable-row"><strong>假日首班</strong> <span style="font-weight:800; color:var(--primary)">${holidayFirst}</span></div>
-                <div class="timetable-row"><strong>假日末班</strong> <span style="font-weight:800; color:var(--danger)">${holidayLast}</span></div>
-                
-                <div style="font-weight: 800; color: #64748b; font-size: 0.85rem; margin-top: 15px; margin-bottom: 8px; border-left: 4px solid var(--accent); padding-left: 8px;">班距資訊</div>
-                <div class="timetable-row"><strong>尖峰班距</strong> <span>${peak} ${isNaN(peak) ? '' : '分鐘'}</span></div>
-                <div class="timetable-row"><strong>離峰班距</strong> <span>${offPeak} ${isNaN(offPeak) ? '' : '分鐘'}</span></div>
-            `;
-        } else {
-            content += '<p style="text-align:center; color:#94a3b8; padding:20px;">暫未載入詳細時刻資料</p>';
-        }
-        content += '</div>';
-        content += '<p style="font-size:0.8rem; color:#64748b; text-align:center; margin:0;">※ 實際到站時間受路況影響，請參考即時動態</p>';
-        
-        body.innerHTML = content;
+        title.innerHTML = `<i class="fas fa-clock"></i> <span>${currentData.route} 時刻表摘要</span>`;
+        body.innerHTML = `<div style="text-align:center; padding:20px;"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>`;
         modal.style.display = 'flex';
         document.getElementById('options-dropdown').style.display = 'none';
+
+        try {
+            // 呼叫 Worker (action=first_last_trip)
+            const url = `${WORKER_URL}?action=first_last_trip&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}&category=${currentData.type}`;
+            const res = await fetch(url);
+            const data = await res.json();
+
+            if (!data || data.length === 0) {
+                body.innerHTML = '<p style="text-align:center; color:#94a3b8; padding:20px;">此路線暫無首末班車資料</p>';
+                return;
+            }
+
+            // 取得當前方向的資料
+            const tripInfo = data.find(d => d.Direction == currentData.direction) || data[0];
+            
+            let html = '<div style="background:#f8fafc; padding:15px; border-radius:12px; margin-bottom:15px; border:1px solid #e2e8f0;">';
+            
+            // 遍歷不同的服務日 (平日/假日)
+            if (tripInfo.FirstLastTrips && tripInfo.FirstLastTrips.length > 0) {
+                tripInfo.FirstLastTrips.forEach(trip => {
+                    const dayType = trip.ServiceDay.ServiceTag || "營運日";
+                    // 簡單翻譯
+                    const dayLabel = dayType === 'Saturday' ? '星期六' : (dayType === 'Sunday' ? '星期日' : (dayType === 'NationalHolidays' ? '國定假日' : '平日'));
+
+                    html += `
+                        <div style="margin-bottom:15px; border-bottom:1px solid #eee; padding-bottom:10px;">
+                            <div style="font-weight:900; color:var(--primary); margin-bottom:8px;">📅 ${dayLabel} (${dayType})</div>
+                            <div class="timetable-row"><strong>首班車</strong> <span style="color:var(--primary)">${trip.FirstTripDepTime}</span></div>
+                            <div class="timetable-row"><strong>末班車</strong> <span style="color:var(--danger)">${trip.LastTripDepTime}</span></div>
+                        </div>
+                    `;
+                });
+            } else {
+                 html += '<p style="text-align:center; color:#64748b;">無發車資訊</p>';
+            }
+
+            html += '</div>';
+            html += '<p style="font-size:0.8rem; color:#64748b; text-align:center; margin:0;">※ 資料來源：TDX 首末班車資訊 API</p>';
+            body.innerHTML = html;
+
+        } catch (e) {
+            console.error(e);
+            body.innerHTML = '<p style="text-align:center; color:red; padding:20px;">資料載入失敗</p>';
+        }
     }
 
     function showFareModal() {
