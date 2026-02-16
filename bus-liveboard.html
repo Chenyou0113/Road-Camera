@@ -1055,24 +1055,45 @@
             
             container.appendChild(div);
 
-            // 創建 Google Marker
-            const marker = createGoogleMarker(stop.lat, stop.lon, '', stop, false); // isBus=false
-            if (marker) {
-                marker.id = `stop-${stop.uid}`; // 方便後續查找
-                
-                // 綁定點擊事件
-                setupMarkerClickListener(marker, stop, routeName, category, null, false);
-                
-                // Google Maps Marker 在創建時已自動添加到地圖上（通過 map: map 參數）
-                mapStopMarkers.push(marker);
+            // 驗證停靠站座標有效性
+            const lat = parseFloat(stop.lat);
+            const lon = parseFloat(stop.lon);
+            
+            if (!isNaN(lat) && !isNaN(lon) && isFinite(lat) && isFinite(lon)) {
+                // 檢查台灣邊界 (緯度: 21-26, 經度: 119-122)
+                if (lat >= 21 && lat <= 26 && lon >= 119 && lon <= 122) {
+                    // 創建 Google Marker
+                    const marker = createGoogleMarker(lat, lon, '', stop, false); // isBus=false
+                    if (marker) {
+                        marker.id = `stop-${stop.uid}`; // 方便後續查找
+                        
+                        // 綁定點擊事件
+                        setupMarkerClickListener(marker, stop, routeName, category, null, false);
+                        
+                        // Google Maps Marker 在創建時已自動添加到地圖上（通過 map: map 參數）
+                        mapStopMarkers.push(marker);
+                    }
+                } else {
+                    console.warn(`⚠️ 停靠站 "${stop.name}" 座標超出台灣邊界: (${lat}, ${lon})`);
+                }
+            } else {
+                console.warn(`⚠️ 停靠站 "${stop.name}" 座標無效: (${stop.lat}, ${stop.lon})`);
             }
         });
 
         // 調整地圖視角
         if (stops.length > 0) {
             const bounds = new google.maps.LatLngBounds();
-            stops.forEach(s => bounds.extend({ lat: s.lat, lng: s.lon }));
-            map.fitBounds(bounds);
+            stops.forEach(s => {
+                const lat = parseFloat(s.lat);
+                const lon = parseFloat(s.lon);
+                if (!isNaN(lat) && !isNaN(lon) && isFinite(lat) && isFinite(lon)) {
+                    bounds.extend({ lat: lat, lng: lon });
+                }
+            });
+            if (!bounds.isEmpty()) {
+                map.fitBounds(bounds);
+            }
         }
         
         updateStopMarkersVisibility();
@@ -1139,19 +1160,23 @@
             
             const coordinates = parseRouteGeometry(targetRoute);
             
-            if (coordinates.length > 0) {
-                // Google Maps Polyline
-                currentRouteLine = new google.maps.Polyline({
-                    path: coordinates,
-                    geodesic: true,
-                    strokeColor: '#667eea',
-                    strokeOpacity: 0.7,
-                    strokeWeight: 5,
-                    // Google Maps 不直接支援 CSS 的 dashArray，需要使用 PatternOption 或第三方庫模擬
-                });
-                currentRouteLine.setMap(map);
-                console.log('🗺️ 路線已繪製到地圖上 (GM)');
+            // 驗證坐標數據
+            if (!Array.isArray(coordinates) || coordinates.length === 0) {
+                console.log('⚠️ 路線座標無效，跳過繪製');
+                return;
             }
+            
+            // Google Maps Polyline
+            currentRouteLine = new google.maps.Polyline({
+                path: coordinates,
+                geodesic: true,
+                strokeColor: '#667eea',
+                strokeOpacity: 0.7,
+                strokeWeight: 5,
+                // Google Maps 不直接支援 CSS 的 dashArray，需要使用 PatternOption 或第三方庫模擬
+            });
+            currentRouteLine.setMap(map);
+            console.log('🗺️ 路線已繪製到地圖上 (GM)');
         } catch (e) {
             console.error('❌ 繪製路線失敗 (GM):', e);
         }
@@ -1461,11 +1486,25 @@
         return '未知方向';
     }
 
-    function parseRouteGeometry(routeData) { /* ... (邏輯不變) ... */
-        if (routeData.Geometry) return parseWktLineString(routeData.Geometry);
-        if (routeData.EncodedPolyline) return decodePolyline(routeData.EncodedPolyline);
-        console.warn('路線資料中沒有找到 Geometry 或 EncodedPolyline');
-        return [];
+    function parseRouteGeometry(routeData) { 
+        let coords = [];
+        if (routeData.Geometry) coords = parseWktLineString(routeData.Geometry);
+        if (!coords || coords.length === 0) coords = routeData.EncodedPolyline ? decodePolyline(routeData.EncodedPolyline) : [];
+        
+        if (!coords || coords.length === 0) {
+            console.warn('路線資料中沒有找到有效的 Geometry 或 EncodedPolyline');
+            return [];
+        }
+        
+        // 確保坐標格式為 {lat, lng} 對象（Google Maps 所需格式）
+        return coords.map(coord => {
+            if (Array.isArray(coord)) {
+                return { lat: coord[0], lng: coord[1] };
+            } else if (coord && typeof coord === 'object') {
+                return { lat: coord.lat || coord[0], lng: coord.lng || coord[1] };
+            }
+            return null;
+        }).filter(coord => coord && isFinite(coord.lat) && isFinite(coord.lng));
     }
     
     function parseWktLineString(wkt) { /* ... (邏輯不變) ... */
