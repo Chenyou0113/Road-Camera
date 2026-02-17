@@ -766,6 +766,120 @@
             50% { opacity: 0.6; transform: scale(0.95); }
             100% { opacity: 1; transform: scale(1); }
         }
+/* --- 新增：票價查詢樣式 --- */
+.fare-selector-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: #f8fafc;
+    padding: 16px;
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+}
+
+.fare-select-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.fare-select-label {
+    width: 40px;
+    font-weight: 700;
+    color: var(--text-sub);
+    font-size: 0.9rem;
+}
+
+.fare-select-box {
+    flex: 1;
+    padding: 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: white;
+    font-size: 1rem;
+    color: var(--text-main);
+    outline: none;
+}
+
+.fare-arrow {
+    text-align: center;
+    color: var(--primary);
+    font-size: 1.2rem;
+    margin: -5px 0;
+}
+
+.fare-result-box {
+    margin-top: 20px;
+    text-align: center;
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    padding: 20px;
+    border-radius: 12px;
+}
+
+.fare-main-price {
+    font-size: 2.5rem;
+    font-weight: 900;
+    color: #059669;
+    line-height: 1;
+}
+
+.fare-sub-text {
+    color: #047857;
+    font-size: 0.9rem;
+    margin-top: 8px;
+    font-weight: 600;
+}
+
+/* --- 新增：詳細時刻表樣式 --- */
+.timetable-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+}
+
+.timetable-tab-btn {
+    padding: 8px 16px;
+    background: #f1f5f9;
+    border: none;
+    border-radius: 20px;
+    color: #64748b;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s;
+}
+
+.timetable-tab-btn.active {
+    background: var(--primary);
+    color: white;
+    box-shadow: 0 4px 6px rgba(37, 99, 235, 0.2);
+}
+
+.timetable-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+    gap: 10px;
+}
+
+.time-chip {
+    background: white;
+    border: 1px solid #e2e8f0;
+    padding: 8px 4px;
+    text-align: center;
+    border-radius: 8px;
+    font-weight: 600;
+    color: var(--text-main);
+    font-size: 0.95rem;
+}
+
+.time-chip:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: #eff6ff;
+}
     </style>
 </head>
 <body>
@@ -1707,114 +1821,292 @@
         }
     }
 
+    // --- 新版：詳細時刻表 (支援 action=schedule) ---
     async function showTimetableModal() {
         const modal = document.getElementById('modal-overlay');
         const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
         
-        title.innerHTML = `<i class="fas fa-clock"></i> <span>${currentData.route} 時刻表摘要</span>`;
-        body.innerHTML = `<div style="text-align:center; padding:20px;"><i class="fas fa-spinner fa-spin"></i> 載入中...</div>`;
+        title.innerHTML = `<i class="fas fa-clock"></i> <span>${currentData.route} 詳細時刻表</span>`;
+        body.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>載入班表資料中...</div>`;
         modal.style.display = 'flex';
         document.getElementById('options-dropdown').style.display = 'none';
 
         try {
-            // 呼叫 Worker (action=first_last_trip)
-            const url = `${WORKER_URL}?action=first_last_trip&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}&category=${currentData.type}`;
+            // 改為呼叫 schedule action
+            const url = `${WORKER_URL}?action=schedule&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}&category=${currentData.type}`;
             const res = await fetch(url);
             const data = await res.json();
 
-            if (!data || data.length === 0) {
-                body.innerHTML = '<p style="text-align:center; color:#94a3b8; padding:20px;">此路線暫無首末班車資料</p>';
+            // 檢查是否有資料
+            const scheduleList = Array.isArray(data) ? data : (data.data || []);
+            
+            // 過濾出目前方向 (Direction) 的班表
+            const dirSchedules = scheduleList.filter(s => s.Direction == currentData.direction);
+
+            if (dirSchedules.length === 0) {
+                // 如果沒有詳細班表，嘗試退回到舊的首末班車邏輯 (Fallback)
+                console.log("查無詳細班表，嘗試載入首末班車...");
+                await showFirstLastTripFallback(body);
                 return;
             }
 
-            // 取得當前方向的資料
-            const tripInfo = data.find(d => d.Direction == currentData.direction) || data[0];
+            // 整理資料：依照 ServiceDay (平日/假日) 分組
+            // 結構: { 'Monday': [], 'Saturday': [], ... }
+            const groups = {};
+            const dayMap = {
+                'Monday': '週一', 'Tuesday': '週二', 'Wednesday': '週三', 'Thursday': '週四', 'Friday': '週五',
+                'Saturday': '週六', 'Sunday': '週日', 'NationalHolidays': '國定假日'
+            };
             
-            let html = '<div style="background:#f8fafc; padding:15px; border-radius:12px; margin-bottom:15px; border:1px solid #e2e8f0;">';
-            
-            // 遍歷不同的服務日 (平日/假日)
-            if (tripInfo.FirstLastTrips && tripInfo.FirstLastTrips.length > 0) {
-                tripInfo.FirstLastTrips.forEach(trip => {
-                    const dayType = trip.ServiceDay.ServiceTag || "營運日";
-                    // 簡單翻譯
-                    const dayLabel = dayType === 'Saturday' ? '星期六' : (dayType === 'Sunday' ? '星期日' : (dayType === 'NationalHolidays' ? '國定假日' : '平日'));
+            // 簡單分類：平日 (Mon-Fri) / 假日 (Sat, Sun, Holiday)
+            const simplifiedGroups = {
+                'weekday': { label: '平日 (週一至週五)', times: [] },
+                'weekend': { label: '假日 (週末/國定假日)', times: [] }
+            };
 
-                    html += `
-                        <div style="margin-bottom:15px; border-bottom:1px solid #eee; padding-bottom:10px;">
-                            <div style="font-weight:900; color:var(--primary); margin-bottom:8px;">📅 ${dayLabel} (${dayType})</div>
-                            <div class="timetable-row"><strong>首班車</strong> <span style="color:var(--primary)">${trip.FirstTripDepTime}</span></div>
-                            <div class="timetable-row"><strong>末班車</strong> <span style="color:var(--danger)">${trip.LastTripDepTime}</span></div>
-                        </div>
-                    `;
+            dirSchedules.forEach(item => {
+                // 判斷是平日還是假日
+                const days = item.ServiceDay;
+                let isWeekend = (days.Saturday === 1 || days.Sunday === 1 || days.NationalHolidays === 1);
+                let isWeekday = (days.Monday === 1); // 簡化判斷
+
+                if (item.Timetables && item.Timetables.length > 0) {
+                    const times = item.Timetables.map(t => t.DepartureTime).sort();
+                    if (isWeekend) {
+                        simplifiedGroups.weekend.times = [...new Set([...simplifiedGroups.weekend.times, ...times])].sort();
+                    } 
+                    // 只有當尚未填入資料，或是這是平日資料時才加入 (避免重複)
+                    if (isWeekday) {
+                        simplifiedGroups.weekday.times = [...new Set([...simplifiedGroups.weekday.times, ...times])].sort();
+                    }
+                }
+            });
+
+            // 渲染 UI
+            let html = '<div class="timetable-container">';
+            
+            // Tabs
+            html += '<div class="timetable-tabs">';
+            html += `<button class="timetable-tab-btn active" onclick="switchTimetableTab('weekday')">平日班表</button>`;
+            html += `<button class="timetable-tab-btn" onclick="switchTimetableTab('weekend')">假日班表</button>`;
+            html += '</div>';
+
+            // Content Areas
+            const renderGrid = (times, id, active) => {
+                const style = active ? 'display:grid' : 'display:none';
+                if (!times || times.length === 0) return `<div id="${id}" class="timetable-grid" style="${style}"><div style="grid-column:1/-1; text-align:center; color:#94a3b8; padding:20px;">無發車資料</div></div>`;
+                
+                let gridHtml = `<div id="${id}" class="timetable-grid" style="${style}">`;
+                times.forEach(t => {
+                    // 格式化時間 HH:mm
+                    const timeStr = t.length > 5 ? t.substring(0, 5) : t; 
+                    gridHtml += `<div class="time-chip">${timeStr}</div>`;
                 });
-            } else {
-                 html += '<p style="text-align:center; color:#64748b;">無發車資訊</p>';
-            }
+                gridHtml += `</div>`;
+                return gridHtml;
+            };
+
+            html += renderGrid(simplifiedGroups.weekday.times, 'content-weekday', true);
+            html += renderGrid(simplifiedGroups.weekend.times, 'content-weekend', false);
 
             html += '</div>';
-            html += '<p style="font-size:0.8rem; color:#64748b; text-align:center; margin:0;">※ 資料來源：TDX 首末班車資訊 API</p>';
+            html += '<p style="font-size:0.8rem; color:#64748b; text-align:center; margin-top:15px;">※ 實際發車可能受路況影響，請參考動態資訊</p>';
+
             body.innerHTML = html;
+
+            // 綁定 Tab 切換功能 (Inline script for modal interaction)
+            window.switchTimetableTab = function(type) {
+                document.querySelectorAll('.timetable-tab-btn').forEach(b => b.classList.remove('active'));
+                event.target.classList.add('active');
+                
+                document.getElementById('content-weekday').style.display = 'none';
+                document.getElementById('content-weekend').style.display = 'none';
+                document.getElementById('content-' + type).style.display = 'grid';
+            };
 
         } catch (e) {
             console.error(e);
-            body.innerHTML = '<p style="text-align:center; color:red; padding:20px;">資料載入失敗</p>';
+            body.innerHTML = '<p style="text-align:center; color:red; padding:20px;">無法取得詳細時刻表</p>';
         }
     }
 
+    // 備用：舊的首末班車邏輯 (當無詳細班表時使用)
+    async function showFirstLastTripFallback(bodyEl) {
+        try {
+            const url = `${WORKER_URL}?action=first_last_trip&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}&category=${currentData.type}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            const tripInfo = data.find(d => d.Direction == currentData.direction);
+            
+            if (!tripInfo || !tripInfo.FirstLastTrips) {
+                bodyEl.innerHTML = '<p style="text-align:center;">無資料</p>';
+                return;
+            }
+
+            let html = '<div style="background:#f8fafc; padding:15px; border-radius:12px;">';
+            tripInfo.FirstLastTrips.forEach(trip => {
+                const dayType = trip.ServiceDay.ServiceTag;
+                html += `<div style="margin-bottom:10px;"><strong>\${dayType}</strong>: 首 \${trip.FirstTripDepTime} / 末 \${trip.LastTripDepTime}</div>`;
+            });
+            html += '</div><p style="text-align:center; font-size:0.8rem; color:#666; margin-top:10px;">(僅顯示首末班車)</p>';
+            bodyEl.innerHTML = html;
+        } catch(e) { bodyEl.innerHTML = '載入失敗'; }
+    }
+
+
+    // --- 新版：起訖點票價計算 ---
     function showFareModal() {
         const modal = document.getElementById('modal-overlay');
         const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
         
-        title.innerHTML = `<i class="fas fa-dollar-sign"></i> <span>${currentData.route} 票價資訊</span>`;
+        title.innerHTML = `<i class="fas fa-calculator"></i> <span>\${currentData.route} 票價試算</span>`;
         
-        let content = '<div class="fare-detail">';
-        if (currentData.fare && currentData.fare.length > 0) {
-            const f = currentData.fare[0];
-            const sectionFares = f.SectionFares || [];
-            
-            // 抓取全票票價 (通常是第一筆)
-            const mainFare = sectionFares.find(sf => sf.FareName?.Zh_tw?.includes('全票')) || sectionFares[0];
-            
-            content += `
-                <div style="text-align:center; padding:10px 0; background: #f0fdf4; border-radius: 12px; border: 1px solid #dcfce7; margin-bottom: 20px;">
-                    <span style="font-size:0.9rem; color:#166534; font-weight: 700;">全票票價</span><br>
-                    <span class="fare-price">$${mainFare?.Fare || '--'} TWD</span>
-                </div>
-                <div style="background:#fff7ed; padding:15px; border-radius:15px; border:1px solid #fed7aa;">
-                    <div style="font-weight: 800; color: #9a3412; font-size: 0.95rem; margin-bottom: 10px; display: flex; align-items: center; gap: 8px;">
-                        <i class="fas fa-file-invoice-dollar"></i> 收費說明
-                    </div>
-                    <p style="margin:0; font-size:0.9rem; color:#9a3412; line-height:1.6;">
-                        <strong>計費方式:</strong> ${f.FareDescription || '段次計費'}<br>
-                        <strong>分段資訊:</strong> ${mainFare?.SectionDescription || '依公車業者公告為準'}
-                    </p>
-                </div>
-            `;
-            
-            // 如果有多種票價類型 (半票、軍警等)
-            if (sectionFares.length > 1) {
-                content += '<div style="margin-top: 15px;">';
-                content += '<div style="font-size: 0.85rem; font-weight: 800; color: #64748b; margin-bottom: 8px;">其他票種</div>';
-                sectionFares.slice(1, 4).forEach(sf => {
-                    content += `
-                        <div class="timetable-row" style="font-size: 0.85rem;">
-                            <span>${sf.FareName?.Zh_tw || '其他'}</span>
-                            <span style="font-weight: 700;">$${sf.Fare}</span>
-                        </div>
-                    `;
-                });
-                content += '</div>';
-            }
-        } else {
-            content += '<p style="text-align:center; color:#94a3b8; padding:20px;">暫未載入詳細電子票價資訊</p>';
+        // 1. 準備站點列表
+        const stops = currentData.stops[currentData.direction];
+        if (!stops || stops.length === 0) {
+            body.innerHTML = '<p style="padding:20px; text-align:center;">此方向無站點資料，無法計算。</p>';
+            modal.style.display = 'flex';
+            return;
         }
-        content += '</div>';
+
+        // 2. 建立選單 HTML
+        // 生成選項
+        const optionsHtml = stops.map((s, idx) => `<option value="\${idx}">\${idx+1}. \${s.StopName.Zh_tw}</option>`).join('');
+        
+        // 預設選單：起點設為第1站，終點設為最後1站
+        const lastIdx = stops.length - 1;
+
+        let content = `
+            <div class="fare-selector-group">
+                <div class="fare-select-row">
+                    <div class="fare-select-label">上車</div>
+                    <select id="fare-start" class="fare-select-box" onchange="calculateODFare()">\${optionsHtml}</select>
+                </div>
+                <div class="fare-arrow"><i class="fas fa-arrow-down"></i></div>
+                <div class="fare-select-row">
+                    <div class="fare-select-label">下車</div>
+                    <select id="fare-end" class="fare-select-box" onchange="calculateODFare()">\${optionsHtml}</select>
+                </div>
+            </div>
+
+            <div id="fare-result-area" class="fare-result-box">
+                <div class="fare-sub-text">請選擇上下車站點以計算</div>
+            </div>
+            
+            <div style="margin-top:15px; font-size:0.8rem; color:#94a3b8; text-align:center;">
+                ※ 票價僅供參考，實際收費依車上刷卡機或公告為準
+            </div>
+        `;
         
         body.innerHTML = content;
         modal.style.display = 'flex';
         document.getElementById('options-dropdown').style.display = 'none';
+
+        // 設定下拉選單預設值
+        document.getElementById('fare-start').selectedIndex = 0;
+        document.getElementById('fare-end').selectedIndex = lastIdx;
+        
+        // 立即計算一次
+        calculateODFare();
+    }
+
+    // 計算 OD 票價的核心邏輯
+    function calculateODFare() {
+        const startIdx = parseInt(document.getElementById('fare-start').value);
+        const endIdx = parseInt(document.getElementById('fare-end').value);
+        const resultArea = document.getElementById('fare-result-area');
+        
+        const stops = currentData.stops[currentData.direction];
+        const startStopName = stops[startIdx].StopName.Zh_tw;
+        const endStopName = stops[endIdx].StopName.Zh_tw;
+
+        // 錯誤檢查：下車站不能在上車站之前
+        if (endIdx <= startIdx) {
+            resultArea.innerHTML = `<div style="color:#ef4444; font-weight:bold;">下車站必須位於上車站之後</div>`;
+            resultArea.style.borderColor = '#fca5a5';
+            resultArea.style.background = '#fef2f2';
+            return;
+        } else {
+            resultArea.style.borderColor = '#a7f3d0';
+            resultArea.style.background = '#ecfdf5';
+        }
+
+        // 嘗試從 API 資料中尋找票價
+        // 結構通常在 currentData.fare[0].ODFares (客運/里程) 或 StageFares (市區/段次)
+        // 這裡需要做一些模糊比對或遍歷
+        
+        let price = null;
+        let fareType = "單程票";
+        
+        if (currentData.fare && currentData.fare.length > 0) {
+            const fareData = currentData.fare[0];
+
+            // 策略 1: 檢查是否有 ODFares (通常用於公路客運/里程計費)
+            if (fareData.ODFares && fareData.ODFares.length > 0) {
+                // 尋找符合起訖站的資料
+                const match = fareData.ODFares.find(od => {
+                    return (od.OriginStopName.Zh_tw === startStopName && od.DestinationStopName.Zh_tw === endStopName);
+                });
+
+                if (match && match.Fares) {
+                    // 通常取第一個 (全票)
+                    const fullFare = match.Fares.find(f => f.FareName.Zh_tw.includes('全票')) || match.Fares[0];
+                    price = fullFare.Price;
+                    fareType = "里程計費";
+                }
+            }
+            
+            // 策略 2: 如果沒有 OD 票價，檢查是否為段次計費 (StageFares)
+            // 這是簡易判斷：計算經過多少個緩衝區
+            if (price === null && fareData.SectionFares) {
+                // 這是比較複雜的市區公車邏輯，簡化處理：
+                // 如果是單一段票，直接顯示基本票價
+                // 如果有多段票，這通常需要 API 提供詳細的 BufferZone 邏輯
+                // 這裡我們先顯示預設的全票價格 (通常在第一個 Fare 結構裡)
+                
+                // 嘗試找基本全票
+                const baseFareObj = fareData.SectionFares[0]?.Fares?.find(f => f.FareName?.Zh_tw?.includes('全票')) || fareData.SectionFares[0]?.Fares?.[0];
+                const basePrice = baseFareObj?.Price || 15;
+                
+                // 檢查是否跨越緩衝區
+                let sections = 1;
+                const buffers = fareData.SectionFares[0]?.BufferZones?.filter(z => z.Direction == currentData.direction) || [];
+                
+                // 簡單判斷：如果 起點在緩衝區前 且 終點在緩衝區後，則 +1 段
+                // 注意：這只是近似算法，精確算法需要比對站序 Index
+                buffers.forEach(buf => {
+                    // 需要取得緩衝區起訖站在 stops 陣列中的 index
+                    const bufStartIdx = stops.findIndex(s => s.StopName.Zh_tw === buf.FareBufferZoneOrigin.OriginStopName.Zh_tw);
+                    const bufEndIdx = stops.findIndex(s => s.StopName.Zh_tw === buf.FareBufferZoneDestination.DestinationStopName.Zh_tw);
+                    
+                    if (bufStartIdx > -1 && bufEndIdx > -1) {
+                        // 如果 起點 < 緩衝區起點 且 終點 > 緩衝區終點，則加一段
+                        // (這只是通用邏輯，雙北公車是這樣，其他縣市可能不同)
+                        if (startIdx < bufStartIdx && endIdx > bufEndIdx) {
+                            sections++;
+                        }
+                    }
+                });
+
+                price = basePrice * sections;
+                fareType = sections > 1 ? `\${sections} 段票` : "1 段票";
+            }
+        }
+
+        // 渲染結果
+        if (price !== null) {
+            resultArea.innerHTML = `
+                <div class="fare-main-price">$ֿ\${price}</div>
+                <div class="fare-sub-text">\${fareType} • 全票</div>
+            `;
+        } else {
+            resultArea.innerHTML = `
+                <div class="fare-main-price" style="font-size:1.5rem; color:#64748b;">--</div>
+                <div class="fare-sub-text">暫無詳細票價資料</div>
+            `;
+        }
     }
 
     function closeModal() {
