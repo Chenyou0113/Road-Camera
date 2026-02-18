@@ -2096,26 +2096,25 @@
         }, 50);
     }
 
-    // --- [修正版] 票價計算邏輯 ---
+    // --- [全能修正版] 票價計算邏輯 (支援 宜蘭StageFares 與 台北SectionFares) ---
     function calculateODFare() {
         const startSelect = document.getElementById('fare-start');
         const endSelect = document.getElementById('fare-end');
         const resultArea = document.getElementById('fare-result-area');
 
-        // 防呆：如果元素找不到，直接退出
+        // 1. 防呆檢查
         if (!startSelect || !endSelect || !resultArea) return;
 
         const startIdx = parseInt(startSelect.value);
         const endIdx = parseInt(endSelect.value);
         const stops = currentData.stops[currentData.direction];
 
-        // 防呆：確保站點有效
         if (!stops || !stops[startIdx] || !stops[endIdx]) return;
 
         const startStopName = stops[startIdx].StopName.Zh_tw;
         const endStopName = stops[endIdx].StopName.Zh_tw;
 
-        // 檢查方向
+        // 2. 檢查方向邏輯
         if (endIdx <= startIdx) {
             resultArea.innerHTML = `<div style="color:#ef4444; font-weight:bold;">下車站必須位於上車站之後</div>`;
             resultArea.style.borderColor = '#fca5a5';
@@ -2129,69 +2128,125 @@
         let price = null;
         let fareType = "單程票";
         
-        // 嘗試從資料中找價格
+        // 3. 開始計算 (遍歷所有可能的票價定義)
         if (currentData.fare && currentData.fare.length > 0) {
-            const fareData = currentData.fare[0];
-
-            // 1. 客運里程計費 (ODFares)
-            if (fareData.ODFares && fareData.ODFares.length > 0) {
-                const match = fareData.ODFares.find(od => {
-                    return (od.OriginStopName.Zh_tw === startStopName && od.DestinationStopName.Zh_tw === endStopName);
-                });
-                if (match && match.Fares) {
-                    const fullFare = match.Fares.find(f => f.FareName.Zh_tw.includes('全票')) || match.Fares[0];
-                    if(fullFare) {
-                        price = fullFare.Price;
-                        fareType = "里程計費";
-                    }
-                }
-            }
             
-            // 2. 市區段次計費 (SectionFares)
-            if (price === null && fareData.SectionFares && fareData.SectionFares.length > 0) {
-                const sectionData = fareData.SectionFares[0];
-                let basePrice = 15; // 預設
-                
-                if (sectionData.Fares) {
-                    const baseObj = sectionData.Fares.find(f => f.FareName?.Zh_tw?.includes('全票')) || sectionData.Fares[0];
-                    if(baseObj) basePrice = baseObj.Price;
-                }
-                
-                let sections = 1;
-                const buffers = sectionData.BufferZones?.filter(z => z.Direction == currentData.direction) || [];
-                
-                buffers.forEach(buf => {
-                    const bStart = buf.FareBufferZoneOrigin.OriginStopName.Zh_tw;
-                    const bEnd = buf.FareBufferZoneDestination.DestinationStopName.Zh_tw;
-                    
-                    const bStartIdx = stops.findIndex(s => s.StopName.Zh_tw === bStart);
-                    const bEndIdx = stops.findIndex(s => s.StopName.Zh_tw === bEnd);
-                    
-                    if (bStartIdx > -1 && bEndIdx > -1) {
-                        // 判斷是否跨越緩衝區
-                        const realStart = Math.min(bStartIdx, bEndIdx);
-                        const realEnd = Math.max(bStartIdx, bEndIdx);
-                        if (startIdx < realStart && endIdx > realEnd) {
-                            sections++;
+            // 我們遍歷 Fare 資料陣列 (通常只有一筆，但有時候有 SubRoutes)
+            for (const fareData of currentData.fare) {
+                if (price !== null) break; // 如果已經找到價格就跳出
+
+                // ---------------------------------------------------------
+                // 策略 A: StageFares (宜蘭 1766 模式 - 站點對站點)
+                // ---------------------------------------------------------
+                if (fareData.StageFares && fareData.StageFares.length > 0) {
+                    // 尋找完全符合 (上車站 & 下車站 & 方向) 的費率
+                    const match = fareData.StageFares.find(stage => {
+                        // 有些資料 Direction 會分開，有些混在一起，主要比對站名
+                        // 宜蘭資料 Direction:0 代表去程
+                        return (stage.Direction == currentData.direction &&
+                                stage.OriginStage.StopName === startStopName && 
+                                stage.DestinationStage.StopName === endStopName);
+                    });
+
+                    if (match && match.Fares) {
+                        // 優先找「全票」且不包含「電子票證」(通常是現金價，或者顯示最貴的)
+                        // 宜蘭 JSON 範例: "全票_不分時段_四排座"
+                        let fareObj = match.Fares.find(f => f.FareName.includes('全票') && !f.FareName.includes('半票'));
+                        if (!fareObj) fareObj = match.Fares[0]; // 找不到就拿第一個
+
+                        if (fareObj) {
+                            price = fareObj.Price;
+                            fareType = "里程計費";
                         }
                     }
-                });
-                price = basePrice * sections;
-                fareType = sections > 1 ? `${sections} 段票` : "1 段票";
+                }
+
+                // ---------------------------------------------------------
+                // 策略 B: ODFares (公路客運標準模式 - 類似 StageFares)
+                // ---------------------------------------------------------
+                if (price === null && fareData.ODFares && fareData.ODFares.length > 0) {
+                    const match = fareData.ODFares.find(od => {
+                        return (od.OriginStopName.Zh_tw === startStopName && 
+                                od.DestinationStopName.Zh_tw === endStopName);
+                    });
+
+                    if (match && match.Fares) {
+                        let fareObj = match.Fares.find(f => f.FareName.Zh_tw.includes('全票'));
+                        if (!fareObj) fareObj = match.Fares[0];
+                        
+                        if (fareObj) {
+                            price = fareObj.Price;
+                            fareType = "里程計費";
+                        }
+                    }
+                }
+
+                // ---------------------------------------------------------
+                // 策略 C: SectionFares (台北 307 模式 - 段次計費)
+                // ---------------------------------------------------------
+                if (price === null && fareData.SectionFares && fareData.SectionFares.length > 0) {
+                    const sectionData = fareData.SectionFares[0]; // 通常取第一個設定
+                    
+                    // C-1. 抓取基本票價 (通常是 15 元)
+                    let basePrice = 15;
+                    if (sectionData.Fares) {
+                        const baseObj = sectionData.Fares.find(f => f.TicketType === 1 && f.FareClass === 1); // 全票
+                        if (baseObj) basePrice = baseObj.Price;
+                    }
+
+                    // C-2. 計算段數 (預設 1 段)
+                    let sections = 1;
+                    
+                    // 找出相關方向的緩衝區
+                    const buffers = sectionData.BufferZones?.filter(z => z.Direction == currentData.direction) || [];
+                    
+                    for (const buf of buffers) {
+                        const bStartName = buf.FareBufferZoneOrigin.StopName;
+                        const bEndName = buf.FareBufferZoneDestination.StopName;
+                        
+                        // 找出緩衝區在「目前站點列表」中的索引位置
+                        const bStartIdx = stops.findIndex(s => s.StopName.Zh_tw === bStartName);
+                        const bEndIdx = stops.findIndex(s => s.StopName.Zh_tw === bEndName);
+                        
+                        if (bStartIdx > -1 && bEndIdx > -1) {
+                            // 修正緩衝區順序 (確保 Start < End)
+                            const realBufStart = Math.min(bStartIdx, bEndIdx);
+                            const realBufEnd = Math.max(bStartIdx, bEndIdx);
+
+                            // 判斷邏輯：
+                            // 如果「上車」在緩衝區之前 且 「下車」在緩衝區之後，就要多收一段
+                            // Start .... [Buffer] .... End  -> 2段
+                            if (startIdx < realBufStart && endIdx > realBufEnd) {
+                                sections++;
+                            }
+                        }
+                    }
+
+                    price = basePrice * sections;
+                    fareType = `${sections} 段票`;
+                }
             }
         }
 
-        // 顯示結果
+        // 4. 顯示結果
         if (price !== null) {
             resultArea.innerHTML = `
                 <div class="fare-main-price">$${price}</div>
                 <div class="fare-sub-text">${fareType} • 全票</div>
             `;
         } else {
-            resultArea.innerHTML = `
-                <div class="fare-main-price" style="font-size:1.5rem; color:#64748b;">--</div>
-                <div class="fare-sub-text">暫無詳細票價</div>
-            `;
+            // 如果是短程(例如同一站上下車)或者資料缺失
+            if (startIdx === endIdx) {
+                 resultArea.innerHTML = `
+                    <div class="fare-main-price" style="color:#64748b;">$0</div>
+                    <div class="fare-sub-text">同站進出</div>
+                `;
+            } else {
+                resultArea.innerHTML = `
+                    <div class="fare-main-price" style="font-size:1.5rem; color:#64748b;">--</div>
+                    <div class="fare-sub-text">無此區間票價資料</div>
+                `;
+            }
         }
     }
 
