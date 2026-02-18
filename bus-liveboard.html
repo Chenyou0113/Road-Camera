@@ -1900,7 +1900,30 @@
             const res = await fetch(url);
             const data = await res.json();
 
-            // 4. 資料處理
+    // --- [修正版 v3] 詳細時刻表 (支援宜蘭等非六都複雜結構) ---
+    async function showTimetableModal() {
+        console.log("正在開啟時刻表...");
+
+        const modal = document.getElementById('modal-overlay');
+        const title = document.getElementById('modal-title');
+        const body = document.getElementById('modal-body');
+        
+        // 1. 設定標題
+        title.innerHTML = `<i class="fas fa-clock"></i> <span>${currentData.route} 詳細時刻表</span>`;
+        
+        // 2. 顯示 Loading
+        body.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在載入班表...</div>`;
+        modal.style.display = 'flex';
+        
+        const dd = document.getElementById('options-dropdown');
+        if(dd) dd.style.display = 'none';
+
+        try {
+            // 3. 呼叫 API
+            const url = `${WORKER_URL}?action=schedule&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}&category=${currentData.type}`;
+            const res = await fetch(url);
+            const data = await res.json();
+
             const scheduleList = Array.isArray(data) ? data : (data.data || []);
             const dirSchedules = scheduleList.filter(s => s.Direction == currentData.direction);
 
@@ -1914,31 +1937,50 @@
                 'weekend': { label: '假日', times: [] }
             };
 
-            dirSchedules.forEach(item => {
-                // 防呆：如果沒有 ServiceDay 就跳過
-                if (!item.ServiceDay) return;
+            // 4. [關鍵修改] 更強大的資料解析邏輯
+            dirSchedules.forEach(routeObj => {
+                if (!routeObj.Timetables) return;
 
-                const days = item.ServiceDay;
-                // 簡易判斷：週六或週日或國定假日 = 假日
-                let isWeekend = (days.Saturday === 1 || days.Sunday === 1 || days.NationalHolidays === 1);
-                // 簡易判斷：週一 = 平日
-                let isWeekday = (days.Monday === 1);
-
-                if (item.Timetables && item.Timetables.length > 0) {
-                    const times = item.Timetables.map(t => {
-                        return t.DepartureTime ? t.DepartureTime.substring(0, 5) : '';
-                    }).filter(t => t !== '').sort();
-
-                    if (isWeekend) {
-                        simplifiedGroups.weekend.times = [...new Set([...simplifiedGroups.weekend.times, ...times])].sort();
+                routeObj.Timetables.forEach(trip => {
+                    // A. 取得發車時間
+                    let depTime = "";
+                    
+                    // 情況 1: 直接有 DepartureTime (部分縣市)
+                    if (trip.DepartureTime) {
+                        depTime = trip.DepartureTime;
                     } 
-                    if (isWeekday) {
-                        simplifiedGroups.weekday.times = [...new Set([...simplifiedGroups.weekday.times, ...times])].sort();
+                    // 情況 2: 時間藏在 StopTimes 陣列的第一筆 (宜蘭/公路客運常見)
+                    else if (trip.StopTimes && trip.StopTimes.length > 0) {
+                        depTime = trip.StopTimes[0].DepartureTime;
                     }
-                }
+
+                    if (!depTime) return; // 沒時間就跳過
+                    
+                    // 格式化 HH:mm
+                    const timeStr = depTime.substring(0, 5);
+
+                    // B. 取得營運日 (ServiceDay)
+                    // 有些 API ServiceDay 在 routeObj 層級，有些在 trip 層級 (截圖是在 trip 層級)
+                    const days = trip.ServiceDay || routeObj.ServiceDay;
+
+                    if (!days) return; // 沒標示營運日就跳過
+
+                    // C. 分類 (平日/假日)
+                    // 只要週六、週日、國定假日其中一個是 1，就歸類為假日
+                    let isWeekend = (days.Saturday === 1 || days.Sunday === 1 || days.NationalHolidays === 1);
+                    // 只要週一到週五其中一個是 1，就歸類為平日 (這裡簡化判斷週一)
+                    let isWeekday = (days.Monday === 1 || days.Tuesday === 1 || days.Wednesday === 1 || days.Thursday === 1 || days.Friday === 1);
+
+                    if (isWeekend) simplifiedGroups.weekend.times.push(timeStr);
+                    if (isWeekday) simplifiedGroups.weekday.times.push(timeStr);
+                });
             });
 
-            // 5. 產生 HTML (注意反引號)
+            // 5. 去除重複並排序
+            simplifiedGroups.weekday.times = [...new Set(simplifiedGroups.weekday.times)].sort();
+            simplifiedGroups.weekend.times = [...new Set(simplifiedGroups.weekend.times)].sort();
+
+            // 6. 產生 HTML
             let html = '<div class="timetable-container">';
             
             // Tabs
@@ -1983,7 +2025,7 @@
 
         } catch (e) {
             console.error("Timetable Error:", e);
-            body.innerHTML = '<p style="text-align:center; color:red; padding:20px;">無法取得詳細時刻表</p>';
+            body.innerHTML = '<p style="text-align:center; color:red; padding:20px;">無法取得詳細時刻表 (資料解析錯誤)</p>';
         }
     }
 
