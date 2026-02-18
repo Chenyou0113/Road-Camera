@@ -137,6 +137,43 @@
 
         #map { width: 100%; height: 100%; }
 
+        /* --- 定位按鈕 --- */
+        #locate-btn {
+            position: absolute;
+            bottom: 80px;
+            right: 12px;
+            z-index: 10;
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            background: white;
+            border: none;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            color: #2563eb;
+            transition: background 0.2s;
+        }
+        #locate-btn:hover { background: #eff6ff; }
+        #locate-btn.locating { color: #9ca3af; animation: pulse 1s infinite; }
+
+        /* --- 離你最近標簽 --- */
+        .nearest-tag {
+            display: inline-block;
+            background: #10b981;
+            color: white;
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 4px;
+            margin-left: 6px;
+            vertical-align: middle;
+            line-height: 1.6;
+        }
+
         /* --- Route Header 優化樣式 (兩行顯示) --- */
         .route-header {
             padding: 12px 16px;
@@ -930,8 +967,11 @@
         </div>
     </div>
 
-    <div id="map-container">
+    <div id="map-container" style="position:relative;">
         <div id="map"></div>
+        <button id="locate-btn" onclick="locateMe()" title="顯示附近公車站牌">
+            <i class="fas fa-location-crosshairs"></i>
+        </button>
     </div>
 </main>
 
@@ -1326,12 +1366,156 @@
         });
     }
 
+    // --- 點擊站牌聚焦地圖 ---
+    function focusMap(lat, lng) {
+        if (!map) return;
+        map.panTo({ lat, lng });
+        map.setZoom(17);
+    }
+
+    // --- 更多功能下拉選單 開/關 ---
+    function toggleOptionsMenu(event) {
+        event.stopPropagation();
+        const dd = document.getElementById('options-dropdown');
+        if (!dd) return;
+        const isOpen = dd.style.display === 'block';
+        dd.style.display = isOpen ? 'none' : 'block';
+    }
+
+    // 點擊其他地方自動收合選單
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('#more-btn') && !e.target.closest('#options-dropdown')) {
+            const dd = document.getElementById('options-dropdown');
+            if (dd) dd.style.display = 'none';
+        }
+    });
+
     function clearMap() {
         if (routeLine) routeLine.setMap(null);
         mapMarkers.stops.forEach(m => m.setMap(null));
         mapMarkers.stops = [];
         mapMarkers.buses.forEach(m => m.setMap(null));
         mapMarkers.buses = [];
+    }
+
+    // 使用者目前位置 (GPS)
+    let userLocation = null;
+    let userMarker = null;
+    let nearbyMarkers = [];
+
+    function locateMe() {
+        const btn = document.getElementById('locate-btn');
+        if (!navigator.geolocation) { alert('您的瀏覽器不支援定位功能'); return; }
+
+        btn.classList.add('locating');
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                btn.classList.remove('locating');
+                userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+
+                // 移動地圖中心
+                map.panTo(userLocation);
+                map.setZoom(16);
+
+                // 移除舊的使用者標記
+                if (userMarker) userMarker.setMap(null);
+                nearbyMarkers.forEach(m => m.setMap(null));
+                nearbyMarkers = [];
+
+                // 畫出使用者位置定位點
+                userMarker = new google.maps.Marker({
+                    position: userLocation,
+                    map: map,
+                    title: '我的位置',
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 9,
+                        fillColor: '#2563eb',
+                        fillOpacity: 1,
+                        strokeColor: 'white',
+                        strokeWeight: 3
+                    },
+                    zIndex: 100
+                });
+
+                // 畫出 500m 範圍團
+                new google.maps.Circle({
+                    strokeColor: '#2563eb',
+                    strokeOpacity: 0.3,
+                    strokeWeight: 1,
+                    fillColor: '#3b82f6',
+                    fillOpacity: 0.07,
+                    map: map,
+                    center: userLocation,
+                    radius: 500
+                });
+
+                // 找出目前路線展示的各站個中 500m 內的展示
+                const dir = currentData.direction;
+                const stops = currentData.stops[dir];
+                if (stops && stops.length > 0) {
+                    // 找最近站點
+                    let nearestIdx = -1, nearestDist = Infinity;
+                    stops.forEach((s, idx) => {
+                        const d = getDistance(userLocation.lat, userLocation.lng,
+                                              s.StopPosition.PositionLat, s.StopPosition.PositionLon);
+                        if (d < nearestDist) { nearestDist = d; nearestIdx = idx; }
+                    });
+
+                    // 在地圖標示 500m 內的展示 + 最近站點
+                    stops.forEach((s, idx) => {
+                        const d = getDistance(userLocation.lat, userLocation.lng,
+                                              s.StopPosition.PositionLat, s.StopPosition.PositionLon);
+                        if (d <= 0.5) {
+                            const isNearest = (idx === nearestIdx);
+                            const nm = new google.maps.Marker({
+                                position: { lat: s.StopPosition.PositionLat, lng: s.StopPosition.PositionLon },
+                                map: map,
+                                title: s.StopName.Zh_tw + (isNearest ? ' (離你最近)' : ''),
+                                icon: {
+                                    path: google.maps.SymbolPath.CIRCLE,
+                                    scale: isNearest ? 10 : 7,
+                                    fillColor: isNearest ? '#10b981' : '#6ee7b7',
+                                    fillOpacity: 1,
+                                    strokeColor: 'white',
+                                    strokeWeight: 2
+                                },
+                                zIndex: isNearest ? 99 : 5
+                            });
+                            nm.addListener('click', () => {
+                                new google.maps.InfoWindow({
+                                    content: `<div style="padding:8px;"><b>${s.StopName.Zh_tw}</b><br>距你 ${(d*1000).toFixed(0)} 公尺</div>`
+                                }).open(map, nm);
+                            });
+                            nearbyMarkers.push(nm);
+                        }
+                    });
+
+                    // 更新列表中的「離你最近」標簽
+                    document.querySelectorAll('.nearest-tag').forEach(el => el.remove());
+                    if (nearestIdx >= 0) {
+                        const stopEl = document.getElementById(`stop-${stops[nearestIdx].StopUID}`);
+                        if (stopEl) {
+                            const nameEl = stopEl.querySelector('.stop-name');
+                            if (nameEl) {
+                                const tag = document.createElement('span');
+                                tag.className = 'nearest-tag';
+                                tag.textContent = '離你最近';
+                                nameEl.appendChild(tag);
+                                // 滾動到該站點
+                                stopEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }
+                        }
+                    }
+                }
+            },
+            (err) => {
+                btn.classList.remove('locating');
+                const msgs = ['', '使用者拒絕定位權限', '無法取得位置', '定位試時超時'];
+                alert('定位失敗：' + (msgs[err.code] || '未知錯誤'));
+            },
+            { enableHighAccuracy: true, timeout: 10000 }
+        );
     }
 
     // --- Haversine 距離計算 (回傳公里) ---
