@@ -1069,20 +1069,32 @@
     });
 
     // --- Core: Load Route Data ---
+    // --- 修正版：載入車輛字典 (加入 Server Error 防呆) ---
     async function loadVehicleData(city, type) {
         // 如果已經載入過該城市的資料，就略過 (節省流量)
         if (vehicleMap[city]) return;
 
+        // 先設定一個空物件，避免重複請求
+        vehicleMap[city] = {};
+
         try {
-            // 呼叫 Worker 取得該縣市所有車輛資料 (建立車牌對照表)
+            // 呼叫 Worker 取得該縣市所有車輛資料
             const res = await fetch(`${WORKER_URL}?action=vehicle&city=${city}`);
+            
+            // 檢查伺服器回應狀態
+            if (!res.ok) {
+                console.warn(`[提示] ${city} 車輛字典載入失敗 (HTTP ${res.status})，將僅顯示即時資訊。`);
+                return;
+            }
+
             const data = await res.json();
             
-            // 建立快取：Key=車牌, Value=資料
-            vehicleMap[city] = {};
+            // 再次檢查資料格式是否為陣列
             if (Array.isArray(data)) {
+                // 建立快取：Key=車牌, Value=資料
+                const tempMap = {};
                 data.forEach(v => {
-                    vehicleMap[city][v.PlateNumb] = {
+                    tempMap[v.PlateNumb] = {
                         year: v.ManufactureYear || (v.PurchaseTime ? v.PurchaseTime.substring(0, 4) : '不詳'),
                         isLowFloor: v.IsLowFloor === 1,
                         hasWifi: v.HasWifi === 1,
@@ -1090,10 +1102,13 @@
                         hasLift: v.HasLiftOrRamp === 1
                     };
                 });
+                // 更新全域變數
+                vehicleMap[city] = tempMap;
+                console.log(`已載入 ${city} 共 ${data.length} 筆車輛字典資料`);
             }
-            console.log(`已載入 ${city} 共 ${data.length || 0} 筆車輛字典資料`);
         } catch (e) {
-            console.error("車籍字典載入失敗:", e);
+            // 使用 warn 而不是 error，因為這不影響主功能
+            console.warn(`車籍字典載入異常 (${city}) - 非關鍵錯誤:`, e);
         }
     }
 
