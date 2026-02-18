@@ -1035,6 +1035,10 @@
         if (vehicleMap[city]) return;
         vehicleMap[city] = {};
 
+        // Vehicle Dictionary API 僅支援六都，其他縣市跳過以避免 HTTP 500
+        const validForVehicle = ['Taipei', 'NewTaipei', 'Taoyuan', 'Taichung', 'Tainan', 'Kaohsiung'];
+        if (!validForVehicle.includes(city)) return;
+
         try {
             const res = await fetch(`${WORKER_URL}?action=vehicle&city=${city}`);
             if (!res.ok) {
@@ -1726,6 +1730,44 @@
             
             calculateODFare();
         }, 50);
+    }
+
+    // 初始化票價 UI，填充站點選單並回傳緩衝區站名 (供路線清單標色)
+    function renderFareInfo(dir) {
+        const startSelect = document.getElementById('fare-start');
+        const endSelect = document.getElementById('fare-end');
+        if (!startSelect || !endSelect) return { start: null, end: null };
+
+        const stops = currentData.stops[dir];
+        if (!stops || stops.length === 0) return { start: null, end: null };
+
+        // 填充上下車站選項
+        const opts = stops.map((s, i) => `<option value="${i}">${i+1}. ${s.StopName.Zh_tw}</option>`).join('');
+        startSelect.innerHTML = opts;
+        endSelect.innerHTML = opts;
+
+        // 預設選頭尾
+        startSelect.value = 0;
+        endSelect.value = stops.length - 1;
+
+        // 觸發計算
+        calculateODFare();
+
+        // 回傳緩衝區站名 (僅 SectionFares 段次計費有緩衝區概念)
+        let bStart = null, bEnd = null;
+        if (currentData.fare && currentData.fare.length > 0) {
+            for (const f of currentData.fare) {
+                if (f.SectionFares && f.SectionFares.length > 0) {
+                    const buffers = f.SectionFares[0].BufferZones?.filter(z => z.Direction == dir) || [];
+                    if (buffers.length > 0) {
+                        bStart = buffers[0].FareBufferZoneOrigin.StopName;
+                        bEnd   = buffers[0].FareBufferZoneDestination.StopName;
+                    }
+                    break;
+                }
+            }
+        }
+        return { start: bStart, end: bEnd };
     }
 
     function calculateODFare() {
