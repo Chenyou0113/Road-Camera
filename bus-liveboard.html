@@ -1777,6 +1777,7 @@
         });
     }
 
+    // --- [修正版 v4] 詳細時刻表 (支援 班表 + 班距 兩種模式) ---
     async function showTimetableModal() {
         console.log("正在開啟時刻表...");
 
@@ -1784,8 +1785,8 @@
         const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
         
-        title.innerHTML = `<i class="fas fa-clock"></i> <span>${currentData.route} 詳細時刻表</span>`;
-        body.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在載入班表...</div>`;
+        title.innerHTML = `<i class="fas fa-clock"></i> <span>${currentData.route} 時刻資訊</span>`;
+        body.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在載入資料...</div>`;
         modal.style.display = 'flex';
         
         const dd = document.getElementById('options-dropdown');
@@ -1800,85 +1801,108 @@
             const dirSchedules = scheduleList.filter(s => s.Direction == currentData.direction);
 
             if (dirSchedules.length === 0) {
-                body.innerHTML = '<div style="padding:20px; text-align:center; color:#666;">查無詳細時刻表資料</div>';
+                body.innerHTML = '<div style="padding:20px; text-align:center; color:#666;">查無班次資料</div>';
                 return;
             }
 
-            const simplifiedGroups = {
-                'weekday': { label: '平日', times: [] },
-                'weekend': { label: '假日', times: [] }
+            // 分為「固定班表」與「班距說明」
+            const result = {
+                weekday: { times: [], headways: [] },
+                weekend: { times: [], headways: [] }
             };
 
             dirSchedules.forEach(routeObj => {
-                if (!routeObj.Timetables) return;
+                // 1. 處理固定班表 (Timetables)
+                if (routeObj.Timetables && routeObj.Timetables.length > 0) {
+                    routeObj.Timetables.forEach(trip => {
+                        let depTime = trip.DepartureTime || (trip.StopTimes && trip.StopTimes[0]?.DepartureTime);
+                        if (!depTime) return;
+                        const timeStr = depTime.substring(0, 5);
+                        const days = trip.ServiceDay || routeObj.ServiceDay;
+                        if (!days) return;
 
-                routeObj.Timetables.forEach(trip => {
-                    let depTime = "";
-                    if (trip.DepartureTime) {
-                        depTime = trip.DepartureTime;
-                    } else if (trip.StopTimes && trip.StopTimes.length > 0) {
-                        depTime = trip.StopTimes[0].DepartureTime;
-                    }
+                        if (days.Saturday === 1 || days.Sunday === 1 || days.NationalHolidays === 1) {
+                            result.weekend.times.push(timeStr);
+                        }
+                        if (days.Monday === 1 || days.Tuesday === 1 || days.Wednesday === 1 || days.Thursday === 1 || days.Friday === 1) {
+                            result.weekday.times.push(timeStr);
+                        }
+                    });
+                }
 
-                    if (!depTime) return;
-                    
-                    const timeStr = depTime.substring(0, 5);
-                    const days = trip.ServiceDay || routeObj.ServiceDay;
-
-                    if (!days) return;
-
-                    let isWeekend = (days.Saturday === 1 || days.Sunday === 1 || days.NationalHolidays === 1);
-                    let isWeekday = (days.Monday === 1 || days.Tuesday === 1 || days.Wednesday === 1 || days.Thursday === 1 || days.Friday === 1);
-
-                    if (isWeekend) simplifiedGroups.weekend.times.push(timeStr);
-                    if (isWeekday) simplifiedGroups.weekday.times.push(timeStr);
-                });
+                // 2. 處理發車班距 (Frequencys) - 臺北市公車核心
+                if (routeObj.Frequencys && routeObj.Frequencys.length > 0) {
+                    routeObj.Frequencys.forEach(f => {
+                        const days = f.ServiceDay || routeObj.ServiceDay;
+                        if (!days) return;
+                        const text = `${f.StartTime}–${f.EndTime}：約 ${f.MinHeadwayMins}–${f.MaxHeadwayMins} 分鐘/班`;
+                        
+                        if (days.Saturday === 1 || days.Sunday === 1 || days.NationalHolidays === 1) {
+                            result.weekend.headways.push(text);
+                        }
+                        if (days.Monday === 1 || days.Tuesday === 1 || days.Wednesday === 1 || days.Thursday === 1 || days.Friday === 1) {
+                            result.weekday.headways.push(text);
+                        }
+                    });
+                }
             });
 
-            simplifiedGroups.weekday.times = [...new Set(simplifiedGroups.weekday.times)].sort();
-            simplifiedGroups.weekend.times = [...new Set(simplifiedGroups.weekend.times)].sort();
+            // 去重排序
+            result.weekday.times = [...new Set(result.weekday.times)].sort();
+            result.weekend.times = [...new Set(result.weekend.times)].sort();
+            result.weekday.headways = [...new Set(result.weekday.headways)];
+            result.weekend.headways = [...new Set(result.weekend.headways)];
 
-            let html = '<div class="timetable-container">';
-            html += '<div class="timetable-tabs">';
-            html += `<button class="timetable-tab-btn active" onclick="switchTimetableTab('weekday')">平日班表</button>`;
-            html += `<button class="timetable-tab-btn" onclick="switchTimetableTab('weekend')">假日班表</button>`;
+            // 渲染 HTML
+            let html = '<div class="timetable-tabs">';
+            html += `<button class="timetable-tab-btn active" onclick="switchTimetableTab('weekday', event)">平日</button>`;
+            html += `<button class="timetable-tab-btn" onclick="switchTimetableTab('weekend', event)">假日</button>`;
             html += '</div>';
 
-            const renderGrid = (times, id, active) => {
-                const style = active ? 'display:grid' : 'display:none';
-                if (!times || times.length === 0) return `<div id="${id}" class="timetable-grid" style="${style}"><div style="grid-column:1/-1; text-align:center; color:#94a3b8; padding:20px;">無發車資料</div></div>`;
+            const renderSection = (dataObj, id, active) => {
+                const style = active ? 'display:block' : 'display:none';
+                let inner = `<div id="${id}" style="${style}">`;
                 
-                let gridHtml = `<div id="${id}" class="timetable-grid" style="${style}">`;
-                times.forEach(t => {
-                    gridHtml += `<div class="time-chip">${t}</div>`;
-                });
-                gridHtml += `</div>`;
-                return gridHtml;
+                // 顯示班距 (藍色區塊)
+                if (dataObj.headways.length > 0) {
+                    inner += `<div style="margin-bottom:15px; background:#f0f9ff; border-left:4px solid #3b82f6; padding:10px 14px; border-radius:4px;">`;
+                    inner += `<div style="font-weight:700; font-size:0.85rem; color:#1e40af; margin-bottom:6px;"><i class="fas fa-arrows-left-right"></i> 發車班距</div>`;
+                    dataObj.headways.forEach(h => inner += `<div style="font-size:0.9rem; margin-bottom:3px; color:#1e3a5f;">${h}</div>`);
+                    inner += `</div>`;
+                }
+                
+                // 顯示固定時刻格
+                if (dataObj.times.length > 0) {
+                    inner += `<div style="font-weight:700; font-size:0.85rem; color:#475569; margin-bottom:8px;"><i class="fas fa-list-ol"></i> 固定發車時刻</div>`;
+                    inner += `<div class="timetable-grid">`;
+                    dataObj.times.forEach(t => inner += `<div class="time-chip">${t}</div>`);
+                    inner += `</div>`;
+                }
+
+                if (dataObj.headways.length === 0 && dataObj.times.length === 0) {
+                    inner += `<div style="text-align:center; color:#94a3b8; padding:20px;">無營運資料</div>`;
+                }
+                inner += `</div>`;
+                return inner;
             };
 
-            html += renderGrid(simplifiedGroups.weekday.times, 'content-weekday', true);
-            html += renderGrid(simplifiedGroups.weekend.times, 'content-weekend', false);
-            html += '</div>';
-            html += '<p style="font-size:0.8rem; color:#64748b; text-align:center; margin-top:15px;">※ 實際發車可能受路況影響，請參考動態資訊</p>';
+            html += renderSection(result.weekday, 'content-weekday', true);
+            html += renderSection(result.weekend, 'content-weekend', false);
+            html += '<p style="font-size:0.75rem; color:#94a3b8; text-align:center; margin-top:15px;">※ 實際到站時間請參考即時動態</p>';
 
             body.innerHTML = html;
 
-            window.switchTimetableTab = function(type) {
+            window.switchTimetableTab = function(type, e) {
                 document.querySelectorAll('.timetable-tab-btn').forEach(b => b.classList.remove('active'));
-                event.target.classList.add('active');
-                
-                const wEl = document.getElementById('content-weekday');
-                const kEl = document.getElementById('content-weekend');
-                if(wEl) wEl.style.display = 'none';
-                if(kEl) kEl.style.display = 'none';
-                
-                const target = document.getElementById('content-' + type);
-                if(target) target.style.display = 'grid';
+                if (e && e.target) e.target.classList.add('active');
+                document.getElementById('content-weekday').style.display = 'none';
+                document.getElementById('content-weekend').style.display = 'none';
+                document.getElementById('content-' + type).style.display = 'block';
             };
 
         } catch (e) {
             console.error("Timetable Error:", e);
-            body.innerHTML = '<p style="text-align:center; color:red; padding:20px;">無法取得詳細時刻表 (資料解析錯誤)</p>';
+            body.innerHTML = '<p style="text-align:center; color:red; padding:20px;">資料解析失敗</p>';
         }
     }
 
