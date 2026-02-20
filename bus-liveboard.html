@@ -242,6 +242,25 @@
             background: #eff6ff; 
         }
 
+        /* ── 更新進度條 ── */
+        #refresh-progress-wrap {
+            height: 3px;
+            background: #e5e7eb;
+            border-radius: 2px;
+            overflow: hidden;
+            margin-bottom: 5px;
+        }
+        #refresh-progress-bar {
+            height: 100%;
+            width: 100%;
+            background: var(--primary, #3b82f6);
+            border-radius: 2px;
+            transition: width 1s linear, background 0.5s ease;
+        }
+        #refresh-countdown {
+            font-variant-numeric: tabular-nums;
+        }
+
         .direction-row { display: none; }
 
         .tabs {
@@ -1017,8 +1036,9 @@
                 <!-- 站牌列表將插入於此 -->
             </div>
             
-            <div style="padding: 8px; text-align: right; font-size: 0.7rem; color: #9ca3af; border-top: 1px solid var(--border);">
-                資料來源: TDX API · <span id="update-time">--:--</span>
+            <div style="padding: 6px 8px 8px; font-size: 0.7rem; color: #9ca3af; border-top: 1px solid var(--border);">
+                <div id="refresh-progress-wrap"><div id="refresh-progress-bar"></div></div>
+                <div style="text-align:right;">資料來源: TDX API · <span id="update-time">--:--</span> · <span id="refresh-countdown">--</span></div>
             </div>
         </div>
 
@@ -1051,7 +1071,29 @@
     };
     let vehicleMap = {}; // 用來儲存車牌對應的詳細資料 (年份、設備)
     let refreshInterval;
+    let countdownInterval;
+    let refreshDuration = 20000; // ms，與 setInterval 同步
     let trafficLayer = null;
+
+    function startCountdown(duration) {
+        refreshDuration = duration;
+        if (countdownInterval) clearInterval(countdownInterval);
+        const bar = document.getElementById('refresh-progress-bar');
+        const el  = document.getElementById('refresh-countdown');
+        let remaining = duration;
+        const tick = 1000;
+        const update = () => {
+            const pct = (remaining / duration) * 100;
+            if (bar) {
+                bar.style.width = pct + '%';
+                bar.style.background = pct > 50 ? '#3b82f6' : pct > 20 ? '#f59e0b' : '#ef4444';
+            }
+            if (el) el.innerText = remaining > 0 ? `${Math.ceil(remaining / 1000)}s 後更新` : '更新中...';
+            remaining = Math.max(0, remaining - tick);
+        };
+        update();
+        countdownInterval = setInterval(update, tick);
+    }
 
     // --- Traffic Layer Toggle ---
     function toggleTrafficLayer(enabled) {
@@ -1311,12 +1353,15 @@
         
         if (refreshInterval) clearInterval(refreshInterval);
         refreshInterval = setInterval(refreshLiveData, 20000);
+        startCountdown(20000);
     }
 
     async function refreshLiveData() {
         const icon = document.getElementById('refresh-icon');
         const updateTimeEl = document.getElementById('update-time');
         icon.classList.add('fa-spin');
+        // 重置進度條（手動按或自動觸發都會重置）
+        startCountdown(refreshDuration);
 
         try {
             const url = `${WORKER_URL}?category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
@@ -1330,6 +1375,7 @@
                 if (res.status === 429 || (data.message && data.message.includes('429'))) {
                     clearInterval(refreshInterval);
                     refreshInterval = setInterval(refreshLiveData, 40000);
+                    startCountdown(40000);
                 }
                 return;
             }
