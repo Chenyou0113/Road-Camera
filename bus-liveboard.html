@@ -781,58 +781,48 @@
             overflow: hidden;
         }
         .browser-header {
-            padding: 12px 12px 8px;
+            padding: 12px 12px 10px;
             border-bottom: 1px solid var(--border);
             flex-shrink: 0;
             background: white;
         }
-        .type-tabs {
+        .browser-selects-row {
             display: flex;
-            gap: 6px;
-            margin-bottom: 10px;
+            gap: 8px;
         }
-        .type-tab-btn {
+        .browser-select-wrap {
             flex: 1;
-            padding: 9px 6px;
-            border: 2px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .browser-select-wrap label {
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: var(--text-sub);
+            padding-left: 2px;
+        }
+        .browser-select-wrap select {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1.5px solid var(--border);
             border-radius: 10px;
             background: white;
-            font-weight: 700;
             font-size: 0.85rem;
-            color: var(--text-sub);
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .type-tab-btn.active {
-            border-color: var(--primary);
-            color: var(--primary);
-            background: #eff6ff;
-        }
-        .city-pills-bar {
-            display: flex;
-            gap: 5px;
-            overflow-x: auto;
-            padding-bottom: 2px;
-            scrollbar-width: none;
-        }
-        .city-pills-bar::-webkit-scrollbar { display: none; }
-        .city-pill {
-            flex-shrink: 0;
-            padding: 4px 11px;
-            border-radius: 20px;
-            background: #f1f5f9;
-            color: var(--text-sub);
-            font-size: 0.78rem;
             font-weight: 700;
+            color: var(--text-main);
             cursor: pointer;
-            border: 1.5px solid transparent;
-            transition: all 0.18s;
-            white-space: nowrap;
+            outline: none;
+            appearance: none;
+            -webkit-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2394a3b8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            padding-right: 28px;
+            transition: border-color 0.2s;
         }
-        .city-pill:hover { border-color: var(--primary); color: var(--primary); }
-        .city-pill.active {
-            background: var(--primary);
-            color: white;
+        .browser-select-wrap select:focus {
+            border-color: var(--primary);
         }
         .route-cards-wrap {
             flex: 1;
@@ -1138,15 +1128,19 @@
         <div id="welcome-view" style="height:100%; overflow:hidden;">
             <div id="route-browser">
                 <div class="browser-header">
-                    <div class="type-tabs">
-                        <button class="type-tab-btn active" data-type="CityBus" onclick="setBrowserType('CityBus')">
-                            <i class="fas fa-city" style="margin-right:4px;"></i>市區公車
-                        </button>
-                        <button class="type-tab-btn" data-type="InterCity" onclick="setBrowserType('InterCity')">
-                            <i class="fas fa-road" style="margin-right:4px;"></i>公路客運
-                        </button>
+                    <div class="browser-selects-row">
+                        <div class="browser-select-wrap">
+                            <label><i class="fas fa-tag" style="margin-right:3px;"></i>類型</label>
+                            <select id="browser-type-select" onchange="onBrowserTypeChange()">
+                                <option value="CityBus">🏙 市區公車</option>
+                                <option value="InterCity">🛣 公路客運</option>
+                            </select>
+                        </div>
+                        <div class="browser-select-wrap" id="browser-city-wrap">
+                            <label><i class="fas fa-map-marker-alt" style="margin-right:3px;"></i>縣市</label>
+                            <select id="browser-city-select" onchange="onBrowserCityChange()"></select>
+                        </div>
                     </div>
-                    <div class="city-pills-bar" id="city-pills-bar"></div>
                 </div>
                 <div class="route-cards-wrap">
                     <div id="route-cards-container">
@@ -1314,23 +1308,37 @@
     };
     const CITY_ORDER = Object.keys(CITY_NAMES);
     const browser = { type: 'CityBus', city: null, cache: {} };
+    let isRouteLoading = false; // 防連點 guard
 
     function initBrowser() {
-        renderCityPills('CityBus');
+        // 建立市區公車的縣市選單
+        const citySelect = document.getElementById('browser-city-select');
+        citySelect.innerHTML = CITY_ORDER.map(k =>
+            `<option value="${k}">${CITY_NAMES[k]}</option>`
+        ).join('');
+        loadBrowserCity(CITY_ORDER[0]);
     }
 
-    function renderCityPills(type) {
-        const bar = document.getElementById('city-pills-bar');
-        if (!bar) return;
-        if (type === 'InterCity') {
-            bar.innerHTML = `<button class="city-pill active" data-city="InterCity" onclick="loadBrowserCity('InterCity')">全台客運</button>`;
+    function onBrowserTypeChange() {
+        const typeVal = document.getElementById('browser-type-select').value;
+        browser.type = typeVal;
+        const cityWrap = document.getElementById('browser-city-wrap');
+        const citySelect = document.getElementById('browser-city-select');
+        if (typeVal === 'InterCity') {
+            cityWrap.style.display = 'none';
             loadBrowserCity('InterCity');
         } else {
-            bar.innerHTML = CITY_ORDER.map((key, i) =>
-                `<button class="city-pill${i===0?' active':''}" data-city="${key}" onclick="loadBrowserCity('${key}')">${CITY_NAMES[key]}</button>`
+            cityWrap.style.display = '';
+            citySelect.innerHTML = CITY_ORDER.map(k =>
+                `<option value="${k}">${CITY_NAMES[k]}</option>`
             ).join('');
             loadBrowserCity(CITY_ORDER[0]);
         }
+    }
+
+    function onBrowserCityChange() {
+        const cityKey = document.getElementById('browser-city-select').value;
+        loadBrowserCity(cityKey);
     }
 
     function goBack() {
@@ -1341,14 +1349,13 @@
     }
 
     function setBrowserType(type) {
-        browser.type = type;
-        document.querySelectorAll('.type-tab-btn').forEach(b => b.classList.toggle('active', b.dataset.type === type));
-        renderCityPills(type);
+        // 直接更新 select 元素並觸發 onchange 邏輯
+        const sel = document.getElementById('browser-type-select');
+        if (sel) { sel.value = type; onBrowserTypeChange(); }
     }
 
     async function loadBrowserCity(cityKey) {
         browser.city = cityKey;
-        document.querySelectorAll('.city-pill').forEach(p => p.classList.toggle('active', p.dataset.city === cityKey));
 
         const container = document.getElementById('route-cards-container');
         const cacheKey = `${browser.type}__${cityKey}`;
@@ -1365,6 +1372,10 @@
                 url = `${WORKER_URL}?action=list_all&search=&city=${cityKey}`;
             }
             const res = await fetch(url);
+            if (res.status === 429) {
+                container.innerHTML = `<div class="browser-empty"><i class="fas fa-clock"></i>請求頻率過快，請稍後再試</div>`;
+                return;
+            }
             const data = await res.json();
             let routes = Array.isArray(data) ? data : (data?.data || []);
 
@@ -1399,7 +1410,7 @@
             const dest = r.destination || r.departure || '';
             const safe = dest.replace(/'/g, '&#39;');
             const safeName = r.name.replace(/'/g, '&#39;');
-            return `<button class="route-card-btn" onclick="loadRoute('${safeName}','${r.city}','${r.type}')">
+            return `<button class="route-card-btn" onclick="loadRouteGuarded('${safeName}','${r.city}','${r.type}',this)">
                 <div class="route-card-num">${r.name}</div>
                 <div class="route-card-dest">${safe}</div>
             </button>`;
@@ -1514,6 +1525,17 @@
         }
     }
 
+    // 防連點 wrapper：避免快速點擊多張卡片同時發出 API 請求造成 429
+    function loadRouteGuarded(name, city, type, btn) {
+        if (isRouteLoading) return;
+        isRouteLoading = true;
+        if (btn) { btn.style.opacity = '0.5'; btn.style.pointerEvents = 'none'; }
+        loadRoute(name, city, type).finally(() => {
+            isRouteLoading = false;
+            if (btn) { btn.style.opacity = ''; btn.style.pointerEvents = ''; }
+        });
+    }
+
     async function loadRoute(name, city, type) {
         if(suggestionsBox) suggestionsBox.style.display = 'none';
         searchInput.value = name;
@@ -1584,7 +1606,20 @@
             if(tab1El) tab1El.style.display = dir1 ? 'block' : 'none';
             
             currentData.shapes = Array.isArray(shapeRes) ? shapeRes : [];
-            currentData.fare = Array.isArray(fareRes) ? fareRes : [];
+
+            // 支持多種回傳格式：直接陣列 / { data:[...] } / { RouteFares:[...] } / 單一物件處理
+            if (Array.isArray(fareRes)) {
+                currentData.fare = fareRes;
+            } else if (fareRes && Array.isArray(fareRes.data)) {
+                currentData.fare = fareRes.data;
+            } else if (fareRes && Array.isArray(fareRes.RouteFares)) {
+                currentData.fare = fareRes.RouteFares;
+            } else if (fareRes && typeof fareRes === 'object' && !fareRes.error) {
+                // 單一物件（非陣列包裑），包裝成陣列
+                currentData.fare = [fareRes];
+            } else {
+                currentData.fare = [];
+            }
 
             switchDirection(0);
 
@@ -2444,6 +2479,9 @@
 
         const boardStop = stops[startIdx];
         const alightStop = stops[endIdx];
+        // StopSequence 若無此欄位則用 index+1 補底（確保比較不會全部失效）
+        const boardSeqBase = boardStop.StopSequence ?? (startIdx + 1);
+        const alightSeqBase = alightStop.StopSequence ?? (endIdx + 1);
 
         if (endIdx <= startIdx) {
             resultArea.innerHTML = `<div style="color:#ef4444; font-weight:bold;">下車站必須位於上車站之後</div>`;
@@ -2480,21 +2518,21 @@
                     
                     if (stagesInDir.length > 0) {
                         // 1. 找出上車站所屬的計費站 (往前找，找 <= 上車站序 的最大值)
-                        const boardSeq = boardStop.StopSequence;
+                        const boardSeq = boardSeqBase;
                         let originStage = null;
                         let maxSeq = -1;
                         stagesInDir.forEach(s => {
                             const seq = s.OriginStage?.StopSequence;
-                            if (seq <= boardSeq && seq > maxSeq) { maxSeq = seq; originStage = s.OriginStage; }
+                            if (seq != null && seq <= boardSeq && seq > maxSeq) { maxSeq = seq; originStage = s.OriginStage; }
                         });
 
                         // 2. 找出下車站所屬的計費站 (往後找，找 >= 下車站序 的最小值)
-                        const alightSeq = alightStop.StopSequence;
+                        const alightSeq = alightSeqBase;
                         let destStage = null;
-                        let minSeq = 9999;
+                        let minSeq = 999999;
                         stagesInDir.forEach(s => {
                             const seq = s.DestinationStage?.StopSequence;
-                            if (seq >= alightSeq && seq < minSeq) { minSeq = seq; destStage = s.DestinationStage; }
+                            if (seq != null && seq >= alightSeq && seq < minSeq) { minSeq = seq; destStage = s.DestinationStage; }
                         });
 
                         // 3. 在梯形矩陣中尋找該組合
@@ -2530,15 +2568,15 @@
                     if (odsInDir.length > 0) {
                         // 嘗試直接比對站序
                         let match = odsInDir.find(od => 
-                            od.OriginStop?.StopSequence === boardStop.StopSequence &&
-                            od.DestinationStop?.StopSequence === alightStop.StopSequence
+                            od.OriginStop?.StopSequence === boardSeqBase &&
+                            od.DestinationStop?.StopSequence === alightSeqBase
                         );
 
                         // 找不到的話，採用區間覆蓋法 (上車 >= OD起點 且 下車 <= OD迄點，找最便宜的)
                         if (!match) {
                             const possibleMatches = odsInDir.filter(od => 
-                                od.OriginStop?.StopSequence <= boardStop.StopSequence &&
-                                od.DestinationStop?.StopSequence >= alightStop.StopSequence
+                                od.OriginStop?.StopSequence <= boardSeqBase &&
+                                od.DestinationStop?.StopSequence >= alightSeqBase
                             );
                             if (possibleMatches.length > 0) {
                                 // 找涵蓋範圍最小(最便宜)的
@@ -2567,13 +2605,13 @@
                     const buffers = sd.BufferZones?.filter(z => z.Direction == dir) || [];
                     for (const buf of buffers) {
                         // 改用 StopSequence 判斷是否跨越緩衝區
-                        const bStartSeq = buf.FareBufferZoneOrigin?.Sequence;
-                        const bEndSeq = buf.FareBufferZoneDestination?.Sequence;
+                        const bStartSeq = buf.FareBufferZoneOrigin?.Sequence ?? buf.FareBufferZoneOrigin?.StopSequence;
+                        const bEndSeq = buf.FareBufferZoneDestination?.Sequence ?? buf.FareBufferZoneDestination?.StopSequence;
                         
                         if (bStartSeq !== undefined && bEndSeq !== undefined) {
                             const rs = Math.min(bStartSeq, bEndSeq);
                             const re = Math.max(bStartSeq, bEndSeq);
-                            if (boardStop.StopSequence < rs && alightStop.StopSequence > re) {
+                            if (boardSeqBase < rs && alightSeqBase > re) {
                                 sections++;
                             }
                         }
@@ -2624,6 +2662,18 @@
         }
 
         if (!hasFareData && !fareNote) { showFree(); return; }
+
+        // 有票價資料但演算法找不到對應 → 顯示查詢失敗，而非誤判為免費
+        if (hasFareData && !fareItems.length && !fareNote) {
+            resultArea.style.background = '#fff7ed';
+            resultArea.style.borderColor = '#fed7aa';
+            resultArea.innerHTML = `
+                <div style="font-size:1.8rem;margin-bottom:6px;">🔍</div>
+                <div style="font-weight:700;color:#92400e;font-size:0.95rem;">查詢不到此區間票價</div>
+                <div style="color:#b45309;font-size:0.78rem;margin-top:4px;">此路線可能為固定票價，請以上車時司機/感應機為準</div>`;
+            return;
+        }
+
         if (!fareItems.length && !fareNote) { showFree(); return; }
 
         if (!fareItems.length && fareNote) {
