@@ -2104,8 +2104,8 @@
 
         if (!stops || !stops[startIdx] || !stops[endIdx]) return;
 
-        const startStopName = stops[startIdx].StopName.Zh_tw;
-        const endStopName = stops[endIdx].StopName.Zh_tw;
+        const boardStop = stops[startIdx];
+        const alightStop = stops[endIdx];
 
         if (endIdx <= startIdx) {
             resultArea.innerHTML = `<div style="color:#ef4444; font-weight:bold;">下車站必須位於上車站之後</div>`;
@@ -2120,81 +2120,129 @@
         // ── 票種名稱對照 ──
         const fareClassNames = { 1: '全票', 2: '半票', 3: '愛心票', 4: '學生票', 5: '敬老票', 6: '兒童票' };
 
-        let fareItems = []; // [{ label, price, highlight }]
-        let fareType   = '單程票';
-        let fareNote   = null;
+        let fareItems = []; 
+        let fareType = '單程票';
+        let fareNote = null;
         const hasFareData = !!(currentData.fare && currentData.fare.length > 0);
 
         if (hasFareData) {
             for (const fareData of currentData.fare) {
                 if (fareItems.length > 0) break;
 
-                // 0: TicketPriceDescriptions 純文字說明
                 if (!fareNote && fareData.TicketPriceDescriptions?.length > 0) {
                     fareNote = fareData.TicketPriceDescriptions.map(d => d.Zh_tw || d).join('；');
                 }
 
-                // A: StageFares
+                const dir = currentData.direction;
+
+                // 【策略 A】: StageFares 計費站區間計費 (梯形表的核心解決方案)
                 if (fareData.StageFares?.length > 0) {
-                    const getSN = v => (v && typeof v === 'object' ? (v.Zh_tw || '') : (v || ''));
-                    const match = fareData.StageFares.find(s =>
-                        s.Direction == currentData.direction &&
-                        getSN(s.OriginStage?.StopName) === startStopName &&
-                        getSN(s.DestinationStage?.StopName) === endStopName
-                    );
-                    if (match?.Fares?.length > 0) {
-                        fareType = '里程計費';
-                        match.Fares.forEach(f => {
-                            const lbl = f.FareName?.Zh_tw || f.FareName || fareClassNames[f.FareClass] || '票價';
-                            fareItems.push({ label: lbl, price: f.Price, highlight: lbl.includes('全票') });
+                    fareType = '里程計費 (依計費區間)';
+                    const stagesInDir = fareData.StageFares.filter(s => s.Direction == dir);
+                    
+                    if (stagesInDir.length > 0) {
+                        // 1. 找出上車站所屬的計費站 (往前找，找 <= 上車站序 的最大值)
+                        const boardSeq = boardStop.StopSequence;
+                        let originStage = null;
+                        let maxSeq = -1;
+                        stagesInDir.forEach(s => {
+                            const seq = s.OriginStage?.StopSequence;
+                            if (seq <= boardSeq && seq > maxSeq) { maxSeq = seq; originStage = s.OriginStage; }
                         });
-                    }
-                }
 
-                // B: ODFares
-                if (!fareItems.length && fareData.ODFares?.length > 0) {
-                    const getSN = v => (v && typeof v === 'object' ? (v.Zh_tw || '') : (v || ''));
-                    let match = fareData.ODFares.find(od =>
-                        getSN(od.OriginStopName) === startStopName &&
-                        getSN(od.DestinationStopName) === endStopName
-                    );
-                    if (!match) {
-                        // fallback: 找涵蓋所選區間的最短 OD
-                        match = fareData.ODFares.find(od => {
-                            const oIdx = stops.findIndex(s => s.StopName.Zh_tw === getSN(od.OriginStopName));
-                            const dIdx = stops.findIndex(s => s.StopName.Zh_tw === getSN(od.DestinationStopName));
-                            return oIdx <= startIdx && dIdx >= endIdx && od.Direction == currentData.direction;
+                        // 2. 找出下車站所屬的計費站 (往後找，找 >= 下車站序 的最小值)
+                        const alightSeq = alightStop.StopSequence;
+                        let destStage = null;
+                        let minSeq = 9999;
+                        stagesInDir.forEach(s => {
+                            const seq = s.DestinationStage?.StopSequence;
+                            if (seq >= alightSeq && seq < minSeq) { minSeq = seq; destStage = s.DestinationStage; }
                         });
-                    }
-                    if (match?.Fares?.length > 0) {
-                        fareType = '里程計費';
-                        match.Fares.forEach(f => {
-                            const lbl = f.FareName?.Zh_tw || f.FareName || fareClassNames[f.FareClass] || '票價';
-                            fareItems.push({ label: lbl, price: f.Price, highlight: lbl.includes('全票') });
-                        });
-                    }
-                }
 
-                // C: SectionFares
-                if (!fareItems.length && fareData.SectionFares?.length > 0) {
-                    const sd = fareData.SectionFares.find(s => s.Direction == currentData.direction) || fareData.SectionFares[0];
+                        // 3. 在梯形矩陣中尋找該組合
+                        if (originStage && destStage) {
+                            let match = stagesInDir.find(s => 
+                                s.OriginStage.StopSequence === originStage.StopSequence && 
+                                s.DestinationStage.StopSequence === destStage.StopSequence
+                            );
+                            
+                            // 若找不到，反向找找看 (有些資料庫梯形表只建單邊)
+                            if (!match) {
+                                match = fareData.StageFares.find(s => 
+                                    s.OriginStage.StopSequence === destStage.StopSequence && 
+                                    s.DestinationStage.StopSequence === originStage.StopSequence
+                                );
+                            }
 
-                    // 計算段數
-                    let sections = 1;
-                    const buffers = sd.BufferZones?.filter(z => z.Direction == currentData.direction) || [];
-                    for (const buf of buffers) {
-                        const bSN = buf.FareBufferZoneOrigin?.StopName || '';
-                        const bEN = buf.FareBufferZoneDestination?.StopName || '';
-                        const bSI = stops.findIndex(s => s.StopName.Zh_tw === bSN);
-                        const bEI = stops.findIndex(s => s.StopName.Zh_tw === bEN);
-                        if (bSI > -1 && bEI > -1) {
-                            const rs = Math.min(bSI, bEI), re = Math.max(bSI, bEI);
-                            if (startIdx < rs && endIdx > re) sections++;
+                            if (match?.Fares?.length > 0) {
+                                match.Fares.forEach(f => {
+                                    const lbl = f.FareName?.Zh_tw || f.FareName || fareClassNames[f.FareClass] || '票價';
+                                    fareItems.push({ label: lbl, price: f.Price, highlight: lbl.includes('全票') });
+                                });
+                            }
                         }
                     }
+                }
+
+                // 【策略 B】: ODFares 起迄站間計費 (另一種梯形表格式)
+                if (!fareItems.length && fareData.ODFares?.length > 0) {
+                    fareType = '里程計費 (站對站)';
+                    const odsInDir = fareData.ODFares.filter(od => od.Direction == dir);
+                    
+                    if (odsInDir.length > 0) {
+                        // 嘗試直接比對站序
+                        let match = odsInDir.find(od => 
+                            od.OriginStop?.StopSequence === boardStop.StopSequence &&
+                            od.DestinationStop?.StopSequence === alightStop.StopSequence
+                        );
+
+                        // 找不到的話，採用區間覆蓋法 (上車 >= OD起點 且 下車 <= OD迄點，找最便宜的)
+                        if (!match) {
+                            const possibleMatches = odsInDir.filter(od => 
+                                od.OriginStop?.StopSequence <= boardStop.StopSequence &&
+                                od.DestinationStop?.StopSequence >= alightStop.StopSequence
+                            );
+                            if (possibleMatches.length > 0) {
+                                // 找涵蓋範圍最小(最便宜)的
+                                match = possibleMatches.sort((a, b) => {
+                                    const aDist = a.DestinationStop.StopSequence - a.OriginStop.StopSequence;
+                                    const bDist = b.DestinationStop.StopSequence - b.OriginStop.StopSequence;
+                                    return aDist - bDist;
+                                })[0];
+                            }
+                        }
+
+                        if (match?.Fares?.length > 0) {
+                            match.Fares.forEach(f => {
+                                const lbl = f.FareName?.Zh_tw || f.FareName || fareClassNames[f.FareClass] || '票價';
+                                fareItems.push({ label: lbl, price: f.Price, highlight: lbl.includes('全票') });
+                            });
+                        }
+                    }
+                }
+
+                // 【策略 C】: SectionFares 段次計費 (市區公車)
+                if (!fareItems.length && fareData.SectionFares?.length > 0) {
+                    const sd = fareData.SectionFares.find(s => s.Direction == dir) || fareData.SectionFares[0];
+
+                    let sections = 1;
+                    const buffers = sd.BufferZones?.filter(z => z.Direction == dir) || [];
+                    for (const buf of buffers) {
+                        // 改用 StopSequence 判斷是否跨越緩衝區
+                        const bStartSeq = buf.FareBufferZoneOrigin?.Sequence;
+                        const bEndSeq = buf.FareBufferZoneDestination?.Sequence;
+                        
+                        if (bStartSeq !== undefined && bEndSeq !== undefined) {
+                            const rs = Math.min(bStartSeq, bEndSeq);
+                            const re = Math.max(bStartSeq, bEndSeq);
+                            if (boardStop.StopSequence < rs && alightStop.StopSequence > re) {
+                                sections++;
+                            }
+                        }
+                    }
+                    
                     fareType = sections > 1 ? `${sections} 段票` : '單段計費';
 
-                    // 分現金 / 電子票證兩組，各票種分開顯示
                     const cashFares  = [];
                     const ipassFares = [];
                     (sd.Fares || []).forEach(f => {
@@ -2202,10 +2250,9 @@
                         const prc  = f.Price * sections;
                         const hi   = f.FareClass === 1;
                         if (f.TicketType === 1)      cashFares.push({ label: cls, price: prc, highlight: hi });
-                        else if (f.TicketType === 2) ipassFares.push({ label: `${cls}(電子)`, price: prc, highlight: hi });
+                        else if (f.TicketType === 2 || f.TicketType === 3) ipassFares.push({ label: `${cls}(電子)`, price: prc, highlight: hi });
                     });
 
-                    // 若現金與電子價格完全一樣，只顯示現金版本
                     const cashPrices  = cashFares.map(f => f.price).sort().join(',');
                     const ipassPrices = ipassFares.map(f => f.price).sort().join(',');
                     if (cashPrices === ipassPrices && cashFares.length > 0) {
@@ -2239,7 +2286,6 @@
         }
 
         if (!hasFareData && !fareNote) { showFree(); return; }
-
         if (!fareItems.length && !fareNote) { showFree(); return; }
 
         if (!fareItems.length && fareNote) {
@@ -2249,7 +2295,7 @@
             return;
         }
 
-        // 去除重複 label + price 的項目
+        // 去重
         const seen = new Set();
         fareItems = fareItems.filter(f => {
             const k = `${f.label}-${f.price}`;
@@ -2263,13 +2309,11 @@
         const uniquePrices = [...new Set(fareItems.map(f => f.price))];
 
         if (uniquePrices.length === 1) {
-            // 全線同一票價
             resultArea.innerHTML = `
                 <div class="fare-main-price">$${uniquePrices[0]}</div>
                 <div class="fare-sub-text">${fareType} • 各票種統一票價</div>
                 ${fareNote ? `<div style="margin-top:8px;font-size:0.8rem;color:#047857;">${fareNote}</div>` : ''}`;
         } else {
-            // 多種票價
             const gridHtml = fareItems.map(f => `
                 <div class="fare-type-cell ${f.highlight ? 'highlight' : ''}">
                     <div class="fare-type-label">${f.label}</div>
