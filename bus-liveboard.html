@@ -1727,6 +1727,9 @@
     }
 
     function updateStopsUI(estimates, buses) {
+        // 記錄已配對的車牌，避免同一台車出現在多個站牌
+        let assignedBuses = new Set();
+
         currentData.stops[currentData.direction].forEach(stop => {
             const uid = stop.StopUID;
             const key = `${currentData.direction}_${uid}`;
@@ -1743,6 +1746,7 @@
             rowEl.classList.remove('coming', 'has-bus');
             busEl.innerHTML = '';
 
+            // 1. 更新時間標籤狀態
             if (!est || est.status === 3) {
                 timeEl.innerText = '末班已過';
                 timeEl.classList.add('none');
@@ -1770,32 +1774,48 @@
                 }
             }
 
-            const nearbyBus = buses.find(b => {
-                if (!b.lat) return false;
-                const d = getDistance(b.lat, b.lon, stop.StopPosition.PositionLat, stop.StopPosition.PositionLon);
-                return d < 0.15;
-            });
+            // 2. 核心修正：尋找要掛在這個站牌的公車卡片
+            let targetBus = null;
 
-            if (nearbyBus) {
-                const plate = nearbyBus.PlateNumb || nearbyBus.plate || '---';
+            // 優先策略 A：N1 預估資料有明確車牌且即將到站 (<=120秒) 才硬掛
+            if (est && est.plate && est.plate !== '-1' && !assignedBuses.has(est.plate)) {
+                if (est.sec != null && est.sec <= 120) {
+                    targetBus = buses.find(b => (b.plate === est.plate || b.PlateNumb === est.plate));
+                }
+            }
+
+            // 備用策略 B：GPS 距離判定，半徑縮小為 50 公尺，且每台車只配對一次
+            if (!targetBus) {
+                targetBus = buses.find(b => {
+                    if (!b.lat || assignedBuses.has(b.plate || b.PlateNumb)) return false;
+                    const d = getDistance(b.lat, b.lon, stop.StopPosition.PositionLat, stop.StopPosition.PositionLon);
+                    return d < 0.05; // 50 公尺，避免抓到總站停車的車
+                });
+            }
+
+            // 3. 渲染車輛卡片
+            if (targetBus) {
+                const plate = targetBus.PlateNumb || targetBus.plate || '---';
+                assignedBuses.add(plate); // 標記已使用
+
                 let operator = '客運公司';
-                if (nearbyBus.OperatorName?.Zh_tw) {
-                    operator = nearbyBus.OperatorName.Zh_tw;
+                if (targetBus.OperatorName?.Zh_tw) {
+                    operator = targetBus.OperatorName.Zh_tw;
                 } else if (currentData.info && currentData.info[currentData.direction]?.Operators) {
                     const ops = currentData.info[currentData.direction].Operators;
                     if (Array.isArray(ops) && ops.length > 0) {
                         operator = ops[0].OperatorName?.Zh_tw || '客運公司';
                     }
                 }
-                
+
                 const cityRegistry = vehicleMap[currentData.city] || {};
                 const vReg = cityRegistry[plate] || {};
 
-                const year = vReg.year || nearbyBus.ManufactureYear || nearbyBus.VehicleInfo?.ManufactureYear || '不詳';
-                const isLowFloor = vReg.isLowFloor || nearbyBus.IsLowFloor === 1 || nearbyBus.VehicleInfo?.IsLowFloor === 1;
-                const hasWifi = vReg.hasWifi || nearbyBus.HasWifi === 1 || nearbyBus.VehicleInfo?.HasWifi === 1;
-                const isElectric = vReg.isElectric || nearbyBus.IsElectric === 1 || nearbyBus.VehicleType === 1;
-                const hasLift = vReg.hasLift || nearbyBus.HasLiftOrRamp === 1 || nearbyBus.VehicleInfo?.HasLiftOrRamp === 1;
+                const year = vReg.year || targetBus.ManufactureYear || targetBus.VehicleInfo?.ManufactureYear || '不詳';
+                const isLowFloor = vReg.isLowFloor || targetBus.IsLowFloor === 1 || targetBus.VehicleInfo?.IsLowFloor === 1;
+                const hasWifi = vReg.hasWifi || targetBus.HasWifi === 1 || targetBus.VehicleInfo?.HasWifi === 1;
+                const isElectric = vReg.isElectric || targetBus.IsElectric === 1 || targetBus.VehicleType === 1;
+                const hasLift = vReg.hasLift || targetBus.HasLiftOrRamp === 1 || targetBus.VehicleInfo?.HasLiftOrRamp === 1;
 
                 busEl.innerHTML = `
                     <div class="bus-badge"><i class="fas fa-bus"></i><span>${plate}</span></div>
