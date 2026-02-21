@@ -1244,6 +1244,7 @@
         info: {}   // 儲存原始 info 供 tab 顯示
     };
     let vehicleMap = {}; // 用來儲存車牌對應的詳細資料 (年份、設備)
+    let lastBuses = [];   // 最後一次 refresh 取得的公車位置列表
     let refreshInterval;
     let countdownInterval;
     let refreshDuration = 20000; // ms，與 setInterval 同步
@@ -1714,6 +1715,7 @@
 
             const estimates = data.estimates || {};
             const buses = (data.buses || []).filter(b => b.dir == currentData.direction);
+            lastBuses = buses; // 快取供 handleSearchPlate 使用
 
             updateStopsUI(estimates, buses);
             updateBusesMap(buses);
@@ -2735,6 +2737,36 @@
                 <div class="fare-types-grid">${gridHtml}</div>
                 ${fareNote ? `<div style="margin-top:10px;font-size:0.8rem;color:#047857;">${fareNote}</div>` : ''}`;
         }
+    }
+
+    // --- 追蹤車牌：從地圖聚焦至該公車 ---
+    async function handleSearchPlate(plate) {
+        if (!plate || plate === '---') return false;
+
+        // 先從快取的 lastBuses 中找
+        let bus = lastBuses.find(b => (b.PlateNumb === plate || b.plate === plate));
+
+        // 找不到則重新向 Worker 查詢一次目前路線動態
+        if (!bus && currentData.route) {
+            try {
+                const res = await fetch(`${WORKER_URL}?category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`);
+                const data = await res.json();
+                const buses = (data.buses || []).filter(b => b.dir == currentData.direction);
+                lastBuses = buses;
+                bus = buses.find(b => (b.PlateNumb === plate || b.plate === plate));
+            } catch(e) { /* 非關鍵，靜默失敗 */ }
+        }
+
+        if (bus && bus.lat) {
+            if (activeInfoWindow) { activeInfoWindow.close(); activeInfoWindow = null; }
+            map.panTo({ lat: bus.lat, lng: bus.lon });
+            map.setZoom(17);
+            return true;
+        }
+
+        // 找不到位置時顯示提示
+        alert(`找不到車牌 ${plate} 的即時位置，可能已離線或停駛。`);
+        return false;
     }
 
     function closeModal() {
