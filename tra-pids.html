@@ -839,6 +839,17 @@
             .train-table td {
                 height: 55px;
                 padding: 0 3px;
+                font-size: 1.1rem;
+            }
+
+            /* 車次欄位特別縮小，避免截斷成省略號 */
+            .train-table td:nth-child(1) {
+                font-size: 0.85rem;
+            }
+
+            /* 狀態欄位特別縮小 */
+            .train-table td:nth-child(5) {
+                font-size: 0.85rem;
             }
 
             /* 手機版5班車佔滿空間 */
@@ -965,6 +976,17 @@
             .train-table td {
                 height: 50px;
                 padding: 0 2px;
+                font-size: 0.95rem;
+            }
+
+            /* 車次欄位特別縮小，避免截斷成省略號 */
+            .train-table td:nth-child(1) {
+                font-size: 0.72rem;
+            }
+
+            /* 狀態欄位特別縮小 */
+            .train-table td:nth-child(5) {
+                font-size: 0.72rem;
             }
 
             .train-type-badge {
@@ -1887,7 +1909,6 @@
             if (!con || _videoIds.length === 0) return;
 
             const videoId = _videoIds[idx];
-            // origin 只在 http/https 下有效，file:// 時省略
             const originParam = location.protocol.startsWith('http')
                 ? `&origin=${location.origin}` : '';
 
@@ -1902,37 +1923,35 @@
                 </iframe>`;
             console.log(`▶️ 播放影片 [${idx + 1}/${_videoIds.length}]: ${videoId}`);
 
-            // 監聽 YouTube 事件（影片結束 → 播下一部；無回應 → 跳過）
             if (_videoRetryTimer) clearTimeout(_videoRetryTimer);
 
-            // 逾時保護：若 15 秒內未回應（影片不可嵌入），跳過換下一部
+            // iframe 載入完成即視為「有回應」，取消跳過計時器
+            const frame = document.getElementById('ytFrame');
             let hasResponded = false;
+            if (frame) {
+                frame.addEventListener('load', () => {
+                    hasResponded = true;
+                    clearTimeout(_videoRetryTimer);
+                }, { once: true });
+            }
+
+            // 逾時保護：20 秒內 iframe 完全沒載入才跳過（真正被封鎖的影片）
             _videoRetryTimer = setTimeout(() => {
                 if (!hasResponded && _videoIds.length > 1) {
-                    console.warn(`⚠️ 影片 ${videoId} 無回應，跳過`);
+                    console.warn(`⚠️ 影片 ${videoId} 無法載入，跳過`);
                     _advanceVideo();
                 }
-            }, 15000);
+            }, 20000);
 
-            // 監聽 YouTube postMessage（影片結束 state=0，或就緒 state=1）
+            // 監聽影片結束事件（playerState = 0），才換下一部
             const ytHandler = (e) => {
                 if (!e.data || typeof e.data !== 'string') return;
                 try {
                     const d = JSON.parse(e.data);
-                    if (d.event === 'infoDelivery' && d.info?.playerState !== undefined) {
-                        hasResponded = true;
-                        clearTimeout(_videoRetryTimer);
-                        if (d.info.playerState === 0) { // 0 = ended
-                            window.removeEventListener('message', ytHandler);
-                            _advanceVideo();
-                        }
-                    } else if (d.event === 'onReady' || d.event === 'onStateChange') {
-                        hasResponded = true;
-                        clearTimeout(_videoRetryTimer);
-                        if (d.info === 0) { // onStateChange ended
-                            window.removeEventListener('message', ytHandler);
-                            _advanceVideo();
-                        }
+                    // onStateChange: info === 0 表示影片播放結束
+                    if (d.event === 'onStateChange' && d.info === 0) {
+                        window.removeEventListener('message', ytHandler);
+                        _advanceVideo();
                     }
                 } catch {}
             };
