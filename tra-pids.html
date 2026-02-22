@@ -1895,41 +1895,53 @@
                 <iframe
                     id="ytFrame"
                     class="video-iframe"
-                    src="https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0&rel=0&enablejsapi=1${originParam}"
+                    src="https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=0&rel=0&enablejsapi=1${originParam}"
                     allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
                     allowfullscreen
                     style="width:100%; height:100%; border:none;">
                 </iframe>`;
             console.log(`▶️ 播放影片 [${idx + 1}/${_videoIds.length}]: ${videoId}`);
 
-            // 若 15 秒後 iframe 載入失敗（例如影片不可嵌入），自動換下一部
+            // 監聽 YouTube 事件（影片結束 → 播下一部；無回應 → 跳過）
             if (_videoRetryTimer) clearTimeout(_videoRetryTimer);
-            _videoRetryTimer = setTimeout(() => {
-                const frame = document.getElementById('ytFrame');
-                if (frame) {
-                    // 嘗試透過 postMessage 確認播放狀態，無回應則換片
-                    let responded = false;
-                    const handler = (e) => {
-                        if (typeof e.data === 'string') {
-                            try {
-                                const d = JSON.parse(e.data);
-                                if (d.event === 'infoDelivery' || d.event === 'onReady') responded = true;
-                            } catch {}
-                        }
-                    };
-                    window.addEventListener('message', handler, { once: true });
-                    frame.contentWindow?.postMessage('{"event":"listening"}', '*');
 
-                    setTimeout(() => {
-                        window.removeEventListener('message', handler);
-                        if (!responded && _videoIds.length > 1) {
-                            console.warn(`⚠️ 影片 ${videoId} 無回應，換下一部`);
-                            _videoIdx = (idx + 1) % _videoIds.length;
-                            _playVideoAt(_videoIdx);
-                        }
-                    }, 3000);
+            // 逾時保護：若 15 秒內未回應（影片不可嵌入），跳過換下一部
+            let hasResponded = false;
+            _videoRetryTimer = setTimeout(() => {
+                if (!hasResponded && _videoIds.length > 1) {
+                    console.warn(`⚠️ 影片 ${videoId} 無回應，跳過`);
+                    _advanceVideo();
                 }
             }, 15000);
+
+            // 監聽 YouTube postMessage（影片結束 state=0，或就緒 state=1）
+            const ytHandler = (e) => {
+                if (!e.data || typeof e.data !== 'string') return;
+                try {
+                    const d = JSON.parse(e.data);
+                    if (d.event === 'infoDelivery' && d.info?.playerState !== undefined) {
+                        hasResponded = true;
+                        clearTimeout(_videoRetryTimer);
+                        if (d.info.playerState === 0) { // 0 = ended
+                            window.removeEventListener('message', ytHandler);
+                            _advanceVideo();
+                        }
+                    } else if (d.event === 'onReady' || d.event === 'onStateChange') {
+                        hasResponded = true;
+                        clearTimeout(_videoRetryTimer);
+                        if (d.info === 0) { // onStateChange ended
+                            window.removeEventListener('message', ytHandler);
+                            _advanceVideo();
+                        }
+                    }
+                } catch {}
+            };
+            window.addEventListener('message', ytHandler);
+        }
+
+        function _advanceVideo() {
+            _videoIdx = (_videoIdx + 1) % _videoIds.length;
+            _playVideoAt(_videoIdx);
         }
 
         function startMarquee(id) {
