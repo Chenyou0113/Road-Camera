@@ -1724,9 +1724,15 @@
 
         async function updateWeather() {
             try {
-                const res = await fetch(`${WEATHER_API}?dataset=F-C0032-001`);
+                // 加入時間戳記，確保拿到最新預報
+                const noCacheStr = new Date().getTime();
+                const res = await fetch(`${WEATHER_API}?dataset=F-C0032-001&nocache=${noCacheStr}`);
+
+                if (!res.ok) throw new Error("Weather API Error");
+
                 const json = await res.json();
-                const county = system === 'TYMC' ? '桃園市' : '臺北市';
+                const county = system === 'TYMC' ? '桃園市' : (system === 'KRTC' ? '高雄市' : (system === 'TMRT' ? '臺中市' : '臺北市'));
+
                 const loc = json.records.location.find(l => l.locationName === county);
                 if (loc) {
                     const wx = loc.weatherElement.find(e => e.elementName === 'Wx').time[0].parameter.parameterName;
@@ -1736,8 +1742,18 @@
                     document.getElementById('ui-weather-text').innerText = wx;
                     document.getElementById('ui-range-display').innerText = `${minT}°C ~ ${maxT}°C`;
                     document.getElementById('ui-rain-display').innerHTML = `<i class="fas fa-umbrella"></i> ${pop}%`;
+
+                    // 根據天氣狀況更換圖示
+                    const iconEl = document.getElementById('ui-weather-icon');
+                    if (iconEl) {
+                        if (wx.includes('雨')) iconEl.innerHTML = '<i class="fas fa-umbrella"></i>';
+                        else if (wx.includes('雲') || wx.includes('陰')) iconEl.innerHTML = '<i class="fas fa-cloud"></i>';
+                        else iconEl.innerHTML = '<i class="fas fa-sun"></i>';
+                    }
                 }
-            } catch (e) { }
+            } catch (e) {
+                console.warn("天氣預報載入失敗", e);
+            }
         }
 
         // 📢 專業官方宣導 + 循環播放邏輯
