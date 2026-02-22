@@ -2292,54 +2292,32 @@
             });
         }
 
-        // 2. 抓取並整理全臺測站資料 (包含自動站與局屬站)
+        // 2. 抓取並整理全臺測站資料 (使用加速路由 /api/weather/now)
         async function fetchAllStations() {
-            const urls = [
-                `${WEATHER_API_BASE}?dataset=O-A0001-001`, // 自動氣象站
-                `${WEATHER_API_BASE}?dataset=O-A0003-001`  // 局屬氣象站
-            ];
+            // 加入時間戳記確保拿到最新資料，單一請求取代原本兩個大檔案請求
+            const noCacheStr = new Date().getTime();
+            const url = `${WEATHER_API_BASE}/api/weather/now?nocache=${noCacheStr}`;
 
             try {
-                const responses = await Promise.all(urls.map(url => fetchWithRetry(url, 0, 3000).catch(() => null)));
-                const jsons = await Promise.all(responses.filter(r => r).map(res => res.json()));
-                
-                let allStations = [];
+                const response = await fetchWithRetry(url, 0, 5000);
+                if (!response || !response.ok) throw new Error("API Error");
 
-                jsons.forEach(data => {
-                    if (data.records && data.records.Station) {
-                        data.records.Station.forEach(s => {
-                            // 提取經緯度
-                            let lat, lon;
-                            if (s.GeoInfo && s.GeoInfo.Coordinates) {
-                                const coord = s.GeoInfo.Coordinates.find(c => c.CoordinateName === 'WGS84') || s.GeoInfo.Coordinates[1];
-                                if (coord) { lat = coord.StationLatitude; lon = coord.StationLongitude; }
-                            } else {
-                                lat = s.StationLatitude; lon = s.StationLongitude;
-                            }
+                const stations = await response.json();
 
-                            // 提取天氣數據 (處理結構差異)
-                            const we = s.WeatherElement || s;
-                            const temp = extractValue(we, 'AirTemperature', 'TEMP');
-                            const weather = extractValue(we, 'Weather'); // 只有部分測站有天氣現象描述
+                // 後端已清洗完畢，直接轉換格式並過濾無效資料
+                return stations.map(s => ({
+                    name: s.stationName,
+                    county: s.county,
+                    town: s.town,
+                    lat: s.lat,
+                    lon: s.lon,
+                    temp: s.temp.val,
+                    weather: s.weather
+                })).filter(s => s.lat && s.lon && s.temp !== null && s.temp > -50);
 
-                            // 排除無效數據 (-99 或 null)
-                            if (lat && lon && temp !== null && temp > -50) {
-                                allStations.push({
-                                    name: s.StationName,
-                                    county: s.GeoInfo ? s.GeoInfo.CountyName : s.CountyName,
-                                    town: s.GeoInfo ? s.GeoInfo.TownName : s.TownName,
-                                    lat: parseFloat(lat),
-                                    lon: parseFloat(lon),
-                                    temp: parseFloat(temp),
-                                    weather: weather
-                                });
-                            }
-                        });
-                    }
-                });
-                return allStations;
             } catch (e) {
                 // 靜默處理：氣象站資料載入失敗
+                console.warn("氣象站資料載入失敗", e);
                 return [];
             }
         }
