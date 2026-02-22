@@ -422,31 +422,22 @@
             try {
                 if (!CLOUDFLARE_WORKER_URL) throw new Error("Worker URL missing");
 
-                const urls = [
-                    `${CLOUDFLARE_WORKER_URL}?dataset=O-A0001-001`,
-                    `${CLOUDFLARE_WORKER_URL}?dataset=O-A0003-001`
-                ];
+                // � 極速版：直接呼叫後端精簡好的 /api/weather/now
+                // 資料量從 5MB 降至 ~80KB，加上 nocache 保證最新
+                const noCacheStr = new Date().getTime();
+                const response = await fetch(`${CLOUDFLARE_WORKER_URL}/api/weather/now?nocache=${noCacheStr}`);
 
-                const responses = await Promise.all(urls.map(url => fetch(url)));
-                const jsons = await Promise.all(responses.map(res => {
-                    if (!res.ok) throw new Error(`Worker Error: ${res.status}`);
-                    return res.json();
-                }));
+                if (!response.ok) throw new Error(`Worker Error: ${response.status}`);
 
-                if (jsons[0].error) throw new Error("Worker: " + jsons[0].error);
+                const data = await response.json();
+                if (data.error) throw new Error("Worker: " + data.error);
 
-                const rawStations = [];
-                if (jsons[0].records && jsons[0].records.Station) rawStations.push(...jsons[0].records.Station);
-                if (jsons[1].records && jsons[1].records.Station) rawStations.push(...jsons[1].records.Station);
-
-                const processedStations = rawStations.map(s => transformStationData(s));
-                const uniqueStationMap = new Map();
-                processedStations.forEach(s => uniqueStationMap.set(s.stationName, s));
-                allStations = Array.from(uniqueStationMap.values());
+                // 伺服器已處理完畢，直接使用
+                allStations = data;
 
             } catch (error) {
                 console.error("Fetch failed:", error);
-                errorMsg.innerHTML = error.message.includes("Worker URL missing") ? 
+                errorMsg.innerHTML = error.message.includes("Worker URL missing") ?
                     "⚠️ 請設定 Worker 網址。" : `⚠️ 連線錯誤 (${error.message})，使用模擬資料。`;
                 errorMsg.style.display = 'block';
                 allStations = MOCK_DATA;
@@ -457,81 +448,6 @@
                 renderStats();
                 renderStations();
             }
-        }
-
-        function processValue(val) {
-            if (typeof val === 'object' && val !== null) val = val.Value || val.value;
-            if (val === 'X' || val === -99) return { val: null, str: '儀器故障' };
-            if (val === 'T') return { val: 0.0, str: '雨跡' };
-            if (val === -98) return { val: 0.0, str: '6hr無降水' };
-            if (val === undefined || val === null || val === '') return { val: null, str: '--' };
-            const num = parseFloat(val);
-            if (isNaN(num)) return { val: null, str: '--' };
-            if (num < -90) return { val: null, str: '資料異常' };
-            return { val: num, str: num.toString() };
-        }
-
-        function transformStationData(s) {
-            const we = s.WeatherElement || s; 
-            let rawTemp, rawHum, rawRain, rawWind, weatherDesc;
-
-            rawTemp = we.AirTemperature;
-            rawHum = we.RelativeHumidity;
-            rawRain = we.Now ? we.Now.Precipitation : we.Precipitation;
-            rawWind = we.WindSpeed;
-            weatherDesc = we.Weather;
-
-            if (Array.isArray(s.WeatherElement)) {
-                const getVal = (name) => {
-                    const item = s.WeatherElement.find(e => e.ElementName === name);
-                    return item ? item.ElementValue : undefined;
-                };
-                if (rawTemp === undefined) rawTemp = getVal('TEMP');
-                if (rawHum === undefined) rawHum = getVal('HUMD');
-                if (rawRain === undefined) rawRain = (getVal('H_24R') || getVal('RAIN'));
-                if (rawWind === undefined) rawWind = getVal('WDSD');
-                if (!weatherDesc) weatherDesc = getVal('Weather');
-            }
-
-            const tempObj = processValue(rawTemp);
-            const rainObj = processValue(rawRain);
-            const windObj = processValue(rawWind);
-            let humObj = processValue(rawHum);
-
-            if (humObj.val !== null && humObj.val <= 1 && humObj.val > 0) {
-                humObj.val *= 100;
-                humObj.str = Math.round(humObj.val).toString();
-            } else if (humObj.val !== null) {
-                humObj.val = Math.round(humObj.val);
-                humObj.str = humObj.val.toString();
-            }
-
-            let lat = null, lon = null;
-            if (s.GeoInfo) {
-                if (s.GeoInfo.Coordinates) {
-                    const coord = s.GeoInfo.Coordinates.find(c => c.CoordinateName === 'WGS84') || s.GeoInfo.Coordinates[1];
-                    if (coord) { lat = coord.StationLatitude; lon = coord.StationLongitude; }
-                } else if (s.GeoInfo.StationLatitude) {
-                    lat = s.GeoInfo.StationLatitude; lon = s.GeoInfo.StationLongitude;
-                }
-            } else if (s.StationLatitude) {
-                lat = s.StationLatitude; lon = s.StationLongitude;
-            }
-
-            return {
-                stationId: s.StationId,
-                stationName: s.StationName,
-                county: s.GeoInfo ? s.GeoInfo.CountyName : (s.CountyName || '未知'),
-                town: s.GeoInfo ? s.GeoInfo.TownName : (s.TownName || ''),
-                lat: parseFloat(lat),
-                lon: parseFloat(lon),
-                temp: tempObj,
-                rain: rainObj,
-                wind: windObj,
-                hum: humObj,
-                weather: weatherDesc,
-                obsTime: s.ObsTime ? s.ObsTime.DateTime : (s.DateTime || '')
-            };
         }
 
         function formatDateTime(isoString) {
@@ -690,10 +606,9 @@
 
         async function fetchHistoryAndRender(stationId) {
             try {
-                // 🔥 修改點:使用正確的 API 路徑來抓取歷史資料
-                // 舊: ?history=true&stationId=...
-                // 新: /api/weather/history?station_id=...
-                const response = await fetch(`${CLOUDFLARE_WORKER_URL}/api/weather/history?station_id=${stationId}`);
+                // 🔥 加上 nocache 參數破除圖表的瀏覽器快取
+                const noCacheStr = new Date().getTime();
+                const response = await fetch(`${CLOUDFLARE_WORKER_URL}/api/weather/history?station_id=${stationId}&nocache=${noCacheStr}`);
                 
                 if (!response.ok) throw new Error("History fetch failed");
                 let historyData = await response.json();
