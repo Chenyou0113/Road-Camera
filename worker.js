@@ -141,7 +141,38 @@ export default {
     }
 
     // ========================================================
-    // 2. 現在才檢查 dataset 參數
+    // 2. 縣市天氣預報路由 (輕量版，取代舊的 ?dataset=F-C0032-001)
+    // ========================================================
+    if (url.pathname === '/api/weather/forecast') {
+        try {
+            const county = url.searchParams.get('county') || '臺北市';
+            const cwaUrl = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization=${env.CWA_API_KEY}&format=JSON&locationName=${encodeURIComponent(county)}`;
+            const response = await fetch(cwaUrl, { cf: { cacheTtl: 300 } });
+            if (!response.ok) throw new Error(`CWA Forecast API Error: ${response.status}`);
+
+            const json = await response.json();
+            const loc = json.records?.location?.[0];
+            if (!loc) return new Response(JSON.stringify({ error: '找不到縣市資料' }), { status: 404, headers: corsHeaders });
+
+            const find = (name) => (loc.weatherElement || []).find(e => e.elementName === name)?.time?.[0]?.parameter?.parameterName ?? null;
+
+            return new Response(JSON.stringify({
+                county: loc.locationName,
+                wx:   find('Wx'),
+                minT: find('MinT'),
+                maxT: find('MaxT'),
+                pop:  find('PoP'),
+                ci:   find('CI')
+            }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json;charset=UTF-8', 'Cache-Control': 'public, max-age=300' }
+            });
+        } catch (e) {
+            return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    // ========================================================
+    // 3. 現在才檢查 dataset 參數
     // ========================================================
     const dataset = url.searchParams.get("dataset");
 
