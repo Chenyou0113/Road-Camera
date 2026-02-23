@@ -183,6 +183,48 @@
             transform: rotate(180deg);
         }
 
+        /* === 車次自動補全選單 === */
+        .autocomplete-wrapper {
+            position: relative;
+            width: 100%;
+        }
+        .autocomplete-suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 0 0 10px 10px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+            z-index: 1000;
+            max-height: 250px;
+            overflow-y: auto;
+            display: none;
+        }
+        .autocomplete-item {
+            padding: 12px 15px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: background 0.2s;
+        }
+        .autocomplete-item:last-child { border-bottom: none; }
+        .autocomplete-item:hover { background: #f0f7ff; }
+        
+        .ac-no { font-weight: 900; color: #D84315; font-size: 1.1rem; min-width: 50px; }
+        .ac-name { background: #e0e0e0; padding: 3px 8px; border-radius: 6px; font-size: 0.85rem; color: #333; font-weight: bold; }
+        .ac-route { color: #666; font-size: 0.9rem; margin-left: auto; white-space: nowrap; }
+
+        /* 深色模式適配 */
+        body.dark-mode .autocomplete-suggestions { background: #2c2c2c; border-color: #444; box-shadow: 0 8px 16px rgba(0,0,0,0.5); }
+        body.dark-mode .autocomplete-item { border-bottom-color: #444; }
+        body.dark-mode .autocomplete-item:hover { background: #3d3d3d; }
+        body.dark-mode .ac-name { background: #444; color: #eee; }
+        body.dark-mode .ac-route { color: #aaa; }
+
         /* 公告面板 */
         .info-panel {
             background: #fff3e0; 
@@ -721,12 +763,20 @@
                 </div>
             </div>
 
-            <!-- 3. 原本的車次查詢區塊 (保持不變) -->
+            <!-- 3. 車次查詢區塊 -->
             <div id="searchTrainMode" style="display: none;">
                 <div class="selector-row" style="grid-template-columns: 1fr auto;">
-                    <div class="selector-group">
+                    <div class="selector-group autocomplete-wrapper">
                         <label for="trainNoInput">輸入車次代碼</label>
-                        <input type="number" id="trainNoInput" placeholder="例如: 408, 3187, 111" onkeypress="if(event.key === 'Enter') fetchTrainDetail()">
+                        <!-- 加上 autocomplete="off" 防止瀏覽器原生的歷史紀錄干擾 -->
+                        <input type="text" inputmode="numeric" id="trainNoInput" 
+                               placeholder="輸入車次 (例如: 408, 3187)" 
+                               autocomplete="off"
+                               oninput="handleTrainNoInput(event)"
+                               onfocus="handleTrainNoInput(event)"
+                               onkeypress="if(event.key === 'Enter') fetchTrainDetail()">
+                        <!-- 🔥 自動補全選單容器 -->
+                        <div id="trainSuggestions" class="autocomplete-suggestions"></div>
                     </div>
                     <button class="query-btn" id="queryTrainBtn" onclick="fetchTrainDetail()" style="background: #FF9800;">
                         <i class="fas fa-search"></i> 追蹤車次
@@ -1817,6 +1867,98 @@
             html += `</div></div>`;
             trainsBoard.innerHTML = html;
         }
+
+        // ============ 車次自動補全 (Autocomplete) ============
+        let allTodayTrains = []; // 暫存今日所有車次
+        let isFetchingTrains = false;
+
+        // 背景載入今日所有車次 (只載入一次)
+        async function loadAllTodayTrains() {
+            if (allTodayTrains.length > 0 || isFetchingTrains) return;
+            isFetchingTrains = true;
+            try {
+                // 使用 TDX v2 API 取得今日所有車次 (資料較輕量)
+                const res = await tdxApi.fetch('/v2/Rail/TRA/DailyTrainInfo/Today?$select=TrainNo,TrainTypeName,StartingStationName,EndingStationName&$format=JSON');
+                
+                // 整理資料並存入陣列
+                allTodayTrains = res.map(t => {
+                    // 簡化車種名稱 (例如 "自強號列車" -> "自強")
+                    let typeName = t.TrainTypeName.Zh_tw.replace(/\(.*\)/g, '').replace('列車', '').trim();
+                    if(typeName.includes('3000')) typeName = '新自強';
+                    
+                    return {
+                        no: t.TrainNo,
+                        name: typeName,
+                        start: t.StartingStationName.Zh_tw,
+                        end: t.EndingStationName.Zh_tw
+                    };
+                });
+                console.log(`✅ 成功載入今日車次清單，共 ${allTodayTrains.length} 筆`);
+            } catch (error) {
+                console.warn("載入今日車次清單失敗", error);
+            }
+            isFetchingTrains = false;
+        }
+
+        // 當使用者輸入時觸發
+        function handleTrainNoInput(e) {
+            const val = e.target.value.trim();
+            const box = document.getElementById('trainSuggestions');
+            
+            if (!val) {
+                box.style.display = 'none';
+                return;
+            }
+
+            // 過濾符合的車次 (取前 8 筆就好，避免畫面太長)
+            // 使用 startsWith 讓打 '4' 的人優先看到 4 開頭的車次
+            const matches = allTodayTrains.filter(t => t.no.startsWith(val)).slice(0, 8);
+            
+            if (matches.length === 0) {
+                box.innerHTML = `<div class="autocomplete-item" style="color:#999; justify-content:center;">查無相符的今日車次</div>`;
+                box.style.display = 'block';
+                return;
+            }
+
+            // 渲染選單
+            let html = '';
+            matches.forEach(t => {
+                html += `
+                    <div class="autocomplete-item" onclick="selectTrainSuggestion('${t.no}')">
+                        <span class="ac-no">${t.no}</span>
+                        <span class="ac-name">${t.name}</span>
+                        <span class="ac-route">${t.start} ➡ ${t.end}</span>
+                    </div>
+                `;
+            });
+            box.innerHTML = html;
+            box.style.display = 'block';
+        }
+
+        // 點選建議選單的項目
+        function selectTrainSuggestion(trainNo) {
+            document.getElementById('trainNoInput').value = trainNo;
+            document.getElementById('trainSuggestions').style.display = 'none';
+            // 自動觸發查詢
+            fetchTrainDetail();
+        }
+
+        // 點擊空白處時關閉選單
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.autocomplete-wrapper')) {
+                const box = document.getElementById('trainSuggestions');
+                if (box) box.style.display = 'none';
+            }
+        });
+
+        // 💡 修改：當切換到「車次查詢」Tab 時，才在背景偷偷載入清單 (避免浪費網路資源)
+        const originalSwitchSearchMode = switchSearchMode;
+        switchSearchMode = function(mode) {
+            originalSwitchSearchMode(mode); // 執行原本的切換邏輯
+            if (mode === 'train') {
+                loadAllTodayTrains(); // 偷偷載入清單
+            }
+        };
     </script>
 </body>
 </html>
