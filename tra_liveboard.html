@@ -1614,7 +1614,15 @@
                 
                 const [odRes, liveRes] = await Promise.all([odPromise, livePromise]);
                 
-                let trainsList = odRes.TrainTimetables || odRes || [];
+                // 🔥 1. 確保 trainsList 絕對是一個陣列，相容 TDX 的各種外層包裹格式
+                let trainsList = [];
+                if (Array.isArray(odRes)) {
+                    trainsList = odRes;
+                } else if (odRes && Array.isArray(odRes.TrainTimetables)) {
+                    trainsList = odRes.TrainTimetables;
+                } else if (odRes && Array.isArray(odRes.value)) {
+                    trainsList = odRes.value;
+                }
                 
                 // 取得現在時間 HH:mm
                 const now = new Date();
@@ -1623,6 +1631,11 @@
                 let validTrains = [];
                 
                 trainsList.forEach(t => {
+                    // 🔥 2. 強大防呆：確保這筆車次資料包含所有我們需要的物件，只要缺一個就跳過，不讓程式崩潰
+                    if (!t || !t.OriginStopTime || !t.DestinationStopTime || !t.TrainInfo) {
+                        return; // 相當於 continue，直接處理下一班車
+                    }
+
                     const depTime = t.OriginStopTime.DepartureTime;
                     
                     // 只過濾出「還沒開走」的車次 (出發時間 >= 現在時間)
@@ -1632,7 +1645,7 @@
                         
                         validTrains.push({
                             TrainNo: t.TrainInfo.TrainNo,
-                            TrainTypeName: t.TrainInfo.TrainTypeName, // 保留完整物件給 getTrainDisplayInfo 判斷
+                            TrainTypeName: t.TrainInfo.TrainTypeName, 
                             DepartureTime: depTime,
                             ArrivalTime: t.DestinationStopTime.ArrivalTime,
                             DelayTime: liveMatch ? liveMatch.DelayTime : 0,
