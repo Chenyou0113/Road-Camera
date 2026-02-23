@@ -155,6 +155,34 @@
         .query-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4); }
         .query-btn:disabled { background: #ccc; cursor: not-allowed; }
 
+        /* === 站到站查詢專用 UI === */
+        .route-inputs {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr auto;
+            gap: 15px;
+            align-items: end;
+        }
+        .swap-btn {
+            background: rgba(255,255,255,0.2);
+            color: white;
+            border: 2px solid rgba(255,255,255,0.5);
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 1.1rem;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 2px; /* 對齊旁邊的 select */
+        }
+        .swap-btn:hover {
+            background: white;
+            color: #D84315;
+            transform: rotate(180deg);
+        }
+
         /* 公告面板 */
         .info-panel {
             background: #fff3e0; 
@@ -449,6 +477,17 @@
         
         /* 手機版適配 */
         @media (max-width: 768px) {
+            .route-inputs {
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
+            .swap-btn {
+                margin: 0 auto;
+                transform: rotate(90deg); /* 手機版變為上下互換 */
+            }
+            .swap-btn:hover {
+                transform: rotate(270deg);
+            }
             .selector-row { grid-template-columns: 1fr; }
             .train-card { grid-template-columns: 1fr; }
             .train-info { flex-direction: column; align-items: flex-start; }
@@ -599,12 +638,14 @@
         </div>
 
         <div class="control-panel">
+            <!-- 3個 Tabs -->
             <div class="search-tabs">
-                <button class="tab-btn active" id="tabStation" onclick="switchSearchMode('station')"><i class="fas fa-torii-gate"></i> 按車站查詢</button>
-                <button class="tab-btn" id="tabTrain" onclick="switchSearchMode('train')"><i class="fas fa-train"></i> 按車次查詢</button>
+                <button class="tab-btn active" id="tabStation" onclick="switchSearchMode('station')"><i class="fas fa-torii-gate"></i> 車站看板</button>
+                <button class="tab-btn" id="tabRoute" onclick="switchSearchMode('route')"><i class="fas fa-route"></i> 站到站查詢</button>
+                <button class="tab-btn" id="tabTrain" onclick="switchSearchMode('train')"><i class="fas fa-train"></i> 車次追蹤</button>
             </div>
 
-            <!-- 車站查詢區塊 -->
+            <!-- 1. 原本的車站查詢區塊 (保持不變) -->
             <div id="searchStationMode">
                 <div class="selector-row">
                     <div class="selector-group">
@@ -657,7 +698,30 @@
                 </div>
             </div>
 
-            <!-- 車次查詢區塊 (預設隱藏) -->
+            <!-- 2. 🔥 新增：站到站路線查詢區塊 -->
+            <div id="searchRouteMode" style="display: none;">
+                <div class="route-inputs">
+                    <div class="selector-group">
+                        <label for="startStationSelect">起點站</label>
+                        <select id="startStationSelect"></select>
+                    </div>
+                    
+                    <button class="swap-btn" onclick="swapRouteStations()" title="起訖站互換">
+                        <i class="fas fa-exchange-alt"></i>
+                    </button>
+                    
+                    <div class="selector-group">
+                        <label for="endStationSelect">終點站</label>
+                        <select id="endStationSelect"></select>
+                    </div>
+                    
+                    <button class="query-btn" id="queryRouteBtn" onclick="fetchRouteSchedule()">
+                        <i class="fas fa-search"></i> 查班次
+                    </button>
+                </div>
+            </div>
+
+            <!-- 3. 原本的車次查詢區塊 (保持不變) -->
             <div id="searchTrainMode" style="display: none;">
                 <div class="selector-row" style="grid-template-columns: 1fr auto;">
                     <div class="selector-group">
@@ -1410,21 +1474,212 @@
             return true;
         }
 
-        // ============ 查詢模式切換 ============
+        // ============ 站到站查詢功能 ============
+
+        // 1. 修改原本的 switchSearchMode，支援三個 Tab
         function switchSearchMode(mode) {
-            document.getElementById('tabStation').classList.remove('active');
-            document.getElementById('tabTrain').classList.remove('active');
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.getElementById('searchStationMode').style.display = 'none';
+            document.getElementById('searchRouteMode').style.display = 'none';
             document.getElementById('searchTrainMode').style.display = 'none';
 
             if (mode === 'station') {
                 document.getElementById('tabStation').classList.add('active');
                 document.getElementById('searchStationMode').style.display = 'block';
+            } else if (mode === 'route') {
+                document.getElementById('tabRoute').classList.add('active');
+                document.getElementById('searchRouteMode').style.display = 'block';
             } else {
                 document.getElementById('tabTrain').classList.add('active');
                 document.getElementById('searchTrainMode').style.display = 'block';
                 document.getElementById('trainNoInput').focus();
             }
+        }
+
+        // 2. 初始化起訖站的下拉選單 (利用已經載入好的 allStationsFlat)
+        function initRouteSelects() {
+            const startSel = document.getElementById('startStationSelect');
+            const endSel = document.getElementById('endStationSelect');
+            
+            // 確保有資料
+            if (allStationsFlat.length > 0) {
+                allStationsFlat.forEach(s => {
+                    startSel.add(new Option(`${s.code} - ${s.name}`, s.code));
+                    endSel.add(new Option(`${s.code} - ${s.name}`, s.code));
+                });
+                // 預設給個大站，方便直接點擊查詢體驗
+                startSel.value = "1000"; // 台北
+                endSel.value = "4400"; // 高雄
+            }
+        }
+        
+        // 在網頁載入後，稍微延遲執行以確保車站清單已建立
+        document.addEventListener('DOMContentLoaded', () => {
+            setTimeout(initRouteSelects, 500); 
+        });
+
+        // 3. 起訖站互換按鈕功能
+        function swapRouteStations() {
+            const start = document.getElementById('startStationSelect');
+            const end = document.getElementById('endStationSelect');
+            const temp = start.value;
+            start.value = end.value;
+            end.value = temp;
+        }
+
+        // 4. 執行站到站查詢 (結合時刻表 + 即時誤點)
+        async function fetchRouteSchedule() {
+            const startId = document.getElementById('startStationSelect').value;
+            const endId = document.getElementById('endStationSelect').value;
+            
+            if (!startId || !endId) return;
+            if (startId === endId) {
+                alert('起點與終點不能相同！');
+                return;
+            }
+
+            const startName = document.getElementById('startStationSelect').options[document.getElementById('startStationSelect').selectedIndex].text.split(' - ')[1];
+            const endName = document.getElementById('endStationSelect').options[document.getElementById('endStationSelect').selectedIndex].text.split(' - ')[1];
+            
+            const queryBtn = document.getElementById('queryRouteBtn');
+            queryBtn.disabled = true;
+            queryBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 搜尋中...';
+            
+            document.getElementById('trainContainer').style.display = 'block';
+            UI.setLoading('trainsBoard', true);
+
+            // 更新標題
+            document.getElementById('stationTitle').innerHTML = `<i class="fas fa-route"></i> ${startName} ➡ ${endName}`;
+            document.getElementById('stationInfo').textContent = '即將發車之直達班次';
+
+            try {
+                // 取得今天日期 YYYY-MM-DD
+                const today = new Date().toLocaleDateString('en-CA'); 
+                
+                // API 1: 取得兩站之間的直達時刻表 (TDX OD API)
+                const odPromise = tdxApi.fetch(`/v3/Rail/TRA/DailyTrainTimetable/OD/${startId}/to/${endId}/${today}?$format=JSON`);
+                
+                // API 2: 同時取得起點站的「即時看板」，用來抓取這些車次現在有沒有誤點
+                const livePromise = fetch(`${TRA_WORKER_URL}/api/liveboard/station?station=${startId}`).then(r => r.json()).catch(() => []);
+                
+                const [odRes, liveRes] = await Promise.all([odPromise, livePromise]);
+                
+                let trainsList = odRes.TrainTimetables || odRes || [];
+                
+                // 取得現在時間 HH:mm
+                const now = new Date();
+                const nowTime = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+                
+                let validTrains = [];
+                
+                trainsList.forEach(t => {
+                    const depTime = t.OriginStopTime.DepartureTime;
+                    
+                    // 只過濾出「還沒開走」的車次 (出發時間 >= 現在時間)
+                    if (depTime >= nowTime) {
+                        // 去 LiveBoard 找這班車，看有沒有誤點資訊
+                        const liveMatch = liveRes.find(l => l.TrainNo === t.TrainInfo.TrainNo);
+                        
+                        validTrains.push({
+                            TrainNo: t.TrainInfo.TrainNo,
+                            TrainTypeName: t.TrainInfo.TrainTypeName, // 保留完整物件給 getTrainDisplayInfo 判斷
+                            DepartureTime: depTime,
+                            ArrivalTime: t.DestinationStopTime.ArrivalTime,
+                            DelayTime: liveMatch ? liveMatch.DelayTime : 0,
+                            TrainStatus: liveMatch ? liveMatch.TrainStatus : 0
+                        });
+                    }
+                });
+
+                // 依出發時間先後排序
+                validTrains.sort((a, b) => a.DepartureTime.localeCompare(b.DepartureTime));
+
+                renderRouteBoard(validTrains);
+
+            } catch (error) {
+                console.error("OD 查詢失敗:", error);
+                UI.showError('trainsBoard', '無法取得路線班次資料，請稍後再試。');
+            } finally {
+                queryBtn.disabled = false;
+                queryBtn.innerHTML = '<i class="fas fa-search"></i> 查班次';
+            }
+        }
+
+        // 5. 渲染站到站結果卡片
+        function renderRouteBoard(trains) {
+            const trainsBoard = document.getElementById('trainsBoard');
+            
+            if (trains.length === 0) {
+                trainsBoard.innerHTML = '<div class="no-data" style="padding: 40px; text-align: center;"><i class="fas fa-bed" style="font-size: 3rem; color: #ccc; margin-bottom: 15px;"></i><p>今日已無直達班次，或請確認路線是否正確。</p></div>';
+                return;
+            }
+
+            let html = '<div class="direction-section">';
+            
+            // 取最近的 15 班車顯示就好，避免清單過長
+            const displayTrains = trains.slice(0, 15);
+
+            displayTrains.forEach(t => {
+                const delay = parseInt(t.DelayTime || 0);
+                const isCancelled = (String(t.TrainStatus) === '2' || t.TrainStatus === 2);
+                
+                // 取得列車美化名稱與顏色 (共用寫好的輔助函數)
+                const trainInfo = getTrainDisplayInfo(t);
+                
+                let timeHtml = '';
+                let statusBadge = '';
+
+                if (isCancelled) {
+                    timeHtml = `<span style="color:#F44336; text-decoration:line-through;">${t.DepartureTime}</span>`;
+                    statusBadge = '<span class="delay-badge status-cancelled"><i class="fas fa-ban"></i> 停駛</span>';
+                } else if (delay > 0) {
+                    const expectedDep = addMinutesToTime(t.DepartureTime, delay);
+                    timeHtml = `
+                        <div style="line-height: 1.2;">
+                            <span style="color:#999; text-decoration:line-through; font-size:0.9rem;">${t.DepartureTime}</span><br>
+                            <span style="color:#00e5ff; font-weight:900; font-size: 1.3rem;">${expectedDep}</span>
+                        </div>`;
+                    statusBadge = `<span class="delay-badge delay-warn">晚 ${delay} 分</span>`;
+                } else {
+                    timeHtml = `<span style="font-size: 1.3rem;">${t.DepartureTime}</span>`;
+                    statusBadge = `<span class="delay-badge delay-ok">準點</span>`;
+                }
+
+                // 點擊整張卡片，自動切換到「車次追蹤」Tab 並搜尋該班車
+                const rowClass = isCancelled ? 'train-card train-cancelled-row' : 'train-card';
+                
+                html += `
+                    <div class="${rowClass}" style="cursor: pointer; position: relative;" 
+                         onclick="switchSearchMode('train'); document.getElementById('trainNoInput').value='${t.TrainNo}'; fetchTrainDetail();">
+                         
+                        <div class="train-info">
+                            <span class="train-type-badge type-${trainInfo.class}">${trainInfo.name}</span>
+                            <div class="train-destination">
+                                <div class="train-no">${t.TrainNo} 次</div>
+                            </div>
+                        </div>
+                        
+                        <div class="schedule-time" style="text-align: center;">
+                            ${timeHtml}
+                            <div class="schedule-label">出發</div>
+                        </div>
+                        
+                        <div class="schedule-time" style="text-align: center; color: #555;">
+                            <span style="font-size: 1.1rem; font-weight: bold;"><i class="fas fa-arrow-right" style="color:#ccc; font-size:0.9rem; margin-right:5px;"></i> ${t.ArrivalTime}</span>
+                            <div class="schedule-label">抵達</div>
+                        </div>
+                        
+                        <div class="delay-status">
+                            ${statusBadge}
+                            <div style="font-size: 0.75rem; color: #2196F3; margin-top: 5px; font-weight: bold;">
+                                <i class="fas fa-crosshairs"></i> 點擊追蹤
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            trainsBoard.innerHTML = html;
         }
 
         // ============ 車次查詢詳細資訊 ============
