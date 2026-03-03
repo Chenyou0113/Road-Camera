@@ -1344,6 +1344,17 @@
         body.dark-mode #ann-footer { background: #0f172a; border-color: #334155; }
     </style>
     <link rel="stylesheet" href="assets/theme-toggle-unified.css">
+    <script>
+        // 🚀 強制清理可能干擾 API 的 Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(registrations => {
+                for (let registration of registrations) {
+                    registration.unregister();
+                    console.log('清理過期的 Service Worker...');
+                }
+            });
+        }
+    </script>
 </head>
 <body>
     <div class="particles-bg"></div>
@@ -2206,65 +2217,42 @@
         // Cloudflare Workers API 代理 (後端已設定 CWA_API_KEY)
         const WEATHER_API_BASE = 'https://cwa-weather-proxy.weacamm.org';
 
-        // 1. 啟動定位：同時獲取「天氣」與「天文」資料
-        async function getUserLocationWeather() {
+        // 🚀 新增：獨立初始化氣象系統
+        async function initWeatherSystem() {
             const weatherTextEl = document.getElementById('locationWeatherText');
-            const astroLocEl = document.getElementById('astroLocation');
-            const locationEl = document.getElementById('locationWeather');
-
-            if (!navigator.geolocation) {
-                console.log("瀏覽器不支援定位");
-                return;
+            try {
+                const stations = await fetchAllStations(); // 立刻抓資料
+                window.allWeatherStations = stations; // 存入全域變數供定位使用
+                
+                // 抓完立刻顯示全台平均溫度或預設狀態
+                if (stations.length > 0) {
+                    weatherTextEl.innerHTML = `📍 氣象系統已連線 (${stations.length} 站)`;
+                }
+            } catch (e) {
+                weatherTextEl.textContent = '📍 氣象資料載入失敗';
             }
+        }
 
-            // 顯示載入狀態
-            locationEl.style.display = 'inline-flex';
-            weatherTextEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 定位中...';
-            if (astroLocEl) astroLocEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 定位中...';
+        // 🚀 修改：定位函式只負責抓座標，不負責抓資料
+        async function getUserLocation() {
+            if (!navigator.geolocation) return;
             
             navigator.geolocation.getCurrentPosition(
                 async (position) => {
                     const { latitude, longitude } = position.coords;
-                    
-                    try {
-                        // --- A. 處理天氣 (找最近測站) ---
-                        const stations = await fetchAllStations();
-                        const nearest = findNearestStation(latitude, longitude, stations);
-                        
-                        let countyName = '臺北市'; // 預設值
-
+                    // 位置抓到了，從已經抓好的全域變數找最近測站
+                    if (window.allWeatherStations) {
+                        const nearest = findNearestStation(latitude, longitude, window.allWeatherStations);
                         if (nearest) {
-                            const dist = nearest.distance.toFixed(1);
-                            const weatherDesc = nearest.weather || '多雲';
-                            const temp = nearest.temp;
-                            countyName = nearest.county; // 抓到縣市名稱，給天文用
-
-                            // 更新 Hero 區塊的天氣
-                            weatherTextEl.innerHTML = `📍 ${nearest.name} (${dist}km)：${temp}°C ${weatherDesc}`;
-                            
-                            // 更新生活指數
-                            updateLifestyleIndices(temp, weatherDesc);
-                        } else {
-                            weatherTextEl.textContent = '📍 無法找到附近測站';
-                            updateLifestyleIndices(null, null);
+                            document.getElementById('locationWeatherText').innerHTML = 
+                                `📍 ${nearest.name}：${nearest.temp}°C ${nearest.weather}`;
+                            updateLifestyleIndices(nearest.temp, nearest.weather);
+                            updateAstronomyData(nearest.county);
                         }
-
-                        // --- B. 處理天文 (日出日落) ---
-                        updateAstronomyData(countyName);
-
-                    } catch (error) {
-                        console.error("資料獲取失敗", error);
-                        weatherTextEl.textContent = '📍 資料載入失敗';
                     }
                 },
-                (error) => {
-                    console.warn("定位失敗", error);
-                    weatherTextEl.textContent = '📍 請開啟定位';
-                    if (astroLocEl) astroLocEl.innerHTML = '<i class="fas fa-map-marker-alt"></i> 臺北市 (預設)';
-                    // 定位失敗時，預設顯示臺北市的天文
-                    updateAstronomyData('臺北市');
-                },
-                { timeout: 10000 }
+                (error) => { console.warn("定位失敗"); updateAstronomyData('臺北市'); },
+                { timeout: 5000 } // 只給定位 5 秒，超過就不等了
             );
         }
 
@@ -2561,7 +2549,7 @@
             }
         });
 
-        // 🌐 延遲載入非關鍵 API（減少初始錯誤）
+        // 🚀 終極加速：並行執行所有請求
         document.addEventListener('DOMContentLoaded', async () => {
             // 檢測網路狀態
             if (!navigator.onLine) {
@@ -2569,16 +2557,13 @@
                 return;
             }
 
-            // 先載入關鍵內容（延遲 500ms）
-            setTimeout(() => {
-                updateWeatherStatus();
-                updateWangweiMsg();
-            }, 500);
-
-            // 定位天氣稍後載入（延遲 1s）
-            setTimeout(() => {
-                getUserLocationWeather();
-            }, 1000);
+            // 🚀 不再嵌套，全部同時開始跑！
+            Promise.allSettled([
+                updateWeatherStatus(), // 抓警報
+                updateWangweiMsg(),    // 抓叮嚀
+                initWeatherSystem(),   // 抓全台測站資料 (新函式)
+                getUserLocation()      // 只負責抓位置，不阻塞資料
+            ]);
             
             // 訪客計數器最後載入（非關鍵，延遲 2s）
             setTimeout(async () => {
