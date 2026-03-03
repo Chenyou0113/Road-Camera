@@ -516,10 +516,21 @@
                 return;
             }
 
-            const sortedStations = [...filteredStations].sort((a, b) => (b.temp.val || -100) - (a.temp.val || -100));
+            // 排序：最高溫排到最低溫，處理 undefined 情況
+            const sortedStations = [...filteredStations].sort((a, b) => {
+                const valA = (a.temp && a.temp.val !== null) ? a.temp.val : -100;
+                const valB = (b.temp && b.temp.val !== null) ? b.temp.val : -100;
+                return valB - valA;
+            });
 
             grid.innerHTML = sortedStations.map(s => {
-                const tempDisplay = s.temp.val !== null ? `${s.temp.str}°C` : s.temp.str;
+                // 🔥 關鍵防禦：如果 s.temp 不存在，給予預設物件防止崩潰
+                const tempObj = s.temp || { val: null, str: '--' };
+                const humObj = s.hum || { val: null, str: '--' };
+                const rainObj = s.rain || { val: null, str: '0' };
+                const windObj = s.wind || { val: null, str: '0' };
+
+                const tempDisplay = tempObj.val !== null ? `${tempObj.str}°C` : tempObj.str;
                 
                 if (s.lat && s.lon) {
                     const marker = L.marker([s.lat, s.lon]).bindPopup(`<b>${s.stationName}</b><br>🌡️ ${tempDisplay}<br>${s.weather || ''}`);
@@ -527,14 +538,15 @@
                 }
 
                 let tempColor, bgColor;
-                if (s.temp.val === null) {
+                if (tempObj.val === null) {
                     tempColor = '#999'; bgColor = '#757575';
                 } else {
-                    tempColor = (s.temp.val > 30) ? '#ff5252' : (s.temp.val < 15 ? '#4FC3F7' : '#29B6F6');
-                    bgColor = (s.temp.val > 30) ? 'linear-gradient(135deg, #d32f2f 0%, #c62828 100%)' : 'linear-gradient(135deg, #1976D2 0%, #0D47A1 100%)';
+                    tempColor = (tempObj.val > 30) ? '#ff5252' : (tempObj.val < 15 ? '#4FC3F7' : '#29B6F6');
+                    bgColor = (tempObj.val > 30) ? 'linear-gradient(135deg, #d32f2f 0%, #c62828 100%)' : 'linear-gradient(135deg, #1976D2 0%, #0D47A1 100%)';
                 }
-                const tempClass = s.temp.val === null ? 'temp-main small-text' : 'temp-main';
-                const weatherIcon = getWeatherIcon(s.weather, s.rain.val);
+                
+                const tempClass = tempObj.val === null ? 'temp-main small-text' : 'temp-main';
+                const weatherIcon = getWeatherIcon(s.weather, rainObj.val);
 
                 return `
                 <div class="station-card" onclick="showModal('${s.stationId}')">
@@ -546,9 +558,9 @@
                         <div class="weather-icon" style="font-size: 3rem; margin: 10px 0;">${weatherIcon}</div>
                         <div class="${tempClass}" style="color: ${tempColor}">${tempDisplay}</div>
                         <div class="station-info-row">
-                            <span class="info-pill">💧 ${s.hum.val !== null ? s.hum.str + '%' : s.hum.str}</span>
-                            <span class="info-pill">🌧️ ${s.rain.val !== null ? s.rain.str + 'mm' : s.rain.str}</span>
-                            <span class="info-pill">💨 ${s.wind.val !== null ? s.wind.str + 'm/s' : s.wind.str}</span>
+                            <span class="info-pill">💧 ${humObj.val !== null ? humObj.str + '%' : humObj.str}</span>
+                            <span class="info-pill">🌧️ ${rainObj.val !== null ? rainObj.str + 'mm' : rainObj.str}</span>
+                            <span class="info-pill">💨 ${windObj.val !== null ? windObj.str + 'm/s' : windObj.str}</span>
                         </div>
                     </div>
                 </div>`;
