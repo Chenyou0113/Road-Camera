@@ -1628,31 +1628,45 @@
                     trainsList = odRes.value;
                 }
                 
-                // 取得現在時間 HH:mm
+                // 取得現在的時間 (換算成分鐘，方便比較)
                 const now = new Date();
-                const nowTime = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+                const nowTotalMinutes = now.getHours() * 60 + now.getMinutes();
                 
                 let validTrains = [];
                 
                 trainsList.forEach(t => {
-                    // 🔥 2. 強大防呆：確保這筆車次資料包含所有我們需要的物件，只要缺一個就跳過，不讓程式崩潰
-                    if (!t || !t.OriginStopTime || !t.DestinationStopTime || !t.TrainInfo) {
-                        return; // 相當於 continue，直接處理下一班車
+                    // 🔥 【關鍵修正】：TDX V3 的起訖站是放在 StopTimes 陣列中！
+                    if (!t || !t.TrainInfo || !t.StopTimes || t.StopTimes.length < 2) {
+                        return; // 跳過無效資料
                     }
 
-                    const depTime = t.OriginStopTime.DepartureTime;
+                    // 取出起點與終點 (陣列第一個與最後一個)
+                    const originStop = t.StopTimes[0];
+                    const destStop = t.StopTimes[t.StopTimes.length - 1];
+
+                    // 取得出發與抵達時間
+                    const depTime = originStop.DepartureTime || originStop.ArrivalTime;
+                    const arrTime = destStop.ArrivalTime || destStop.DepartureTime;
                     
-                    // 只過濾出「還沒開走」的車次 (出發時間 >= 現在時間)
-                    if (depTime >= nowTime) {
-                        // 去 LiveBoard 找這班車，看有沒有誤點資訊
-                        const liveMatch = liveRes.find(l => l.TrainNo === t.TrainInfo.TrainNo);
-                        
+                    if (!depTime || !arrTime) return;
+
+                    // 將火車出發時間轉為分鐘數
+                    const [depH, depM] = depTime.split(':').map(Number);
+                    const depTotalMinutes = depH * 60 + depM;
+
+                    // 去 LiveBoard 找這班車，看有沒有誤點資訊
+                    const liveMatch = liveRes.find(l => l.TrainNo === t.TrainInfo.TrainNo);
+                    const delayMins = liveMatch ? parseInt(liveMatch.DelayTime || 0) : 0;
+                    
+                    // 🔥 顯示條件優化：表定時間 + 誤點時間 >= 現在時間 - 30分鐘
+                    // (保留過去半小時內的車次，這樣大誤點的車才不會因為超過表定時間而憑空消失)
+                    if ((depTotalMinutes + delayMins) >= (nowTotalMinutes - 30)) {
                         validTrains.push({
                             TrainNo: t.TrainInfo.TrainNo,
                             TrainTypeName: t.TrainInfo.TrainTypeName, 
                             DepartureTime: depTime,
-                            ArrivalTime: t.DestinationStopTime.ArrivalTime,
-                            DelayTime: liveMatch ? liveMatch.DelayTime : 0,
+                            ArrivalTime: arrTime,
+                            DelayTime: delayMins,
                             TrainStatus: liveMatch ? liveMatch.TrainStatus : 0
                         });
                     }
