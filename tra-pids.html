@@ -1159,6 +1159,8 @@
             // 應用狀態（使用 Proxy 實現響應式）
             STATE: new Proxy({
                 currentLang: localStorage.getItem('pids_lang') || 'zh',
+                manualLangOverride: false, // 記錄是否為手動切換
+                rowLangs: [], // 🔥 儲存每一行目前的獨立語言
                 stationID: '',
                 stationName: '',
                 lastTrainData: [],
@@ -1168,34 +1170,18 @@
                 _observers: new Set()
             }, {
                 set(target, prop, value) {
-                    // 忽略內部屬性
-                    if (prop.startsWith('_')) {
-                        target[prop] = value;
-                        return true;
-                    }
-
+                    if (prop.startsWith('_')) { target[prop] = value; return true; }
                     const oldValue = target[prop];
                     target[prop] = value;
+                    target._observers.forEach(cb => { try { cb(prop, value, oldValue); } catch(e){} });
 
-                    // 通知所有觀察者
-                    target._observers.forEach(callback => {
-                        try {
-                            callback(prop, value, oldValue);
-                        } catch (error) {
-                            console.error('Observer callback failed:', error);
-                        }
-                    });
-
-                    // 特定屬性的自動連動邏輯
-                    if (prop === 'stationID' && value) {
-                        console.log(`🔄 Station changed to: ${value}`);
-                        PIDS_APP.updatePids();
+                    if (prop === 'stationID' && value) PIDS_APP.updatePids();
+                    
+                    // 🔥 防抖動 (Debounce) 渲染機制：當語言或資料改變時，延遲 10ms 再重繪，避免同一秒內重複渲染
+                    if (prop === 'currentLang' || prop === 'rowLangs' || prop === 'lastTrainData') {
+                        clearTimeout(target._renderTimer);
+                        target._renderTimer = setTimeout(() => refreshDisplay(), 10);
                     }
-                    if (prop === 'lastTrainData') {
-                        console.log(`📊 Train data updated: ${value.length} trains`);
-                        refreshDisplay();
-                    }
-
                     return true;
                 }
             }),
@@ -1266,15 +1252,20 @@
             },
 
             startTimers() {
+                // 每秒更新時鐘與語言檢查
                 setInterval(() => this.updateClock(), this.CONFIG.INTERVALS.CLOCK);
+                
                 if (this.STATE.stationID) {
                     this.updatePids();
                     setInterval(() => this.updatePids(), this.CONFIG.INTERVALS.PIDS_UPDATE);
                 }
+                
                 this.checkTopMarquee();
                 setTimeout(() => startMarquee('unifiedTopMarquee'), 1500);
                 setInterval(() => this.checkTopMarquee(), this.CONFIG.INTERVALS.TOP_MARQUEE_CHECK);
-                this.startAutoLangSwitch();
+                
+                // 🔥 移除這行：不再使用舊的 setInterval 切換語言
+                // this.startAutoLangSwitch(); 
             },
 
             loadInitialData() {
@@ -1365,18 +1356,50 @@
                 console.log('⌨️ 鍵盤導航已啟用：使用 Tab/方向鍵瀏覽');
             },
 
-            startAutoLangSwitch() {
-                if (this.STATE.autoSwitchTimer) clearInterval(this.STATE.autoSwitchTimer);
-                this.STATE.autoSwitchTimer = setInterval(() => {
-                    toggleLanguage(true);
-                }, this.CONFIG.INTERVALS.LANG_SWITCH);
-                console.log('\u2705 \u81ea\u52d5\u8a9e\u8a00\u5207\u63db\u5df2\u555f\u52d5 (\u6bcf 80 \u79d2)');
-            },
+            // 🔥 不需要這個函數了
+            // startAutoLangSwitch() { ... },
 
             updateClock() {
                 const now = new Date();
+                
+                // 1. 更新畫面時間
                 UI_Helper.setText('unifiedTime', now.toLocaleTimeString('en-GB'));
                 UI_Helper.setText('unifiedDate', now.toISOString().split('T')[0].replace(/-/g, '/'));
+
+                if (this.STATE.manualLangOverride) return;
+
+                // 🔥 2. 絕對時間數學公式 (瀑布流切換)
+                const t = Math.floor(now.getTime() / 1000);
+                const m = Math.floor(t / 60);
+                const s = t % 60;
+
+                // 偶數分中文、奇數分英文
+                const currentBase = (m % 2 === 0) ? 'zh' : 'en';
+                const prevBase = (m % 2 === 0) ? 'en' : 'zh';
+
+                // 處理表頭與跑馬燈的語言 (00秒瞬間切換)
+                if (this.STATE.currentLang !== currentBase) {
+                    this.STATE.currentLang = currentBase;
+                    PIDS_APP.ui.updateUIStrings();
+                }
+
+                // 計算每一行的專屬語言：第 0 行 0秒切換，第 1 行 3秒切換...
+                const newRowLangs = [];
+                const maxRows = window.innerWidth <= 900 ? this.CONFIG.ROWS.MOBILE : this.CONFIG.ROWS.DESKTOP;
+                for (let i = 0; i < maxRows; i++) {
+                    if (s >= i * 3) {
+                        newRowLangs.push(currentBase);
+                    } else {
+                        newRowLangs.push(prevBase);
+                    }
+                }
+
+                // 檢查如果列語言陣列有改變，才觸發更新
+                const currentLangsStr = JSON.stringify(this.STATE.rowLangs || []);
+                const newLangsStr = JSON.stringify(newRowLangs);
+                if (currentLangsStr !== newLangsStr) {
+                    this.STATE.rowLangs = newRowLangs; // 觸發 Proxy 自動呼叫 refreshDisplay()
+                }
             },
 
             async updatePids() {
@@ -1632,18 +1655,15 @@
             "雙溪": "Shuangxi", "貢寮": "Gongliao", "海山": "Mountain Line", "山線": "Mountain Line", "海線": "Coast Line"
         };
 
-        // 翻譯車站名稱的函式
-        function translateStation(zhName) {
-            // ✅ 使用 PIDS_APP.STATE.currentLang
-            if (PIDS_APP.STATE.currentLang === 'zh') return zhName;
+        // 翻譯車站名稱的函式 (加入 rowLangCode 參數)
+        function translateStation(zhName, langCode = PIDS_APP.STATE.currentLang) {
+            if (langCode === 'zh') return zhName;
 
-            // 移除括號內的文字 (如 山、海) 獨立翻譯
             let cleanName = zhName.replace(/\s*\(山\)/g, "").replace(/\s*\(海\)/g, "").replace(/車站$/g, "").trim();
             let suffix = "";
             if (zhName.includes("(山)")) suffix = " (MT)";
             if (zhName.includes("(海)")) suffix = " (CO)";
 
-            // 先找 stationDataMap (如果你引入的 mapping.js 有資料)
             if (typeof stationDataMap !== 'undefined') {
                 for (let code in stationDataMap) {
                     if (stationDataMap[code].name === cleanName || stationDataMap[code].name === cleanName + "站") {
@@ -1651,6 +1671,7 @@
                     }
                 }
             }
+
 
             // 再找手動字典
             return (stationEnMap[cleanName] || cleanName) + suffix;
@@ -1667,26 +1688,28 @@
 
         // --- 語言切換功能 ---
         function toggleLanguage(isAuto = false) {
-            // ✅ 直接改 STATE，這會觸發 Proxy 攝取器，進而執行 refreshDisplay()
-            PIDS_APP.STATE.currentLang = PIDS_APP.STATE.currentLang === 'zh' ? 'en' : 'zh';
-            localStorage.setItem('pids_lang', PIDS_APP.STATE.currentLang);
+            const targetLang = PIDS_APP.STATE.currentLang === 'zh' ? 'en' : 'zh';
+            PIDS_APP.STATE.currentLang = targetLang;
+            localStorage.setItem('pids_lang', targetLang);
 
-            console.log(`[語言切換] 目前語言: ${PIDS_APP.STATE.currentLang.toUpperCase()} ${isAuto ? '(自動)' : '(手動)'}`);
-
-            // 更新標題與靜態文字
+            // 手動切換時，強制所有行瞬間跟著切換，打破瀑布流
+            const maxRows = window.innerWidth <= 900 ? PIDS_APP.CONFIG.ROWS.MOBILE : PIDS_APP.CONFIG.ROWS.DESKTOP;
+            PIDS_APP.STATE.rowLangs = Array(maxRows).fill(targetLang);
+            
+            PIDS_APP.STATE.manualLangOverride = true;
+            console.log(`[語言切換] 手動切換至: ${targetLang.toUpperCase()}`);
             PIDS_APP.ui.updateUIStrings();
 
-            // 如果是手動點擊，重設計時器
-            if (!isAuto) {
-                PIDS_APP.startAutoLangSwitch(); // 使用 PIDS_APP 的方法
-            }
+            // 5 分鐘後恢復瀑布流自動同步
+            if (window.langOverrideTimer) clearTimeout(window.langOverrideTimer);
+            window.langOverrideTimer = setTimeout(() => {
+                console.log("⏱️ 手動覆蓋超時，恢復瀑布流時鐘同步模式");
+                PIDS_APP.STATE.manualLangOverride = false;
+            }, 300000); 
         }
 
         function startAutoSwitch() {
-            if (autoSwitchTimer) clearInterval(autoSwitchTimer);
-            autoSwitchTimer = setInterval(() => {
-                toggleLanguage(true);
-            }, SWITCH_INTERVAL);
+             // 已廢棄，由全局時鐘同步取代
         }
 
         function updateUIStrings() {
@@ -1726,7 +1749,7 @@
             }
         }
 
-        function getInfo(t) {
+        function getInfo(t, langCode = PIDS_APP.STATE.currentLang) {
             // 🔥 修正: 增強名稱判斷，支援物件型與字串型 TrainTypeName，並補上 missing ID 的防護
             let rawName = t.TrainTypeName?.Zh_tw || t.TrainTypeName || '';
             let name = String(TRAIN_TYPES[t.TrainTypeID] || rawName || '列車');
@@ -1751,8 +1774,8 @@
             }
 
             // 多語言支援
-            // ✅ 使用 PIDS_APP.STATE.currentLang
-            const lang = i18n[PIDS_APP.STATE.currentLang];
+            // 🔥 根據傳入的行語言去抓翻譯
+            const lang = i18n[langCode];
             const displayName = lang.types[cls] || name;
 
             return { name: displayName, cls };
@@ -2100,7 +2123,7 @@
         function renderTable(dir, list) {
             const tb = document.getElementById(`body${dir}`);
             // ✅ 關鍵修正：直接讀取 STATE，確保語言同步
-            const lang = i18n[PIDS_APP.STATE.currentLang];
+            // const lang = i18n[PIDS_APP.STATE.currentLang]; (這行在下面會根據 row 取消)
             const template = document.getElementById('train-row-template');
 
             // 清空表格（使用 textContent 比 innerHTML = '' 更安全）
@@ -2111,17 +2134,37 @@
             const isMobile = window.innerWidth <= 900;
             const currentMaxRows = isMobile ? RWD_MAX_ROWS : MAX_ROWS;
 
-            // 🔥 使用 DocumentFragment 提升性能（一次性插入所有元素）
+            // 🔥 使用 DocumentFragment 提升性能
             const fragment = document.createDocumentFragment();
 
             list.slice(0, currentMaxRows).forEach((t, i) => {
-                let info = getInfo(t);
+                // 🌟 關鍵：取得這一行目前的專屬語言！
+                const rowLangCode = (PIDS_APP.STATE.rowLangs && PIDS_APP.STATE.rowLangs[i]) || PIDS_APP.STATE.currentLang;
+                const lang = i18n[rowLangCode];
+
+                let info = getInfo(t, rowLangCode); // 傳入行語言
                 let delay = parseInt(t.DelayTime || 0);
                 let isCancel = String(t.TrainStatus) === '2';
 
-                // 多語言狀態顯示
                 let status = isCancel ? lang.cancelled : (delay > 0 ? lang.delay.replace('{min}', delay) : lang.onTime);
                 let cls = isCancel ? 'status-cancelled' : (delay > 0 ? 'status-delay' : 'status-ontime');
+
+                let timeStr = (t.ScheduledDepartureTime || "").slice(0, 5);
+                let timeDisplay = timeStr;
+                let isDelayed = false;
+
+                if (delay > 0 && !isCancel) {
+                    let [h, m] = timeStr.split(':').map(Number);
+                    let min = h * 60 + m + delay;
+                    timeDisplay = `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+                    isDelayed = true;
+                }
+
+                // 目的地處理 (傳入行語言)
+                let dest = translateStation(t.EndingStationName, rowLangCode);
+                if (t.TripLine == 1) dest += rowLangCode === 'zh' ? ' (山)' : ' (MT)';
+                else if (t.TripLine == 2) dest += rowLangCode === 'zh' ? ' (海)' : ' (CO)';
+
 
                 let timeStr = (t.ScheduledDepartureTime || "").slice(0, 5);
                 let timeDisplay = timeStr;
