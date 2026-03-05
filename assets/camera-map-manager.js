@@ -1,9 +1,9 @@
 /**
- * 通用監視器地圖管理器
- * 用於為不同監視器頁面提供 Leaflet 地圖定位功能
+ * 通用監視器地圖管理器 (Google Maps Version)
+ * 用於為不同監視器頁面提供 Google Maps 地圖定位功能
  * 
  * 使用方式：
- * 1. 在 HTML 中引入 Leaflet CSS 和 JS
+ * 1. 在 HTML 中引入 Google Maps API Script
  * 2. 創建 <div id="map"></div> 容器
  * 3. 初始化：new CameraMapManager('map', cameraList, options)
  */
@@ -11,20 +11,28 @@
 class CameraMapManager {
     constructor(mapContainerId, cameras = [], options = {}) {
         this.mapContainerId = mapContainerId;
-        this.cameras = cameras;
+        this.cameras = cameras; // Keep reference
+        
+        // Handle center coordinates format (Leaflet [lat, lng] -> Google {lat, lng})
+        let center = options.center || { lat: 23.6, lng: 120.9 };
+        if (Array.isArray(center)) {
+            center = { lat: center[0], lng: center[1] };
+        }
+
         this.options = {
-            center: [23.5, 121],  // 台灣中心
-            zoom: 7,
-            tileLayer: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-            attribution: '© OpenStreetMap contributors',
-            markerCluster: false,  // 是否使用群集標記
+            center: center,
+            zoom: options.zoom || 8,
+            minZoom: 7,
+            mapId: 'DEMO_MAP_ID', // Optional: for advanced markers if needed
             ...options
         };
         
         this.map = null;
         this.markers = [];
-        this.markerLayer = null;
-        
+        this.infoWindow = null;
+        this.mapElement = document.getElementById(this.mapContainerId);
+
+        // Try to init immediately, or wait a bit
         this.init();
     }
 
@@ -32,278 +40,247 @@ class CameraMapManager {
      * 初始化地圖
      */
     init() {
-        if (!window.L) {
-            console.error('Leaflet 未載入，請先引入 Leaflet 庫');
+        if (!window.google || !window.google.maps) {
+            console.warn('Google Maps API 未載入，等待中...');
+            setTimeout(() => this.init(), 500);
             return;
         }
 
-        // 創建地圖
-        this.map = L.map(this.mapContainerId).setView(this.options.center, this.options.zoom);
+        if (!this.mapElement) {
+            this.mapElement = document.getElementById(this.mapContainerId);
+            if (!this.mapElement) {
+                console.error(`找不到地圖容器 #${this.mapContainerId}`);
+                return;
+            }
+        }
 
-        // 添加地圖圖層
-        L.tileLayer(this.options.tileLayer, {
-            attribution: this.options.attribution,
-            maxZoom: 19
-        }).addTo(this.map);
+        try {
+            // 創建地圖
+            this.map = new google.maps.Map(this.mapElement, {
+                center: this.options.center,
+                zoom: this.options.zoom,
+                minZoom: this.options.minZoom,
+                mapTypeId: 'roadmap',
+                streetViewControl: false,
+                mapTypeControl: false,
+                fullscreenControl: true,
+                zoomControl: true,
+                styles: [
+                    {
+                        featureType: "poi",
+                        elementType: "labels",
+                        stylers: [{ visibility: "off" }]
+                    }
+                ]
+            });
 
-        // 添加標記圖層組
-        this.markerLayer = L.layerGroup().addTo(this.map);
+            // 初始化訊息視窗 (單例模式，每次只顯示一個)
+            this.infoWindow = new google.maps.InfoWindow({
+                maxWidth: 320
+            });
 
-        // 添加初始標記
-        this.addMarkers(this.cameras);
+            // 添加初始標記
+            if (this.cameras && this.cameras.length > 0) {
+                this.addMarkers(this.cameras);
+            }
 
-        // 監聽地圖事件
-        this.setupMapEvents();
+            // 設置地圖事件
+            this.setupMapEvents();
+
+            console.log('✅ Google Map 初始化成功');
+
+        } catch (error) {
+            console.error('❌ Google Map 初始化失敗:', error);
+        }
     }
 
     /**
      * 添加標記到地圖
      */
     addMarkers(cameras) {
+        if (!this.map) return;
+        
         this.clearMarkers();
+        this.cameras = cameras; // Update internal reference
         
         let validMarkers = 0;
-        let invalidMarkers = [];
+        const bounds = new google.maps.LatLngBounds();
 
-        cameras.forEach(camera => {
+        cameras.forEach((camera, index) => {
             // 獲取坐標
-            const lat = camera.PositionLat || camera.lat || camera.latitude;
-            const lng = camera.PositionLon || camera.lng || camera.longitude;
+            const lat = parseFloat(camera.PositionLat || camera.lat || camera.latitude);
+            const lng = parseFloat(camera.PositionLon || camera.lng || camera.longitude);
 
-            if (!lat || !lng) return;
+            if (isNaN(lat) || isNaN(lng)) return;
             
             // 驗證坐標是否在台灣範圍內 (簡化檢查)
-            // 台灣大約範圍: 緯度 21-25, 經度 120-122
-            const isValidCoords = (lat >= 20 && lat <= 26 && lng >= 119 && lng <= 123);
+            if (lat < 21 || lat > 26 || lng < 118 || lng > 123) return;
+
+            const position = { lat, lng };
             
-            if (!isValidCoords) {
-                invalidMarkers.push({
-                    name: camera.RoadName || camera.name || '未知',
-                    lat: lat,
-                    lng: lng
-                });
-            }
+            // 創建圓形標記 icon
+            const circleIcon = {
+                path: google.maps.SymbolPath.CIRCLE,
+                fillColor: camera.markerColor || '#1e40af', // Blue default
+                fillOpacity: 0.8,
+                scale: 6, // Radius
+                strokeColor: 'white',
+                strokeWeight: 1
+            };
 
             // 創建標記
-            const marker = L.circleMarker([lat, lng], {
-                radius: 8,
-                fillColor: camera.markerColor || '#1e40af',
-                color: '#fff',
-                weight: 2,
-                opacity: 1,
-                fillOpacity: 0.8
+            const marker = new google.maps.Marker({
+                position: position,
+                map: this.map,
+                icon: circleIcon,
+                title: camera.RoadName || camera.name || '監視器',
+                optimized: true // Render many markers efficiently
             });
 
-            // 創建彈窗內容
-            const popupContent = this.createPopupContent(camera);
-            marker.bindPopup(popupContent);
-
-            // 添加 Tooltip（懸停顯示）
-            const tooltipText = camera.RoadName || camera.name || camera.CCTVID || '監視器';
-            marker.bindTooltip(tooltipText, { 
-                permanent: false,
-                direction: 'top'
-            });
+            // 存儲額外數據以便交互
+            marker.metadata = { camera, index };
 
             // 點擊事件
-            marker.on('click', () => {
-                this.onMarkerClick(camera);
+            marker.addListener('click', () => {
+                this.onMarkerClick(marker, camera);
+                if (this.options.onMarkerClick) {
+                    this.options.onMarkerClick(camera);
+                }
             });
 
-            marker.addTo(this.markerLayer);
             this.markers.push(marker);
+            bounds.extend(position);
             validMarkers++;
         });
 
-        // 輸出診斷信息
-        console.log(`📍 地圖標記統計: ${validMarkers} 個有效標記`);
-        if (invalidMarkers.length > 0) {
-            console.warn(`⚠️ 發現 ${invalidMarkers.length} 個坐標可能不正確:`);
-            invalidMarkers.slice(0, 5).forEach(m => {
-                console.warn(`  - ${m.name}: [${m.lat}, ${m.lng}]`);
-            });
-        }
+        console.log(`📍 已添加 ${validMarkers} 個 Google Map 標記`);
 
-        // 自動調整視圖以適應所有標記
-        if (this.markers.length > 0) {
-            this.fitMarkersInView();
+        // 自動調整視圖 (如果不禁用並且有有效標記)
+        if (validMarkers > 0 && !this.options.disableAutoFit) {
+           this.map.fitBounds(bounds);
         }
+    }
+
+    /**
+     * 處理標記點擊，顯示 InfoWindow
+     */
+    onMarkerClick(marker, camera) {
+        const content = this.createPopupContent(camera);
+        this.infoWindow.setContent(content);
+        this.infoWindow.open(this.map, marker);
     }
 
     /**
      * 創建彈窗內容
      */
     createPopupContent(camera) {
-        const name = camera.RoadName || camera.LocationDescription || camera.CCTVID || '監視器';
+        const name = camera.RoadName || camera.LocationDescription || camera.name || '監視器';
         const city = camera.City || '未知';
-        const district = camera.District || camera.LocationAdministrativeAreaName || '未知';
+        const mile = camera.LocationMile ? `里程：${camera.LocationMile}` : '';
+        const imgUrl = camera.VideoImageURL || camera.VideoImageUrl || '';
         
-        // 生成一個唯一的相機ID用於後續查找
-        const cameraId = camera.CCTVID || name;
-        
+        // 簡單的 HTML 內容
+        // 注意：Google Maps InfoWindow 樣式比較難完全客製化，只能改內容
         return `
-            <div style="min-width: 250px; font-family: 'Microsoft JhengHei', Arial, sans-serif;">
-                <h4 style="margin: 0 0 10px 0; color: #1e40af; word-wrap: break-word;">
-                    ${this.escapeHtml(name)}
-                </h4>
-                <div style="font-size: 0.9rem; line-height: 1.6;">
-                    <p style="margin: 5px 0;"><strong>📍 縣市：</strong> ${this.escapeHtml(city)}</p>
-                    <p style="margin: 5px 0;"><strong>🏘️ 行政區：</strong> ${this.escapeHtml(district)}</p>
-                    <p style="margin: 5px 0;"><strong>🧭 坐標：</strong></p>
-                    <div style="margin-left: 15px; background: #f5f5f5; padding: 8px; border-radius: 4px; font-family: monospace; font-size: 0.85rem;">
-                        <p style="margin: 3px 0;">N: ${(camera.PositionLat || camera.lat || 0).toFixed(6)}</p>
-                        <p style="margin: 3px 0;">E: ${(camera.PositionLon || camera.lng || 0).toFixed(6)}</p>
-                    </div>
-                    ${camera.LocationMile ? `<p style="margin: 5px 0;"><strong>🛣️ 里程：</strong> ${this.escapeHtml(camera.LocationMile)}</p>` : ''}
-                    ${camera.RoadNumber ? `<p style="margin: 5px 0;"><strong>🚗 路線編號：</strong> ${this.escapeHtml(camera.RoadNumber)}</p>` : ''}
+            <div style="font-family: 'Microsoft JhengHei', sans-serif; padding: 5px; max-width: 250px; text-align: left;">
+                <h3 style="margin: 0 0 5px 0; color: #1e40af; font-size: 16px; font-weight: bold;">${this.escapeHtml(name)}</h3>
+                <div style="font-size: 13px; color: #555; margin-bottom: 8px;">
+                    <span style="display:inline-block; margin-right: 5px;">📍 ${this.escapeHtml(city)}</span>
+                    <span>${this.escapeHtml(mile)}</span>
                 </div>
-                <button onclick="openCameraDetails('${this.escapeHtml(cameraId)}')" 
-                        style="width: 100%; padding: 10px; margin-top: 12px; 
-                               background: #1e40af; color: white; border: none; 
-                               border-radius: 5px; cursor: pointer; font-weight: 600; font-size: 0.95rem;">
-                    📸 顯示詳細資訊
-                </button>
+                ${imgUrl ? `
+                <div style="width: 100%; height: 120px; background: #eee; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+                    <img src="${imgUrl}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.src='https://via.placeholder.com/200x120?text=No+Image'">
+                </div>` : ''}
+                <div style="font-size: 12px; color: #888;">
+                    Lat: ${parseFloat(camera.PositionLat || 0).toFixed(4)}, Lng: ${parseFloat(camera.PositionLon || 0).toFixed(4)}
+                </div>
             </div>
         `;
-    }
-
-    /**
-     * 標記點擊事件
-     */
-    onMarkerClick(camera) {
-        console.log('標記已點擊:', camera);
-        // 可以在這裡觸發自定義事件或回調
-        if (this.options.onMarkerClick) {
-            this.options.onMarkerClick(camera);
-        }
     }
 
     /**
      * 設置地圖事件
      */
     setupMapEvents() {
-        // 地圖加載完成
-        this.map.on('load', () => {
-            console.log('地圖加載完成');
-        });
-
-        // 地圖移動結束
-        this.map.on('moveend', () => {
-            console.log('地圖中心:', this.map.getCenter());
-        });
+        // Google Maps 載入完成不需要特別監聽，因為 Map 對象創建即載入
     }
 
     /**
      * 清除所有標記
      */
     clearMarkers() {
-        this.markers.forEach(marker => {
-            this.markerLayer.removeLayer(marker);
-        });
+        if (this.markers) {
+            this.markers.forEach(marker => marker.setMap(null));
+        }
         this.markers = [];
     }
 
     /**
-     * 更新標記
+     * 更新標記 (外部調用介面)
      */
     updateMarkers(cameras) {
-        this.cameras = cameras;
         this.addMarkers(cameras);
     }
 
     /**
-     * 自動調整視圖以適應所有標記
-     */
-    fitMarkersInView() {
-        if (this.markers.length === 0) return;
-
-        const group = new L.featureGroup(this.markers);
-        this.map.fitBounds(group.getBounds().pad(0.1));
-    }
-
-    /**
-     * 按城市篩選標記
-     */
-    filterByCity(city) {
-        const filtered = this.cameras.filter(c => (c.City || c.city) === city);
-        this.addMarkers(filtered);
-    }
-
-    /**
-     * 按道路篩選標記
-     */
-    filterByRoad(road) {
-        const filtered = this.cameras.filter(c => 
-            (c.RoadName || c.RoadNumber || c.road || '').includes(road)
-        );
-        this.addMarkers(filtered);
-    }
-
-    /**
-     * 高亮特定標記
+     * 按索引高亮標記
      */
     highlightMarker(index) {
+        // Find marker by camera index assuming order is preserved or use metadata
+        // Since indices might mismatch if filtered, try to handle gracefully
+        
         if (!this.markers[index]) return;
-
+        
         const marker = this.markers[index];
-        marker.setStyle({
-            fillColor: '#ff9800',
-            radius: 12,
-            weight: 3
+        const camera = marker.metadata.camera;
+
+        // 改變樣式 (Google Maps Marker 變大或變色)
+        marker.setIcon({
+            path: google.maps.SymbolPath.CIRCLE,
+            fillColor: '#ff5722', // Orange for highlight
+            fillOpacity: 1.0,
+            scale: 10,
+            strokeColor: 'white',
+            strokeWeight: 2
         });
-
-        // 居中於此標記
-        this.map.setView(marker.getLatLng(), 15);
-
-        // 打開彈窗
-        marker.openPopup();
+        
+        // 顯示 InfoWindow
+        this.onMarkerClick(marker, camera);
+        
+        // 移動地圖
+        this.map.panTo(marker.getPosition());
+        this.map.setZoom(14);
+        
+        // 3秒後恢復樣式
+        setTimeout(() => {
+            if (marker.getMap()) { // Check if still on map
+                marker.setIcon({
+                    path: google.maps.SymbolPath.CIRCLE,
+                    fillColor: camera.markerColor || '#1e40af',
+                    fillOpacity: 0.8,
+                    scale: 6,
+                    strokeColor: 'white',
+                    strokeWeight: 1
+                });
+            }
+        }, 3000);
     }
 
     /**
-     * 重置所有標記樣式
-     */
-    resetMarkerStyles() {
-        this.markers.forEach(marker => {
-            marker.setStyle({
-                fillColor: '#1e40af',
-                radius: 8,
-                weight: 2
-            });
-        });
-    }
-
-    /**
-     * HTML 轉義
-     */
-    escapeHtml(text) {
-        if (!text) return '';
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-
-    /**
-     * 獲取地圖物件
-     */
-    getMap() {
-        return this.map;
-    }
-
-    /**
-     * 獲取所有標記
-     */
-    getMarkers() {
-        return this.markers;
-    }
-
-    /**
-     * 銷毀地圖
+     * 銷毀
      */
     destroy() {
-        if (this.map) {
-            this.map.remove();
-            this.map = null;
-        }
-        this.markers = [];
+        this.clearMarkers();
+        this.map = null;
+    }
+
+    escapeHtml(text) {
+        if (!text) return '';
+        return text.replace(/&/g, "&amp;")
+                   .replace(/</g, "&lt;")
+                   .replace(/>/g, "&gt;")
+                   .replace(/"/g, "&quot;")
+                   .replace(/'/g, "&#039;");
     }
 }

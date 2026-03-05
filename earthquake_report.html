@@ -6,9 +6,8 @@
     <title>地震監測中心 | Earthquake Monitor</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-          crossorigin=""/>
+    <!-- Google Maps API -->
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=places&language=zh-TW"></script>
     <style>
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Microsoft JhengHei", sans-serif;
@@ -86,9 +85,6 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-            crossorigin=""></script>
 </head>
 <body class="bg-gray-100">
     <div class="header">
@@ -183,6 +179,7 @@
 
         // === 地圖相關變數 ===
         let map = null;
+        let infoWindow = null;
         let markers = [];
 
         // === 分頁狀態變數 ===
@@ -195,15 +192,18 @@
         let currentTimeIntervalId = null;
         let earthquakeDataIntervalId = null;
 
-        // === 初始化 Leaflet 地圖 ===
+        // === 初始化 Google 地圖 ===
         function initializeMap() {
             if (map) return;
             try {
-                map = L.map(mapContainer).setView([23.7, 120.9], 7);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    attribution: '© OpenStreetMap contributors',
-                    maxZoom: 18,
-                }).addTo(map);
+                map = new google.maps.Map(mapContainer, {
+                    center: { lat: 23.7, lng: 120.9 },
+                    zoom: 7,
+                    mapTypeControl: false,
+                    streetViewControl: false,
+                    fullscreenControl: false
+                });
+                infoWindow = new google.maps.InfoWindow();
                 console.log("地圖初始化成功");
             } catch (error) {
                 console.error("地圖初始化失敗:", error);
@@ -264,7 +264,7 @@
         // === 清除地圖上的所有標記 ===
         function clearMapMarkers() {
             if (markers.length > 0) {
-                markers.forEach(marker => marker.remove());
+                markers.forEach(marker => marker.setMap(null));
                 markers = [];
             }
         }
@@ -302,7 +302,10 @@
 
             if (!dataToRender || dataToRender.length === 0) {
                 earthquakeList.innerHTML = '<div class="text-center text-gray-500 py-4">此頁無地震資料。</div>';
-                if (map) map.setView([23.7, 120.9], 7);
+                if (map) {
+                     map.setCenter({ lat: 23.7, lng: 120.9 });
+                     map.setZoom(7);
+                }
                 return;
             }
 
@@ -373,23 +376,38 @@
                     const lat = parseFloat(latitudeStr);
                     const lon = parseFloat(longitudeStr);
                     if (!isNaN(lat) && !isNaN(lon)) {
-                        const marker = L.marker([lat, lon], {
-                            icon: L.divIcon({
-                                className: 'custom-marker',
-                                html: `<div style="background-color: ${magnitude >= 5 ? '#dc2626' : '#2563eb'}; color: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${magnitude.toFixed(1)}</div>`,
-                                iconSize: [30, 30],
-                                iconAnchor: [15, 15]
-                            })
-                        }).addTo(map);
+                         const marker = new google.maps.Marker({
+                             position: {lat: lat, lng: lon},
+                             map: map,
+                             title: location,
+                             icon: {
+                                 path: google.maps.SymbolPath.CIRCLE,
+                                 scale: 15,
+                                 fillColor: magnitude >= 5 ? '#dc2626' : '#2563eb', // red-600 or blue-600
+                                 fillOpacity: 1,
+                                 strokeWeight: 2,
+                                 strokeColor: 'white',
+                             },
+                             label: {
+                                 text: magnitude.toFixed(1),
+                                 color: "white",
+                                 fontWeight: "bold"
+                             }
+                         });
 
-                        marker.bindPopup(`
-                            <div style="min-width: 180px;">
+                        const contentString = `
+                            <div style="min-width: 180px; color: black;">
                                 <strong>${location}</strong><br>
                                 規模：<strong>${magnitude.toFixed(1)}</strong><br>
                                 深度：${depth} km<br>
                                 時間：${formattedTime}
                             </div>
-                        `);
+                        `;
+
+                        marker.addListener('click', () => {
+                            infoWindow.setContent(contentString);
+                            infoWindow.open(map, marker);
+                        });
 
                         pageMarkers.push(marker);
                     }
@@ -400,10 +418,12 @@
 
             // 調整地圖視圖
             if (map && markers.length > 0) {
-                const group = L.featureGroup(markers);
-                map.fitBounds(group.getBounds().pad(0.1));
+                const bounds = new google.maps.LatLngBounds();
+                markers.forEach(marker => bounds.extend(marker.getPosition()));
+                map.fitBounds(bounds);
             } else if (map && dataToRender.length > 0 && markers.length === 0) {
-                map.setView([23.7, 120.9], 7);
+                 map.setCenter({lat: 23.7, lng: 120.9});
+                 map.setZoom(7);
             }
         }
 

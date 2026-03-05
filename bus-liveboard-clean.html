@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>台灣公車即時動態追蹤系統 - 專業版</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Google Maps API -->
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=places&language=zh-TW"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
@@ -190,44 +190,22 @@
     let pollingTimer = null;
     let currentStops = [];
 
-    // 初始化地图（使用多个备选瓦片源，避免 SSL 证书错误）
-    map = L.map('map').setView([25.0475, 121.5173], 13);
-    
-    // 尝试使用多个地图瓦片源（依次尝试）
-    const tileProviders = [
-        {
-            name: 'OpenStreetMap',
-            url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-            attr: '© OpenStreetMap contributors'
-        },
-        {
-            name: 'CartoDB Voyager',
-            url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-            attr: '© OpenStreetMap | CartoDB'
-        },
-        {
-            name: 'OpenTopoMap',
-            url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
-            attr: '© OpenStreetMap | OpenTopoMap'
-        }
-    ];
-    
-    // 使用第一个可用的地图源
-    let tileLayer = null;
-    for (const provider of tileProviders) {
-        try {
-            tileLayer = L.tileLayer(provider.url, {
-                attribution: provider.attr,
-                maxZoom: 19,
-                crossOrigin: true
-            });
-            tileLayer.addTo(map);
-            console.log('✅ 使用地图源:', provider.name);
-            break;
-        } catch (e) {
-            console.warn('⚠️ 地图源加载失败:', provider.name, e);
-        }
+    let infoWindow = null;
+
+    // 初始化地圖
+    function initMap() {
+        map = new google.maps.Map(document.getElementById('map'), {
+            center: { lat: 25.0475, lng: 121.5173 },
+            zoom: 13,
+            mapTypeControl: false,
+            streetViewControl: false,
+            fullscreenControl: false
+        });
+        infoWindow = new google.maps.InfoWindow();
     }
+    
+    // 確保頁面載入後初始化地圖
+    window.onload = initMap;
 
     async function startTracking() {
         const category = document.getElementById('category').value;
@@ -268,8 +246,9 @@
         const container = document.getElementById('stop-list');
         container.innerHTML = `<div style="background:#667eea;color:white;padding:10px;border-radius:8px;margin-bottom:10px;font-weight:900;text-align:center;">${routeName} - ${direction==0?'去程':'返程'}</div>`;
         
-        stopMarkers.forEach(m => map.removeLayer(m));
+        stopMarkers.forEach(m => m.setMap(null));
         stopMarkers = [];
+        const bounds = new google.maps.LatLngBounds();
 
         stops.forEach((stop, idx) => {
             const item = document.createElement('div');
@@ -278,16 +257,31 @@
             item.innerHTML = `<span class="stop-name">${stop.name}</span><span class="arrival-time time-none">--</span>`;
             container.appendChild(item);
 
-            const marker = L.circleMarker([stop.lat, stop.lon], {
-                radius: 6, color: '#667eea', fillColor: 'white', fillOpacity: 1, weight: 2
-            }).addTo(map).bindPopup(`<b>${stop.name}</b>`);
+            const marker = new google.maps.Marker({
+                position: { lat: stop.lat, lng: stop.lon },
+                map: map,
+                title: stop.name,
+                icon: {
+                     path: google.maps.SymbolPath.CIRCLE,
+                     scale: 3,
+                     fillColor: "white",
+                     fillOpacity: 1,
+                     strokeWeight: 2,
+                     strokeColor: "#667eea",
+                }
+            });
+
+            marker.addListener('click', () => {
+                infoWindow.setContent(`<b>${stop.name}</b>`);
+                infoWindow.open(map, marker);
+            });
             
+            bounds.extend(marker.getPosition());
             stopMarkers.push(marker);
         });
 
         if (stops.length > 0) {
-            const bounds = L.latLngBounds(stops.map(s => [s.lat, s.lon]));
-            map.fitBounds(bounds, { padding: [50, 50] });
+            map.fitBounds(bounds);
         }
     }
 
@@ -323,22 +317,29 @@
     }
 
     function updateBusPositions(buses, direction) {
-        busMarkers.forEach(m => map.removeLayer(m));
+        busMarkers.forEach(m => m.setMap(null));
         busMarkers = [];
 
         if (!buses || buses.length === 0) return;
 
-        buses.filter(b => b.dir == direction).forEach(bus => {
+        buses.forEach(bus => {
+            if (bus.dir != direction && bus.dir !== undefined) return;
             const azimuth = bus.azi || 0;
             
-            const busIcon = L.divIcon({
-                className: '',
-                html: `<div class="bus-marker-container"><div class="bus-icon-wrapper" style="transform: rotate(${azimuth}deg);"><i class="fas fa-location-arrow"></i></div><div class="bus-plate-label">${bus.plate || '未知'}</div></div>`,
-                iconSize: [45, 60],
-                iconAnchor: [22, 30]
+            const marker = new google.maps.Marker({
+                position: { lat: bus.lat, lng: bus.lon },
+                map: map,
+                title: bus.plate || '未知',
+                icon: {
+                    path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+                    scale: 6,
+                    rotation: azimuth,
+                    fillColor: (bus.status === 0 || bus.status === undefined) ? '#10b981' : '#ef4444',
+                    fillOpacity: 1,
+                    strokeWeight: 2,
+                    strokeColor: 'white'
+                }
             });
-            
-            const marker = L.marker([bus.lat, bus.lon], { icon: busIcon }).addTo(map);
             
             const statusColor = (bus.status === 0 || bus.status === undefined) ? '#10b981' : '#ef4444';
             const statusText = (bus.status === 0 || bus.status === undefined) ? '正常' : '異常';
@@ -346,7 +347,11 @@
             
             const popupHtml = `<div class="bus-popup"><div class="bus-popup-header"><i class="fas fa-bus"></i> ${bus.plate || '未知'}</div><div class="bus-info-row"><span class="bus-info-label">行駛方向</span><span class="bus-info-value">${directionText}</span></div><div class="bus-info-row"><span class="bus-info-label">車頭朝向</span><span class="bus-info-value">${azimuth}°</span></div><div class="bus-info-row"><span class="bus-info-label">運行狀態</span><span class="bus-info-value" style="color:${statusColor};">${statusText}</span></div><div class="bus-popup-footer">更新: ${new Date().toLocaleTimeString()}</div></div>`;
             
-            marker.bindPopup(popupHtml);
+            marker.addListener('click', () => {
+                infoWindow.setContent(popupHtml);
+                infoWindow.open(map, marker);
+            });
+            
             busMarkers.push(marker);
         });
     }
@@ -368,7 +373,7 @@
     }
 
     async function drawRouteShape(city, route, category, direction) {
-        if (currentRouteLine) map.removeLayer(currentRouteLine);
+        if (currentRouteLine) currentRouteLine.setMap(null);
         
         const res = await fetch(`${WORKER_URL}?action=shape&city=${city}&route=${route}&category=${category}`);
         if (!res.ok) return;
@@ -380,11 +385,14 @@
         
         const coords = parseWKT(targetRoute.Geometry);
         if (coords.length > 0) {
-            currentRouteLine = L.polyline(coords, { 
-                color: '#667eea', 
-                weight: 5, 
-                opacity: 0.7
-            }).addTo(map);
+            currentRouteLine = new google.maps.Polyline({
+                path: coords,
+                geodesic: true,
+                strokeColor: '#667eea',
+                strokeOpacity: 0.7,
+                strokeWeight: 5,
+                map: map
+            });
         }
     }
 
@@ -396,7 +404,7 @@
             if (coords.length >= 2) {
                 const lon = parseFloat(coords[0]);
                 const lat = parseFloat(coords[1]);
-                if (!isNaN(lat) && !isNaN(lon)) return [lat, lon];
+                if (!isNaN(lat) && !isNaN(lon)) return { lat: lat, lng: lon };
             }
             return null;
         }).filter(c => c !== null);

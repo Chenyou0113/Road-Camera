@@ -4,9 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>氣象觀測 | 中央氣象署即時資料</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4" async defer></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         :root {
@@ -404,12 +403,18 @@
         });
 
         function initMap() {
+            if (typeof google === 'undefined') {
+                setTimeout(initMap, 500); // Retry
+                return;
+            }
             if (!map) {
-                map = L.map('map').setView([23.6, 121], 7);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    attribution: '© OpenStreetMap', maxZoom: 18
-                }).addTo(map);
-                markersLayer = L.layerGroup().addTo(map);
+                map = new google.maps.Map(document.getElementById('map'), {
+                    center: { lat: 23.6, lng: 121 },
+                    zoom: 7,
+                    mapTypeControl: false,
+                    streetViewControl: false
+                });
+                markersLayer = []; // 用陣列儲存 markers
             }
         }
 
@@ -509,7 +514,23 @@
 
         function renderStations() {
             const grid = document.getElementById('stations-grid');
-            markersLayer.clearLayers();
+            
+            // 清除現有標記
+            if (markersLayer) {
+                if (Array.isArray(markersLayer)) {
+                    markersLayer.forEach(m => m.setMap(null));
+                    markersLayer = [];
+                } else if (markersLayer.clearLayers) {
+                    markersLayer.clearLayers(); // Leaflet fallback (should not happen)
+                }
+            } else {
+                markersLayer = [];
+            }
+            
+            // 確保地圖已初始化
+            if (!map && typeof google !== 'undefined') {
+                initMap();
+            }
 
             if (filteredStations.length === 0) {
                 grid.innerHTML = '<p style="color:var(--text-secondary); text-align:center; grid-column:1/-1;">無符合資料</p>';
@@ -522,6 +543,9 @@
                 const valB = (b.temp && b.temp.val !== null) ? b.temp.val : -100;
                 return valB - valA;
             });
+            
+            // InfoWindow 物件
+            const infoWindow = typeof google !== 'undefined' ? new google.maps.InfoWindow() : null;
 
             grid.innerHTML = sortedStations.map(s => {
                 // 🔥 關鍵防禦：如果 s.temp 不存在，給予預設物件防止崩潰
@@ -532,9 +556,25 @@
 
                 const tempDisplay = tempObj.val !== null ? `${tempObj.str}°C` : tempObj.str;
                 
-                if (s.lat && s.lon) {
-                    const marker = L.marker([s.lat, s.lon]).bindPopup(`<b>${s.stationName}</b><br>🌡️ ${tempDisplay}<br>${s.weather || ''}`);
-                    markersLayer.addLayer(marker);
+                if (s.lat && s.lon && map && typeof google !== 'undefined') {
+                    const marker = new google.maps.Marker({
+                        position: { lat: parseFloat(s.lat), lng: parseFloat(s.lon) },
+                        map: map,
+                        title: s.stationName
+                    });
+                    
+                    marker.addListener('click', () => {
+                        infoWindow.setContent(`
+                            <div style="font-family: inherit; color: #333;">
+                                <h3 style="margin-top:0;">${s.stationName}</h3>
+                                <p>🌡️ ${tempDisplay}</p>
+                                <p>${s.weather || ''}</p>
+                            </div>
+                        `);
+                        infoWindow.open(map, marker);
+                    });
+                    
+                    markersLayer.push(marker);
                 }
 
                 let tempColor, bgColor;

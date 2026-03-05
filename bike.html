@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YouBike 2.0 / 2.0E 即時地圖</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=places"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -156,23 +156,24 @@
         <div style="margin-top:10px; color:#666; font-weight:bold;">資料更新中...</div>
     </div>
 
-    <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         const API_URL = "https://bike-api.xiaoyouwu5-fd3.workers.dev/"; 
 
         let map;
-        let markersLayer;
+        let markers = [];
         let allStations = [];
         let currentView = 'map';
+        let infoWindow;
 
         function initMap() {
-            map = L.map('map').setView([24.1477, 120.6736], 13);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '&copy; OpenStreetMap',
-                maxZoom: 19
-            }).addTo(map);
-            markersLayer = L.layerGroup().addTo(map);
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 24.1477, lng: 120.6736 },
+                zoom: 13,
+                styles: [
+                    { featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] }
+                ]
+            });
+            infoWindow = new google.maps.InfoWindow();
             changeCity();
         }
 
@@ -192,7 +193,7 @@
                 locateBtn.style.display = 'flex';
                 btnMap.classList.add('active');
                 btnList.classList.remove('active');
-                map.invalidateSize();
+                google.maps.event.trigger(map, 'resize');
             } else {
                 mapDiv.style.display = 'none';
                 listDiv.style.display = 'block';
@@ -218,8 +219,9 @@
                 
                 if (allStations.length > 0 && currentView === 'map') {
                     const sample = allStations.slice(0, 50);
-                    const group = L.featureGroup(sample.map(s => L.marker([s.lat, s.lng])));
-                    map.fitBounds(group.getBounds());
+                    const bounds = new google.maps.LatLngBounds();
+                    sample.forEach(s => bounds.extend({ lat: s.lat, lng: s.lng }));
+                    map.fitBounds(bounds);
                 }
 
             } catch (e) {
@@ -231,7 +233,9 @@
         }
 
         function renderMarkers() {
-            markersLayer.clearLayers();
+            markers.forEach(m => m.setMap(null));
+            markers = [];
+
             allStations.forEach(st => {
                 let color = '#27ae60';
                 if (st.rent_elec > 0) color = '#8e44ad';
@@ -239,13 +243,19 @@
                 else if (st.rent === 0) color = '#c0392b';
                 else if (st.rent < 3) color = '#f39c12';
 
-                const icon = L.divIcon({
-                    className: 'custom-pin',
-                    html: `<div style="background:${color}; width:14px; height:14px; border-radius:50%; border:2px solid white; box-shadow:0 2px 5px rgba(0,0,0,0.3);"></div>`,
-                    iconSize: [14, 14]
+                const marker = new google.maps.Marker({
+                    position: { lat: st.lat, lng: st.lng },
+                    map: map,
+                    title: st.name,
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 7,
+                        fillColor: color,
+                        fillOpacity: 1,
+                        strokeWeight: 2,
+                        strokeColor: "white",
+                    }
                 });
-
-                const marker = L.marker([st.lat, st.lng], { icon: icon });
                 
                 const popupContent = `
                     <div style="font-size:1rem; width:200px;">
@@ -273,8 +283,12 @@
                     </div>
                 `;
 
-                marker.bindPopup(popupContent);
-                markersLayer.addLayer(marker);
+                marker.addListener('click', () => {
+                    infoWindow.setContent(popupContent);
+                    infoWindow.open(map, marker);
+                });
+                
+                markers.push(marker);
             });
         }
 
@@ -334,13 +348,17 @@
 
         function focusStation(lat, lng) {
             switchView('map');
-            map.setView([lat, lng], 18);
-            markersLayer.eachLayer(layer => {
-                const ll = layer.getLatLng();
-                if (ll.lat === lat && ll.lng === lng) {
-                    layer.openPopup();
-                }
+            map.setCenter({ lat, lng });
+            map.setZoom(18);
+            
+            const target = markers.find(m => {
+                const pos = m.getPosition();
+                return Math.abs(pos.lat() - lat) < 0.000001 && Math.abs(pos.lng() - lng) < 0.000001;
             });
+            
+            if (target) {
+                google.maps.event.trigger(target, 'click');
+            }
         }
 
         function locateUser() {
@@ -348,8 +366,17 @@
                 navigator.geolocation.getCurrentPosition(p => {
                     const lat = p.coords.latitude;
                     const lng = p.coords.longitude;
-                    map.setView([lat, lng], 16);
-                    L.marker([lat, lng]).addTo(map).bindPopup("您的位置").openPopup();
+                    map.setCenter({ lat, lng });
+                    map.setZoom(16);
+                    
+                    const marker = new google.maps.Marker({
+                        position: { lat, lng },
+                        map: map,
+                        title: "您的位置"
+                    });
+                    
+                    infoWindow.setContent("您的位置");
+                    infoWindow.open(map, marker);
                 });
             } else {
                 alert("無法取得位置");

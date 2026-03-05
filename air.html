@@ -5,8 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>臺灣即時空品戰情室</title>
     
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=places"></script>
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     
@@ -330,9 +329,8 @@
         }
 
         /* 深色模式地圖反轉 */
-        body.dark-mode .leaflet-tile-pane { filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%); }
-        body.dark-mode .leaflet-popup-content-wrapper { background: #333; color: #fff; }
-        body.dark-mode .leaflet-popup-tip { background: #333; }
+        body.dark-mode .map-container iframe { filter: invert(90%) hue-rotate(180deg); }
+        /* Google Maps Dark Mode styles if needed can serve here */
 
         /* 響應式調整 */
         @media (max-width: 1024px) {
@@ -565,6 +563,7 @@
         let map = null;
         let markers = [];
         let currentStation = null;
+        let infoWindow = null;
 
         // === 初始化 ===
         document.addEventListener('DOMContentLoaded', () => {
@@ -576,7 +575,7 @@
         async function initAirPage() {
             try {
                 const stations = await fetchAirQualityData();
-                allStations = stations.sort((a, b) => b.aqi - a.aqi);
+                allStations = stations;
 
                 populateCityFilter(allStations);
                 renderUI(allStations);
@@ -592,10 +591,14 @@
         }
 
         function initMap() {
-            map = L.map('air-map').setView([23.6, 121.0], 7);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-                attribution: '© OpenStreetMap, © CartoDB', maxZoom: 19
-            }).addTo(map);
+            map = new google.maps.Map(document.getElementById('air-map'), {
+                center: { lat: 23.6, lng: 121.0 },
+                zoom: 7,
+                styles: [
+                    { featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] }
+                ]
+            });
+            infoWindow = new google.maps.InfoWindow();
         }
 
         async function fetchAirQualityData() {
@@ -615,7 +618,7 @@
         function renderUI(stations) {
             const grid = document.getElementById('air-grid');
             grid.innerHTML = '';
-            markers.forEach(m => map.removeLayer(m));
+            markers.forEach(m => m.setMap(null));
             markers = [];
 
             if (stations.length === 0) {
@@ -640,14 +643,40 @@
                         <span class="status-badge">${info.name}</span>
                     </div>
                 `;
-                card.onclick = () => openModal(st);
+                card.onclick = () => {
+                     openModal(st);
+                     map.panTo({ lat: parseFloat(st.lat), lng: parseFloat(st.lon) });
+                     map.setZoom(14);
+                };
                 grid.appendChild(card);
 
                 // 2. 地圖標記
-                const marker = L.circleMarker([st.lat, st.lon], {
-                    radius: 6, fillColor: info.code, color: '#fff', weight: 1, fillOpacity: 0.8
-                }).addTo(map);
-                marker.bindPopup(`<b>${st.name}</b><br>AQI: ${st.aqi}`);
+                const marker = new google.maps.Marker({
+                    position: { lat: parseFloat(st.lat), lng: parseFloat(st.lon) },
+                    map: map,
+                    title: st.name,
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 6,
+                        fillColor: info.code,
+                        fillOpacity: 0.8,
+                        strokeWeight: 1,
+                        strokeColor: '#fff',
+                    }
+                });
+
+                marker.addListener('click', () => {
+                    infoWindow.setContent(`<b>${st.name}</b><br>AQI: ${st.aqi}`);
+                    infoWindow.open(map, marker);
+                    openModal(st);
+                });
+                
+                markers.push(marker);
+                
+                // Keep references for search
+                st.marker = marker; 
+            });
+        }
                 marker.on('click', () => openModal(st));
                 markers.push(marker);
             });

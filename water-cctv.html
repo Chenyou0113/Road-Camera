@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>水利署 CCTV 監控站系統 | 即時影像監控</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Google Maps API -->
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=places&language=zh-TW"></script>
     <link rel="stylesheet" href="assets/modern-theme.css">
     <link rel="stylesheet" href="assets/dark-mode.css">
     <link rel="stylesheet" href="assets/mobile-responsive.css">
@@ -785,13 +786,13 @@
         </div>
     </div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="assets/water-cctv-manager.js"></script>
     <script src="assets/water-cctv-data.js"></script>
     <script src="assets/dark-mode.js"></script>
     <script>
         // 全域變數
         let map;
+        let infoWindow;
         let markers = [];
         let currentView = 'grid';
 
@@ -973,40 +974,57 @@
 
         // 初始化地圖
         function initializeMap() {
-            map = L.map('map').setView([23.5, 121], 7);
-            
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap contributors'
-            }).addTo(map);
-            
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 23.5, lng: 121 },
+                zoom: 7,
+                mapTypeControl: false,
+                streetViewControl: false,
+                fullscreenControl: false
+            });
+            infoWindow = new google.maps.InfoWindow();
+
             updateMapMarkers();
         }
 
         // 更新地圖標記
         function updateMapMarkers() {
             // 清除現有標記
-            markers.forEach(marker => map.removeLayer(marker));
+            markers.forEach(marker => marker.setMap(null));
             markers = [];
             
             const mapData = waterCCTVManager.getMapMarkers();
             
             mapData.forEach(station => {
-                const marker = L.marker([station.lat, station.lng])
-                    .bindPopup(`
-                        <div style="min-width: 200px;">
-                            <h3 style="margin: 0 0 10px 0; color: #2c5aa0;">${station.name}</h3>
-                            <p><strong>縣市：</strong>${station.city}</p>
-                            <p><strong>行政區：</strong>${station.district}</p>
-                            <p><strong>流域：</strong>${station.basin || '未分類'}</p>
-                            <button onclick="showStationDetail('${station.id}')" 
-                                    style="width: 100%; padding: 8px; background: #00bcd4; 
-                                           color: white; border: none; border-radius: 5px; 
-                                           cursor: pointer; margin-top: 10px;">
-                                查看詳細資訊
-                            </button>
-                        </div>
-                    `)
-                    .addTo(map);
+                const lat = parseFloat(station.lat);
+                const lng = parseFloat(station.lng);
+                
+                if (isNaN(lat) || isNaN(lng)) return;
+
+                const marker = new google.maps.Marker({
+                    position: { lat: lat, lng: lng },
+                    map: map,
+                    title: station.name
+                });
+
+                const contentString = `
+                    <div style="min-width: 200px; font-family: 'Segoe UI', sans-serif;">
+                        <h3 style="margin: 0 0 10px 0; color: #2c5aa0;">${station.name}</h3>
+                        <p style="margin: 5px 0;"><strong>縣市：</strong>${station.city}</p>
+                        <p style="margin: 5px 0;"><strong>行政區：</strong>${station.district}</p>
+                        <p style="margin: 5px 0;"><strong>流域：</strong>${station.basin || '未分類'}</p>
+                        <button onclick="showStationDetail('${station.id}')" 
+                                style="width: 100%; padding: 8px; background: #00bcd4; 
+                                       color: white; border: none; border-radius: 5px; 
+                                       cursor: pointer; margin-top: 10px;">
+                            查看詳細資訊
+                        </button>
+                    </div>
+                `;
+
+                marker.addListener("click", () => {
+                    infoWindow.setContent(contentString);
+                    infoWindow.open(map, marker);
+                });
                 
                 markers.push(marker);
             });

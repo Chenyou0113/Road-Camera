@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>河川水位監測 | 台灣即時監控</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <!-- Google Maps API -->
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=places&language=zh-TW"></script>
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
@@ -42,19 +42,15 @@
         .main-content { flex: 1; display: flex; overflow: hidden; position: relative; }
         #map { flex: 1; height: 100%; z-index: 1; }
 
-        /* ✨ 關鍵修正：地圖深色模式濾鏡 */
+        /* ✨ 關鍵修正：地圖深色模式濾鏡 (Google Maps 已內建樣式，無需濾鏡) */
+        /*
         body.dark-mode #map {
-            /* 讓地圖瓦片反色，變成深色背景 */
             filter: invert(90%) hue-rotate(180deg) brightness(85%) contrast(100%);
-            /* 修正彈出視窗，讓它維持可讀性 */
             color: black;
         }
-        body.dark-mode .leaflet-popup-content-wrapper {
-            background: #2c2c2c;
-            color: #eee;
-        }
-        body.dark-mode .leaflet-popup-tip {
-            background: #2c2c2c;
+        */
+        body.dark-mode .gm-style-iw {
+            color: black;
         }
         
         .sidebar { width: 380px; background: var(--card-bg); border-right: 1px solid var(--border); display: flex; flex-direction: column; z-index: 2; box-shadow: 2px 0 10px rgba(0,0,0,0.1); }
@@ -160,22 +156,41 @@
         const API_BASE = 'https://river-monitor-api.weacamm.org'; 
         
         let map, markers = [];
+        let infoWindow;
         let allData = [], riverList = [];
         let levelChart = null; 
 
         document.addEventListener('DOMContentLoaded', () => {
+            if(localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
             initMap();
             initFilters();
             loadData();
-            if(localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
         });
 
         function initMap() {
-            map = L.map('map').setView([23.6, 121], 7);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-                attribution: '&copy; OpenStreetMap',
-                maxZoom: 18
-            }).addTo(map);
+            const isDark = document.body.classList.contains('dark-mode');
+            const styles = isDark ? [
+                { elementType: "geometry", stylers: [{ color: "#242f3e" }] },
+                { elementType: "labels.text.stroke", stylers: [{ color: "#242f3e" }] },
+                { elementType: "labels.text.fill", stylers: [{ color: "#746855" }] },
+                { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#d59563" }] },
+                { featureType: "road", elementType: "geometry", stylers: [{ color: "#38414e" }] },
+                { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#212a37" }] },
+                { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#9ca5b3" }] },
+                { featureType: "water", elementType: "geometry", stylers: [{ color: "#17263c" }] },
+                { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#515c6d" }] },
+                { featureType: "water", elementType: "labels.text.stroke", stylers: [{ color: "#17263c" }] }
+            ] : null;
+            
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 23.6, lng: 121 },
+                zoom: 7,
+                mapTypeControl: false,
+                streetViewControl: false,
+                fullscreenControl: false,
+                styles: styles
+            });
+            infoWindow = new google.maps.InfoWindow();
         }
 
         async function initFilters() {
@@ -213,7 +228,7 @@
         function renderUI(data) {
             const list = document.getElementById('list');
             list.innerHTML = '';
-            markers.forEach(m => map.removeLayer(m));
+            markers.forEach(m => m.setMap(null));
             markers = [];
 
             if(data.length === 0) {
@@ -236,16 +251,35 @@
                     <div class="st-level">${item.level !== null ? item.level.toFixed(2) : '--'} <span style="font-size:1rem;color:#666">m</span></div>
                     <div class="st-time"><i class="far fa-clock"></i> ${formatTime(item.time)}</div>
                 `;
-                card.onclick = () => openChartModal(item);
+                card.onclick = () => {
+                    openChartModal(item);
+                    focusMap(item.lat, item.lon);
+                };
                 list.appendChild(card);
 
                 if (item.lat && item.lon) {
-                    const marker = L.circleMarker([item.lat, item.lon], {
-                        radius: 8, fillColor: color, color: '#fff', weight: 2, fillOpacity: 0.9
-                    }).bindPopup(`<b>${item.name}</b><br>水位：${item.level} m`);
+                    const marker = new google.maps.Marker({
+                        position: { lat: item.lat, lng: item.lon },
+                        map: map,
+                        title: item.name,
+                        icon: {
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 8,
+                            fillColor: color,
+                            fillOpacity: 0.9,
+                            strokeWeight: 2,
+                            strokeColor: 'white',
+                        }
+                    });
+
+                    const contentString = `<div style="color:black"><b>${item.name}</b><br>水位：${item.level} m</div>`;
                     
-                    marker.on('click', () => openChartModal(item));
-                    marker.addTo(map);
+                    marker.addListener('click', () => {
+                        infoWindow.setContent(contentString);
+                        infoWindow.open(map, marker);
+                        openChartModal(item);
+                    });
+                    
                     markers.push(marker);
                 }
             });
@@ -426,7 +460,8 @@
         
         function focusMap(lat, lon) {
             if (lat && lon) {
-                map.flyTo([lat, lon], 14);
+                map.panTo({ lat: lat, lng: lon });
+                map.setZoom(14);
                 if(window.innerWidth < 768) document.getElementById('map').scrollIntoView({behavior: 'smooth'});
             } else {
                 alert("該測站無座標資料");

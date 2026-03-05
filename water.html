@@ -5,8 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>全台水情監測 - 天氣即時快訊</title>
     
-    <!-- Leaflet 地圖 CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Google Maps API -->
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&callback=initMap&libraries=places&language=zh-TW"></script>
+    
     <!-- FontAwesome 圖示 -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
@@ -219,12 +220,12 @@
         <div id="map"></div>
     </div>
 
-    <!-- 載入 Leaflet -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Maps Loaded -->
 
     <script>
         // 🌍 全域變數
         let map;
+        let infoWindow;
         let allCameras = [];
         let filteredCameras = [];
         let markers = [];
@@ -232,10 +233,17 @@
         let currentFilter = null;
 
         // 🚀 初始化
-        document.addEventListener('DOMContentLoaded', () => {
-            initMap();
+        window.initMap = function() {
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 23.7, lng: 121.0 },
+                zoom: 8,
+                mapTypeControl: false,
+                streetViewControl: false,
+                fullscreenControl: false
+            });
+            infoWindow = new google.maps.InfoWindow();
             loadWaterCCTV();
-        });
+        };
 
         // 🕒 時間格式化小幫手
         function formatTime(timeStr) {
@@ -257,13 +265,8 @@
             return `${year}/${month}/${day} ${hours}:${minutes}`;
         }
 
-        // 1️⃣ 初始化地圖
-        function initMap() {
-            map = L.map('map').setView([23.7, 121.0], 7);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap contributors'
-            }).addTo(map);
-        }
+        // 1️⃣ 初始化地圖 (已整合至 window.initMap)
+        // function initMap() {}
 
         // 2️⃣ 載入水利署 CCTV (呼叫 Cloudflare Functions API)
         async function loadWaterCCTV() {
@@ -347,12 +350,6 @@
             }
 
             // 重新渲染
-            map.eachLayer(layer => {
-                if (layer instanceof L.CircleMarker) {
-                    map.removeLayer(layer);
-                }
-            });
-            
             renderList(filteredCameras);
             renderMapMarkers(filteredCameras);
         }
@@ -395,7 +392,8 @@
                 
                 // 點擊卡片，地圖飛過去
                 div.onclick = () => {
-                    map.flyTo([cam.lat, cam.lon], 14, { duration: 1.5 });
+                    map.setZoom(14);
+                    map.panTo({ lat: cam.lat, lng: cam.lon });
                 };
 
                 container.appendChild(div);
@@ -404,33 +402,42 @@
 
         // 5️⃣ 渲染地圖標記
         function renderMapMarkers(cams) {
+            // 清除舊標記
+            markers.forEach(marker => marker.setMap(null));
+            markers = [];
+
             cams.forEach(cam => {
-                const marker = L.circleMarker([cam.lat, cam.lon], {
-                    radius: 7,
-                    fillColor: '#0077b6',
-                    color: '#fff',
-                    weight: 2,
-                    opacity: 1,
-                    fillOpacity: 0.85
-                }).addTo(map);
+                const marker = new google.maps.Marker({
+                    position: { lat: cam.lat, lng: cam.lon },
+                    map: map,
+                    title: cam.name,
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        scale: 5,
+                        fillColor: "#0077b6",
+                        fillOpacity: 1,
+                        strokeColor: "white",
+                        strokeWeight: 1,
+                    },
+                });
 
                 // 點擊標記顯示彈出視窗
-                const popupContent = `
-                    <div style="max-width: 260px; padding: 12px;">
-                        <h4>${cam.name}</h4>
+                const contentString = `
+                    <div style="font-family: 'Segoe UI', sans-serif; text-align: center;">
+                        <h4 style="margin: 0 0 5px 0; color: #0077b6;">${cam.name}</h4>
                         <p style="margin: 0 0 8px 0; font-size: 0.9rem; color: #666;">
-                            <i class="fas fa-map-pin"></i> ${cam.city} ${cam.river}
+                            <i class="fas fa-map-pin"></i> ${cam.city} ${cam.river || ''}
                         </p>
-                        <img src="${cam.url}" alt="監視器影像" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22260%22 height=%22146%22%3E%3Crect fill=%22%23f0f0f0%22 width=%22260%22 height=%22146%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23999%22 font-family=%22Arial%22%3E影像載入失敗%3C/text%3E%3C/svg%3E'">
-                        <div class="time-tag">
+                        <img src="${cam.url}" alt="監視器影像" style="width:100%; max-width:240px; border-radius:4px; display:block; margin:0 auto;" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22260%22 height=%22146%22%3E%3Crect fill=%22%23f0f0f0%22 width=%22260%22 height=%22146%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23999%22 font-family=%22Arial%22%3E影像載入失敗%3C/text%3E%3C/svg%3E'">
+                        <div class="time-tag" style="margin-top: 5px; font-size: 0.8rem; color: #888;">
                             <i class="far fa-clock"></i> ${formatTime(cam.time)}
                         </div>
                     </div>
                 `;
-                marker.bindPopup(popupContent, { maxWidth: 250 });
-                
-                // 🎥 記錄監視器瀏覽統計
-                marker.on('popupopen', function() {
+
+                marker.addListener("click", () => {
+                    infoWindow.setContent(contentString);
+                    infoWindow.open(map, marker);
                     recordCameraView(cam.id, cam.name, 'water-cctv');
                 });
                 

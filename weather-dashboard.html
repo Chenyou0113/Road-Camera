@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>全台天氣儀表板</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         * {
             margin: 0;
@@ -283,7 +282,7 @@
         </div>
     </div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4" async defer></script>
     <script>
         // ============ 設定 ============
         const CONFIG = {
@@ -341,18 +340,29 @@
         function initMap() {
             if (map) return; // 已初始化
             
-            map = L.map('map').setView([23.6, 121.0], 7);
-            
-            // 使用淺色底圖
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-                attribution: '© OpenStreetMap, © CartoDB',
-                maxZoom: 18
-            }).addTo(map);
+            if (typeof google === 'undefined') {
+                 setTimeout(initMap, 500);
+                 return;
+            }
+
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 23.6, lng: 121.0 },
+                zoom: 7,
+                mapTypeControl: false,
+                streetViewControl: false,
+                 styles: [
+                    {
+                        featureType: "poi",
+                        elementType: "labels",
+                        stylers: [{ visibility: "off" }]
+                    }
+                ]
+            });
         }
 
         // ============ 清除舊標記 ============
         function clearMarkers() {
-            markers.forEach(marker => map.removeLayer(marker));
+            markers.forEach(marker => marker.setMap(null));
             markers = [];
         }
 
@@ -360,25 +370,34 @@
         function drawMarkers(stations) {
             clearMarkers();
             
+            if (!map) return;
+
+            const infoWindow = new google.maps.InfoWindow();
+            
             stations.forEach(st => {
                 if (!st.lat || !st.lon) return;
 
                 const color = getTempColor(st.temp);
-                const radius = st.temp === null ? 6 : 8;
+                const scale = st.temp === null ? 3 : 5;
 
-                // 圓點標記
-                const marker = L.circleMarker([st.lat, st.lon], {
-                    radius: radius,
-                    fillColor: color,
-                    color: '#fff',
-                    weight: 2,
-                    opacity: 1,
-                    fillOpacity: 0.8
-                }).addTo(map);
+                // 圓點標記 (Google Maps Marker with Symbol)
+                const marker = new google.maps.Marker({
+                    position: { lat: st.lat, lng: st.lon },
+                    map: map,
+                    icon: {
+                        path: google.maps.SymbolPath.CIRCLE,
+                        fillColor: color,
+                        fillOpacity: 0.8,
+                        scale: scale,
+                        strokeColor: '#fff',
+                        strokeWeight: 1
+                    },
+                    title: st.name
+                });
 
                 // 彈出視窗內容
                 const popupContent = `
-                    <div style="text-align:center; font-size:0.95em;">
+                    <div style="text-align:center; font-size:0.95em; width: 200px;">
                         <b style="font-size:1.2em; color:${color}">${st.name}</b>
                         <br>
                         <small style="color:#666">${st.city} ${st.town}</small>
@@ -412,7 +431,11 @@
                     </div>
                 `;
 
-                marker.bindPopup(popupContent);
+                marker.addListener('click', () => {
+                    infoWindow.setContent(popupContent);
+                    infoWindow.open(map, marker);
+                });
+                
                 markers.push(marker);
             });
 

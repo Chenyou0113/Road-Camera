@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>即時海圖 | 臺灣天氣視界</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Google Maps API -->
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=places&language=zh-TW&callback=initMap"></script>
     <style>
         body { 
             margin: 0; 
@@ -70,47 +71,91 @@
     </nav>
     <div id="map"></div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        const map = L.map('map').setView([23.5, 120.8], 7);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        }).addTo(map);
+        let map;
+        let markers = [];
+        let infoWindow;
 
-        let shipLayer = L.layerGroup().addTo(map);
+        function initMap() {
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 23.5, lng: 120.8 },
+                zoom: 7,
+                mapTypeControl: false,
+                streetViewControl: false,
+                styles: [
+                    { elementType: "geometry", stylers: [{ color: "#242f3e" }] },
+                    { elementType: "labels.text.stroke", stylers: [{ color: "#242f3e" }] },
+                    { elementType: "labels.text.fill", stylers: [{ color: "#746855" }] },
+                    { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#d59563" }] },
+                    { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#d59563" }] },
+                    { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#263c3f" }] },
+                    { featureType: "poi.park", elementType: "labels.text.fill", stylers: [{ color: "#6b9a76" }] },
+                    { featureType: "road", elementType: "geometry", stylers: [{ color: "#38414e" }] },
+                    { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#212a37" }] },
+                    { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#9ca5b3" }] },
+                    { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#746855" }] },
+                    { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#1f2835" }] },
+                    { featureType: "road.highway", elementType: "labels.text.fill", stylers: [{ color: "#f3d19c" }] },
+                    { featureType: "transit", elementType: "geometry", stylers: [{ color: "#2f3948" }] },
+                    { featureType: "transit.station", elementType: "labels.text.fill", stylers: [{ color: "#d59563" }] },
+                    { featureType: "water", elementType: "geometry", stylers: [{ color: "#17263c" }] },
+                    { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#515c6d" }] },
+                    { featureType: "water", elementType: "labels.text.stroke", stylers: [{ color: "#17263c" }] }
+                ]
+            });
+            infoWindow = new google.maps.InfoWindow();
+            updateShips();
+            setInterval(updateShips, 30000);
+        }
 
         async function updateShips() {
             try {
-                const res = await fetch('https://tdx-shipping-worker.weacamm.org/positions');
-                const ships = await res.json();
-                shipLayer.clearLayers();
+                // Remove old markers
+                markers.forEach(marker => marker.setMap(null));
+                markers = [];
 
+                const res = await fetch('https://tdx-shipping-worker.weacamm.org/positions'); // Assuming this API works as before
+                const ships = await res.json();
+                
                 ships.forEach(ship => {
                     if (!ship.Lat || !ship.Lon) return;
-                    const icon = L.divIcon({
-                        className: 'ship-icon',
-                        html: `<div class="ship-arrow" style="transform: rotate(${ship.COG || 0}deg);"></div>`,
-                        iconSize: [16, 20], 
-                        iconAnchor: [8, 10]
+                    
+                    const marker = new google.maps.Marker({
+                        position: { lat: ship.Lat, lng: ship.Lon },
+                        map: map,
+                        title: ship.VesselNameZh || ship.VesselName || '未知船隻',
+                        icon: {
+                            path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+                            scale: 4,
+                            rotation: ship.COG || 0,
+                            fillColor: "#06b6d4",
+                            fillOpacity: 1,
+                            strokeWeight: 1,
+                            strokeColor: "white",
+                        }
                     });
-                    const marker = L.marker([ship.Lat, ship.Lon], { icon: icon }).addTo(shipLayer);
-                    marker.bindPopup(`
-                        <div style="color:#333">
+
+                    const contentString = `
+                        <div style="color:#333; font-family: 'Microsoft JhengHei', sans-serif;">
                             <b style="font-size:1.1rem">${ship.VesselNameZh || ship.VesselName || '未知船隻'}</b><hr>
                             MMSI: ${ship.MMSI}<br>
                             速度: ${ship.SOG || 0} kts<br>
                             航向: ${ship.COG || 0}°<br>
                             更新: ${new Date(ship.UpdateTime).toLocaleTimeString()}
                         </div>
-                    `);
+                    `;
+                    
+                    marker.addListener('click', () => {
+                         infoWindow.setContent(contentString);
+                         infoWindow.open(map, marker);
+                    });
+
+                    markers.push(marker);
                 });
             } catch (e) { 
                 console.error('更新船隻資料失敗:', e); 
             }
         }
-        
-        updateShips();
-        setInterval(updateShips, 30000);
     </script>
 </body>
 </html>

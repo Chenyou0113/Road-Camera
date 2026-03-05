@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>市區道路監視器 - TDX</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Google Maps API -->
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=places&language=zh-TW"></script>
+    <script src="https://unpkg.com/@googlemaps/markerclusterer/dist/index.min.js"></script>
     <link rel="stylesheet" href="assets/dark-mode.css">
     <link rel="stylesheet" href="assets/mobile-responsive.css">
     <link rel="stylesheet" href="assets/responsive-camera.css">
@@ -405,8 +407,10 @@
         
         // 地圖相關變數
         let mapViewActive = false;   // 地圖模式狀水
-        let map = null;              // Leaflet 地圖實例
-        let markers = null;          // 聘合標記組
+        let map = null;              // Google 地圖實例
+        let markers = [];          // 標記數組
+        let clusterer = null;      // 聚合器
+        let infoWindow = null;     // 彈出視窗
         
         // 分頁相關變數
         let currentPage = 1;
@@ -615,58 +619,82 @@
             if (map !== null) return; // 避免重複初始化
 
             // 建立地圖，預設中心在台灣
-            map = L.map('map').setView([23.6, 121.0], 7);
-
-            // 加入 OpenStreetMap 圖層
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            }).addTo(map);
-
-            // 初始化聚合群組
-            markers = L.markerClusterGroup();
-            map.addLayer(markers);
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 23.6, lng: 121.0 },
+                zoom: 7,
+                mapTypeControl: false,
+                streetViewControl: false,
+                fullscreenControl: false
+            });
+            infoWindow = new google.maps.InfoWindow();
             
             console.log('✅ 地圖已初始化');
         }
 
         // 更新地圖上的標記
         function updateMapMarkers(cameras) {
-            if (!map || !markers) initMap();
+            if (!map) initMap();
 
-            // 清除舊標記
-            markers.clearLayers();
+            // 清除舊標記和聚合器
+            if (clusterer) {
+                clusterer.clearMarkers();
+            }
+            markers.forEach(m => m.setMap(null));
+            markers = [];
 
             const validMarkers = [];
 
             cameras.forEach(camera => {
                 // 檢查座標是否存在且有效
-                const lat = camera.PositionLat;
-                const lon = camera.PositionLon;
+                const lat = parseFloat(camera.PositionLat);
+                const lon = parseFloat(camera.PositionLon);
 
                 if (lat && lon && !isNaN(lat) && !isNaN(lon)) {
                     // 建立標記
-                    const marker = L.marker([lat, lon]);
+                    const marker = new google.maps.Marker({
+                        position: { lat: lat, lng: lon },
+                        title: camera.RoadName
+                    });
                     
                     // 綁定彈出視窗內容
                     const popupContent = `
-                        <div style="font-size: 1rem; font-weight: bold; margin-bottom: 5px;">${camera.RoadName || '未命名道路'}</div>
-                        <div style="font-size: 0.9rem; color: #666;">${camera.LocationDescription || ''}</div>
+                        <div style="font-size: 1rem; font-weight: bold; margin-bottom: 5px; color: black; font-family: 'Microsoft JhengHei', sans-serif;">
+                            ${camera.RoadName || '未命名道路'}
+                        </div>
+                        <div style="font-size: 0.9rem; color: #666; font-family: 'Microsoft JhengHei', sans-serif;">
+                            ${camera.LocationDescription || ''}
+                        </div>
                         <div style="margin-top: 5px;">
-                            <span style="background: #e3f2fd; color: #1976d2; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem;">
+                            <span style="background: #e3f2fd; color: #1976d2; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; font-family: 'Microsoft JhengHei', sans-serif;">
                                 ${camera.City || ''} ${camera.district || ''}
                             </span>
                         </div>
                     `;
                     
-                    marker.bindPopup(popupContent);
-                    markers.addLayer(marker);
+                    marker.addListener('click', () => {
+                        infoWindow.setContent(popupContent);
+                        infoWindow.open(map, marker);
+                    });
+                    
+                    markers.push(marker);
                     validMarkers.push(marker);
                 }
             });
 
-            // 如果有標記，自動縮放地圖以顯示所有標記
+            // 初始化聚合群組
             if (validMarkers.length > 0) {
-                map.fitBounds(markers.getBounds());
+                // 檢查是否已載入 markerClusterer
+                if (typeof markerClusterer !== 'undefined' && markerClusterer.MarkerClusterer) {
+                     clusterer = new markerClusterer.MarkerClusterer({ map, markers: validMarkers });
+                } else {
+                     console.warn('MarkerClusterer library not loaded');
+                     markers.forEach(m => m.setMap(map));
+                }
+
+                // 自動縮放地圖
+                const bounds = new google.maps.LatLngBounds();
+                validMarkers.forEach(marker => bounds.extend(marker.getPosition()));
+                map.fitBounds(bounds);
             }
             
             console.log(`✅ 已在地圖上新增 ${validMarkers.length} 個監視器`);
@@ -892,7 +920,7 @@
                     requestAnimationFrame(() => {
                         initMap();
                         updateMapMarkers(allCameras);
-                        if (map) map.invalidateSize();
+                        if (map) google.maps.event.trigger(map, 'resize');
                     });
                 }
                 
@@ -1742,7 +1770,7 @@
                 // 重新計算地圖大小
                 if (map) {
                     setTimeout(() => {
-                        map.invalidateSize();
+                        google.maps.event.trigger(map, 'resize');
                         console.log('✅ 地圖大小已重新計算');
                     }, 100);
                 }
