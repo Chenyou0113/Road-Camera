@@ -1257,8 +1257,8 @@
 <main>
     <div id="panel">
         
-        <!-- 歡迎畫面：路線瀏覽器 -->
-        <div id="welcome-view" style="height:100%; overflow:hidden;">
+        <!-- 首頁容器 (包含縣市選單 + 路線列表) -->
+        <div id="home-view" style="height:100%; overflow:hidden;">
             <div id="route-browser">
                 <div class="browser-header" style="background:white; border-bottom:1px solid var(--border); padding:0;">
                     
@@ -1785,7 +1785,7 @@
     async function loadRoute(name, city, type) {
         if(suggestionsBox) suggestionsBox.style.display = 'none';
         searchInput.value = name;
-        document.getElementById('welcome-view').style.display = 'none';
+        document.getElementById('home-view').style.display = 'none';
         
         // 隱藏跑馬燈
         if(document.getElementById('marquee-wrapper')) document.getElementById('marquee-wrapper').style.display = 'none';
@@ -2697,6 +2697,35 @@
         }, 50);
     }
 
+    // --- 新增: 返回上一頁功能 (修復 ReferenceError) ---
+    function goBack() {
+        document.getElementById('route-view').style.display = 'none';
+        
+        // 隱藏跑馬燈(地圖用)
+        if(document.getElementById('marquee-wrapper')) document.getElementById('marquee-wrapper').style.display = 'block';
+
+        document.getElementById('home-view').style.display = 'block';
+        if (suggestionsBox) suggestionsBox.style.display = 'none';
+        
+        // 清除地圖上的路線和站牌
+        clearMap();
+        lastBuses = []; 
+        
+        // 清除計時器
+        if (refreshInterval) clearInterval(refreshInterval);
+        if (countdownInterval) clearInterval(countdownInterval);
+        
+        // 重設標題
+        document.title = '臺灣公車通 - 智慧即時動態';
+        
+        // 恢復搜尋框文字
+        const searchInput = document.getElementById('search-input');
+        if (searchInput) searchInput.value = '';
+
+        // 取消選取狀態
+        activeInfoWindow = null;
+    }
+
     // 初始化票價 UI，填充站點選單並回傳緩衝區站名 (供路線清單標色)
     function renderFareInfo(dir) {
         const startSelect = document.getElementById('fare-start');
@@ -2813,12 +2842,24 @@
                                 s.DestinationStage.StopSequence === destStage.StopSequence
                             );
                             
-                            // 若找不到，反向找找看 (有些資料庫梯形表只建單邊)
+                            // 🌟 關鍵修正：如果正向找不到，試試看反向找 (例如回程 B->A 找不到，就去找去程 A->B 的票價)
+                            // 因為里程計費通常是對稱的 (去回票價一樣)
                             if (!match) {
-                                match = fareData.StageFares.find(s => 
+                                // 注意：要搜尋「反向 (Direction!=dir)」的表，且起迄對調
+                                // 這樣才能對應到對面的梯形表 (Origin=B, Dest=A)
+                                const stagesReverse = fareData.StageFares.filter(s => s.Direction != dir);
+                                match = stagesReverse.find(s => 
                                     s.OriginStage.StopSequence === destStage.StopSequence && 
                                     s.DestinationStage.StopSequence === originStage.StopSequence
                                 );
+                                
+                                // 如果還是找不到，試試看在「同方向」裡面找反向組合 (有些資料庫建得很亂，把回程寫在去程表裡)
+                                if (!match) {
+                                     match = stagesInDir.find(s => 
+                                        s.OriginStage.StopSequence === destStage.StopSequence && 
+                                        s.DestinationStage.StopSequence === originStage.StopSequence
+                                    );
+                                }
                             }
 
                             if (match?.Fares?.length > 0) {
@@ -2831,19 +2872,29 @@
                     }
                 }
 
-                // 【策略 B】: ODFares 起迄站間計費 (另一種梯形表格式)
+                // 【策略 B】: ODFares 起迄站間計費 (另一種梯形表格式) - 🌟 優先權提升且強化判定
+                // 很多市區快速公車 (如965) 雖然是段次，但因為規則複雜，會把票價直接寫在這裡
+                // 我們要優先相信這張表，避免被 SectionFares 的單純段次計算覆蓋
                 if (!fareItems.length && fareData.ODFares?.length > 0) {
-                    fareType = '里程計費 (站對站)';
+                    
                     const odsInDir = fareData.ODFares.filter(od => od.Direction == dir);
                     
                     if (odsInDir.length > 0) {
-                        // 嘗試直接比對站序
+                        // 1. 優先使用 StopID 精準比對 (解決 965 等去回程站序混亂問題)
                         let match = odsInDir.find(od => 
-                            od.OriginStop?.StopSequence === boardSeqBase &&
-                            od.DestinationStop?.StopSequence === alightSeqBase
+                             od.OriginStop?.StopID === boardStop.StopID && // 使用 StopID 比對最準
+                             od.DestinationStop?.StopID === alightStop.StopID
                         );
 
-                        // 找不到的話，採用區間覆蓋法 (上車 >= OD起點 且 下車 <= OD迄點，找最便宜的)
+                        // 2. 找不到 ID 才嘗試直接比對站序
+                        if (!match) {
+                            match = odsInDir.find(od => 
+                                od.OriginStop?.StopSequence === boardSeqBase &&
+                                od.DestinationStop?.StopSequence === alightSeqBase
+                            );
+                        }
+
+                        // 3. 還是找不到，採用區間覆蓋法 (模糊比對)
                         if (!match) {
                             const possibleMatches = odsInDir.filter(od => 
                                 od.OriginStop?.StopSequence <= boardSeqBase &&
@@ -2860,6 +2911,7 @@
                         }
 
                         if (match?.Fares?.length > 0) {
+                            fareType = '指定票價'; // 更新類型名稱，顯示這是表定價格而非計算結果
                             match.Fares.forEach(f => {
                                 const lbl = f.FareName?.Zh_tw || f.FareName || fareClassNames[f.FareClass] || '票價';
                                 fareItems.push({ label: lbl, price: f.Price, highlight: lbl.includes('全票') });
