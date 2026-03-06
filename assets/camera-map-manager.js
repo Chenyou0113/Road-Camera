@@ -192,15 +192,22 @@ class CameraMapManager {
     /**
      * 創建彈窗內容 (使用 DOM 元素以綁定事件)
      */
+
+    /**
+     * 創建彈窗內容 (使用 DOM 元素以綁定事件)
+     */
     createPopupContent(camera) {
         const name = camera.RoadName || camera.LocationDescription || camera.name || '監視器';
         const city = camera.City || '未知';
         const mile = camera.LocationMile ? `里程：${camera.LocationMile}` : '';
-        const imgUrl = camera.VideoImageURL || camera.VideoImageUrl || '';
+        // 優先嘗試使用即時串流 URL
+        let streamUrl = camera.RealtimeStreamURL || camera.StreamURL || '';
+        // 如果沒有串流 URL，嘗試使用 Image URL
+        let imgUrl = camera.VideoImageURL || camera.VideoImageUrl || '';
         
         // 建立容器
         const container = document.createElement('div');
-        container.style.cssText = "font-family: 'Microsoft JhengHei', sans-serif; padding: 5px; max-width: 250px; text-align: left;";
+        container.style.cssText = "font-family: 'Microsoft JhengHei', sans-serif; padding: 5px; max-width: 320px; text-align: left;";
         
         // 標題
         const title = document.createElement('h3');
@@ -214,63 +221,64 @@ class CameraMapManager {
         infoDiv.innerHTML = `<span style="display:inline-block; margin-right: 5px;">📍 ${this.escapeHtml(city)}</span><span>${this.escapeHtml(mile)}</span>`;
         container.appendChild(infoDiv);
 
-        if (imgUrl) {
-            // 按鈕容器
-            const btnContainer = document.createElement('div');
-            btnContainer.style.marginBottom = '8px';
-            btnContainer.style.textAlign = 'center';
-
-            // 顯示即時影像按鈕
-            const btn = document.createElement('button');
-            btn.textContent = '🎥 顯示即時影像';
-            btn.style.cssText = "background-color: #1e40af; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; transition: background 0.3s;";
-            
-            btn.onmouseover = () => btn.style.backgroundColor = '#0891b2';
-            btn.onmouseout = () => btn.style.backgroundColor = '#1e40af';
-
-            // 影像容器 (預設隱藏)
+        // 影像容器 (直接顯示，不使用按鈕)
+        const displayUrl = streamUrl || imgUrl;
+        
+        if (displayUrl) {
             const imgContainer = document.createElement('div');
-            imgContainer.style.cssText = "width: 100%; height: 140px; background: #eee; border-radius: 4px; overflow: hidden; margin-bottom: 8px; display: none; position: relative;";
+            // 改為 3:2 比例 (或符合使用者需求的比例)
+            imgContainer.style.cssText = "width: 100%; height: 180px; background: #000; border-radius: 4px; overflow: hidden; margin-bottom: 8px; position: relative;";
             
             // 載入中提示
             const loadingText = document.createElement('div');
             loadingText.textContent = '載入中...';
-            loadingText.style.cssText = "position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #666; font-size: 12px;";
+            loadingText.style.cssText = "position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: #fff; font-size: 12px;";
             imgContainer.appendChild(loadingText);
 
             // 影像元素
             const img = document.createElement('img');
-            img.style.cssText = "width: 100%; height: 100%; object-fit: cover; position: relative; z-index: 1;";
-            img.alt = "監視器畫面";
+            img.style.cssText = "width: 100%; height: 100%; object-fit: contain; position: relative; z-index: 1;";
+            img.alt = "即時影像";
             
-            // 點擊事件
-            btn.onclick = function() {
-                // 隱藏按鈕，顯示容器
-                btn.style.display = 'none';
-                imgContainer.style.display = 'block';
-                
-                // 開始載入圖片
-                // 嘗試使用 Proxy 解決混合內容/CORS 問題
-                let finalUrl = imgUrl;
-                if (window.location.protocol === 'https:' && imgUrl.startsWith('http://')) {
-                     // 使用公共 Proxy 如果可用，或者是直接嘗試
-                     finalUrl = imgUrl.replace('http://', 'https://'); 
+            // 處理 URL (Proxy)
+            let finalUrl = displayUrl;
+            
+            // 如果是 Stream URL，優先使用 Proxy 確保播放
+            if (streamUrl) {
+                // 強制 HTTPS
+                if (streamUrl.startsWith('http://')) {
+                    streamUrl = streamUrl.replace('http://', 'https://');
                 }
-                
-                img.src = finalUrl;
-                img.onerror = function() {
-                    this.onerror = null;
-                    // 如果 HTTPS 失敗，嘗試使用 api proxy (如果專案裡有 API Proxy)
-                    // 這裡簡單使用 placeholder
-                    this.src = 'https://via.placeholder.com/200x120?text=Image+Load+Error';
-                };
-                
-                imgContainer.appendChild(img);
-            };
+                // 使用 Proxy
+                finalUrl = `https://taiwan-traffic-cctv.weacamm.org/api/proxy?url=${encodeURIComponent(streamUrl)}&t=${Date.now()}`;
+            } else if (imgUrl && window.location.protocol === 'https:' && imgUrl.startsWith('http://')) {
+                // 圖片混和內容處理
+                finalUrl = imgUrl.replace('http://', 'https://');
+            }
 
-            btnContainer.appendChild(btn);
-            container.appendChild(btnContainer);
+            img.src = finalUrl;
+            
+            // 錯誤處理
+            img.onerror = function() {
+                this.onerror = null;
+                // 嘗試不帶 Proxy 或使用 Placeholder
+                if (finalUrl.includes('api/proxy')) {
+                   // 如果 Proxy 失敗，嘗試直接讀取 (可能會有 CORS/Mixed Content 問題，但值得一試)
+                   console.warn('Proxy load failed, trying direct URL for:', displayUrl);
+                   this.src = displayUrl;
+                } else {
+                   this.src = 'https://via.placeholder.com/320x180?text=無訊號';
+                }
+            };
+            
+            imgContainer.appendChild(img);
             container.appendChild(imgContainer);
+        } else {
+            // 無影像提示
+            const noImg = document.createElement('div');
+            noImg.style.cssText = "padding: 10px; background: #f5f5f5; color: #666; font-size: 13px; text-align: center; border-radius: 4px; margin-bottom: 8px;";
+            noImg.textContent = '暫無影像訊號';
+            container.appendChild(noImg);
         }
 
         // 座標資訊
