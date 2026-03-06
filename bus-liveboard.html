@@ -1135,19 +1135,27 @@
 
         /* 跑馬燈動畫 */
         @keyframes marquee-scroll {
-            0% { transform: translateX(100%); }
+            0% { transform: translateX(0); }
             100% { transform: translateX(-100%); }
         }
 
-        .marquee-anim {
-            animation: marquee-scroll 20s linear infinite;
-            padding-left: 0; 
+        .marquee-content {
             display: inline-block;
+            padding-left: 100%;
+            animation: marquee-scroll 25s linear infinite;
+            white-space: nowrap;
+        }
+
+        .marquee-content-slow {
+            display: inline-block;
+            padding-left: 100%;
+            animation: marquee-scroll 40s linear infinite;
             white-space: nowrap;
         }
 
         /* 當滑鼠移上去時暫停，方便閱讀 */
-        #marquee-container:hover #marquee-text {
+        #marquee-wrapper:hover .marquee-content,
+        #marquee-wrapper:hover .marquee-content-slow {
             animation-play-state: paused;
         }
 
@@ -1168,6 +1176,50 @@
         .header-back-btn:hover {
             background: #eff6ff;
             color: var(--primary);
+        }
+
+        /* --- City Selector in Modal --- */
+        .city-scroll-wrapper {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            white-space: nowrap;
+            -webkit-overflow-scrolling: touch;
+        }
+        .city-scroll-wrapper::-webkit-scrollbar {
+            display: none;
+        }
+        .city-chip {
+            display: inline-block;
+            padding: 6px 14px;
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            color: #64748b;
+            cursor: pointer;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+        .city-chip.active {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+            box-shadow: 0 4px 6px rgba(37,99,235,0.2);
+        }
+        .city-chip:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+        .city-chip.active:hover {
+            color: white;
+        }
+        
+        .tag-alert {
+            background: #fee2e2; color: #ef4444; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; margin-right: 6px; font-weight: 700;
+        }
+        .tag-news {
+            background: #dbeafe; color: #2563eb; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; margin-right: 6px; font-weight: 700;
         }
     </style>
 </head>
@@ -1190,16 +1242,34 @@
 
 <main>
     <div id="panel">
-        <!-- 🌟 跑馬燈區域 (預設隱藏) -->
-        <div id="marquee-container" style="background:#fffbeb; border-bottom:1px solid #fcd34d; padding:8px 12px; display:none; align-items:center; gap:8px; flex-shrink:0;">
-            <i class="fas fa-exclamation-triangle" style="color:#d97706; font-size:0.9rem; flex-shrink:0;"></i>
-            <div style="flex:1; overflow:hidden; position:relative; height:20px;">
-                <div id="marquee-text" style="display:inline-block; font-size:0.9rem; color:#92400e; font-weight:600; white-space:nowrap;">
-                    <!-- JS 會填入內容 -->
+        
+        <!-- 🌟 雙層跑馬燈區域 (常駐顯示) -->
+        <div id="marquee-wrapper" style="flex-shrink:0; border-bottom:1px solid #e5e7eb; background:white;">
+            
+            <!-- 第一層：縣市公車通阻 (黃色底) -->
+            <div id="marquee-city" style="background:#fffbeb; padding:8px 12px; display:flex; align-items:center; gap:8px; border-bottom:1px solid #fcd34d; height:36px;">
+                <div style="font-size:0.75rem; font-weight:800; color:#d97706; background:#fef3c7; padding:2px 6px; border-radius:4px; white-space:nowrap; flex-shrink:0;" id="marquee-city-label">
+                    北市公車
+                </div>
+                <div style="flex:1; overflow:hidden; position:relative; height:20px;">
+                    <div id="marquee-city-text" class="marquee-content" style="display:inline-block; font-size:0.85rem; color:#92400e; font-weight:600; white-space:nowrap; line-height:20px;">
+                        載入中...
+                    </div>
                 </div>
             </div>
-            <!-- 關閉按鈕 -->
-            <i class="fas fa-times" onclick="document.getElementById('marquee-container').style.display='none'" style="color:#b45309; cursor:pointer; padding:4px;"></i>
+
+            <!-- 第二層：公路客運通阻 (藍色底) -->
+            <div id="marquee-inter" style="background:#eff6ff; padding:8px 12px; display:flex; align-items:center; gap:8px; border-bottom:1px solid #bfdbfe; height:36px;">
+                <div style="font-size:0.75rem; font-weight:800; color:#2563eb; background:#dbeafe; padding:2px 6px; border-radius:4px; white-space:nowrap; flex-shrink:0;">
+                    公路客運
+                </div>
+                <div style="flex:1; overflow:hidden; position:relative; height:20px;">
+                    <div id="marquee-inter-text" class="marquee-content-slow" style="display:inline-block; font-size:0.85rem; color:#1e40af; font-weight:600; white-space:nowrap; line-height:20px;">
+                        載入中...
+                    </div>
+                </div>
+            </div>
+
         </div>
 
         <!-- 歡迎畫面：路線瀏覽器 -->
@@ -1360,6 +1430,39 @@
     }
 
     // --- Google Maps Init ---
+    
+    // 簡單的縣市中心點與半徑 (單位: 度) - 用來粗略判斷地圖在哪
+    const cityCenters = {
+        'Taipei': { lat: 25.03, lng: 121.56, r: 0.15 },
+        'NewTaipei': { lat: 25.01, lng: 121.46, r: 0.3 }, // 新北包圍台北，判定比較難，這裡簡化
+        'Taoyuan': { lat: 24.99, lng: 121.30, r: 0.2 },
+        'Taichung': { lat: 24.14, lng: 120.67, r: 0.2 },
+        'Tainan': { lat: 22.99, lng: 120.21, r: 0.2 },
+        'Kaohsiung': { lat: 22.62, lng: 120.30, r: 0.25 },
+        'Keelung': { lat: 25.12, lng: 121.73, r: 0.08 },
+        'Hsinchu': { lat: 24.81, lng: 120.96, r: 0.08 },
+        'HualienCounty': { lat: 23.98, lng: 121.60, r: 0.3 },
+        'TaitungCounty': { lat: 22.75, lng: 121.14, r: 0.3 },
+        'YilanCounty': { lat: 24.70, lng: 121.72, r: 0.2 },
+        // ...其他縣市可依此類推
+    };
+
+    function getCityByMapCenter(lat, lng) {
+        // 簡單遍歷，找最近的縣市
+        let minD = Infinity;
+        let nearest = 'Taipei'; // 預設
+        
+        for (const [code, center] of Object.entries(cityCenters)) {
+            const d = Math.sqrt(Math.pow(lat - center.lat, 2) + Math.pow(lng - center.lng, 2));
+            if (d < minD) {
+                minD = d;
+                nearest = code;
+            }
+        }
+        // 如果距離太遠(例如在海上)，就保持原樣，或是回傳 'InterCity'
+        return minD > 0.5 ? null : nearest;
+    }
+
     // 地圖初始化同時啟動路線瀏覽器
     window.initMap = function() {
         map = new google.maps.Map(document.getElementById('map'), {
@@ -1372,8 +1475,21 @@
                 { featureType: "transit", elementType: "labels.icon", stylers: [{ visibility: "off" }] }
             ]
         });
+        
+        // 監聽地圖移動結束事件
+        map.addListener('idle', () => {
+            const center = map.getCenter();
+            const detectedCity = getCityByMapCenter(center.lat(), center.lng());
+            
+            // 如果偵測到縣市變更，且跟目前左側選單不同，我們只更新跑馬燈 (不改變左側選單，以免干擾使用者)
+            if (detectedCity && detectedCity !== currentData.city) {
+                // console.log(`地圖移動至: ${detectedCity}，更新跑馬燈...`); // 除錯用
+                updateMarqueeSection('marquee-city-text', detectedCity, 'CityBus');
+            }
+        });
+
         initBrowser();
-        initMarquee(); // 啟動跑馬燈
+        initDualMarquee(); // 啟動雙層跑馬燈
     };
 
     // ── Route Browser ──────────────────────────────────────────────────────────
@@ -1437,8 +1553,8 @@
 
     async function loadBrowserCity(cityKey) {
         browser.city = cityKey;
-        // 🌟 切換縣市時更新跑馬燈
-        updateMarquee(cityKey, browser.type);
+        // 🌟 切換縣市時更新跑馬燈 (僅更新市區公車層)
+        updateMarqueeSection('marquee-city-text', cityKey, 'CityBus');
 
         const container = document.getElementById('route-cards-container');
         const cacheKey = `${browser.type}__${cityKey}`;
@@ -2855,151 +2971,176 @@
     }
 
     // --- 查看縣市公告 ---
-    async function openCityNewsModal() {
-        // 取得目前選中的縣市與類型 (預設台北/市區公車)
-        const city = browser.city || 'Taipei';
-        const type = browser.type || 'CityBus'; 
+    async function openCityNewsModal(targetCity = null) {
+        // 如果有傳入 targetCity 就用它，否則用 browser.city
+        const city = targetCity || browser.city || 'Taipei';
+        const type = 'CityBus'; // 公告通常看市區公車即可
         
-        const titleText = CITY_NAMES[city] || (city === 'InterCity' ? '公路客運' : city);
+        const cityNameMap = {
+            'Taipei': '臺北市', 'NewTaipei': '新北市', 'Taoyuan': '桃園市', 
+            'Taichung': '臺中市', 'Tainan': '臺南市', 'Kaohsiung': '高雄市',
+            'Keelung': '基隆市', 'Hsinchu': '新竹市', 'HsinchuCounty': '新竹縣',
+            'MiaoliCounty': '苗栗縣', 'ChanghuaCounty': '彰化縣', 'NantouCounty': '南投縣',
+            'YunlinCounty': '雲林縣', 'ChiayiCounty': '嘉義縣', 'Chiayi': '嘉義市',
+            'PingtungCounty': '屏東縣', 'YilanCounty': '宜蘭縣', 'HualienCounty': '花蓮縣',
+            'TaitungCounty': '臺東縣', 'PenghuCounty': '澎湖縣', 'KinmenCounty': '金門縣', 
+            'InterCity': '公路客運'
+        };
 
-        // 開啟 Modal (顯示載入中)
         const modal = document.getElementById('modal-overlay');
         const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
         
-        // Modal 預設結構可能只有 title 文字，這裡我們需要清空並重設
-        title.innerHTML = `<i class="fas fa-bullhorn"></i> <span>${titleText} 最新消息</span>`;
-        body.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在載入公告...</div>`;
+        // 1. 建立 Modal 標題
+        title.innerHTML = `<i class="fas fa-bullhorn"></i> <span>營運公告</span>`;
+
+        // 2. 建立「縣市切換選單」的 HTML (橫向捲動)
+        // 這裡我們產生所有縣市的標籤，並標示當前選中的
+        let chipsHtml = `<div class="city-scroll-wrapper" style="margin: -10px -24px 15px -24px; padding: 10px 24px; border-bottom:1px solid #eee; background:#f8fafc;">`;
+        for (const [code, name] of Object.entries(cityNameMap)) {
+            const activeClass = (code === city) ? 'active' : '';
+            // 點擊後重新呼叫 openCityNewsModal(code)
+            chipsHtml += `<span class="city-chip ${activeClass}" onclick="openCityNewsModal('${code}')">${name}</span>`;
+        }
+        chipsHtml += `</div>`;
+
+        // 3. 先顯示載入中畫面 (保留選單在上面)
+        body.innerHTML = `
+            ${chipsHtml}
+            <div id="news-content-area">
+                <div style="text-align:center; padding:40px;">
+                    <i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在載入 ${cityNameMap[city] || city} 公告...
+                </div>
+            </div>
+        `;
+        
         modal.style.display = 'flex';
 
         try {
-            // 同時抓取 News (一般消息) 與 Alert (通阻)
-            // 處理 InterCity 的特殊情況
-            const cityParam = city === 'InterCity' ? '' : `&city=${city}`;
-            const typeParam = `&category=${type}`;
-
+            // 抓取資料
             const [newsRes, alertRes] = await Promise.all([
-                fetch(`${WORKER_URL}?action=news${typeParam}${cityParam}`).then(r => r.json()),
-                fetch(`${WORKER_URL}?action=alert${typeParam}${cityParam}`).then(r => r.json())
+                fetch(`${WORKER_URL}?action=news&category=${type}&city=${city}`).then(r => r.json()),
+                fetch(`${WORKER_URL}?action=alert&category=${type}&city=${city}`).then(r => r.json())
             ]);
 
             const newsList = Array.isArray(newsRes) ? newsRes : [];
             const alertList = Array.isArray(alertRes) ? alertRes : [];
 
-            // 合併並排序 (日期新的在前)
-            // 統一格式：{ title, desc, date, url, tag }
             const allItems = [
                 ...alertList.map(a => ({
-                    title: a.Title,
-                    desc: a.Description,
-                    date: a.StartTime,
-                    url: a.AlertURL,
-                    tag: '通阻',
-                    tagClass: 'tag-alert' // CSS class: 紅色
+                    title: a.Title, desc: a.Description, date: a.StartTime, url: a.AlertURL, tag: '通阻', tagClass: 'tag-alert'
                 })),
                 ...newsList.map(n => ({
-                    title: n.Title,
-                    desc: n.Description,
-                    date: n.PublishTime,
-                    url: n.NewsURL,
-                    tag: '消息',
-                    tagClass: 'tag-news' // CSS class: 藍色
+                    title: n.Title, desc: n.Description, date: n.PublishTime, url: n.NewsURL, tag: '消息', tagClass: 'tag-news'
                 }))
             ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
+            const contentArea = document.getElementById('news-content-area');
+
             if (allItems.length === 0) {
-                body.innerHTML = `<div style="text-align:center; padding:40px; color:#9ca3af;">目前無任何公告</div>`;
-                return;
+                contentArea.innerHTML = `<div style="text-align:center; padding:40px; color:#9ca3af;">目前無任何公告</div>`;
+            } else {
+                let listHtml = '<div style="display:flex; flex-direction:column; gap:12px;">';
+                allItems.forEach(item => {
+                    const dateStr = item.date ? item.date.substring(0, 10) : '';
+                    listHtml += `
+                        <div style="border-bottom:1px solid #eee; padding-bottom:12px;">
+                            <div style="font-size:0.8rem; color:#9ca3af; margin-bottom:4px;">${dateStr}</div>
+                            <div style="font-weight:700; font-size:1rem; margin-bottom:6px; line-height:1.4;">
+                                <span class="${item.tagClass}">${item.tag}</span> ${item.title}
+                            </div>
+                            <div style="font-size:0.9rem; color:#4b5563; white-space:pre-wrap;">${item.desc}</div>
+                            ${item.url ? `<a href="${item.url}" target="_blank" style="display:inline-block; margin-top:6px; font-size:0.85rem; color:#2563eb;"><i class="fas fa-link"></i> 詳細連結</a>` : ''}
+                        </div>`;
+                });
+                listHtml += '</div>';
+                contentArea.innerHTML = listHtml;
             }
-
-            // 渲染列表
-            let html = '<div style="display:flex; flex-direction:column; gap:12px;">';
-            allItems.forEach(item => {
-                const dateStr = item.date ? item.date.substring(0, 10) : '';
-                // Inline styles for tags
-                const tagStyle = item.tagClass === 'tag-alert' 
-                    ? 'background:#fee2e2; color:#ef4444; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-right:6px;'
-                    : 'background:#dbeafe; color:#2563eb; padding:2px 6px; border-radius:4px; font-size:0.8rem; margin-right:6px;';
-
-                html += `
-                    <div style="border-bottom:1px solid #eee; padding-bottom:12px;">
-                        <div style="font-size:0.8rem; color:#9ca3af; margin-bottom:4px;">${dateStr}</div>
-                        <div style="font-weight:700; font-size:1rem; margin-bottom:6px; line-height:1.4;">
-                            <span style="${tagStyle}">${item.tag}</span> ${item.title}
-                        </div>
-                        <div style="font-size:0.9rem; color:#4b5563; white-space:pre-wrap;">${item.desc}</div>
-                        ${item.url ? `<a href="${item.url}" target="_blank" style="display:inline-block; margin-top:6px; font-size:0.85rem; color:#2563eb;"><i class="fas fa-link"></i> 詳細連結</a>` : ''}
-                    </div>
-                `;
-            });
-            html += '</div>';
-            body.innerHTML = html;
 
         } catch (e) {
             console.error("News load failed", e);
-            body.innerHTML = `<div style="text-align:center; padding:20px; color:#ef4444;">載入失敗，請稍後再試</div>`;
+            const contentArea = document.getElementById('news-content-area');
+            if(contentArea) contentArea.innerHTML = `<div style="text-align:center; padding:20px; color:#ef4444;">載入失敗，請稍後再試</div>`;
         }
     }
 
-    // --- 跑馬燈功能 (優化版) ---
-    async function updateMarquee(city, type) {
-        // 如果是全台公車，可能沒有特定 city
-        const targetCity = city === 'InterCity' ? '' : city;
+    // --- 雙層跑馬燈功能 ---
+    async function initDualMarquee() {
+        // 1. 啟動公路客運跑馬燈 (只抓一次即可，因為它是全台性的)
+        updateMarqueeSection('marquee-inter-text', '', 'InterCity');
+
+        // 2. 啟動縣市公車跑馬燈 (預設台北)
+        updateMarqueeSection('marquee-city-text', 'Taipei', 'CityBus');
+    }
+
+    // 通用更新函式
+    async function updateMarqueeSection(elementId, city, type) {
+        const textEl = document.getElementById(elementId);
+        const labelEl = document.getElementById('marquee-city-label'); // 只有縣市層需要更新標籤
         
-        const container = document.getElementById('marquee-container');
-        const textEl = document.getElementById('marquee-text');
-        
-        // 先隱藏並移除動畫 class 以便重置
-        container.style.display = 'none';
-        textEl.classList.remove('marquee-anim');
-        textEl.style.animation = 'none';
-        void textEl.offsetWidth; // trigger reflow
-        
+        // 如果是更新縣市層，順便更新前面的小標籤 (例如：北市公車、台中公車)
+        if (elementId === 'marquee-city-text' && labelEl) {
+            const cityNameMap = {
+                'Taipei': '北市公車', 'NewTaipei': '新北公車', 'Taoyuan': '桃園公車',
+                'Taichung': '台中公車', 'Tainan': '台南公車', 'Kaohsiung': '高雄公車',
+                'Keelung': '基隆公車', 'Hsinchu': '新竹市公車', 'HsinchuCounty': '新竹縣公車',
+                'MiaoliCounty': '苗栗公車', 'ChanghuaCounty': '彰化公車', 'NantouCounty': '南投公車',
+                'YunlinCounty': '雲林公車', 'ChiayiCounty': '嘉義縣公車', 'Chiayi': '嘉義市公車',
+                'PingtungCounty': '屏東公車', 'YilanCounty': '宜蘭公車', 'HualienCounty': '花蓮公車',
+                'TaitungCounty': '台東公車', 'PenghuCounty': '澎湖公車', 'KinmenCounty': '金門公車',
+                'LienchiangCounty': '連江公車'
+            };
+            // 若為 InterCity 或其他不在此表中的，顯示 "當地公車"
+            labelEl.innerText = cityNameMap[city] || '當地公車';
+        }
+
+        if (!textEl) return;
+
+        // 先重置內容與動畫 class
+        textEl.innerText = "載入中...";
+        textEl.className = ''; 
+        // 為了讓 CSS animation 重啟，需要 reflow 或先清掉 class
+        // 這裡我們等得到資料後再加上對應 class
+
         try {
             // 抓取 Alert
-            let url = `${WORKER_URL}?action=alert`;
-            if (targetCity) url += `&city=${targetCity}`;
-            // 如果 API 支援 type (category) 也可以加上
-             
+            let url = `${WORKER_URL}?action=alert&category=${type}`;
+            if (city && city !== 'InterCity') url += `&city=${city}`;
+            
             const res = await fetch(url);
             const alerts = await res.json();
             
             // 過濾：只顯示狀態非正常的公告 (Status != 1) 或是重要公告
-            // 假設 API 回傳 alert 結構中 Status 1 為正常
             const urgentAlerts = Array.isArray(alerts) ? alerts.filter(a => a.Status !== 1) : [];
 
             if (urgentAlerts.length > 0) {
                 // 組合跑馬燈文字
                 const text = urgentAlerts.map(a => `【${a.Title}】${a.Description}`).join("　　　");
-                
                 textEl.innerText = text;
-                container.style.display = 'flex';
                 
-                // 計算動畫時間 (字越多跑越久)
-                const duration = Math.max(15, text.length * 0.25);
-                
-                // 重新套用動畫
-                // 使用 setTimeout 確保 DOM 更新後再啟動動畫
-                setTimeout(() => {
-                    textEl.style.animation = `marquee-scroll ${duration}s linear infinite`;
-                    textEl.classList.add('marquee-anim');
-                }, 50);
+                // 客運層用慢速動畫，縣市層用標準速度
+                // 先移除再添加以觸發動畫重置 (如果不這樣做，有時換文字後動畫會接續原本進度看起來怪怪的，或是不動)
+                void textEl.offsetWidth; 
+                textEl.className = (elementId === 'marquee-inter-text') ? 'marquee-content-slow' : 'marquee-content';
                 
             } else {
-                // 如果沒有重大公告，可以選擇不顯示
-                // container.style.display = 'none';
+                // 如果沒有重大公告，顯示平安訊息
+                textEl.innerText = (elementId === 'marquee-city-text') ? "🚍 當地公車營運正常" : "🚌 公路客運全線順暢";
+                textEl.className = ''; // 靜止不動
+                textEl.style.paddingLeft = '0';
             }
 
         } catch (e) {
             console.warn("跑馬燈載入失敗", e);
-            container.style.display = 'none';
+            textEl.innerText = "暫無即時資訊";
+            textEl.className = '';
+            textEl.style.paddingLeft = '0';
         }
     }
 
     // 舊的 initMarquee 可以移除或保留作為初始呼叫
-    async function initMarquee() {
-        // 預設載入台北市
-        updateMarquee('Taipei', 'CityBus');
+    function initMarquee() {
+        initDualMarquee();
     }
 
     // window.onload 已移除，改由 Google Maps API callback=initMap 觸發
