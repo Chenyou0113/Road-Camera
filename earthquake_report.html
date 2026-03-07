@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Google Maps API -->
-    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=places&language=zh-TW"></script>
+    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=places&language=zh-TW&callback=initializeMap"></script>
     <style>
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Microsoft JhengHei", sans-serif;
@@ -173,9 +173,7 @@
         const currentTimeSpan = document.getElementById('currentTime');
 
         // === API 設定 ===
-        // 使用 Cloudflare Functions 代理 (後端已設定 CWA_API_KEY，前端無需暴露)
-        const CWA_API_URL_SIGNIFICANT = '/api/earthquake-proxy?type=significant&limit=10';
-        const CWA_API_URL_MINOR = '/api/earthquake-proxy?type=minor&limit=10';
+        const WORKER_DOMAIN = 'https://cwa-weather-proxy.weacamm.org';
 
         // === 地圖相關變數 ===
         let map = null;
@@ -493,19 +491,20 @@
         async function fetchEarthquakeData() {
             loadingIndicator.style.display = 'block';
             refreshButton.disabled = true;
-            console.log("正在從 CWA API 獲取地震資料...");
             
+            const noCache = Date.now();
+
             try {
-                // 順序獲取兩個 API 的資料（更穩定）
+                // 🚀 改為呼叫你的 Worker 萬用路由
                 console.log("獲取顯著有感地震資料...");
-                const responseSignificant = await fetchWithRetry(CWA_API_URL_SIGNIFICANT);
-                const dataSignificant = await responseSignificant.json();
+                const resSig = await fetchWithRetry(`${WORKER_DOMAIN}/?dataset=E-A0015-001&nocache=${noCache}`);
+                const dataSignificant = await resSig.json();
                 
                 console.log("獲取小區域有感地震資料...");
-                const responseMinor = await fetchWithRetry(CWA_API_URL_MINOR);
-                const dataMinor = await responseMinor.json();
+                const resMin = await fetchWithRetry(`${WORKER_DOMAIN}/?dataset=E-A0016-001&nocache=${noCache}`);
+                const dataMinor = await resMin.json();
 
-                // 提取地震資料
+                // 提取與合併 (邏輯維持原樣)
                 const earthquakesSignificant = dataSignificant?.records?.Earthquake || [];
                 const earthquakesMinor = dataMinor?.records?.Earthquake || [];
 
@@ -609,7 +608,6 @@
 
         // === 初始化 ===
         document.addEventListener('DOMContentLoaded', () => {
-            initializeMap();
             fetchEarthquakeData();
             startCurrentTimeClock();
             startEarthquakeDataAutoUpdate(60 * 1000);
