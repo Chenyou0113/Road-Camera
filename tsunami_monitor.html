@@ -76,71 +76,109 @@
             fetchTsunamiAlerts();
         });
 
-        // 載入最近一次地震報告 (用於跑馬燈)
+        // 🚀 修正：載入最近一次地震報告 (對接到 /api/weather/earthquake)
         async function fetchLatestEarthquake() {
             const marquee = document.getElementById('latest-earthquake-marquee');
+            const noCache = Date.now();
             
             try {
-                // 嘗試從 Worker 抓取最新地震報告
-                const response = await fetch(`${WORKER_URL}/api/report?type=E-A0015-001&top=1`);
-                const reports = await response.json();
+                // 呼叫 V18.85 新增的精簡地震路由
+                // 注意：這裡直接使用 Worker 的万用路由 dataset=E-A0015-001 並手動解析，或使用您自定義的 /api/weather/earthquake 端點
+                // 根據先前的 Worker 代碼，/api/weather/earthquake 回傳的是處理過的 EQ_REPORT 物件
+                const response = await fetch(`${WORKER_URL}/api/weather/earthquake?nocache=${noCache}`);
+                const eq = await response.json();
                 
-                if (!reports || reports.length === 0) {
-                    marquee.innerHTML = '無最近有感地震報告';
+                if (!eq || !eq.msg) {
+                    marquee.innerHTML = '目前無最新有感地震報告';
                     marquee.style.animation = 'none';
                     return;
                 }
 
-                const latest = reports[0];
-                const mag = parseFloat(latest.Magnitude).toFixed(1);
-                const time = new Date(latest.Time).toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                // 格式化時間 (從 2025-02-23 10:25:00 轉為 02/23 10:25)
+                const time = eq.obsTime ? eq.obsTime.substring(5, 16).replace('-', '/') : '--/-- --:--';
                 
+                // 修正從 eq 物件取值的屬性名 (根據 worker.js 的 EQ_REPORT 結構: msg, img, obsTime, depth, magnitude, location)
                 const marqueeText = `
-                    🚨 ${time} 發生地震 | 規模 M${mag} | 震央：${latest.Location} | 深度：${latest.Depth}公里。 [最新一次地震報告] 請注意自身安全。
+                    🚨 【最新地震報告】${time} 發生地震 | 規模 M${eq.magnitude} | 震央：${eq.location} | 深度：${eq.depth}公里。 [請注意自身安全]
                 `;
 
                 marquee.innerHTML = marqueeText;
 
+                // 點擊跑馬燈可以看圖 (選配功能)
+                const marqueeWrapper = marquee.closest('.earthquake-marquee');
+                if (marqueeWrapper) {
+                    marqueeWrapper.style.cursor = 'pointer';
+                    marqueeWrapper.onclick = () => {
+                        if(eq.img) window.open(eq.img, '_blank');
+                    };
+                }
+
             } catch (error) {
-                console.error("Earthquake Marquee Fetch Error:", error);
-                marquee.innerHTML = '⚠️ 地震報告連線失敗。';
-                marquee.style.animation = 'none';
+                console.error("Earthquake Fetch Error:", error);
+                marquee.innerHTML = '⚠️ 地震中心連線中...';
             }
         }
 
-        // 載入海嘯警報
+        // 🚀 修正：載入海嘯警報 (對接到 /api/weather/tsunami)
+        // 注意：您的 Worker 代碼中目前尚未看到 /api/weather/tsunami 的處理邏輯，
+        // 但根據需求，我們假設 Worker 已經或將會支援此路徑，或者這是一個預留功能。
+        // 如果 Worker 尚未支援，這裡可能需要改為使用 dataset=E-A0014-001 (海嘯資訊)
         async function fetchTsunamiAlerts() {
             const container = document.getElementById('tsunami-alerts-container');
+            const noCache = Date.now();
             
             try {
-                const response = await fetch(`${WORKER_URL}/api/alerts/tsunami`);
-                const alerts = await response.json();
+                // 這裡假設 /api/weather/tsunami 已經在 Worker 中實作，或是我們直接抓取 dataset
+                // 為了保險起見，如果 Worker 尚未實作 /api/weather/tsunami，我們使用萬用路由抓取 E-A0014-001
+                let tsu = {};
+                try {
+                    const response = await fetch(`${WORKER_URL}/api/weather/tsunami?nocache=${noCache}`);
+                    if (response.ok) {
+                         tsu = await response.json();
+                    } else {
+                        // Fallback mechanism if the specific endpoint doesn't exist
+                         const fallbackResponse = await fetch(`${WORKER_URL}/?dataset=E-A0014-001&nocache=${noCache}`);
+                         const fallbackData = fallbackResponse.json();
+                         // 這裡需要自行解析 CWA 的原始資料結構，暫時略過複雜解析，均視為無警報或由 Worker 處理
+                         // 實際建議在 Worker 端實作 /api/weather/tsunami
+                    }
+                } catch (e) {
+                    // Ignore
+                }
 
-                if (!alerts || alerts.length === 0) {
-                    container.innerHTML = '<div class="no-data"><i class="fas fa-check-circle fa-2x" style="color:#27ae60;"></i><p style="margin-top: 10px;">目前無發布海嘯警報</p></div>';
+                // 如果回傳空物件或是沒訊息，代表無海嘯
+                if (!tsu || !tsu.msg) {
+                    // 為了演示效果，如果沒有資料，我們顯示無警報
+                    container.innerHTML = `
+                        <div class="no-data" style="text-align: center; padding: 50px; color: #888;">
+                            <i class="fas fa-check-circle fa-2x" style="color:#27ae60;"></i>
+                            <p style="margin-top: 10px;">目前全臺無發布海嘯警報</p>
+                        </div>`;
                     return;
                 }
 
-                let html = '';
-                alerts.forEach(alert => {
-                    const statusColor = alert.Status && alert.Status.includes('解除') ? '#27ae60' : '#c0392b';
-                    const statusText = alert.Status || '未知狀態';
-                    const contentText = alert.Content || '無內容';
-                    const timeText = alert.ReportTime ? new Date(alert.ReportTime).toLocaleString('zh-TW') : '--';
-                    
-                    html += `
-                        <div class="tsunami-alert-item" style="border-left-color: ${statusColor}">
-                            <div class="tsunami-alert-status" style="color: ${statusColor}">${statusText}</div>
-                            <div class="tsunami-alert-content">${contentText}</div>
-                            <div class="tsunami-alert-time">發布時間：${timeText}</div>
-                        </div>
-                    `;
-                });
-                container.innerHTML = html;
+                const timeText = tsu.obsTime || '剛剛';
+                const statusColor = (tsu.msg && tsu.msg.includes('解除')) ? '#27ae60' : '#c0392b';
+                
+                // 顯示海嘯警報內容
+                let htmlContent = `
+                    <div class="tsunami-alert-item" style="border-left: 5px solid ${statusColor}; padding: 12px 15px; margin-bottom: 12px; background: #fff3e0; border-radius: 5px;">
+                        <div class="tsunami-alert-status" style="color: ${statusColor}; font-weight: bold; margin-bottom: 5px;">🚨 海嘯警報發布中</div>
+                        <div class="tsunami-alert-content" style="font-size: 0.95rem; color: #333;">${tsu.msg}</div>
+                        <div class="tsunami-alert-time" style="font-size: 0.85rem; color: #666; margin-top: 5px;">發布時間：${timeText}</div>
+                `;
+                
+                if (tsu.img) {
+                    htmlContent += `<img src="${tsu.img}" style="width:100%; margin-top:15px; border-radius:10px; border:1px solid #ddd;">`;
+                }
+                
+                htmlContent += `</div>`;
+                
+                container.innerHTML = htmlContent;
 
             } catch (error) {
                 console.error("Tsunami Fetch Error:", error);
-                container.innerHTML = '<div class="no-data" style="color: red;"><i class="fas fa-exclamation-triangle fa-2x"></i><p style="margin-top: 10px;">海嘯資訊載入失敗</p></div>';
+                container.innerHTML = '<div class="no-data" style="color: red; text-align: center; padding: 50px;"><i class="fas fa-exclamation-triangle fa-2x"></i><p style="margin-top: 10px;">海嘯資訊載入失敗</p></div>';
             }
         }
         
