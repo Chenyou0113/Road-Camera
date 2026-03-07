@@ -1,237 +1,150 @@
-// ============================================================
-//  核心功能 1：從氣象署抓取警特報並寫入 D1 (背景執行用)
-// ============================================================
-async function updateWarningsInBackground(env) {
-    const apiKey = env.CWA_API_KEY;
-    if (!apiKey) return console.error("Missing API Key");
+/**
+ * CWA Weather Monitor Worker (V18.70 - Earthquake Details Pro)
+ */
 
-    // 警特報 URL (使用 File API)
-    const cwaUrl = `https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/W-C0033-002?Authorization=${apiKey}&downloadType=WEB&format=JSON`;
-    
-    try {
-        console.log("開始背景更新警特報...");
-        const response = await fetch(cwaUrl, { 
-            cf: { cacheTtl: 0 } // 強制不使用 Cloudflare 快取
-        });
+const CWA_API_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore";
+const TABLE_HISTORY = "weather_history";
 
-        if (!response.ok) throw new Error(`CWA API Error: ${response.status}`);
-        
-        const jsonData = await response.text();
-        
-        // 寫入 D1 (ID 固定為 1)
-        await env.DB.prepare(`
-            INSERT OR REPLACE INTO weather_warnings (id, json_data, updated_at) 
-            VALUES (1, ?, ?)
-        `).bind(jsonData, Date.now()).run();
-
-        console.log("警特報背景更新完成");
-        return true;
-    } catch (e) {
-        console.error(`背景更新失敗: ${e.message}`);
-        return false;
-    }
-}
-
-// ============================================================
-//  核心功能 2：儲存氣象站資料 (維持原樣)
-// ============================================================
-async function saveStationDataToD1(env) {
-    const apiKey = env.CWA_API_KEY;
-    if (!apiKey) throw new Error("找不到 API Key");
-
-    const cwaUrl = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001?Authorization=${apiKey}&format=JSON&StationStatus=OPEN`;
-    
-    try {
-        const response = await fetch(cwaUrl);
-        if (!response.ok) throw new Error(`氣象署 API 回傳錯誤: ${response.status}`);
-        
-        const data = await response.json();
-        const stations = data.records?.Station || [];
-
-        // 準備 SQL
-        const stmtStation = env.DB.prepare(`
-            INSERT OR REPLACE INTO stations (station_id, name, county, town, lat, lon)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `);
-
-        const stmtLog = env.DB.prepare(`
-            INSERT INTO weather_logs (station_id, obs_time, temperature, humidity, rain, weather)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `);
-
-        let currentBatch = [];
-        const BATCH_SIZE = 20;
-        const timestamp = Date.now();
-        let totalSaved = 0;
-
-        for (const s of stations) {
-            if (!s.WeatherElement) continue;
-            const we = s.WeatherElement;
-
-            let tempVal = parseFloat(we.AirTemperature);
-            if (isNaN(tempVal) || tempVal < -50) continue;
-
-            let humdVal = parseFloat(we.RelativeHumidity);
-            if (humdVal !== null && humdVal <= 1 && humdVal > 0) humdVal *= 100;
-            if (isNaN(humdVal)) humdVal = null;
-
-            let rainVal = we.Now && we.Now.Precipitation ? parseFloat(we.Now.Precipitation) : 0;
-            if (isNaN(rainVal) || rainVal < 0) rainVal = 0;
-
-            const weatherVal = we.Weather || null;
-
-            let lat = null, lon = null;
-            if (s.GeoInfo?.Coordinates) {
-                const coord = s.GeoInfo.Coordinates.find(c => c.CoordinateName === 'WGS84') || s.GeoInfo.Coordinates[1];
-                if (coord) {
-                    lat = parseFloat(coord.StationLatitude);
-                    lon = parseFloat(coord.StationLongitude);
-                }
-            }
-
-            currentBatch.push(stmtStation.bind(s.StationId, s.StationName, s.GeoInfo.CountyName, s.GeoInfo.TownName, lat, lon));
-            currentBatch.push(stmtLog.bind(s.StationId, timestamp, tempVal, humdVal, rainVal, weatherVal));
-
-            if (currentBatch.length >= BATCH_SIZE * 2) {
-                await env.DB.batch(currentBatch);
-                totalSaved += (currentBatch.length / 2);
-                currentBatch = [];
-            }
-        }
-
-        if (currentBatch.length > 0) {
-            await env.DB.batch(currentBatch);
-            totalSaved += (currentBatch.length / 2);
-        }
-        return `成功同步 ${totalSaved} 個測站`;
-    } catch (e) {
-        console.error("Save Station Error:", e);
-        return `同步失敗: ${e.message}`;
-    }
-}
-
-// ============================================================
-//  主入口 (Main Handler)
-// ============================================================
 export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-    
-    // 1. 設定 CORS (必須放在最前面)
-    const corsHeaders = {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    };
-    if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
-
-    // ========================================================
-    // 🔥 修正重點：這裡先檢查 force_update，不檢查 dataset
-    // ========================================================
-    if (url.searchParams.get("force_update") === "true") {
-        // 使用 waitUntil 讓更新在背景執行，前端不用等
-        ctx.waitUntil(Promise.all([
-            updateWarningsInBackground(env),
-            saveStationDataToD1(env)
-        ]));
-
-        return new Response("✅ 已觸發背景更新！請等待 5~10 秒後重新整理首頁。", { 
-            headers: { ...corsHeaders, "Content-Type": "text/plain;charset=UTF-8" } 
-        });
-    }
-
-    // ========================================================
-    // 2. 縣市天氣預報路由 (輕量版，取代舊的 ?dataset=F-C0032-001)
-    // ========================================================
-    if (url.pathname === '/api/weather/forecast') {
+    async fetch(request, env, ctx) {
+        const url = new URL(request.url);
+        const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" };
+        if (request.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
         try {
-            const county = url.searchParams.get('county') || '臺北市';
-            const cwaUrl = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization=${env.CWA_API_KEY}&format=JSON&locationName=${encodeURIComponent(county)}`;
-            const response = await fetch(cwaUrl, { cf: { cacheTtl: 300 } });
-            if (!response.ok) throw new Error(`CWA Forecast API Error: ${response.status}`);
-
-            const json = await response.json();
-            const loc = json.records?.location?.[0];
-            if (!loc) return new Response(JSON.stringify({ error: '找不到縣市資料' }), { status: 404, headers: corsHeaders });
-
-            const find = (name) => (loc.weatherElement || []).find(e => e.elementName === name)?.time?.[0]?.parameter?.parameterName ?? null;
-
-            return new Response(JSON.stringify({
-                county: loc.locationName,
-                wx:   find('Wx'),
-                minT: find('MinT'),
-                maxT: find('MaxT'),
-                pop:  find('PoP'),
-                ci:   find('CI')
-            }), {
-                headers: { ...corsHeaders, 'Content-Type': 'application/json;charset=UTF-8', 'Cache-Control': 'public, max-age=300' }
-            });
-        } catch (e) {
-            return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
-        }
-    }
-
-    // ========================================================
-    // 3. 現在才檢查 dataset 參數
-    // ========================================================
-    const dataset = url.searchParams.get("dataset");
-
-    // 警特報 (W-C0033-002) 邏輯
-    if (dataset === 'W-C0033-002') {
-        try {
-            // 優先從 D1 讀取
-            const record = await env.DB.prepare("SELECT json_data, updated_at FROM weather_warnings WHERE id = 1").first();
+            if (url.pathname.startsWith("/api/weather/now")) return new Response(await env.WEATHER_KV.get("CURRENT_NOW") || "[]", { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            if (url.pathname.startsWith("/api/weather/forecast")) return new Response(await env.WEATHER_KV.get(`FC_${(url.searchParams.get("county") || "臺北市").replace('台', '臺')}`) || "{}", { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            if (url.pathname.startsWith("/api/weather/alert")) return new Response(await env.WEATHER_KV.get("CURRENT_ALERT") || '{"count":0,"alerts":[]}', { headers: { ...corsHeaders, "Content-Type": "application/json" } });
             
-            // 判斷是否過期 (10分鐘 = 600000ms)
-            const isStale = !record || !record.json_data || (Date.now() - record.updated_at > 600000);
-            
-            if (isStale) {
-                console.log("資料陳舊或不存在，觸發背景更新...");
-                ctx.waitUntil(updateWarningsInBackground(env));
+            // 🚀 地震報告：回傳包含完整原始資料的物件
+            if (url.pathname.startsWith("/api/weather/earthquake")) return new Response(await env.WEATHER_KV.get("EQ_REPORT") || "{}", { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+            if (url.pathname.startsWith("/api/weather/history")) {
+                const sid = url.searchParams.get("station_id");
+                const { results } = await env.DB.prepare(`SELECT timestamp, temperature, rain FROM ${TABLE_HISTORY} WHERE station_id = ? AND timestamp > ? ORDER BY timestamp ASC`).bind(sid, Date.now()-93600000).all();
+                return new Response(JSON.stringify(results), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
             }
-
-            // 如果資料庫完全沒資料 (第一次跑)，回傳假資料避免前端報錯
-            let responseData = record && record.json_data ? record.json_data : JSON.stringify({
-                cwaopendata: {
-                    dataset: {
-                        datasetInfo: { datasetDescription: "系統初始化中..." },
-                        contents: { content: { contentText: "正在同步警特報資料，請稍候..." } }
-                    }
+            if (url.pathname.startsWith("/api/sync")) {
+                ctx.waitUntil(runSync(env, url.searchParams.get("target")));
+                return new Response(JSON.stringify({ status: "sync_triggered" }), { headers: corsHeaders });
+            }
+            let dataset = (url.searchParams.get("dataset") || "").trim();
+            if (dataset) {
+                if (dataset.startsWith('A-B')) {
+                    const r = await fetch(`${CWA_API_URL}/${dataset}?Authorization=${env.CWA_API_KEY}&CountyName=${encodeURIComponent(url.searchParams.get('CountyName'))}&Date=${url.searchParams.get('Date')}&format=JSON`);
+                    return new Response(JSON.stringify(await r.json()), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
                 }
-            });
-
-            return new Response(responseData, {
-                headers: { 
-                    ...corsHeaders, 
-                    "Content-Type": "application/json;charset=UTF-8",
-                    "X-Source": isStale ? "D1-Stale" : "D1-Hit"
-                }
-            });
-        } catch (e) {
-            return new Response(JSON.stringify({ error: "DB Error: " + e.message }), { status: 500, headers: corsHeaders });
-        }
-    }
-
-    // 一般氣象資料 (Proxy) 邏輯
-    if (dataset) {
-        try {
-            const cwaUrl = `https://opendata.cwa.gov.tw/api/v1/rest/datastore/${dataset}?Authorization=${env.CWA_API_KEY}&format=JSON&StationStatus=OPEN`;
-            const response = await fetch(cwaUrl);
-            const data = await response.json();
-            return new Response(JSON.stringify(data), { 
-                headers: { ...corsHeaders, "Content-Type": "application/json;charset=UTF-8", "Cache-Control": "public, max-age=60" } 
-            });
-        } catch (err) {
-            return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: corsHeaders });
-        }
-    }
-
-    // 如果沒有 force_update 也沒有 dataset，才回傳錯誤
-    return new Response("錯誤：缺少資料集參數 (dataset missing)", { status: 400, headers: corsHeaders });
-  },
-
-  // 3. 排程觸發 (Cron Job)
-  async scheduled(event, env, ctx) {
-    ctx.waitUntil(Promise.all([saveStationDataToD1(env), updateWarningsInBackground(env)]));
-  }
+                const kvChart = await env.WEATHER_KV.get(`CHART_${dataset}`);
+                if (kvChart) return new Response(kvChart, { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+                return new Response(JSON.stringify(await updateCacheItem(env, dataset) || {}), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
+            return new Response(JSON.stringify({ status: "running", version: "V18.70" }), { headers: corsHeaders });
+        } catch (e) { return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders }); }
+    },
+    async scheduled(event, env, ctx) { ctx.waitUntil(runSync(env, 'auto')); }
 };
+
+const parseValue = (v) => { if (v==='X'||v===-99||v==='-99.0'||v===null||v===undefined) return {val:null,str:'故障'}; const n=parseFloat(v); return (isNaN(n)||n<=-50)?{val:null,str:'故障'}:{val:n,str:n.toString()}; };
+
+async function runSync(env, target) {
+    if (!env.CWA_API_KEY) return;
+    if (target === 'auto' || target === 'manned') {
+        const f1 = await updateCacheItem(env, 'O-A0001-001'); const f3 = await updateCacheItem(env, 'O-A0003-001');
+        let existing = JSON.parse(await env.WEATHER_KV.get("CURRENT_NOW") || "[]");
+        const newIds = new Set((f1||[]).concat(f3||[]).map(s => s.stationId));
+        await env.WEATHER_KV.put("CURRENT_NOW", JSON.stringify(existing.filter(s => !newIds.has(s.stationId)).concat((f1||[]).concat(f3||[]))));
+        await updateHistoryToD1(env, (target === 'manned') ? 'O-A0003-001' : 'O-A0001-001');
+    }
+    if (target === 'forecast' || target === 'auto') await updateCacheItem(env, 'F-C0032-001');
+    if (target === 'alert' || target === 'auto' || target === 'earthquake') {
+        const eq = await updateCacheItem(env, 'E-A0015-001'); await updateCacheItem(env, 'E-A0016-001');
+        const alerts = [];
+        // 🚀 修改跑馬燈內的地震文字，加上引導語
+        if (eq && eq.msg && (Date.now() - new Date(eq.obsTime).getTime() < 86400000)) {
+            alerts.push(`🚨【最新地震報告】${eq.msg} (點此查看詳圖)`);
+        }
+        const alertIDs = ['W-C0033-001', 'W-C0033-002', 'W-C0033-004', 'W-C0033-005', 'W-C0034-001'];
+        for (let id of alertIDs) {
+            const r = await fetch(`${CWA_API_URL}/${id}?Authorization=${env.CWA_API_KEY}&format=JSON`);
+            if (!r.ok) continue;
+            const d = await r.json();
+            if (d.records?.record) {
+                const recs = Array.isArray(d.records.record) ? d.records.record : [d.records.record];
+                const fmt = (t) => { if(!t) return ""; const p=t.split(' '); const dp=p[0].split('-'); return `${dp[1]}/${dp[2]} ${p[1].substring(0,5)}`; };
+                recs.forEach(rec => {
+                    const info = rec.datasetInfo; const content = rec.contents?.content?.contentText || rec.contents?.content || ""; if (!info || !content) return;
+                    alerts.push(`【${info.datasetDescription} ${fmt(info.issueTime)}】${String(content).replace(/一、概述：/g,"").replace(/[\r\n]+/g," ").split("二、")[0].trim()}${info.validTime?.endTime ? `（～ ${fmt(info.validTime.endTime)}）` : ""}`);
+                });
+            }
+        }
+        const finalAlerts = Array.from(new Set(alerts));
+        await env.WEATHER_KV.put("CURRENT_ALERT", JSON.stringify({ count: finalAlerts.length, alerts: finalAlerts, feed_string: finalAlerts.length > 0 ? finalAlerts.join("   📢   ") : "目前全臺無發布氣象警特報" }));
+    }
+}
+
+async function updateCacheItem(env, id) {
+    try {
+        const isRest = ['O-A0001', 'O-A0003', 'F-C0032', 'W-C0033', 'W-C0034', 'E-A0015', 'E-A0016'].some(p => id.startsWith(p));
+        const url = isRest ? `${CWA_API_URL}/${id}?format=JSON` : `https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/${id}?downloadType=WEB&format=JSON`;
+        const r = await fetch(`${url}&Authorization=${env.CWA_API_KEY}`);
+        if (!r.ok) return null;
+        const json = await r.json();
+
+        if (id.startsWith('E-A0015')) {
+            const report = json.records?.Earthquake?.[0];
+            if(report) {
+                const info = report.EarthquakeInfo;
+                // 🚀 存入更豐富的資訊
+                const res = { 
+                    msg: `發震：${info.OriginTime.substring(11,16)}，規模 ${info.EarthquakeMagnitude.MagnitudeValue}，位於 ${info.Epicenter.Location}`,
+                    img: report.ReportImageURI, 
+                    obsTime: info.OriginTime,
+                    depth: info.FocalDepth,
+                    magnitude: info.EarthquakeMagnitude.MagnitudeValue,
+                    location: info.Epicenter.Location,
+                    raw: json // 完整原始資料
+                };
+                await env.WEATHER_KV.put("EQ_REPORT", JSON.stringify(res));
+                return res;
+            }
+        }
+
+        if (id === 'F-C0032-001') {
+            const locs = json.records?.location || [];
+            for (let l of locs) {
+                const g = (n) => l.weatherElement?.find(e => e.elementName === n)?.time[0]?.parameter?.parameterName;
+                await env.WEATHER_KV.put(`FC_${l.locationName.replace('台', '臺')}`, JSON.stringify({ county: l.locationName, wx: g('Wx'), minT: g('MinT'), maxT: g('MaxT'), pop: g('PoP') }));
+            }
+            await env.WEATHER_KV.put(id, JSON.stringify({ records: { location: locs.map(l => ({ locationName: l.locationName, weatherElement: l.weatherElement.map(e => ({ elementName: e.elementName, time: [e.time[0]] })) })) } }));
+            return json;
+        }
+
+        if (id.startsWith('O-A0001') || id.startsWith('O-A0003')) {
+            const st = json.records?.Station || json.records?.station || [];
+            return st.map(s => {
+                const we = s.WeatherElement; const getRaw = (key) => Array.isArray(we) ? we.find(e => e.ElementName === key)?.ElementValue : we?.[key];
+                return { stationId: s.StationId, stationName: s.StationName, county: s.GeoInfo?.CountyName || s.CountyName, temp: parseValue(getRaw('AirTemperature') || getRaw('TEMP')), weather: getRaw('Weather') || '', obsTime: s.ObsTime?.DateTime || s.DateTime };
+            });
+        }
+        
+        const findImg = (obj) => { if(!obj||typeof obj!=='object') return null; if (obj.web || obj.uri || obj.ProductURL) return obj.web || obj.uri || obj.ProductURL; if (Array.isArray(obj)) { for (let i of obj) { let r = findImg(i); if(r) return r; } } for (let k in obj) { if (typeof obj[k] === 'string' && obj[k].startsWith('http')) return obj[k]; if (typeof obj[k] === 'object'){ let r = findImg(obj[k]); if(r) return r; } } return null; };
+        const img = findImg(json); const final = id.startsWith('W-C') ? json : { cwaopendata: { dataset: { resource: { uri: img || "" }, obsTime: json.cwaopendata?.dataset?.obsTime || new Date().toISOString() } } };
+        await env.WEATHER_KV.put(`CHART_${id}`, JSON.stringify(final));
+        return final;
+    } catch(e) { return null; }
+}
+
+async function updateHistoryToD1(env, id) {
+    const r = await fetch(`${CWA_API_URL}/${id}?Authorization=${env.CWA_API_KEY}&format=JSON`);
+    if(!r.ok) return;
+    const json = await r.json(); const st = json.records?.Station || json.records?.station || [];
+    const now = Date.now();
+    const stmt = env.DB.prepare(`INSERT OR IGNORE INTO ${TABLE_HISTORY} (station_id, station_name, timestamp, temperature, wind_speed, rain, humidity) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+    for (let i = 0; i < st.length; i += 50) {
+        const batch = st.slice(i, i+50).map(s => {
+            const we = s.WeatherElement; const getRaw = (key) => Array.isArray(we) ? we.find(e => e.ElementName === key)?.ElementValue : we?.[key];
+            const g = (k) => { const v = parseFloat(getRaw(k)); return (isNaN(v) || v < -50) ? null : v; };
+            return stmt.bind(s.StationId, s.StationName, now, g('AirTemperature')||g('TEMP'), g('WindSpeed')||g('WDSD'), g('Precipitation')||g('NOW'), g('RelativeHumidity')||g('HUMD'));
+        });
+        await env.DB.batch(batch);
+    }
+}

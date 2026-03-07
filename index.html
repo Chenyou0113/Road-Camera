@@ -8,6 +8,24 @@
     <link rel="stylesheet" href="assets/dark-mode.css">
     <link rel="stylesheet" href="assets/mobile-responsive.css">
     <style>
+        /* 🚨 地震詳情彈窗樣式 */
+        #eq-modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); backdrop-filter: blur(8px);
+            display: none; z-index: 11000; align-items: center; justify-content: center;
+        }
+        #eq-modal {
+            background: white; width: 90%; max-width: 500px; border-radius: 20px;
+            overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+            animation: zoomIn 0.3s ease-out;
+        }
+        @keyframes zoomIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .eq-header { background: #d32f2f; color: white; padding: 15px 20px; display: flex; justify-content: space-between; }
+        .eq-body { padding: 20px; text-align: center; }
+        .eq-img { width: 100%; border-radius: 10px; margin-top: 15px; border: 1px solid #ddd; }
+        .eq-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 15px; }
+        .eq-info-item { background: #f1f5f9; padding: 10px; border-radius: 10px; font-size: 0.9rem; }
+
         :root {
             --primary-gradient: linear-gradient(135deg, #1e40af, #0891b2);
             --secondary-gradient: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #1e40af 100%);
@@ -2106,6 +2124,7 @@
         }
 
         // �🔥 核心修正：警報更新邏輯 (直接讀取 Worker 的 feed_string)
+        // 🔥 核心修正：警報更新邏輯 (直接讀取 Worker 的 feed_string)
         async function updateWeatherStatus() {
             const alertEl = document.getElementById('alertText');
             if (!alertEl) return;
@@ -2118,6 +2137,17 @@
                 const res = await fetchWithRetry(alertUrl);
                 const data = await res.json();
                 
+                // 重要：讓跑馬燈容器可以被點擊
+                const tickerWrapper = document.getElementById('warningTickerContainer');
+                
+                if (data.feed_string && data.feed_string.includes('地震報告')) {
+                    tickerWrapper.style.cursor = 'pointer';
+                    tickerWrapper.onclick = showEqModal; // 點擊跑馬燈任何地方都觸發地震彈窗
+                } else {
+                    tickerWrapper.onclick = null;
+                    tickerWrapper.style.cursor = 'default';
+                }
+
                 let displayText = "";
                 let hasAlert = false;
 
@@ -2154,6 +2184,27 @@
                 alertEl.textContent = "⚠️ 網路連線中...";
                 alertEl.classList.add('no-warning-text');
             }
+        }
+
+        // 🚀 新增：顯示地震詳情彈窗
+        async function showEqModal() {
+            const overlay = document.getElementById('eq-modal-overlay');
+            try {
+                const res = await fetch('https://cwa-weather-proxy.weacamm.org/api/weather/earthquake');
+                const eq = await res.json();
+                if (!eq.img) return;
+
+                document.getElementById('eq-summary').textContent = eq.location;
+                document.getElementById('eq-depth').textContent = eq.depth;
+                document.getElementById('eq-mag').textContent = eq.magnitude;
+                document.getElementById('eq-report-img').src = eq.img;
+                
+                overlay.style.display = 'flex';
+            } catch (e) { console.error("無法載入地震詳情"); }
+        }
+
+        function closeEqModal() {
+            document.getElementById('eq-modal-overlay').style.display = 'none';
         }
 
         async function updateWangweiMsg() {
@@ -2633,6 +2684,23 @@
                     <input type="checkbox" id="ann-no-show-check"> 本次選單不再顯示
                 </label>
                 <button id="ann-close-btn">我知道了</button>
+            </div>
+        </div>
+    </div>
+    <div id="eq-modal-overlay" onclick="closeEqModal()">
+        <div id="eq-modal" onclick="event.stopPropagation()">
+            <div class="eq-header">
+                <h3>🚨 最新地震詳情</h3>
+                <button onclick="closeEqModal()" style="background:none; border:none; color:white; font-size:24px; cursor:pointer;">&times;</button>
+            </div>
+            <div class="eq-body">
+                <div id="eq-summary" style="font-weight:bold; font-size:1.1rem; color:#d32f2f;"></div>
+                <div class="eq-info-grid">
+                    <div class="eq-info-item">深度：<span id="eq-depth">--</span> km</div>
+                    <div class="eq-info-item">規模：<span id="eq-mag">--</span></div>
+                </div>
+                <img id="eq-report-img" class="eq-img" src="" alt="地震報告圖">
+                <p style="margin-top:15px; font-size:0.8rem; color:#666;">資料來源：中央氣象署</p>
             </div>
         </div>
     </div>
