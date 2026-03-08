@@ -178,6 +178,26 @@
         
         /* 深色模式下按鈕文字修正 */
         body.dark-mode .filter-btn.active { color: #000; }
+        
+        /* 強制同步按鈕樣式 */
+        #btn-force-sync {
+            transition: all 0.2s ease;
+        }
+        
+        #btn-force-sync:hover:not(:disabled) {
+            color: #0D47A1 !important;
+            transform: scale(1.05);
+        }
+        
+        #btn-force-sync:disabled {
+            opacity: 0.5;
+            cursor: not-allowed !important;
+            text-decoration: none !important;
+        }
+        
+        body.dark-mode #btn-force-sync:hover:not(:disabled) {
+            color: #90CAF9 !important;
+        }
 
         .search-box { display: flex; gap: 10px; }
         .search-input {
@@ -262,6 +282,23 @@
             .header-content { flex-direction: column; text-align: center; }
             .data-grid { grid-template-columns: 1fr 1fr; }
             .basic-info-card { flex-direction: column; text-align: center; gap: 15px; }
+            
+            /* 控制面板在手機上的優化 */
+            .controls > div:first-child {
+                flex-direction: column !important;
+                align-items: flex-start !important;
+                gap: 10px;
+            }
+            
+            .controls > div:first-child > div:last-child {
+                width: 100%;
+                text-align: left;
+            }
+            
+            #data-obs-time {
+                display: block;
+                margin-bottom: 5px;
+            }
         }
 
         /* === 🔥 修正深色模式文字看不見的問題 === */
@@ -321,11 +358,19 @@
         </div>
 
         <div class="controls">
-            <h2>🔍 篩選條件</h2>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h2 style="margin: 0;">🔍 篩選條件</h2>
+                <div style="text-align: right; font-size: 0.9rem; color: var(--text-secondary);">
+                    <div>📡 觀測時間：<span id="data-obs-time" style="font-weight: bold; color: var(--highlight-color);">載入中...</span></div>
+                    <button id="btn-force-sync" onclick="forceSync()" style="background: none; border: none; color: var(--highlight-color); text-decoration: underline; cursor: pointer; padding: 5px 0; font-size: 0.85rem;">
+                        ⚡ 強制同步最新資料
+                    </button>
+                </div>
+            </div>
             <div class="filter-group" id="county-filters"></div>
             <div class="search-box">
                 <input type="text" class="search-input" id="search-input" placeholder="搜尋站名或鄉鎮...">
-                <button class="btn-refresh" onclick="refreshData()">🔄 刷新資料</button>
+                <button class="btn-refresh" onclick="refreshData()">🔄 刷新列表</button>
             </div>
         </div>
 
@@ -439,6 +484,18 @@
 
                 // 伺服器已處理完畢，直接使用
                 allStations = data;
+                
+                // 🚀 更新觀測時間顯示（取第一筆資料的時間）
+                if (data.length > 0 && data[0].obsTime) {
+                    const obsTimeElement = document.getElementById('data-obs-time');
+                    if (obsTimeElement) {
+                        // 顯示完整的日期時間和相對時間
+                        const fullTime = formatDateTime(data[0].obsTime);
+                        const timeAgo = getTimeAgo(data[0].obsTime);
+                        obsTimeElement.innerHTML = `${fullTime} <span style="font-size: 0.85em; opacity: 0.8;">(${timeAgo})</span>`;
+                        obsTimeElement.title = `最新觀測資料時間：${fullTime}`;
+                    }
+                }
 
             } catch (error) {
                 console.error("Fetch failed:", error);
@@ -461,6 +518,24 @@
             if (isNaN(d.getTime())) return isoString;
             const pad = (n) => n.toString().padStart(2, '0');
             return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        }
+        
+        // 計算時間差（多久之前）
+        function getTimeAgo(isoString) {
+            if (!isoString) return '';
+            const obsTime = new Date(isoString);
+            const now = new Date();
+            const diffMs = now - obsTime;
+            const diffMins = Math.floor(diffMs / 60000);
+            
+            if (diffMins < 1) return '剛剛';
+            if (diffMins < 60) return `${diffMins} 分鐘前`;
+            
+            const diffHours = Math.floor(diffMins / 60);
+            if (diffHours < 24) return `${diffHours} 小時前`;
+            
+            const diffDays = Math.floor(diffHours / 24);
+            return `${diffDays} 天前`;
         }
 
         function setupCountyFilters() {
@@ -868,6 +943,81 @@
 
         function refreshData() {
             loadStationData();
+        }
+        
+        // 🚀 強制同步最新資料（含冷卻時間機制）
+        let lastSyncTime = 0;
+        const SYNC_COOLDOWN = 5 * 60 * 1000; // 5 分鐘冷卻時間
+        
+        async function forceSync() {
+            const btn = document.getElementById('btn-force-sync');
+            const now = Date.now();
+            
+            // 1. 檢查冷卻時間
+            const timeSinceLastSync = now - lastSyncTime;
+            if (timeSinceLastSync < SYNC_COOLDOWN) {
+                const remainingTime = Math.ceil((SYNC_COOLDOWN - timeSinceLastSync) / 1000 / 60);
+                alert(`⏳ 請稍候 ${remainingTime} 分鐘後再試\n\n為避免頻繁請求造成 API 限制，強制同步有 5 分鐘的冷卻時間。`);
+                return;
+            }
+            
+            // 2. 防止重複點擊
+            const originalHTML = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '⏳ 同步中，請稍候...';
+            btn.style.cursor = 'wait';
+            
+            try {
+                // 3. 顯示同步開始訊息
+                const loading = document.getElementById('loading');
+                if (loading) {
+                    loading.style.display = 'block';
+                    loading.innerHTML = '<i class="fas fa-sync fa-spin" style="font-size: 2.5rem; color: #1976D2; margin-right: 15px;"></i><span style="font-size: 1.2rem; color: #666;">正在從氣象署同步最新資料，請稍候 5-10 秒...</span>';
+                }
+                
+                // 4. 呼叫 Worker 的同步接口
+                console.log('🚀 開始強制同步氣象資料...');
+                const syncResponse = await fetch(`${CLOUDFLARE_WORKER_URL}/api/sync?target=auto`, {
+                    method: 'GET',
+                    headers: {
+                        'Cache-Control': 'no-cache',
+                        'Pragma': 'no-cache'
+                    }
+                });
+                
+                if (!syncResponse.ok) {
+                    throw new Error(`同步失敗 (${syncResponse.status})`);
+                }
+                
+                const syncResult = await syncResponse.json();
+                console.log('✅ 同步完成：', syncResult);
+                
+                // 5. 等待 3 秒讓 Worker 將資料寫入 KV
+                await new Promise(r => setTimeout(r, 3000));
+                
+                // 6. 重新載入資料
+                await loadStationData();
+                
+                // 7. 更新最後同步時間
+                lastSyncTime = now;
+                
+                // 8. 顯示成功訊息
+                alert('✅ 資料同步成功！\n\n已從氣象署取得最新觀測資料。');
+                
+            } catch (error) {
+                console.error('❌ 同步失敗：', error);
+                alert(`❌ 同步失敗\n\n${error.message}\n\n請稍後再試，或使用一般的「刷新列表」功能。`);
+            } finally {
+                // 9. 恢復按鈕狀態
+                btn.innerHTML = originalHTML;
+                btn.disabled = false;
+                btn.style.cursor = 'pointer';
+                
+                const loading = document.getElementById('loading');
+                if (loading) {
+                    loading.style.display = 'none';
+                }
+            }
         }
 
         function toggleTheme() {
