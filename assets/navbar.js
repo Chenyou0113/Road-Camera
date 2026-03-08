@@ -14,7 +14,7 @@ function createNavbar(currentPage = '') {
             items: [
                 { id: 'water', icon: 'fa-water', text: '水資源', color: '#00BCD4', file: 'water.html' },
                 { id: 'soil-observation', icon: 'fa-mountain', text: '河川流域', color: '#8D6E63', file: 'soil-observation.html' },
-                { id: 'air-quality', icon: 'fa-wind', text: '空氣品質', color: '#9C27B0', file: 'air-quality.html' }
+                { id: 'air', icon: 'fa-wind', text: '空氣品質', color: '#9C27B0', file: 'air.html' }
             ]
         },
         { 
