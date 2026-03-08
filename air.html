@@ -549,11 +549,11 @@
 
         // === 16 方位轉換邏輯 (★ 修正點：數字轉中文方位) ===
         function convertDegreesTo16Point(deg) {
-            if (deg === null || deg === undefined || isNaN(deg)) return '-';
+            if (deg === null || deg === undefined || isNaN(deg) || deg === '') return '-';
             // 定義中文 16 方位陣列
             const directions = ["北", "北北東", "東北", "東北東", "東", "東南東", "東南", "南南東", "南", "南南西", "西南", "西南西", "西", "西北西", "西北", "北北西"];
             
-            let index = Math.floor(((deg + 11.25) % 360) / 22.5);
+            let index = Math.floor(((parseFloat(deg) + 11.25) % 360) / 22.5);
             if (index === 16) index = 0; 
             return directions[index]; // 回傳中文
         }
@@ -574,7 +574,15 @@
 
         async function initAirPage() {
             try {
-                const stations = await fetchAirQualityData();
+                let stations = await fetchAirQualityData();
+                
+                // ★ 修正點 1：將資料依照 AQI 由高到低（壞到好）排序
+                stations.sort((a, b) => {
+                    const aqiA = parseInt(a.aqi) || 0;
+                    const aqiB = parseInt(b.aqi) || 0;
+                    return aqiB - aqiA; 
+                });
+                
                 allStations = stations;
 
                 populateCityFilter(allStations);
@@ -642,7 +650,7 @@
                         <span class="card-county">${st.county}</span>
                     </div>
                     <div class="card-row" style="margin-top:5px;">
-                        <span class="aqi-val" style="color:${info.code}">${st.aqi}</span>
+                        <span class="aqi-val" style="color:${info.code}">${st.aqi || '--'}</span>
                         <span class="status-badge">${info.name}</span>
                     </div>
                 `;
@@ -669,7 +677,7 @@
                 });
 
                 marker.addListener('click', () => {
-                    infoWindow.setContent(`<b>${st.name}</b><br>AQI: ${st.aqi}`);
+                    infoWindow.setContent(`<b>${st.name}</b><br>AQI: ${st.aqi || '--'}`);
                     infoWindow.open(map, marker);
                     openModal(st);
                 });
@@ -683,9 +691,29 @@
 
         function updateStats(stations) {
             if(stations.length === 0) return;
-            const avg = Math.round(stations.reduce((a,b)=>a+b.aqi,0)/stations.length);
-            const worst = stations[0]; // 已排序
-            const good = stations.filter(s => s.aqi <= 50).length;
+            
+            let totalAqi = 0;
+            let validStations = 0;
+            let goodCount = 0;
+            
+            // ★ 修正點 2：確實尋找 AQI 數值最大的測站
+            let worstStation = stations[0];
+            let maxAqi = -1;
+
+            stations.forEach(s => {
+                const aqiVal = parseInt(s.aqi);
+                if (!isNaN(aqiVal)) {
+                    totalAqi += aqiVal;
+                    validStations++;
+                    if (aqiVal <= 50) goodCount++;
+                    if (aqiVal > maxAqi) {
+                        maxAqi = aqiVal;
+                        worstStation = s;
+                    }
+                }
+            });
+
+            const avg = validStations > 0 ? Math.round(totalAqi / validStations) : 0;
 
             const totalEl = document.getElementById('total-stations');
             const avgEl = document.getElementById('avg-aqi');
@@ -697,32 +725,33 @@
                 avgEl.textContent = avg;
                 avgEl.style.color = getAQIColor(avg).code;
             }
-            if (worstEl) {
-                worstEl.textContent = `${worst.name} (${worst.aqi})`;
-                worstEl.style.color = getAQIColor(worst.aqi).code;
+            if (worstEl && worstStation) {
+                const worstAqiVal = parseInt(worstStation.aqi) || 0;
+                worstEl.textContent = `${worstStation.name} (${worstAqiVal})`;
+                worstEl.style.color = getAQIColor(worstAqiVal).code;
             }
-            if (goodEl) goodEl.textContent = good;
+            if (goodEl) goodEl.textContent = goodCount;
         }
 
         // === 🚀 Modal 資料填寫邏輯 (新版) ===
         function openModal(st) {
             currentStation = st;
             const info = getAQIColor(st.aqi);
-            const safe = (v) => (v === undefined || v === null || v === '') ? '-' : v;
+            const safe = (v) => (v === undefined || v === null || v === '' || v === 'ND') ? '-' : v;
 
             // 標題與 AQI
             document.getElementById('m-name').textContent = st.name;
             document.getElementById('m-county').textContent = st.county;
             document.getElementById('m-time').textContent = st.publishtime || '-';
             
-            document.getElementById('m-aqi').textContent = st.aqi;
+            document.getElementById('m-aqi').textContent = st.aqi || '--';
             document.getElementById('m-status').textContent = info.name;
             // 換行符號處理
             document.getElementById('m-suggestion').innerHTML = info.desc.replace(/\n/g, '<br>');
             
             const badge = document.getElementById('m-aqi-bg');
             badge.style.background = info.code;
-            badge.style.color = (st.aqi > 50 && st.aqi <= 100) ? '#333' : '#fff'; // 黃色背景改深色字
+            badge.style.color = (parseInt(st.aqi) > 50 && parseInt(st.aqi) <= 100) ? '#333' : '#fff'; // 黃色背景改深色字
 
             // 填寫儀表板數據
             document.getElementById('m-pm25').textContent = safe(st.pm25);
