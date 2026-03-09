@@ -1800,10 +1800,9 @@
         loadVehicleData(city, type);
 
         try {
-            const [infoRes, shapeRes, fareRes] = await Promise.all([
+            const [infoRes, shapeRes] = await Promise.all([
                 fetch(`${WORKER_URL}?action=info&category=${type}&city=${city}&route=${encodeURIComponent(name)}`).then(r => r.json()),
-                fetch(`${WORKER_URL}?action=shape&category=${type}&city=${city}&route=${encodeURIComponent(name)}`).then(r => r.json()),
-                fetch(`${WORKER_URL}?action=fare&category=${type}&city=${city}&route=${encodeURIComponent(name)}`).then(r => r.json())
+                fetch(`${WORKER_URL}?action=shape&category=${type}&city=${city}&route=${encodeURIComponent(name)}`).then(r => r.json())
             ]);
 
             const infoList = Array.isArray(infoRes) ? infoRes : 
@@ -1857,19 +1856,8 @@
             
             currentData.shapes = Array.isArray(shapeRes) ? shapeRes : [];
 
-            // 支持多種回傳格式：直接陣列 / { data:[...] } / { RouteFares:[...] } / 單一物件處理
-            if (Array.isArray(fareRes)) {
-                currentData.fare = fareRes;
-            } else if (fareRes && Array.isArray(fareRes.data)) {
-                currentData.fare = fareRes.data;
-            } else if (fareRes && Array.isArray(fareRes.RouteFares)) {
-                currentData.fare = fareRes.RouteFares;
-            } else if (fareRes && typeof fareRes === 'object' && !fareRes.error) {
-                // 單一物件（非陣列包裑），包裝成陣列
-                currentData.fare = [fareRes];
-            } else {
-                currentData.fare = [];
-            }
+            // 🌟 票價改為按需載入，此處重置以確保下次點擊會重新抓取
+            currentData.fare = null;
 
             switchDirection(0);
 
@@ -2636,30 +2624,56 @@
         }
     }
 
-    function showFareModal() {
+    async function showFareModal() {
         console.log("正在開啟票價視窗...");
-
         const modal = document.getElementById('modal-overlay');
         const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
-        
+
+        const dd = document.getElementById('options-dropdown');
+        if(dd) dd.style.display = 'none';
+
+        // 1. 先顯示載入中狀態
+        title.innerHTML = `<i class="fas fa-calculator"></i> <span>票價試算載入中</span>`;
+        body.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在獲取最新的計費規則...</div>`;
+        modal.style.display = 'flex';
+
+        // 2. 如果尚未抓取票價，現在立刻抓
+        if (!currentData.fare) {
+            try {
+                const url = `${WORKER_URL}?action=fare&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                if (Array.isArray(data)) {
+                    currentData.fare = data;
+                } else if (data && Array.isArray(data.data)) {
+                    currentData.fare = data.data;
+                } else if (data && Array.isArray(data.RouteFares)) {
+                    currentData.fare = data.RouteFares;
+                } else if (data && typeof data === 'object' && !data.error) {
+                    currentData.fare = [data];
+                } else {
+                    currentData.fare = [];
+                }
+            } catch (e) {
+                console.error('票價載入失敗:', e);
+                body.innerHTML = `<div style="text-align:center; color:red; padding:20px;">票價資料載入失敗，請稍後再試</div>`;
+                return;
+            }
+        }
+
+        // 3. 確認站點資料
         title.innerHTML = `<i class="fas fa-calculator"></i> <span>${currentData.route} 票價試算</span>`;
-        
-        if (!currentData.stops || !currentData.stops[currentData.direction]) {
-            console.log("無站點資料");
+        const stops = currentData.stops[currentData.direction];
+        if (!stops || stops.length === 0) {
             body.innerHTML = '<p style="padding:20px; text-align:center;">此方向暫無站點資料，無法計算。</p>';
-            modal.style.display = 'flex';
-            const dd = document.getElementById('options-dropdown');
-            if(dd) dd.style.display = 'none';
             return;
         }
 
-        const stops = currentData.stops[currentData.direction];
-        
         const optionsHtml = stops.map((s, idx) => `<option value="${idx}">${idx+1}. ${s.StopName.Zh_tw}</option>`).join('');
-        const lastIdx = stops.length - 1;
 
-        let content = `
+        // 4. 渲染 UI
+        body.innerHTML = `
             <div class="fare-selector-group">
                 <div class="fare-select-row">
                     <div class="fare-select-label">上車</div>
@@ -2671,30 +2685,16 @@
                     <select id="fare-end" class="fare-select-box" onchange="calculateODFare()">${optionsHtml}</select>
                 </div>
             </div>
-
             <div id="fare-result-area" class="fare-result-box">
                 <div class="fare-sub-text">請選擇上下車站點以計算</div>
             </div>
-            
-            <div style="margin-top:15px; font-size:0.8rem; color:#94a3b8; text-align:center;">
-                ※ 票價僅供參考，實際收費依車上刷卡機或公告為準
-            </div>
+            <p style="font-size:0.75rem; color:#94a3b8; text-align:center; margin-top:15px;">※ 實際票價依車上刷卡機為準</p>
         `;
-        
-        body.innerHTML = content;
-        modal.style.display = 'flex';
-        
-        const dd = document.getElementById('options-dropdown');
-        if(dd) dd.style.display = 'none';
 
-        setTimeout(() => {
-            const sStart = document.getElementById('fare-start');
-            const sEnd = document.getElementById('fare-end');
-            if(sStart) sStart.selectedIndex = 0;
-            if(sEnd) sEnd.selectedIndex = lastIdx;
-            
-            calculateODFare();
-        }, 50);
+        // 5. 預設選頭尾並立即計算
+        document.getElementById('fare-start').selectedIndex = 0;
+        document.getElementById('fare-end').selectedIndex = stops.length - 1;
+        calculateODFare();
     }
 
     // --- 新增: 返回上一頁功能 (修復 ReferenceError) ---
@@ -2793,6 +2793,12 @@
         let fareItems = []; 
         let fareType = '單程票';
         let fareNote = null;
+
+        // 如果票價資料為空，顯示提示後結束
+        if (!currentData.fare || currentData.fare.length === 0) {
+            renderFareResult(resultArea, [], fareType, null);
+            return;
+        }
 
         // 遍歷所有可能的票價結構 (TDX 格式)
         for (const fareData of currentData.fare) {
