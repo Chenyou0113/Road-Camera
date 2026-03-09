@@ -567,6 +567,21 @@
 
         .bus-popup-row:last-child { border-bottom: none; }
 
+        /* 擁擠度樣式 */
+        .occ-badge {
+            font-size: 0.7rem;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-weight: 800;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-left: 6px;
+        }
+        .occ-L0 { background: #dcfce7; color: #166534; }
+        .occ-L1 { background: #fef9c3; color: #854d0e; }
+        .occ-L2 { background: #fee2e2; color: #991b1b; }
+
         .bus-popup-label {
             display: flex;
             align-items: center;
@@ -2052,11 +2067,21 @@
                 const year = vReg.year || targetBus.ManufactureYear || targetBus.VehicleInfo?.ManufactureYear || '不詳';
                 const isLowFloor = vReg.isLowFloor || targetBus.IsLowFloor === 1 || targetBus.VehicleInfo?.IsLowFloor === 1;
                 const hasWifi = vReg.hasWifi || targetBus.HasWifi === 1 || targetBus.VehicleInfo?.HasWifi === 1;
-                const isElectric = vReg.isElectric || targetBus.IsElectric === 1 || targetBus.VehicleType === 1;
+                const isElectric = plate.startsWith('E') || vReg.isElectric || targetBus.IsElectric === 1 || targetBus.VehicleType === 1;
                 const hasLift = vReg.hasLift || targetBus.HasLiftOrRamp === 1 || targetBus.VehicleInfo?.HasLiftOrRamp === 1;
+                const lastSeen = targetBus.time ? new Date(targetBus.time).toLocaleTimeString('zh-TW', { hour12: false }) : '--:--:--';
+
+                const occ = targetBus.occupancy;
+                let occHtml = '';
+                if (occ != null) {
+                    const occLabels = ['舒適', '普通', '擁擠'];
+                    const occIcons = ['fa-smile', 'fa-user-friends', 'fa-users'];
+                    const level = Math.min(occ.level ?? occ, 2);
+                    occHtml = `<span class="occ-badge occ-L${level}"><i class="fas ${occIcons[level]}"></i>${occLabels[level]}</span>`;
+                }
 
                 busEl.innerHTML = `
-                    <div class="bus-badge"><i class="fas fa-bus"></i><span>${plate}</span></div>
+                    <div class="bus-badge"><i class="fas fa-bus"></i><span>${plate}</span>${occHtml}</div>
                     <div class="bus-details-card">
                         <div class="bus-header">
                             <span class="bus-operator">${operator}</span>
@@ -2066,7 +2091,9 @@
                             <i class="fas fa-bolt ${isElectric ? 'active' : ''}" title="電動公車"></i>
                             <i class="fas fa-wheelchair ${isLowFloor || hasLift ? 'active' : ''}" title="低底盤/斜道"></i>
                             <i class="fas fa-wifi ${hasWifi ? 'active' : ''}" title="WiFi"></i>
-                            <i class="fas fa-plug active" title="充電插座"></i>
+                            <span style="font-size:0.65rem; color:#94a3b8; margin-left:auto;">
+                                <i class="far fa-clock"></i> ${lastSeen}
+                            </span>
                         </div>
                     </div>
                 `;
@@ -2421,9 +2448,10 @@
             const vReg = cityRegistry[plate] || {};
 
             const year = vReg.year || bus.ManufactureYear || bus.VehicleInfo?.ManufactureYear || '不詳';
-            const isElectric = vReg.isElectric || bus.IsElectric === 1 || bus.VehicleType === 1;
+            const isElectric = plate.startsWith('E') || vReg.isElectric || bus.IsElectric === 1 || bus.VehicleType === 1;
             const isLowFloor = vReg.isLowFloor || bus.IsLowFloor === 1 || bus.VehicleInfo?.IsLowFloor === 1;
             const hasWifi = vReg.hasWifi || bus.HasWifi === 1 || bus.VehicleInfo?.HasWifi === 1;
+            const lastSeen = bus.time ? new Date(bus.time).toLocaleTimeString('zh-TW', { hour12: false }) : '--:--:--';
 
             const azimuth = bus.azi || 0;
             const directionText = currentData.direction === 0 ? '去程' : '返程';
@@ -2477,9 +2505,30 @@
                                 <i class="fas fa-bolt" style="color:${isElectric ? '#10b981' : '#cbd5e1'}" title="電動車"></i>
                                 <i class="fas fa-wheelchair" style="color:${isLowFloor ? '#10b981' : '#cbd5e1'}" title="低底盤"></i>
                                 <i class="fas fa-wifi" style="color:${hasWifi ? '#10b981' : '#cbd5e1'}" title="WiFi"></i>
-                                <i class="fas fa-plug" style="color:#10b981" title="USB充電"></i>
                             </div>
                         </div>
+                        <div class="bus-popup-row">
+                            <div class="bus-popup-label"><i class="far fa-clock"></i> 資料時間</div>
+                            <div class="bus-popup-value">${lastSeen}</div>
+                        </div>
+                        <div class="bus-popup-row">
+                            <div class="bus-popup-label"><i class="fas fa-bolt"></i> 動力類型</div>
+                            <div class="bus-popup-value">
+                                ${isElectric ? '<span style="color:#10b981; font-weight:bold;">⚡ 電動公車</span>' : '柴油/油電'}
+                            </div>
+                        </div>
+                        ${(() => {
+                            const occ = bus.occupancy;
+                            if (occ == null) return '';
+                            const level = Math.min(occ.level ?? occ, 2);
+                            const occLabels = ['舒適 (空位多)', '普通 (有站位)', '擁擠 (人多)'];
+                            const occColors = ['#10b981', '#f59e0b', '#ef4444'];
+                            return `
+                        <div class="bus-popup-row">
+                            <div class="bus-popup-label"><i class="fas fa-users"></i> 車內擁擠度</div>
+                            <div class="bus-popup-value" style="color:${occColors[level]}; font-weight:bold;">${occLabels[level]}</div>
+                        </div>`;
+                        })()}
                     </div>
                     <div class="bus-popup-footer">
                         <a href="javascript:void(0)" onclick="handleSearchPlate('${plate}')" class="bus-popup-link">
