@@ -3020,6 +3020,31 @@
         document.getElementById('modal-overlay').style.display = 'none';
     }
 
+    // --- 清除 HTML 標籤並處理圖片 ---
+    function formatDescription(html) {
+        if (!html) return { text: '無詳細內容', images: [] };
+        
+        // 1. 提取圖片網址 (如果有 <img> 標籤)
+        const imgRegex = /<img[^>]+src="([^">]+)"/g;
+        let images = [];
+        let m;
+        while ((m = imgRegex.exec(html)) !== null) {
+            images.push(m[1]);
+        }
+
+        // 2. 移除所有標籤，但保留換行
+        let text = html.replace(/<br\s*\/?>/gi, '\n'); // <br> 轉 換行
+        text = text.replace(/<\/p>/gi, '\n');          // </p> 轉 換行
+        text = text.replace(/<[^>]+>/g, '');            // 移除其餘所有標籤
+        
+        // 3. 反解 HTML 實體字元 (例如 &nbsp; 轉為空白)
+        const txt = document.createElement('textarea');
+        txt.innerHTML = text;
+        text = txt.value;
+
+        return { text: text.trim(), images: images };
+    }
+
     // --- 查看縣市公告 ---
     async function openCityNewsModal(targetCity = null) {
         // 如果有傳入 targetCity 就用它，否則用 browser.city
@@ -3111,14 +3136,28 @@
                 let listHtml = '<div style="display:flex; flex-direction:column; gap:12px;">';
                 allItems.forEach(item => {
                     const dateStr = item.date ? item.date.substring(0, 10) : '';
+                    
+                    // 呼叫清洗函式
+                    const formatted = formatDescription(item.desc);
+
                     listHtml += `
                         <div style="border-bottom:1px solid #eee; padding-bottom:12px;">
                             <div style="font-size:0.8rem; color:#9ca3af; margin-bottom:4px;">${dateStr}</div>
                             <div style="font-weight:700; font-size:1rem; margin-bottom:6px; line-height:1.4;">
                                 <span class="${item.tagClass}">${item.tag}</span> ${item.title}
                             </div>
-                            <div style="font-size:0.9rem; color:#4b5563; white-space:pre-wrap;">${item.desc}</div>
-                            ${item.url ? `<a href="${item.url}" target="_blank" style="display:inline-block; margin-top:6px; font-size:0.85rem; color:#2563eb;"><i class="fas fa-link"></i> 詳細連結</a>` : ''}
+                            
+                            <!-- 顯示清洗後的乾淨文字 -->
+                            <div style="font-size:0.9rem; color:#4b5563; white-space:pre-wrap;">${formatted.text}</div>
+                            
+                            <!-- 如果公告裡有圖片，美化後顯示 -->
+                            ${formatted.images.map(img => `
+                                <div style="margin-top:10px; border-radius:8px; overflow:hidden; border:1px solid #eee;">
+                                    <img src="${img}" style="width:100%; display:block;" onerror="this.style.display='none'">
+                                </div>
+                            `).join('')}
+
+                            ${item.url ? `<a href="${item.url}" target="_blank" style="display:inline-block; margin-top:8px; font-size:0.85rem; color:#2563eb;"><i class="fas fa-link"></i> 官方詳細公告</a>` : ''}
                         </div>`;
                 });
                 listHtml += '</div>';
