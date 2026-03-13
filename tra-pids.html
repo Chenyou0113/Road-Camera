@@ -1923,6 +1923,16 @@
             });
 
             if (_videoIds.length > 0) {
+                // 確保 YouTube IFrame API បាន載入
+                if (typeof YT === 'undefined' || typeof YT.Player === 'undefined') {
+                    if (!document.getElementById('yt-api-script')) {
+                        const tag = document.createElement('script');
+                        tag.id = 'yt-api-script';
+                        tag.src = "https://www.youtube.com/iframe_api";
+                        const firstScriptTag = document.getElementsByTagName('script')[0];
+                        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+                    }
+                }
                 // 從第一部開始順序播放
                 _videoIdx = 0;
                 _playVideoAt(_videoIdx);
@@ -1945,52 +1955,70 @@
             
             // 2. 播放清單 (playlist) 不能包含第一部影片
             const others = ordered.slice(1);
+            // 當只有一部影片時，讓它以自己為 playlist 以達成無限循環
             const playlistString = others.length > 0 ? others.join(',') : first;
 
-            const originParam = location.protocol.startsWith('http')
-                ? `&origin=${location.origin}` : '';
+            const originParam = location.protocol.startsWith('http') ? location.origin : '';
 
-            // 🔥 雙重靜音保險 1：URL 參數加上 mute=1
-            con.innerHTML = `
-                <iframe
-                    id="ytFrame"
-                    class="video-iframe"
-                    src="https://www.youtube.com/embed/${first}?autoplay=1&mute=1&loop=1&playlist=${playlistString}&controls=0&rel=0&enablejsapi=1${originParam}"
-                    allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-                    style="width:100%; height:100%; border:none;">
-                </iframe>`;
-                
+            // 清空容器，建立給 YT.Player 使用的 div
+            con.innerHTML = '<div id="ytPlayerDiv" style="width:100%; height:100%;"></div>';
             console.log(`▶️ 影片清單載入: 首播 [${first}], 後續 [${playlistString}]`);
 
             if (_videoRetryTimer) clearTimeout(_videoRetryTimer);
 
-            const frame = document.getElementById('ytFrame');
-            let hasLoaded = false;
-            
-            if (frame) {
-                frame.addEventListener('load', () => {
-                    hasLoaded = true;
-                    clearTimeout(_videoRetryTimer);
-                    
-                    // 🔥 雙重靜音保險 2：載入完成時，發送 postMessage 強制將播放器靜音
-                    // 這能破解某些瀏覽器無視 mute=1 參數的問題
-                    try {
-                        frame.contentWindow.postMessage(
-                            JSON.stringify({ event: 'command', func: 'mute' }), 
-                            '*'
-                        );
-                        frame.contentWindow.postMessage(
-                            JSON.stringify({ event: 'command', func: 'playVideo' }), 
-                            '*'
-                        );
-                    } catch(e) {}
-                }, { once: true });
+            // 確保 YT API 已準備就緒
+            if (typeof YT === 'undefined' || typeof YT.Player === 'undefined') {
+                console.warn('⚠️ YouTube API 尚未載入，2 秒後重試...');
+                setTimeout(() => _playVideoAt(idx), 2000);
+                return;
             }
 
-            // 逾時保護：20 秒內 iframe 完全沒載入才跳過
+            // 使用官方 API 建立播放器
+            let hasLoaded = false;
+            window.ytPlayer = new YT.Player('ytPlayerDiv', {
+                videoId: first,
+                playerVars: {
+                    autoplay: 1,
+                    mute: 1,
+                    loop: 1,         // 配合下面的 playlist 達到循環
+                    playlist: playlistString,
+                    controls: 0,     // 隱藏控制列
+                    rel: 0,          // 不顯示相關影片
+                    enablejsapi: 1,
+                    origin: originParam
+                },
+                events: {
+                    'onReady': function(event) {
+                        hasLoaded = true;
+                        clearTimeout(_videoRetryTimer);
+                        // 強制靜音和播放
+                        event.target.mute();
+                        event.target.playVideo();
+                    },
+                    'onStateChange': function(event) {
+                        // 確保播放器處於靜音
+                        if (event.data === YT.PlayerState.PLAYING) {
+                           event.target.mute();
+                        }
+                        // 只有一個影片時，某些環境 loop 失效，我們強迫重播
+                        if (event.data === YT.PlayerState.ENDED && _videoIds.length === 1) {
+                            event.target.seekTo(0);
+                            event.target.playVideo();
+                        }
+                    },
+                    'onError': function(event) {
+                        console.warn(`⚠️ 影片 ${first} 發生錯誤 (代碼: ${event.data})，跳過播放下一部`);
+                        hasLoaded = true; // 取消超時
+                        clearTimeout(_videoRetryTimer);
+                        _advanceVideo();
+                    }
+                }
+            });
+
+            // 逾時保護：20 秒內還沒 ready 才跳過
             _videoRetryTimer = setTimeout(() => {
                 if (!hasLoaded && _videoIds.length > 1) {
-                    console.warn(`⚠️ 影片 ${first} 無法載入，跳過播放下一部`);
+                    console.warn(`⚠️ 影片 ${first} API 無法載入，跳過播放下一部`);
                     _advanceVideo();
                 }
             }, 20000);
