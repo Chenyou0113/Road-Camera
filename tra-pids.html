@@ -1939,40 +1939,58 @@
             const con = document.getElementById('videoContainer');
             if (!con || _videoIds.length === 0) return;
 
-            // 從 idx 開始，把清單重排（idx 後面的 + idx 前面的），讓 YouTube 從這部開始順序播
+            // 1. 把清單重排：讓它從指定的 idx 開始播
             const ordered = [..._videoIds.slice(idx), ..._videoIds.slice(0, idx)];
             const first = ordered[0];
-            const playlist = ordered.join(',');
+            
+            // 2. 播放清單 (playlist) 不能包含第一部影片
+            const others = ordered.slice(1);
+            const playlistString = others.length > 0 ? others.join(',') : first;
+
             const originParam = location.protocol.startsWith('http')
                 ? `&origin=${location.origin}` : '';
 
+            // 🔥 雙重靜音保險 1：URL 參數加上 mute=1
             con.innerHTML = `
                 <iframe
                     id="ytFrame"
                     class="video-iframe"
-                    src="https://www.youtube.com/embed/${first}?autoplay=1&mute=1&loop=1&playlist=${playlist}&controls=0&rel=0&enablejsapi=1${originParam}"
+                    src="https://www.youtube.com/embed/${first}?autoplay=1&mute=1&loop=1&playlist=${playlistString}&controls=0&rel=0&enablejsapi=1${originParam}"
                     allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-                    allowfullscreen
                     style="width:100%; height:100%; border:none;">
                 </iframe>`;
-            console.log(`▶️ 從第 [${idx + 1}/${_videoIds.length}] 部開始播放，清單共 ${_videoIds.length} 部`);
+                
+            console.log(`▶️ 影片清單載入: 首播 [${first}], 後續 [${playlistString}]`);
 
             if (_videoRetryTimer) clearTimeout(_videoRetryTimer);
 
-            // iframe 載入完成即取消跳過計時器
             const frame = document.getElementById('ytFrame');
             let hasLoaded = false;
+            
             if (frame) {
                 frame.addEventListener('load', () => {
                     hasLoaded = true;
                     clearTimeout(_videoRetryTimer);
+                    
+                    // 🔥 雙重靜音保險 2：載入完成時，發送 postMessage 強制將播放器靜音
+                    // 這能破解某些瀏覽器無視 mute=1 參數的問題
+                    try {
+                        frame.contentWindow.postMessage(
+                            JSON.stringify({ event: 'command', func: 'mute' }), 
+                            '*'
+                        );
+                        frame.contentWindow.postMessage(
+                            JSON.stringify({ event: 'command', func: 'playVideo' }), 
+                            '*'
+                        );
+                    } catch(e) {}
                 }, { once: true });
             }
 
-            // 逾時保護：20 秒內 iframe 完全沒載入才跳過（影片被封鎖時）
+            // 逾時保護：20 秒內 iframe 完全沒載入才跳過
             _videoRetryTimer = setTimeout(() => {
                 if (!hasLoaded && _videoIds.length > 1) {
-                    console.warn(`⚠️ 影片 ${first} 無法載入，跳過`);
+                    console.warn(`⚠️ 影片 ${first} 無法載入，跳過播放下一部`);
                     _advanceVideo();
                 }
             }, 20000);
