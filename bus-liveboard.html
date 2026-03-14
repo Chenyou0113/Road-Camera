@@ -1529,6 +1529,7 @@
         map = new google.maps.Map(document.getElementById('map'), {
             center: { lat: 25.0478, lng: 121.5170 },
             zoom: 13,
+            mapId: "DEMO_MAP_ID", // 必填，使用 AdvancedMarkerElement 需指定 mapId
             disableDefaultUI: true,
             zoomControl: window.innerWidth > 768,
             styles: [
@@ -2003,9 +2004,22 @@
             if (!est || est.status === 3) {
                 timeEl.innerText = '末班已過';
                 timeEl.classList.add('none');
-            } else if (est.status === 1 || est.status === 4) {
-                timeEl.innerText = '未發車';
+            } else if (est.status === 4) {
+                timeEl.innerText = '今日停駛';
                 timeEl.classList.add('none');
+            } else if (est.status === 1) {
+                // 🌟 未發車時，嘗試顯示下一班時間
+                if (est.nextBusTime) {
+                    const nextDate = new Date(est.nextBusTime);
+                    const hours = nextDate.getHours().toString().padStart(2, '0');
+                    const mins = nextDate.getMinutes().toString().padStart(2, '0');
+                    timeEl.innerText = `${hours}:${mins}`; // 顯示例如 "14:30"
+                    timeEl.classList.add('normal'); // 使用一般深色文字
+                    timeEl.style.fontSize = '0.9rem'; // 稍微縮小字體以放下四位數
+                } else {
+                    timeEl.innerText = '未發車';
+                    timeEl.classList.add('none');
+                }
             } else if (est.status === 2) {
                 timeEl.innerText = '不停靠';
                 timeEl.classList.add('none');
@@ -2158,19 +2172,19 @@
                 nearbyMarkers.forEach(m => m.setMap(null));
                 nearbyMarkers = [];
 
-                // 畫出使用者位置定位點
-                userMarker = new google.maps.Marker({
+                // 畫出使用者位置定位點 (改用 AdvancedMarkerElement)
+                const userPin = new google.maps.marker.PinElement({
+                    background: '#2563eb',
+                    borderColor: 'white',
+                    glyphColor: 'white',
+                    scale: 0.9
+                });
+
+                userMarker = new google.maps.marker.AdvancedMarkerElement({
                     position: userLocation,
                     map: map,
+                    content: userPin.element,
                     title: '我的位置',
-                    icon: {
-                        path: google.maps.SymbolPath.CIRCLE,
-                        scale: 9,
-                        fillColor: '#2563eb',
-                        fillOpacity: 1,
-                        strokeColor: 'white',
-                        strokeWeight: 3
-                    },
                     zIndex: 100
                 });
 
@@ -2204,18 +2218,17 @@
                                               s.StopPosition.PositionLat, s.StopPosition.PositionLon);
                         if (d <= 0.5) {
                             const isNearest = (idx === nearestIdx);
-                            const nm = new google.maps.Marker({
+                            const nmPin = new google.maps.marker.PinElement({
+                                background: isNearest ? '#10b981' : '#6ee7b7',
+                                borderColor: 'white',
+                                glyphColor: 'white',
+                                scale: isNearest ? 1.1 : 0.8
+                            });
+                            const nm = new google.maps.marker.AdvancedMarkerElement({
                                 position: { lat: s.StopPosition.PositionLat, lng: s.StopPosition.PositionLon },
                                 map: map,
+                                content: nmPin.element,
                                 title: s.StopName.Zh_tw + (isNearest ? ' (離你最近)' : ''),
-                                icon: {
-                                    path: google.maps.SymbolPath.CIRCLE,
-                                    scale: isNearest ? 10 : 7,
-                                    fillColor: isNearest ? '#10b981' : '#6ee7b7',
-                                    fillOpacity: 1,
-                                    strokeColor: 'white',
-                                    strokeWeight: 2
-                                },
                                 zIndex: isNearest ? 99 : 5
                             });
                             nm.addListener('click', () => {
@@ -2320,23 +2333,21 @@
         
         stops.forEach((stop, idx) => {
             const isBuffer = bufferStops.start === stop.StopName.Zh_tw || bufferStops.end === stop.StopName.Zh_tw;
-            const marker = new google.maps.Marker({
+            
+            // 改用 PinElement 來建立標示，取代舊版 icon/label
+            const pin = new google.maps.marker.PinElement({
+                glyph: (idx + 1).toString(),
+                glyphColor: isBuffer ? '#b45309' : '#4b5563',
+                background: isBuffer ? '#fef3c7' : 'white',
+                borderColor: isBuffer ? '#f59e0b' : '#6b7280',
+                scale: 0.85
+            });
+
+            const marker = new google.maps.marker.AdvancedMarkerElement({
                 position: { lat: stop.StopPosition.PositionLat, lng: stop.StopPosition.PositionLon },
                 map: map,
-                label: {
-                    text: (idx + 1).toString(),
-                    color: isBuffer ? '#b45309' : '#4b5563',
-                    fontSize: "10px",
-                    fontWeight: "bold"
-                },
-                icon: {
-                    path: google.maps.SymbolPath.CIRCLE,
-                    scale: 7,
-                    fillColor: isBuffer ? '#fef3c7' : 'white',
-                    fillOpacity: 1,
-                    strokeColor: isBuffer ? '#f59e0b' : '#6b7280',
-                    strokeWeight: 2
-                },
+                content: pin.element,
+                title: stop.StopName.Zh_tw,
                 zIndex: isBuffer ? 2 : 1
             });
 
@@ -2417,28 +2428,31 @@
     }
 
     function updateBusesMap(buses) {
-        mapMarkers.buses.forEach(m => m.setMap(null));
+        mapMarkers.buses.forEach(m => m.setMap(null)); // setMap(null) 也可以用於 AdvancedMarkerElement
         mapMarkers.buses = [];
 
         buses.forEach(bus => {
             if (!bus.lat) return;
 
-            // 地圖上的圖示依然保留旋轉角度，方便視覺判斷
-            const busSymbol = {
-                path: "M -10,-14 L 10,-14 L 10,14 L -10,14 Z M 0,-20 L 8,-14 L -8,-14 Z",
-                fillColor: "#ef4444",
-                fillOpacity: 1,
-                strokeWeight: 2,
-                strokeColor: "white",
-                scale: 1.2,
-                rotation: bus.azi || 0,
-                anchor: new google.maps.Point(0, 0)
-            };
+            // 建立公車圖示容器 (AdvancedMarkerElement 使用 DOM)
+            const busEl = document.createElement('div');
+            // 加入 SVG
+            // 原 path: "M -10,-14 L 10,-14 L 10,14 L -10,14 Z M 0,-20 L 8,-14 L -8,-14 Z"
+            // 範圍約 -10~10, -20~14. 寬20, 高34.
+            busEl.innerHTML = `
+                <svg width="24" height="40" viewBox="-12 -22 24 40" style="display:block; overflow:visible;">
+                    <path d="M -10,-14 L 10,-14 L 10,14 L -10,14 Z M 0,-20 L 8,-14 L -8,-14 Z" fill="#ef4444" stroke="white" stroke-width="2" />
+                </svg>
+            `;
+            // 旋轉
+            busEl.style.transform = `rotate(${bus.azi || 0}deg)`;
+            busEl.style.transformOrigin = 'center center';
 
-            const marker = new google.maps.Marker({
+            const marker = new google.maps.marker.AdvancedMarkerElement({
                 position: { lat: bus.lat, lng: bus.lon },
                 map: map,
-                icon: busSymbol,
+                content: busEl,
+                title: bus.plate || bus.PlateNumb,
                 zIndex: 100
             });
 
@@ -3226,7 +3240,7 @@
 </script>
 
 <!-- Google Maps API: 放在主 script 之後，確保 window.initMap 已定義 -->
-<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=geometry&language=zh-TW&callback=initMap" async defer></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=geometry,marker&language=zh-TW&callback=initMap" async defer></script>
 
 <!-- Modal 彈窗結構 -->
 <div id="modal-overlay" class="modal-overlay" onclick="closeModal()">
