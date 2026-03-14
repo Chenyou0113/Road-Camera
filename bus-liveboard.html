@@ -1440,6 +1440,16 @@
 </main>
 
 <script>
+    // --- 在前端 script 的開頭加入這個強化的 normalize 函式 ---
+    const normalize = (name) => {
+        if (!name) return "";
+        return name
+            .replace(/[\(（][^\)）]*[\)）]/g, "") 
+            .replace(/(去程半|返程半|去程|返程|狗狗公車|動物園專車|夜間公車|區間車|區|繞駛|繞|延駛|延)$/g, "")
+            .replace(/\(?往[\u4e00-\u9fa5A-Za-z0-9]+\)?$/g, "")
+            .trim();
+    };
+
     const WORKER_URL = 'https://bus-worker.weacamm.org/';
     let map, routeLine;
     let mapMarkers = { stops: [], buses: [] };
@@ -1816,9 +1826,11 @@
         loadVehicleData(city, type);
 
         try {
+            // 🌟 這裡發送請求時，我們傳遞「正規化後」的名字給 Worker，避免特殊符號導致找不到資料
+            const targetName = normalize(name);
             const [infoRes, shapeRes] = await Promise.all([
-                fetch(`${WORKER_URL}?action=info&category=${type}&city=${city}&route=${encodeURIComponent(name)}`).then(r => r.json()),
-                fetch(`${WORKER_URL}?action=shape&category=${type}&city=${city}&route=${encodeURIComponent(name)}`).then(r => r.json())
+                fetch(`${WORKER_URL}?action=info&category=${type}&city=${city}&route=${encodeURIComponent(targetName)}`).then(r => r.json()),
+                fetch(`${WORKER_URL}?action=shape&category=${type}&city=${city}&route=${encodeURIComponent(targetName)}`).then(r => r.json())
             ]);
 
             const infoList = Array.isArray(infoRes) ? infoRes : 
@@ -1945,7 +1957,8 @@
         startCountdown(refreshDuration);
 
         try {
-            const url = `${WORKER_URL}?category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
+            const targetName = normalize(currentData.route);
+            const url = `${WORKER_URL}?category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(targetName)}`;
             const res = await fetch(url);
             const data = await res.json();
             
@@ -1961,16 +1974,21 @@
                 return;
             }
 
-            updateTimeEl.style.color = '';
-            const now = new Date();
-            updateTimeEl.innerText = now.toTimeString().substring(0, 5);
+            // 🌟 檢查如果真的沒資料，給個提示，而不是空白
+            if ((!data.buses || data.buses.length === 0) && Object.keys(data.estimates || {}).length === 0) {
+                 document.getElementById('stops-container').innerHTML = '<div class="empty-view">目前此路線無營運資料或已收班</div>';
+            } else {
+                 updateTimeEl.style.color = '';
+                 const now = new Date();
+                 updateTimeEl.innerText = now.toTimeString().substring(0, 5);
 
-            const estimates = data.estimates || {};
-            const buses = (data.buses || []).filter(b => b.dir == currentData.direction);
-            lastBuses = buses; // 快取供 handleSearchPlate 使用
+                 const estimates = data.estimates || {};
+                 const buses = (data.buses || []).filter(b => b.dir == currentData.direction);
+                 lastBuses = buses; // 快取供 handleSearchPlate 使用
 
-            updateStopsUI(estimates, buses);
-            updateBusesMap(buses);
+                 updateStopsUI(estimates, buses);
+                 updateBusesMap(buses);
+            }
 
         } catch (e) {
             console.error('Update failed', e);
