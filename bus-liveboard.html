@@ -1907,43 +1907,64 @@
         currentData.direction = dir;
         
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        document.getElementById(`tab-${dir}`).classList.add('active');
+        const tabEl = document.getElementById(`tab-${dir}`);
+        if (tabEl) tabEl.classList.add('active');
 
-        const stops = currentData.stops[dir];
+        const stops = currentData.stops ? currentData.stops[dir] : [];
         const container = document.getElementById('stops-container');
         
+        // 安全檢查
+        if (!container) return;
+
         if (!stops || stops.length === 0) {
             container.innerHTML = '<div class="empty-view">此方向無營運資料</div>';
             clearMap();
             return;
         }
 
-        const bufferStops = renderFareInfo(dir);
+        let bufferStops = { start: null, end: null };
+        try {
+            bufferStops = renderFareInfo(dir);
+        } catch (e) {
+            console.warn('Fare info render failed', e);
+        }
 
         container.innerHTML = stops.map((s, idx) => {
-            const isBufferStart = bufferStops.start === s.StopName.Zh_tw;
-            const isBufferEnd = bufferStops.end === s.StopName.Zh_tw;
+            // 安全取得站名
+            const stopName = s.StopName?.Zh_tw || s.StopName || '未命名站牌';
+            const isBufferStart = bufferStops.start === stopName;
+            const isBufferEnd = bufferStops.end === stopName;
             const bufferHtml = isBufferStart ? '<span class="buffer-tag">緩衝區起點</span>' : (isBufferEnd ? '<span class="buffer-tag">緩衝區終點</span>' : '');
 
+            // 安全取得座標
+            const lat = s.StopPosition?.PositionLat ?? 0;
+            const lon = s.StopPosition?.PositionLon ?? 0;
+            const uid = s.StopUID || `unknown-${idx}`;
+
             return `
-                <div class="stop-row ${isBufferStart ? 'buffer-start' : ''} ${isBufferEnd ? 'buffer-end' : ''}" id="stop-${s.StopUID}" onclick="focusMap(${s.StopPosition.PositionLat}, ${s.StopPosition.PositionLon})">
+                <div class="stop-row ${isBufferStart ? 'buffer-start' : ''} ${isBufferEnd ? 'buffer-end' : ''}" id="stop-${uid}" onclick="focusMap(${lat}, ${lon})">
                     <div class="col-time">
                         <span class="badge-time none">--</span>
                     </div>
                     <div class="col-line">
                         <div class="line-bar"></div>
-                        <div class="line-dot" id="dot-${s.StopUID}">${idx + 1}</div>
+                        <div class="line-dot" id="dot-${uid}">${idx + 1}</div>
                     </div>
                     <div class="col-info">
-                        <div class="stop-name">${s.StopName.Zh_tw}${bufferHtml}</div>
-                        <div class="stop-routes" id="routes-${s.StopUID}"></div>
-                        <div id="bus-${s.StopUID}"></div>
+                        <div class="stop-name">${stopName}${bufferHtml}</div>
+                        <div class="stop-routes" id="routes-${uid}"></div>
+                        <div id="bus-${uid}"></div>
                     </div>
                 </div>
             `;
         }).join('');
 
-        drawStaticMap(dir);
+        try {
+            drawStaticMap(dir);
+        } catch (e) {
+            console.error('Map draw error:', e);
+        }
+
         refreshLiveData();
         
         if (refreshInterval) clearInterval(refreshInterval);
@@ -2775,40 +2796,49 @@
 
     // 初始化票價 UI，填充站點選單並回傳緩衝區站名 (供路線清單標色)
     function renderFareInfo(dir) {
-        const startSelect = document.getElementById('fare-start');
-        const endSelect = document.getElementById('fare-end');
-        if (!startSelect || !endSelect) return { start: null, end: null };
+        try {
+            const startSelect = document.getElementById('fare-start');
+            const endSelect = document.getElementById('fare-end');
+            if (!startSelect || !endSelect) return { start: null, end: null };
 
-        const stops = currentData.stops[dir];
-        if (!stops || stops.length === 0) return { start: null, end: null };
+            const stops = currentData.stops ? currentData.stops[dir] : null;
+            if (!stops || stops.length === 0) return { start: null, end: null };
 
-        // 填充上下車站選項
-        const opts = stops.map((s, i) => `<option value="${i}">${i+1}. ${s.StopName.Zh_tw}</option>`).join('');
-        startSelect.innerHTML = opts;
-        endSelect.innerHTML = opts;
+            // 填充上下車站選項
+            const opts = stops.map((s, i) => {
+                const name = s.StopName?.Zh_tw || s.StopName || `站點 ${i+1}`;
+                return `<option value="${i}">${i+1}. ${name}</option>`;
+            }).join('');
+            
+            startSelect.innerHTML = opts;
+            endSelect.innerHTML = opts;
 
-        // 預設選頭尾
-        startSelect.value = 0;
-        endSelect.value = stops.length - 1;
+            // 預設選頭尾
+            startSelect.value = 0;
+            endSelect.value = stops.length - 1;
 
-        // 觸發計算
-        calculateODFare();
+            // 觸發計算
+            calculateODFare();
 
-        // 回傳緩衝區站名 (僅 SectionFares 段次計費有緩衝區概念)
-        let bStart = null, bEnd = null;
-        if (currentData.fare && currentData.fare.length > 0) {
-            for (const f of currentData.fare) {
-                if (f.SectionFares && f.SectionFares.length > 0) {
-                    const buffers = f.SectionFares[0].BufferZones?.filter(z => z.Direction == dir) || [];
-                    if (buffers.length > 0) {
-                        bStart = buffers[0].FareBufferZoneOrigin.StopName;
-                        bEnd   = buffers[0].FareBufferZoneDestination.StopName;
+            // 回傳緩衝區站名
+            let bStart = null, bEnd = null;
+            if (currentData.fare && currentData.fare.length > 0) {
+                for (const f of currentData.fare) {
+                    if (f.SectionFares && f.SectionFares.length > 0) {
+                        const buffers = f.SectionFares[0].BufferZones?.filter(z => z.Direction == dir) || [];
+                        if (buffers.length > 0) {
+                            bStart = buffers[0].FareBufferZoneOrigin?.StopName;
+                            bEnd   = buffers[0].FareBufferZoneDestination?.StopName;
+                        }
+                        break;
                     }
-                    break;
                 }
             }
+            return { start: bStart, end: bEnd };
+        } catch (e) {
+            console.warn('Render fare info error', e);
+            return { start: null, end: null };
         }
-        return { start: bStart, end: bEnd };
     }
 
     // --- 終極票價運算引擎 (旗艦修正版) ---
