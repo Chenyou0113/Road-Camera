@@ -196,6 +196,13 @@ async function tdxFetch({ path, env, params = {}, forceXml = false, lastModified
 
       const res = await fetch(url, { headers });
       if (res.status === 304) return { data: null, lastModified: null, notModified: true };
+      if (res.status === 429 && attempt < 3) {
+        // 速率限制：等待後重試
+        const retryAfter = parseInt(res.headers.get("Retry-After") ?? "2", 10);
+        console.warn(`[TDX] 速率限制 [429]，${retryAfter}秒後重試... (第 ${attempt}/3 次)`);
+        await new Promise(r => setTimeout(r, retryAfter * 1000));
+        continue;
+      }
       if (res.status === 401 && attempt < 3) {
         await env.BUS_META.delete(TOKEN_KEY);
         continue;
@@ -208,7 +215,9 @@ async function tdxFetch({ path, env, params = {}, forceXml = false, lastModified
 
     } catch (err) {
       if (attempt >= 3) throw err;
-      await new Promise(r => setTimeout(r, 500 * 2 ** (attempt - 1)));
+      const delay = 500 * 2 ** (attempt - 1);
+      console.warn(`[TDX] 重試 ${attempt}/3，等待 ${delay}ms...`, err.message);
+      await new Promise(r => setTimeout(r, delay));
     }
   }
 }
@@ -459,6 +468,56 @@ async function fetchRealtimeBatch(env) {
   failed.forEach(r => console.error("  失敗:", r.reason?.message));
 }
 
+// 一次性抓取所有城市的即時資料（串行以避免速率限制）
+async function fetchRealtimeAll(env) {
+  const total = ALL_CITIES_V2.length + (USE_V3_TAINAN ? 1 : 0);
+  let succeeded = 0, failed = 0;
+  const failedDetails = [];
+
+  console.log(`[Realtime All] 開始串行抓取 ${total} 個城市...`);
+  
+  // 逐個抓取 v2 城市
+  for (const city of ALL_CITIES_V2) {
+    try {
+      await fetchCityRealtime(env, "v2", city);
+      succeeded++;
+      console.log(`[Realtime All] ✅ v2:${city} 完成 (${succeeded}/${total})`);
+    } catch (err) {
+      failed++;
+      failedDetails.push({ city, ver: "v2", reason: err.message });
+      console.error(`[Realtime All] ❌ v2:${city} 失敗: ${err.message}`);
+    }
+    // 在此城市完成後稍稍等待，避免貼著 TDX API 速率限制
+    await new Promise(r => setTimeout(r, 500));
+  }
+  
+  // 如果啟用 v3 Tainan，也統一抓取
+  if (USE_V3_TAINAN) {
+    try {
+      await fetchCityRealtime(env, "v3", "Tainan");
+      succeeded++;
+      console.log(`[Realtime All] ✅ v3:Tainan 完成 (${succeeded}/${total})`);
+    } catch (err) {
+      failed++;
+      failedDetails.push({ city: "Tainan", ver: "v3", reason: err.message });
+      console.error(`[Realtime All] ❌ v3:Tainan 失敗: ${err.message}`);
+    }
+  }
+  
+  console.log(`[Realtime All] 完成！成功 ${succeeded}/${total}，失敗 ${failed}/${total}`);
+  if (failedDetails.length > 0) {
+    console.warn(`[Realtime All] 失敗城市：`);
+    failedDetails.slice(0, 5).forEach((f, idx) => {
+      console.warn(`  #${idx + 1}: ${f.ver}:${f.city} - ${f.reason}`);
+    });
+    if (failedDetails.length > 5) {
+      console.warn(`  ... 還有 ${failedDetails.length - 5} 個失敗`);
+    }
+  }
+  
+  return { succeeded, failed, total, failedDetails: failedDetails.slice(0, 10) };
+}
+
 async function fetchCityRealtime(env, ver, city) {
   const base = ver === "v2" ? "v2/Bus" : "v3/Bus";
 
@@ -670,14 +729,58 @@ async function handleRequest(request, env) {
     if (debugP) {
       const a1Cache = await kvGet(env.BUS_RT, kvKey("rt_a1", "v2", debugP.city));
       const allBuses = a1Cache?.data ?? [];
-      // 找出前5筆的 routeNameZh 值，方便確認格式
-      const sample = allBuses.slice(0, 5).map(b => ({ routeNameZh: b.routeNameZh, RouteName: b.RouteName }));
-      // 找出符合路線名稱的
-      const matched = allBuses.filter(b =>
-        (b.routeNameZh && b.routeNameZh.includes(debugP.route)) ||
-        (b.RouteName?.Zh_tw && b.RouteName.Zh_tw.includes(debugP.route))
-      ).slice(0, 5);
-      return okRes({ sample, matched, totalBuses: allBuses.length, searchRoute: debugP.route });
+      
+      // 採樣：前10筆 (包括坐標信息)
+      const sample = allBuses.slice(0, 10).map(b => ({ 
+        routeNameZh: b.routeNameZh, 
+        RouteName: b.RouteName,
+        lat: b.lat,
+        lon: b.lon,
+        Direction: b.Direction,
+        PlateNumb: b.PlateNumb
+      }));
+      
+      // 精確匹配（使用 === 而不是 includes）
+      const exactMatched = allBuses
+        .filter(b => (b.routeNameZh === debugP.route) || (b.RouteName?.Zh_tw === debugP.route))
+        .slice(0, 10);
+      
+      // 包含匹配 (用於排查問題)
+      const partialMatched = allBuses
+        .filter(b =>
+          (b.routeNameZh && b.routeNameZh.includes(debugP.route)) ||
+          (b.RouteName?.Zh_tw && b.RouteName.Zh_tw.includes(debugP.route))
+        )
+        .slice(0, 10)
+        .map(b => ({ 
+          routeNameZh: b.routeNameZh,
+          RouteName: b.RouteName?.Zh_tw,
+          hasCoords: b.lat && b.lon ? 'YES' : 'NO',
+          lat: b.lat,
+          lon: b.lon
+        }));
+
+      // 統計有坐標的公車
+      const withCoords = allBuses.filter(b => b.lat && b.lon);
+      
+      return okRes({
+        searchRoute: debugP.route,
+        city: debugP.city,
+        kvStatus: a1Cache ? "✅ 有快取數據" : "❌ 無快取數據",
+        cachedAt: a1Cache?.cachedAt ? new Date(a1Cache.cachedAt).toISOString() : null,
+        totalBuses: allBuses.length,
+        busesWithCoords: withCoords.length,
+        exactMatches: exactMatched.length,
+        sample,
+        exactMatched: exactMatched.map(b => ({ 
+          routeNameZh: b.routeNameZh,
+          plate: b.PlateNumb,
+          lat: b.lat,
+          lon: b.lon,
+          Direction: b.Direction
+        })),
+        partialMatches: partialMatched
+      });
     }
 
     if (pathname === "/cities") {
@@ -716,7 +819,17 @@ async function handleRequest(request, env) {
     if (pathname === "/trigger/realtime") {
       const start = Date.now();
       await fetchRealtimeBatch(env);
-      return okRes({ message: "即時資料抓取完成", elapsedMs: Date.now() - start });
+      return okRes({ message: "即時資料抓取完成（本批）", elapsedMs: Date.now() - start });
+    }
+
+    if (pathname === "/trigger/realtime/all") {
+      const start = Date.now();
+      const result = await fetchRealtimeAll(env);
+      return okRes({ 
+        message: "✅ 全台所有城市即時資料抓取完成", 
+        elapsedMs: Date.now() - start,
+        ...result
+      });
     }
 
     if (pathname === "/trigger/static") {
@@ -971,7 +1084,8 @@ async function handleRequest(request, env) {
         "GET /cache/status",
         "GET /db/init  ← 第一次部署後呼叫一次",
         "GET /db/stats",
-        "GET /trigger/realtime",
+        "GET /trigger/realtime           (本批次城市，按輪換)",
+        "GET /trigger/realtime/all       ← 🔥 一次性全台所有城市",
         "GET /trigger/static",
         "GET /trigger/city/:city[?ver=v2|v3]",
         "GET /v2/bus/live/:city/:route          (KV → 前端即時用)",
