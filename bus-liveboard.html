@@ -1450,7 +1450,7 @@
             .trim();
     };
 
-    const WORKER_URL = 'https://bus-worker.weacamm.org/';
+    const WORKER_URL = 'https://bus-worker.weacamm.org';
     let map, routeLine;
     let mapMarkers = { stops: [], buses: [] };
     let activeInfoWindow = null;
@@ -1627,9 +1627,9 @@
         try {
             let url;
             if (cityKey === 'InterCity') {
-                url = `${WORKER_URL}?action=list_all&search=&type=InterCity`;
+                url = `${WORKER_URL}/v2/bus/route/InterCity`;
             } else {
-                url = `${WORKER_URL}?action=list_all&search=&city=${cityKey}`;
+                url = `${WORKER_URL}/v2/bus/route/${cityKey}`;
             }
             
             const res = await fetch(url);
@@ -1642,9 +1642,9 @@
 
             // 嚴格過濾：確保類型與縣市符合 (API 有時會回傳全部)
             if (cityKey === 'InterCity') {
-                routes = routes.filter(r => r.type === 'InterCity');
+                routes = routes.filter(r => r.ver === 'intercity' || r.city === 'InterCity');
             } else {
-                routes = routes.filter(r => r.city === cityKey && r.type === 'CityBus');
+                routes = routes.filter(r => r.city === cityKey);
             }
 
             browser.cache[cacheKey] = routes;
@@ -1675,11 +1675,11 @@
             return a.name.localeCompare(b.name, 'zh-Hant');
         });
         const cards = routes.map(r => {
-            const dest = r.destination || r.departure || '';
+            const dest = r.destination_stop_name_zh || r.departure_stop_name_zh || '';
             const safe = dest.replace(/'/g, '&#39;');
             const safeName = r.name.replace(/'/g, '&#39;');
-            return `<button class="route-card-btn" onclick="loadRouteGuarded('${safeName}','${r.city}','${r.type}',this)">
-                <div class="route-card-num">${r.name}</div>
+            return `<button class="route-card-btn" onclick="loadRouteGuarded('${safeName}','${r.city}','CityBus',this)">
+                <div class="route-card-num">${r.route_name_zh || r.name || ''}</div>
                 <div class="route-card-dest">${safe}</div>
             </button>`;
         }).join('');
@@ -1716,7 +1716,7 @@
                     }
                 }
 
-                const res = await fetch(`${WORKER_URL}?action=list_all&search=${encodeURIComponent(val)}`);
+                const res = await fetch(`${WORKER_URL}/v2/bus/route/search?q=${encodeURIComponent(val)}`);
                 const routes = await res.json();
                 const routeArray = Array.isArray(routes) ? routes : (routes && Array.isArray(routes.data) ? routes.data : []);
                 
@@ -1733,20 +1733,20 @@
             return;
         }
         suggestionsBox.innerHTML = list.map(r => `
-            <div class="suggest-item" onclick="loadRoute('${r.name}', '${r.city}', '${r.type}')">
+            <div class="suggest-item" onclick="loadRoute('${r.route_name_zh||r.name}', '${r.city}', 'CityBus')">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <strong>${r.name}</strong>
+                    <strong>${r.route_name_zh || r.name}</strong>
                     <div style="display:flex; gap:4px;">
                         <span style="font-size:0.7rem; background:#64748b; color:white; padding:1px 5px; border-radius:3px;">
                             ${r.city || '全台'}
                         </span>
-                        <span style="font-size:0.7rem; background:${r.type === 'InterCity' ? '#f59e0b' : '#2563eb'}; color:white; padding:1px 5px; border-radius:3px;">
-                            ${r.type === 'InterCity' ? '客運' : '市區'}
+                        <span style="font-size:0.7rem; background:${r.city === 'InterCity' ? '#f59e0b' : '#2563eb'}; color:white; padding:1px 5px; border-radius:3px;">
+                            ${r.city === 'InterCity' ? '客運' : '市區'}
                         </span>
                     </div>
                 </div>
                 <div class="meta">
-                    <span>${r.departure || '起點'} <i class="fas fa-arrow-right"></i> ${r.destination || '終點'}</span>
+                    <span>${r.departure_stop_name_zh || '起點'} <i class="fas fa-arrow-right"></i> ${r.destination_stop_name_zh || '終點'}</span>
                 </div>
             </div>
         `).join('');
@@ -1767,7 +1767,7 @@
         if (!validForVehicle.includes(city)) return;
 
         try {
-            const res = await fetch(`${WORKER_URL}?action=vehicle&city=${city}`);
+            const res = await fetch(`${WORKER_URL}/v2/bus/vehicle/${city}`);
             if (!res.ok) {
                 console.warn(`[提示] ${city} 車輛字典載入失敗 (HTTP ${res.status})，將僅顯示即時資訊。`);
                 return;
@@ -1825,8 +1825,8 @@
             // 🌟 這裡發送請求時，我們傳遞「正規化後」的名字給 Worker，避免特殊符號導致找不到資料
             const targetName = normalize(name);
             const [infoRes, shapeRes] = await Promise.all([
-                fetch(`${WORKER_URL}?action=info&category=${type}&city=${city}&route=${encodeURIComponent(targetName)}`).then(r => r.json()),
-                fetch(`${WORKER_URL}?action=shape&category=${type}&city=${city}&route=${encodeURIComponent(targetName)}`).then(r => r.json())
+                fetch(`${WORKER_URL}/v2/bus/info/${city}/${encodeURIComponent(targetName)}`).then(r => r.json()),
+                fetch(`${WORKER_URL}/v2/bus/shape/${city}/${encodeURIComponent(targetName)}`).then(r => r.json())
             ]);
 
             const infoList = Array.isArray(infoRes) ? infoRes : 
@@ -1954,7 +1954,7 @@
 
         try {
             const targetName = normalize(currentData.route);
-            const url = `${WORKER_URL}?category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(targetName)}`;
+            const url = `${WORKER_URL}/v2/bus/live/${currentData.city}/${encodeURIComponent(targetName)}`;
             const res = await fetch(url);
             const data = await res.json();
             
@@ -2404,7 +2404,7 @@
 
         if (!routes || routes.length === 0) {
             try {
-                const url = `${WORKER_URL}?action=stop_info&name=${encodeURIComponent(stopName)}&city=${currentData.city}&category=${currentData.type}`;
+                const url = `${WORKER_URL}/v2/bus/stop-routes/${currentData.city}?name=${encodeURIComponent(stopName)}`;
                 const res = await fetch(url);
                 const data = await res.json();
                 routes = data.routes || [];
@@ -2552,7 +2552,7 @@
         if(dd) dd.style.display = 'none';
 
         try {
-            const url = `${WORKER_URL}?action=schedule&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}&category=${currentData.type}`;
+            const url = `${WORKER_URL}/v2/bus/schedule/${currentData.city}/${encodeURIComponent(currentData.route)}`;
             const res = await fetch(url);
             const data = await res.json();
 
@@ -2682,7 +2682,7 @@
         // 2. 如果尚未抓取票價，現在立刻抓
         if (!currentData.fare) {
             try {
-                const url = `${WORKER_URL}?action=fare&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
+                const url = `${WORKER_URL}/v2/bus/fare/${currentData.city}/${encodeURIComponent(currentData.route)}`;
                 const res = await fetch(url);
                 const data = await res.json();
                 if (Array.isArray(data)) {
@@ -2988,7 +2988,7 @@
         // 找不到則重新向 Worker 查詢一次目前路線動態
         if (!bus && currentData.route) {
             try {
-                const res = await fetch(`${WORKER_URL}?category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`);
+                const res = await fetch(`${WORKER_URL}/v2/bus/live/${currentData.city}/${encodeURIComponent(currentData.route)}`);
                 const data = await res.json();
                 const buses = (data.buses || []).filter(b => b.dir == currentData.direction);
                 lastBuses = buses;
@@ -3104,8 +3104,8 @@
         try {
             // 抓取資料
             const [newsRes, alertRes] = await Promise.all([
-                fetch(`${WORKER_URL}?action=news&category=${type}&city=${city}`).then(r => r.json()),
-                fetch(`${WORKER_URL}?action=alert&category=${type}&city=${city}`).then(r => r.json())
+                fetch(`${WORKER_URL}/v2/bus/news?city=${city}&type=${type}`).then(r => r.json()),
+                fetch(`${WORKER_URL}/v2/bus/alert?city=${city}&type=${type}`).then(r => r.json())
             ]);
 
             const newsList = Array.isArray(newsRes) ? newsRes : [];
@@ -3204,7 +3204,7 @@
 
         try {
             // 抓取 Alert
-            let url = `${WORKER_URL}?action=alert&category=${type}`;
+            let url = `${WORKER_URL}/v2/bus/alert?type=${type}`;
             if (city && city !== 'InterCity') url += `&city=${city}`;
             
             const res = await fetch(url);
