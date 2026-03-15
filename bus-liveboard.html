@@ -1975,6 +1975,8 @@
     async function refreshLiveData() {
         const icon = document.getElementById('refresh-icon');
         const updateTimeEl = document.getElementById('update-time');
+        if (!icon) return;
+
         icon.classList.add('fa-spin');
         // 重置進度條（手動按或自動觸發都會重置）
         startCountdown(refreshDuration);
@@ -1983,35 +1985,37 @@
             const targetName = normalize(currentData.route);
             const url = `${WORKER_URL}/v2/bus/live/${currentData.city}/${encodeURIComponent(targetName)}`;
             const res = await fetch(url);
-            const data = await res.json();
+            let rawData = await res.json();
             
-            if (data.error || res.status === 429) {
-                console.error('Rate limited or Worker error:', data.message || 'Unknown error');
+            if (rawData.error || res.status === 429) {
+                console.error('Rate limited or Worker error:', rawData.message || 'Unknown error');
                 updateTimeEl.innerText = '⚠️ 頻率過快';
                 updateTimeEl.style.color = '#ef4444';
-                if (res.status === 429 || (data.message && data.message.includes('429'))) {
-                    clearInterval(refreshInterval);
+                if (res.status === 429 || (rawData.message && rawData.message.includes('429'))) {
+                    if (refreshInterval) clearInterval(refreshInterval);
                     refreshInterval = setInterval(refreshLiveData, 40000);
                     startCountdown(40000);
                 }
                 return;
             }
 
-            // 🌟 檢查如果真的沒資料，給個提示，而不是空白
-            if ((!data.buses || data.buses.length === 0) && Object.keys(data.estimates || {}).length === 0) {
-                 document.getElementById('stops-container').innerHTML = '<div class="empty-view">目前此路線無營運資料或已收班</div>';
-            } else {
-                 updateTimeEl.style.color = '';
-                 const now = new Date();
-                 updateTimeEl.innerText = now.toTimeString().substring(0, 5);
-
-                 const estimates = data.estimates || {};
-                 const buses = (data.buses || []).filter(b => b.dir == currentData.direction);
-                 lastBuses = buses; // 快取供 handleSearchPlate 使用
-
-                 updateStopsUI(estimates, buses);
-                 updateBusesMap(buses);
+            // 🌟 修正資料結構解析 (支援 data 欄位嵌套)
+            let data = rawData;
+            if (rawData.data && (rawData.data.buses || rawData.data.estimates)) {
+                data = rawData.data;
             }
+
+            updateTimeEl.style.color = '';
+            const now = new Date();
+            updateTimeEl.innerText = now.toTimeString().substring(0, 5);
+
+            const estimates = data.estimates || {};
+            const buses = (data.buses || []).filter(b => b.dir == currentData.direction);
+            lastBuses = buses; // 快取供 handleSearchPlate 使用
+
+            // 即使是空的也要更新 UI (會顯示末班已過/未發車等)
+            updateStopsUI(estimates, buses);
+            updateBusesMap(buses);
 
         } catch (e) {
             console.error('Update failed', e);
