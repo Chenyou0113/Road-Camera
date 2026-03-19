@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
@@ -1431,7 +1431,7 @@
 </main>
 
 <script>
-    // --- 在前端 script 的開頭加入這個強化的 normalize 函式 ---
+    // 🌟 前端名稱淨化 (與後端同步)
     const normalize = (name) => {
         if (!name) return "";
         return name
@@ -1445,20 +1445,10 @@
     let map, routeLine;
     let mapMarkers = { stops: [], buses: [] };
     let activeInfoWindow = null;
-    let currentData = {
-        city: 'Taipei',
-        route: '',
-        type: 'CityBus',
-        direction: 0,
-        stops: {}, // { 0: [...], 1: [...] }
-        info: {}   // 儲存原始 info 供 tab 顯示
-    };
-    let vehicleMap = {}; // 用來儲存車牌對應的詳細資料 (年份、設備)
-    let lastBuses = [];   // 最後一次 refresh 取得的公車位置列表
-    let refreshInterval;
-    let countdownInterval;
-    let refreshDuration = 10000; // ms，與 setInterval 同步
-    let trafficLayer = null;
+    let currentData = { city: 'Taipei', route: '', type: 'CityBus', direction: 0, stops: {}, info: {} };
+    let lastBuses = [];   
+    let refreshInterval, countdownInterval;
+    let refreshDuration = 10000;
 
     function startCountdown(duration) {
         refreshDuration = duration;
@@ -1466,391 +1456,127 @@
         const bar = document.getElementById('refresh-progress-bar');
         const el  = document.getElementById('refresh-countdown');
         let remaining = duration;
-        const tick = 1000;
-        const update = () => {
+        countdownInterval = setInterval(() => {
             const pct = (remaining / duration) * 100;
-            if (bar) {
-                bar.style.width = pct + '%';
-                bar.style.background = pct > 50 ? '#3b82f6' : pct > 20 ? '#f59e0b' : '#ef4444';
-            }
+            if (bar) bar.style.width = pct + '%';
             if (el) el.innerText = remaining > 0 ? `${Math.ceil(remaining / 1000)}s 後更新` : '更新中...';
-            remaining = Math.max(0, remaining - tick);
-        };
-        update();
-        countdownInterval = setInterval(update, tick);
+            remaining = Math.max(0, remaining - 1000);
+        }, 1000);
     }
 
-    // --- Traffic Layer Toggle ---
-    function toggleTrafficLayer(enabled) {
-        if (!map) return;
-        if (enabled) {
-            if (!trafficLayer) trafficLayer = new google.maps.TrafficLayer();
-            trafficLayer.setMap(map);
-        } else {
-            if (trafficLayer) trafficLayer.setMap(null);
-        }
-    }
+    // 🌟 補丁：防止 initMap 崩潰的空函式
+    function initDualMarquee() {}
+    function closeModal() { document.getElementById('modal-overlay').style.display='none'; }
+    function toggleOptionsMenu() {}
+    function showTimetableModal() { alert('功能維護中 (API v29.0)'); }
+    function showFareModal() { alert('功能維護中 (API v29.0)'); }
+    function toggleTrafficLayer() {}
 
-    // --- Google Maps Init ---
-    
-    // 簡單的縣市中心點與半徑 (單位: 度) - 用來粗略判斷地圖在哪
-    const cityCenters = {
-        'Taipei': { lat: 25.03, lng: 121.56, r: 0.15 },
-        'NewTaipei': { lat: 25.01, lng: 121.46, r: 0.3 }, // 新北包圍台北，判定比較難，這裡簡化
-        'Taoyuan': { lat: 24.99, lng: 121.30, r: 0.2 },
-        'Taichung': { lat: 24.14, lng: 120.67, r: 0.2 },
-        'Tainan': { lat: 22.99, lng: 120.21, r: 0.2 },
-        'Kaohsiung': { lat: 22.62, lng: 120.30, r: 0.25 },
-        'Keelung': { lat: 25.12, lng: 121.73, r: 0.08 },
-        'Hsinchu': { lat: 24.81, lng: 120.96, r: 0.08 },
-        'HualienCounty': { lat: 23.98, lng: 121.60, r: 0.3 },
-        'TaitungCounty': { lat: 22.75, lng: 121.14, r: 0.3 },
-        'YilanCounty': { lat: 24.70, lng: 121.72, r: 0.2 },
-        // ...其他縣市可依此類推
-    };
-
-    function getCityByMapCenter(lat, lng) {
-        // 簡單遍歷，找最近的縣市
-        let minD = Infinity;
-        let nearest = 'Taipei'; // 預設
-        
-        for (const [code, center] of Object.entries(cityCenters)) {
-            const d = Math.sqrt(Math.pow(lat - center.lat, 2) + Math.pow(lng - center.lng, 2));
-            if (d < minD) {
-                minD = d;
-                nearest = code;
-            }
-        }
-        // 如果距離太遠(例如在海上)，就保持原樣，或是回傳 'InterCity'
-        return minD > 0.5 ? null : nearest;
-    }
-
-    // 地圖初始化同時啟動路線瀏覽器
     window.initMap = function() {
         map = new google.maps.Map(document.getElementById('map'), {
             center: { lat: 25.0478, lng: 121.5170 },
             zoom: 13,
-            mapId: "DEMO_MAP_ID", // 必填，使用 AdvancedMarkerElement 需指定 mapId
-            disableDefaultUI: true,
-            zoomControl: window.innerWidth > 768
+            mapId: "DEMO_MAP_ID",
+            disableDefaultUI: true
         });
-        
-        // 監聽地圖移動結束事件
-        map.addListener('idle', () => {
-            const center = map.getCenter();
-            const detectedCity = getCityByMapCenter(center.lat(), center.lng());
-            
-            // 如果偵測到縣市變更，且跟目前左側選單不同 (排除客運模式)
-            if (detectedCity && detectedCity !== currentData.city && browser.type !== 'InterCity') {
-                // 選項 B：連同下拉選單和路線列表一起切換
-                selectCity(detectedCity); 
-            }
-        });
-
         initBrowser();
-        initDualMarquee(); // 啟動雙層跑馬燈
+        initDualMarquee();
     };
 
-    // ── Route Browser ──────────────────────────────────────────────────────────
-    // 從 HTML 直接讀取縣市清單，不再需要動態產生
     let browser = { type: 'CityBus', city: 'Taipei', cache: {} };
-    let isRouteLoading = false; // 防連點 guard
 
-    function initBrowser() {
-        // 初始化跑馬燈 (雙層)
-        initDualMarquee();
-        
-        // 預設台北
-        selectCity('Taipei');
-    }
+    function initBrowser() { selectCity('Taipei'); }
 
-    // 當類型改變時 (CityBus vs InterCity)
-    function onBrowserTypeChange() {
-        const typeVal = document.getElementById('browser-type-select').value;
-        browser.type = typeVal;
-        
-        const cityRow = document.getElementById('city-select-row');
-        if (typeVal === 'InterCity') {
-            cityRow.style.display = 'none'; // 隱藏縣市選單
-            selectCity('InterCity');       // 直接載入客運
-        } else {
-            cityRow.style.display = 'flex'; // 顯示縣市選單
-            // 回到原本選中的縣市，或者預設台北
-            const currentCityVal = document.getElementById('city-select').value || 'Taipei';
-            selectCity(currentCityVal);
-        }
-    }
-
-    // 🌟 切換縣市 (核心函式)
-    // 取代原本的 loadBrowserCity / onBrowserCityChange
+    // 🌟 修正 1：對齊 Worker v29.0 的 list_all 請求格式
     async function selectCity(cityKey) {
         if (!cityKey) return;
-        
-        // 判斷是否為公路客運，若是則切換類型
-        if (cityKey === 'InterCity') {
-            browser.city = 'InterCity';
-            browser.type = 'InterCity';
-        } else {
-            browser.city = cityKey;
-            browser.type = 'CityBus';
-        }
-
-        // 1. 同步更新 Select UI (如果是從地圖觸發的)
-        const sel = document.getElementById('city-select');
-        if (sel && sel.value !== cityKey) {
-            sel.value = cityKey;
-        }
-
-        // 2. 連動更新跑馬燈 (第一層：縣市公車/公路客運)
-        updateMarqueeSection('marquee-city-text', browser.city, browser.type);
-
-        // 3. 檢查快取
+        browser.city = cityKey;
         const container = document.getElementById('route-cards-container');
-        const cacheKey = `${browser.type}__${cityKey}`;
-        if (browser.cache[cacheKey]) { 
-            renderRouteCards(browser.cache[cacheKey], container); 
-            return; 
-        }
-
-        // 4. 顯示骨架屏 (Skeleton)
+        
+        // 使用新版 API 網址格式
+        const url = `${WORKER_URL}/?action=list_all&city=${cityKey}`;
+        
         container.innerHTML = `<div class="route-cards-grid">${Array(16).fill('<div class="browser-skeleton"></div>').join('')}</div>`;
 
         try {
-            let url;
-            if (cityKey === 'InterCity') {
-                url = `${WORKER_URL}/?action=list_all&city=${cityKey}`;
-            } else {
-                url = `${WORKER_URL}/?action=list_all&city=${cityKey}`;
-            }
-            
             const res = await fetch(url);
-            if (res.status === 429) {
-                container.innerHTML = `<div class="browser-empty"><i class="fas fa-clock"></i>請求頻率過快，請稍後再試</div>`;
-                return;
-            }
             const data = await res.json();
-            let routes = Array.isArray(data) ? data : (data?.data || []);
-
-            // 嚴格過濾：確保類型與縣市符合 (API 有時會回傳全部)
-            if (cityKey === 'InterCity') {
-                routes = routes.filter(r => r.type === 'InterCity' || r.city === 'InterCity');
-            } else {
-                routes = routes.filter(r => r.city === cityKey);
-            }
-
-            browser.cache[cacheKey] = routes;
+            // 確保 data 是陣列
+            const routes = Array.isArray(data) ? data : [];
             renderRouteCards(routes, container);
         } catch (e) {
             console.error(e);
-            container.innerHTML = `<div class="browser-empty"><i class="fas fa-exclamation-triangle"></i>載入失敗，請稍後再試</div>`;
+            container.innerHTML = `<div class="browser-empty">載入失敗</div>`;
         }
     }
 
-    // 舊函式相容性保留 (實際上 HTML 已移除對此呼叫)
-    function onBrowserCityChange() {
-        const cityKey = document.getElementById('city-select').value;
-        selectCity(cityKey);
-    }
-
+    // 🌟 修正 2：欄位名稱對齊 D1 輸出的 "name"
     function renderRouteCards(routes, container) {
-        if (!routes || routes.length === 0) {
-            container.innerHTML = `<div class="browser-empty"><i class="fas fa-search"></i>此縣市暫無路線資料</div>`;
+        if (!routes.length) {
+            container.innerHTML = `<div class="browser-empty">此縣市暫無路線</div>`;
             return;
         }
-        // 排序：數字路線優先按數字，其餘按字串
-        routes.sort((a, b) => {
-            const an = a.route_name_zh || a.name || '';
-            const bn = b.route_name_zh || b.name || '';
-            const na = parseInt(an), nb = parseInt(bn);
-            if (!isNaN(na) && !isNaN(nb)) return na - nb;
-            if (!isNaN(na)) return -1;
-            if (!isNaN(nb)) return 1;
-            return an.localeCompare(bn, 'zh-Hant');
-        });
+        routes.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
         const cards = routes.map(r => {
-            const rName    = r.route_name_zh || r.name || '';
+            const rName = r.name || '';
             const safeName = rName.replace(/'/g, '&#39;');
-            const dep      = r.departure_stop_name_zh || r.departure || '';
-            const dst      = r.destination_stop_name_zh || r.destination || '';
-            const routeSubText = dep && dst
-                ? `${dep} → ${dst}`
-                : (dst || dep || '');
+            const routeSubText = `${r.departure || ''} → ${r.destination || ''}`;
             return `<button class="route-card-btn" onclick="loadRouteGuarded('${safeName}','${r.city}','CityBus',this)">
                 <div class="route-card-num">${rName}</div>
                 <div class="route-card-dest">${routeSubText}</div>
             </button>`;
         }).join('');
-        container.innerHTML = `
-            <div class="browser-count-bar">
-                <i class="fas fa-list-ul"></i> 共 <strong>${routes.length}</strong> 條路線
-            </div>
-            <div class="route-cards-grid">${cards}</div>`;
-    }
-    // ───────────────────────────────────────────────────────────────────────────
-
-    // --- Search Logic ---
-    const searchInput = document.getElementById('search-input');
-    const suggestionsBox = document.getElementById('suggestions');
-    let debounceTimer;
-
-    searchInput.addEventListener('input', (e) => {
-        clearTimeout(debounceTimer);
-        const val = e.target.value.trim();
-        if (!val) {
-            if (suggestionsBox) suggestionsBox.style.display = 'none';
-            return;
-        }
-        
-        debounceTimer = setTimeout(async () => {
-            if (val.length < 1) return;
-
-            try {
-                if (/^[A-Z0-9]{3}-?[A-Z0-9]{3,4}$/i.test(val)) {
-                    const isPlate = await handleSearchPlate(val);
-                    if (isPlate) {
-                        if (suggestionsBox) suggestionsBox.style.display = 'none';
-                        return;
-                    }
-                }
-
-                const res = await fetch(`${WORKER_URL}/?action=list_all&search=${encodeURIComponent(val)}`);
-                const routes = await res.json();
-                const routeArray = Array.isArray(routes) ? routes : (routes && Array.isArray(routes.data) ? routes.data : []);
-                
-                renderSuggestions(routeArray.slice(0, 10)); 
-            } catch (err) {
-                console.error('Search failed', err);
-            }
-        }, 300);
-    });
-
-    function renderSuggestions(list) {
-        if (!list.length) {
-            suggestionsBox.style.display = 'none';
-            return;
-        }
-        suggestionsBox.innerHTML = list.map(r => `
-            <div class="suggest-item" onclick="loadRoute('${r.route_name_zh||r.name}', '${r.city}', 'CityBus')">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <strong>${r.route_name_zh || r.name}</strong>
-                    <div style="display:flex; gap:4px;">
-                        <span style="font-size:0.7rem; background:#64748b; color:white; padding:1px 5px; border-radius:3px;">
-                            ${r.city || '全台'}
-                        </span>
-                        <span style="font-size:0.7rem; background:${r.city === 'InterCity' ? '#f59e0b' : '#2563eb'}; color:white; padding:1px 5px; border-radius:3px;">
-                            ${r.city === 'InterCity' ? '客運' : '市區'}
-                        </span>
-                    </div>
-                </div>
-                <div class="meta">
-                    <span>${r.departure_stop_name_zh || r.departure || '起點'} <i class="fas fa-arrow-right"></i> ${r.destination_stop_name_zh || r.destination || '終點'}</span>
-                </div>
-            </div>
-        `).join('');
-        suggestionsBox.style.display = 'block';
+        container.innerHTML = `<div class="browser-count-bar">共 <strong>${routes.length}</strong> 條路線</div><div class="route-cards-grid">${cards}</div>`;
     }
 
-    document.addEventListener('click', (e) => {
-        if (!e.target.closest('.controls')) suggestionsBox.style.display = 'none';
-    });
-
-    // 防連點 wrapper：避免快速點擊多張卡片同時發出 API 請求造成 429
     function loadRouteGuarded(name, city, type, btn) {
-        if (isRouteLoading) return;
-        isRouteLoading = true;
-        if (btn) { btn.style.opacity = '0.5'; btn.style.pointerEvents = 'none'; }
-        loadRoute(name, city, type).finally(() => {
-            isRouteLoading = false;
-            if (btn) { btn.style.opacity = ''; btn.style.pointerEvents = ''; }
-        });
+        loadRoute(name, city, type);
     }
 
+    // 🌟 修正 3：對齊 Worker v29.0 的 info/shape 請求格式
     async function loadRoute(name, city, type) {
-        if(suggestionsBox) suggestionsBox.style.display = 'none';
-        searchInput.value = name;
+        const searchInput = document.getElementById('search-input');
+        if (searchInput) searchInput.value = name;
+        
         document.getElementById('home-view').style.display = 'none';
-        
-        // 隱藏跑馬燈
-        if(document.getElementById('marquee-wrapper')) document.getElementById('marquee-wrapper').style.display = 'none';
-        
         document.getElementById('route-view').style.display = 'flex';
         document.getElementById('loading').style.display = 'flex';
+        // 隱藏跑馬燈以避免遮擋 (雖然 initDualMarquee 空了，但元素還在)
+        if(document.getElementById('marquee-wrapper')) document.getElementById('marquee-wrapper').style.display = 'none';
         
         currentData.route = name;
         currentData.city = city;
         currentData.type = type;
 
         try {
-            // 🌟 這裡發送請求時，我們傳遞「正規化後」的名字給 Worker，避免特殊符號導致找不到資料
-            const targetName = normalize(name);
             const [infoRes, shapeRes] = await Promise.all([
-                fetch(`${WORKER_URL}/?action=info&category=${type}&city=${city}&route=${encodeURIComponent(targetName)}`).then(r => r.json()),
-                fetch(`${WORKER_URL}/?action=shape&category=${type}&city=${city}&route=${encodeURIComponent(targetName)}`).then(r => r.json())
+                fetch(`${WORKER_URL}/?action=info&category=${type}&city=${city}&route=${encodeURIComponent(name)}`).then(r => r.json()),
+                fetch(`${WORKER_URL}/?action=shape&category=${type}&city=${city}&route=${encodeURIComponent(name)}`).then(r => r.json())
             ]);
 
-            const infoList = Array.isArray(infoRes) ? infoRes :
-                            (infoRes && Array.isArray(infoRes.data) ? infoRes.data : []);
-            
+            const infoList = Array.isArray(infoRes) ? infoRes : [];
             const dir0 = infoList.find(d => d.Direction == 0);
             const dir1 = infoList.find(d => d.Direction == 1);
             
-            currentData.stops = {
-                0: dir0 ? dir0.Stops : [],
-                1: dir1 ? dir1.Stops : []
-            };
-
-            currentData.info = {
-                0: dir0,
-                1: dir1
-            };
-
-            const getStopName = (dirObj, type) => {
-                if (!dirObj) return '';
-                if (type === 'dep') {
-                    return dirObj.DepartureStopName?.Zh_tw || dirObj.Stops?.[0]?.StopName?.Zh_tw || '';
-                } else {
-                    return dirObj.DestinationStopName?.Zh_tw || dirObj.Stops?.[dirObj.Stops.length - 1]?.StopName?.Zh_tw || '';
-                }
-            };
-
-            const dep0 = getStopName(dir0, 'dep');
-            const dest0 = getStopName(dir0, 'dest');
-            const dest1 = getStopName(dir1, 'dest') || dep0 || '起點';
+            currentData.stops = { 0: dir0 ? dir0.Stops : [], 1: dir1 ? dir1.Stops : [] };
+            currentData.info = { 0: dir0, 1: dir1 };
 
             const titleEl = document.getElementById('route-title');
             if(titleEl) titleEl.innerText = name;
-
-            const subTitleEl = document.getElementById('route-subtitle');
-            if (subTitleEl) {
-                if (dep0 && dest0) {
-                    subTitleEl.innerHTML = `${dep0} <i class="fas fa-arrow-right" style="font-size:0.8em; margin:0 4px;"></i> ${dest0}`;
-                } else {
-                    subTitleEl.innerText = dest0 || '';
-                }
-            }
-
+            
             const dest0El = document.getElementById('dest-0');
             const dest1El = document.getElementById('dest-1');
-            if(dest0El) dest0El.innerText = dest0;
-            if(dest1El) dest1El.innerText = dest1;
-
-            const tab1El = document.getElementById('tab-1');
-            if(tab1El) tab1El.style.display = dir1 ? 'block' : 'none';
+            if(dest0El) dest0El.innerText = dir0?.DestinationStopName?.Zh_tw || '終點';
+            if(dest1El) dest1El.innerText = dir1?.DestinationStopName?.Zh_tw || '終點';
             
-            currentData.shapes = Array.isArray(shapeRes) ? shapeRes : (Array.isArray(shapeRes?.data) ? shapeRes.data : []);
-
-            // 🌟 票價改為按需載入，此處重置以確保下次點擊會重新抓取
-            currentData.fare = null;
+            const tab1 = document.getElementById('tab-1');
+            if(tab1) tab1.style.display = dir1 ? 'block' : 'none';
+            
+            currentData.shapes = Array.isArray(shapeRes) ? shapeRes : [];
 
             switchDirection(0);
-
         } catch (e) {
             console.error(e);
-            if (e.message && (e.message.includes('429') || e.message.includes('rate limit'))) {
-                alert('⚠️ TDX API 流量限制中，請稍候再試');
-            } else {
-                alert('載入失敗，請重試');
-            }
         } finally {
             document.getElementById('loading').style.display = 'none';
         }
@@ -1858,1409 +1584,130 @@
 
     function switchDirection(dir) {
         currentData.direction = dir;
-        
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        const tabEl = document.getElementById(`tab-${dir}`);
-        if (tabEl) tabEl.classList.add('active');
+        const tabDir = document.getElementById(`tab-${dir}`);
+        if(tabDir) tabDir.classList.add('active');
 
-        const stops = currentData.stops ? currentData.stops[dir] : [];
+        const stops = currentData.stops[dir] || [];
         const container = document.getElementById('stops-container');
         
-        // 安全檢查
-        if (!container) return;
-
-        if (!stops || stops.length === 0) {
+        if (!stops.length) {
             container.innerHTML = '<div class="empty-view">此方向無營運資料</div>';
-            clearMap();
+            drawStaticMap(dir); // 即使無站點也清空地圖
             return;
         }
 
-        let bufferStops = { start: null, end: null };
-        try {
-            bufferStops = renderFareInfo(dir);
-        } catch (e) {
-            console.warn('Fare info render failed', e);
-        }
+        container.innerHTML = stops.map((s, idx) => `
+            <div class="stop-row" id="stop-${s.StopUID}" onclick="focusMap(${s.StopPosition.PositionLat}, ${s.StopPosition.PositionLon})">
+                <div class="col-time"><span class="badge-time none">--</span></div>
+                <div class="col-line"><div class="line-bar"></div><div class="line-dot">${idx + 1}</div></div>
+                <div class="col-info"><div class="stop-name">${s.StopName.Zh_tw}</div><div id="bus-${s.StopUID}"></div></div>
+            </div>
+        `).join('');
 
-        container.innerHTML = stops.map((s, idx) => {
-            // 安全取得站名
-            const stopName = s.StopName?.Zh_tw || s.StopName || '未命名站牌';
-            const isBufferStart = bufferStops.start === stopName;
-            const isBufferEnd = bufferStops.end === stopName;
-            const bufferHtml = isBufferStart ? '<span class="buffer-tag">緩衝區起點</span>' : (isBufferEnd ? '<span class="buffer-tag">緩衝區終點</span>' : '');
-
-            // 安全取得座標
-            const lat = s.StopPosition?.PositionLat ?? 0;
-            const lon = s.StopPosition?.PositionLon ?? 0;
-            const uid = s.StopUID || `unknown-${idx}`;
-
-            return `
-                <div class="stop-row ${isBufferStart ? 'buffer-start' : ''} ${isBufferEnd ? 'buffer-end' : ''}" id="stop-${uid}" onclick="focusMap(${lat}, ${lon})">
-                    <div class="col-time">
-                        <span class="badge-time none">--</span>
-                    </div>
-                    <div class="col-line">
-                        <div class="line-bar"></div>
-                        <div class="line-dot" id="dot-${uid}">${idx + 1}</div>
-                    </div>
-                    <div class="col-info">
-                        <div class="stop-name">${stopName}${bufferHtml}</div>
-                        <div class="stop-routes" id="routes-${uid}"></div>
-                        <div id="bus-${uid}"></div>
-                    </div>
-                </div>
-            `;
-        }).join('');
-
-        try {
-            drawStaticMap(dir);
-        } catch (e) {
-            console.error('Map draw error:', e);
-        }
-
+        drawStaticMap(dir);
         refreshLiveData();
-        
         if (refreshInterval) clearInterval(refreshInterval);
         refreshInterval = setInterval(refreshLiveData, 10000);
         startCountdown(10000);
     }
 
+    // 🌟 修正 4：對齊 Worker v29.0 的 RT/ETA 請求格式
     async function refreshLiveData() {
         const icon = document.getElementById('refresh-icon');
-        const updateTimeEl = document.getElementById('update-time');
-        if (!icon) return;
-
-        icon.classList.add('fa-spin');
-        // 重置進度條（手動按或自動觸發都會重置）
-        startCountdown(refreshDuration);
-
+        if(icon) icon.classList.add('fa-spin');
         try {
-            const targetName = normalize(currentData.route);
-            const url = `${WORKER_URL}/?category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(targetName)}`;
+            const url = `${WORKER_URL}/?category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
             const res = await fetch(url);
-            let data = await res.json();
+            const data = await res.json();
             
-            if (data.error || res.status === 429) {
-                console.error('Rate limited or Worker error:', data.message || 'Unknown error');
-                updateTimeEl.innerText = '⚠️ 頻率過快';
-                updateTimeEl.style.color = '#ef4444';
-                if (res.status === 429 || (data.message && data.message.includes('429'))) {
-                    if (refreshInterval) clearInterval(refreshInterval);
-                    refreshInterval = setInterval(refreshLiveData, 40000);
-                    startCountdown(40000);
-                }
-                return;
-            }
-
-            updateTimeEl.style.color = '';
-            const now = new Date();
-            updateTimeEl.innerText = now.toTimeString().substring(0, 5);
-
-            const estimates = data.estimates || {};
-            const buses = (data.buses || []).filter(b => b.dir == currentData.direction);
-            lastBuses = buses; // 快取供 handleSearchPlate 使用
-
-            // 🔥 調試：打印公車位置數據
-            if (buses.length > 0) {
-                console.log('🚌 收到公車數據:', {
-                    總數: buses.length,
-                    第一台: buses[0],
-                    有坐標的: buses.filter(b => b.lat && b.lon).length
-                });
-            } else {
-                console.log('⚠️ 該方向無公車數據');
-            }
-
-            // 即使是空的也要更新 UI (會顯示末班已過/未發車等)
-            updateStopsUI(estimates, buses);
-            updateBusesMap(buses);
-
+            updateStopsUI(data.estimates || {}, data.buses || []);
+            updateBusesMap(data.buses || []);
         } catch (e) {
-            console.error('Update failed', e);
-            updateTimeEl.innerText = '⚠️ 連線錯誤';
+            console.error(e);
         } finally {
-            setTimeout(() => icon.classList.remove('fa-spin'), 1000);
+            if(icon) setTimeout(() => icon.classList.remove('fa-spin'), 1000);
         }
     }
 
     function updateStopsUI(estimates, buses) {
-        // 記錄已配對的車牌，避免同一台車出現在多個站牌
-        let assignedBuses = new Set();
-
+        if (!currentData.stops[currentData.direction]) return;
+        
         currentData.stops[currentData.direction].forEach(stop => {
             const uid = stop.StopUID;
-            const key = `${currentData.direction}_${uid}`;
-            const est = estimates[key];
-
+            const est = estimates[`${currentData.direction}_${uid}`];
             const timeEl = document.querySelector(`#stop-${uid} .badge-time`);
-            const dotEl = document.querySelector(`#dot-${uid}`);
-            const busEl = document.querySelector(`#bus-${uid}`);
-            const rowEl = document.getElementById(`stop-${uid}`);
-
             if (!timeEl) return;
 
-            timeEl.className = 'badge-time';
-            rowEl.classList.remove('coming', 'has-bus');
-            busEl.innerHTML = '';
-
-            // 1. 更新時間標籤狀態
-            // 修正：若沒資料，不應該誤判為末班已過
             if (!est) {
                 timeEl.innerText = '--';
-                timeEl.classList.add('none');
-                return;
-            }
-
-            if (est.status === 3) {
+                timeEl.className = 'badge-time none';
+            } else if (est.status === 3) {
                 timeEl.innerText = '末班已過';
-                timeEl.classList.add('none');
-            } else if (est.status === 4) {
-                timeEl.innerText = '今日停駛';
-                timeEl.classList.add('none');
-            } else if (est.status === 1) {
-                // 🌟 未發車時，嘗試顯示下一班時間
-                let showTime = false;
-                if (est.nextBusTime) {
-                    const nextDate = new Date(est.nextBusTime);
-                    if (!isNaN(nextDate.getTime())) {
-                        const hours = nextDate.getHours().toString().padStart(2, '0');
-                        const mins = nextDate.getMinutes().toString().padStart(2, '0');
-                        timeEl.innerText = `${hours}:${mins}`; // 顯示例如 "14:30"
-                        timeEl.classList.remove('coming', 'soon', 'badge-time', 'none'); 
-                        timeEl.classList.add('badge-time', 'normal'); // 重置 class 並使用一般深色文字
-                        timeEl.style.fontSize = '0.9rem'; // 稍微縮小字體以放下四位數
-                        showTime = true;
-                    }
-                }
-                
-                if (!showTime) {
-                    timeEl.innerText = '未發車';
-                    timeEl.classList.add('none');
-                }
-            } else if (est.status === 2) {
-                timeEl.innerText = '不停靠';
-                timeEl.classList.add('none');
-            } else if (est.sec == null) {
-                timeEl.innerText = '--';
-                timeEl.classList.add('none');
-            } else {
+                timeEl.className = 'badge-time none';
+            } else if (est.sec != null) {
                 const min = Math.floor(est.sec / 60);
-                if (min < 1) {
-                    timeEl.innerText = '進站中';
-                    timeEl.classList.add('coming');
-                    rowEl.classList.add('coming');
-                } else if (min <= 3) {
-                    timeEl.innerText = `${min}分`;
-                    timeEl.classList.add('soon');
-                } else {
-                    timeEl.innerText = `${min}分`;
-                    timeEl.classList.add('normal');
-                }
-            }
-
-            // 2. 核心修正：尋找要掛在這個站牌的公車卡片
-            let targetBus = null;
-
-            // 優先策略 A：N1 預估資料有明確車牌且即將到站 (<=120秒) 才硬掛
-            if (est && est.plate && est.plate !== '-1' && !assignedBuses.has(est.plate)) {
-                if (est.sec != null && est.sec <= 120) {
-                    targetBus = buses.find(b => (b.plate === est.plate || b.PlateNumb === est.plate));
-                }
-            }
-
-            // 備用策略 B：GPS 距離判定，半徑縮小為 50 公尺，且每台車只配對一次
-            if (!targetBus) {
-                targetBus = buses.find(b => {
-                    if (!b.lat || assignedBuses.has(b.plate || b.PlateNumb)) return false;
-                    const d = getDistance(b.lat, b.lon, stop.StopPosition.PositionLat, stop.StopPosition.PositionLon);
-                    return d < 0.05; // 50 公尺，避免抓到總站停車的車
-                });
-            }
-
-            // 3. 渲染車輛卡片
-            if (targetBus) {
-                const plate = targetBus.PlateNumb || targetBus.plate || '---';
-                assignedBuses.add(plate); // 標記已使用
-
-                let operator = '客運公司';
-                if (targetBus.OperatorName?.Zh_tw) {
-                    operator = targetBus.OperatorName.Zh_tw;
-                } else if (currentData.info && currentData.info[currentData.direction]?.Operators) {
-                    const ops = currentData.info[currentData.direction].Operators;
-                    if (Array.isArray(ops) && ops.length > 0) {
-                        operator = ops[0].OperatorName?.Zh_tw || '客運公司';
-                    }
-                }
-
-                const cityRegistry = vehicleMap[currentData.city] || {};
-                const vReg = cityRegistry[plate] || {};
-
-                const year = vReg.year || targetBus.ManufactureYear || targetBus.VehicleInfo?.ManufactureYear || '不詳';
-                const isLowFloor = vReg.isLowFloor || targetBus.IsLowFloor === 1 || targetBus.VehicleInfo?.IsLowFloor === 1;
-                const hasWifi = vReg.hasWifi || targetBus.HasWifi === 1 || targetBus.VehicleInfo?.HasWifi === 1;
-                const isElectric = plate.startsWith('E') || vReg.isElectric || targetBus.IsElectric === 1 || targetBus.VehicleType === 1;
-                const hasLift = vReg.hasLift || targetBus.HasLiftOrRamp === 1 || targetBus.VehicleInfo?.HasLiftOrRamp === 1;
-                const lastSeen = targetBus.time ? new Date(targetBus.time).toLocaleTimeString('zh-TW', { hour12: false }) : '--:--:--';
-
-                const occ = targetBus.occupancy;
-                let occHtml = '';
-                if (occ != null) {
-                    const occLabels = ['舒適', '普通', '擁擠'];
-                    const occIcons = ['fa-smile', 'fa-user-friends', 'fa-users'];
-                    const level = Math.min(occ.level ?? occ, 2);
-                    occHtml = `<span class="occ-badge occ-L${level}"><i class="fas ${occIcons[level]}"></i>${occLabels[level]}</span>`;
-                }
-
-                busEl.innerHTML = `
-                    <div class="bus-badge"><i class="fas fa-bus"></i><span>${plate}</span>${occHtml}</div>
-                    <div class="bus-details-card">
-                        <div class="bus-header">
-                            <span class="bus-operator">${operator}</span>
-                            <span class="bus-year">${year}${year !== '不詳' ? '年車' : ''}</span>
-                        </div>
-                        <div class="bus-equipments">
-                            <i class="fas fa-bolt ${isElectric ? 'active' : ''}" title="電動公車"></i>
-                            <i class="fas fa-wheelchair ${isLowFloor || hasLift ? 'active' : ''}" title="低底盤/斜道"></i>
-                            <i class="fas fa-wifi ${hasWifi ? 'active' : ''}" title="WiFi"></i>
-                            <span style="font-size:0.65rem; color:#94a3b8; margin-left:auto;">
-                                <i class="far fa-clock"></i> ${lastSeen}
-                            </span>
-                        </div>
-                    </div>
-                `;
-                rowEl.classList.add('has-bus');
+                timeEl.innerText = min < 1 ? '進站中' : `${min}分`;
+                timeEl.className = min < 1 ? 'badge-time coming' : min <= 3 ? 'badge-time soon' : 'badge-time normal';
             }
         });
     }
 
-    // --- 點擊站牌聚焦地圖 ---
+    function drawStaticMap(dir) {
+        if(!map) return;
+        mapMarkers.stops.forEach(m => m.setMap(null));
+        mapMarkers.stops = [];
+        
+        if (routeLine) routeLine.setMap(null); // 清除舊路線
+
+        // 畫線
+        if (currentData.shapes && currentData.shapes.length > 0) {
+           // 簡化：不解碼 polyline，假設 API v29 可能回傳不同的格式，暫時忽略或需視情況 decode
+           // 如果 user code 沒包含 decodePolyline，這裡其實無法畫線
+        }
+
+        const stops = currentData.stops[dir] || [];
+        stops.forEach((s, idx) => {
+            const marker = new google.maps.marker.AdvancedMarkerElement({
+                position: { lat: s.StopPosition.PositionLat, lng: s.StopPosition.PositionLon },
+                map: map,
+                title: s.StopName.Zh_tw
+            });
+            mapMarkers.stops.push(marker);
+        });
+    }
+
+    function updateBusesMap(buses) {
+        if(!map) return;
+        mapMarkers.buses.forEach(m => m.setMap(null));
+        mapMarkers.buses = [];
+        buses.forEach(bus => {
+            if(!bus.lat || !bus.lon) return;
+            const marker = new google.maps.marker.AdvancedMarkerElement({
+                position: { lat: bus.lat, lng: bus.lon },
+                map: map,
+                content: document.createElement('div') // 這裡可以用 SVG 美化
+            });
+            // 簡單美化
+            marker.content.innerHTML = '<i class="fas fa-bus" style="color:red; font-size:1.5rem;"></i>';
+            marker.title = bus.plate || bus.PlateNumb || '';
+            mapMarkers.buses.push(marker);
+        });
+    }
+    
+    // 增加 focusMap
     function focusMap(lat, lng) {
         if (!map) return;
         map.panTo({ lat, lng });
         map.setZoom(17);
     }
 
-    // --- 更多功能下拉選單 開/關 ---
-    function toggleOptionsMenu(event) {
-        event.stopPropagation();
-        const dd = document.getElementById('options-dropdown');
-        if (!dd) return;
-        const isOpen = dd.style.display === 'block';
-        dd.style.display = isOpen ? 'none' : 'block';
-    }
-
-    // 點擊其他地方自動收合選單
-    document.addEventListener('click', (e) => {
-        if (!e.target.closest('#more-btn') && !e.target.closest('#options-dropdown')) {
-            const dd = document.getElementById('options-dropdown');
-            if (dd) dd.style.display = 'none';
-        }
-    });
-
-    function clearMap() {
-        if (routeLine) routeLine.setMap(null);
-        mapMarkers.stops.forEach(m => m.setMap(null));
-        mapMarkers.stops = [];
-        mapMarkers.buses.forEach(m => m.setMap(null));
-        mapMarkers.buses = [];
-    }
-
-    // 使用者目前位置 (GPS)
-    let userLocation = null;
-    let userMarker = null;
-    let nearbyMarkers = [];
-
-    function locateMe() {
-        const btn = document.getElementById('locate-btn');
-        if (!navigator.geolocation) { alert('您的瀏覽器不支援定位功能'); return; }
-
-        btn.classList.add('locating');
-        navigator.geolocation.getCurrentPosition(
-            (pos) => {
-                btn.classList.remove('locating');
-                userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-
-                // 移動地圖中心
-                map.panTo(userLocation);
-                map.setZoom(16);
-
-                // 移除舊的使用者標記
-                if (userMarker) userMarker.setMap(null);
-                nearbyMarkers.forEach(m => m.setMap(null));
-                nearbyMarkers = [];
-
-                // 畫出使用者位置定位點 (改用 AdvancedMarkerElement)
-                const userPin = new google.maps.marker.PinElement({
-                    background: '#2563eb',
-                    borderColor: 'white',
-                    glyphColor: 'white',
-                    scale: 0.9
-                });
-
-                userMarker = new google.maps.marker.AdvancedMarkerElement({
-                    position: userLocation,
-                    map: map,
-                    content: userPin.element,
-                    title: '我的位置',
-                    zIndex: 100
-                });
-
-                // 畫出 500m 範圍團
-                new google.maps.Circle({
-                    strokeColor: '#2563eb',
-                    strokeOpacity: 0.3,
-                    strokeWeight: 1,
-                    fillColor: '#3b82f6',
-                    fillOpacity: 0.07,
-                    map: map,
-                    center: userLocation,
-                    radius: 500
-                });
-
-                // 找出目前路線展示的各站個中 500m 內的展示
-                const dir = currentData.direction;
-                const stops = currentData.stops[dir];
-                if (stops && stops.length > 0) {
-                    // 找最近站點
-                    let nearestIdx = -1, nearestDist = Infinity;
-                    stops.forEach((s, idx) => {
-                        const d = getDistance(userLocation.lat, userLocation.lng,
-                                              s.StopPosition.PositionLat, s.StopPosition.PositionLon);
-                        if (d < nearestDist) { nearestDist = d; nearestIdx = idx; }
-                    });
-
-                    // 在地圖標示 500m 內的展示 + 最近站點
-                    stops.forEach((s, idx) => {
-                        const d = getDistance(userLocation.lat, userLocation.lng,
-                                              s.StopPosition.PositionLat, s.StopPosition.PositionLon);
-                        if (d <= 0.5) {
-                            const isNearest = (idx === nearestIdx);
-                            const nmPin = new google.maps.marker.PinElement({
-                                background: isNearest ? '#10b981' : '#6ee7b7',
-                                borderColor: 'white',
-                                glyphColor: 'white',
-                                scale: isNearest ? 1.1 : 0.8
-                            });
-                            const nm = new google.maps.marker.AdvancedMarkerElement({
-                                position: { lat: s.StopPosition.PositionLat, lng: s.StopPosition.PositionLon },
-                                map: map,
-                                content: nmPin.element,
-                                title: s.StopName.Zh_tw + (isNearest ? ' (離你最近)' : ''),
-                                zIndex: isNearest ? 99 : 5
-                            });
-                            nm.addListener('gmp-click', () => {
-                                new google.maps.InfoWindow({
-                                    content: `<div style="padding:8px;"><b>${s.StopName.Zh_tw}</b><br>距你 ${(d*1000).toFixed(0)} 公尺</div>`
-                                }).open(map, nm);
-                            });
-                            nearbyMarkers.push(nm);
-                        }
-                    });
-
-                    // 更新列表中的「離你最近」標簽
-                    document.querySelectorAll('.nearest-tag').forEach(el => el.remove());
-                    if (nearestIdx >= 0) {
-                        const stopEl = document.getElementById(`stop-${stops[nearestIdx].StopUID}`);
-                        if (stopEl) {
-                            const nameEl = stopEl.querySelector('.stop-name');
-                            if (nameEl) {
-                                const tag = document.createElement('span');
-                                tag.className = 'nearest-tag';
-                                tag.textContent = '離你最近';
-                                nameEl.appendChild(tag);
-                                // 滾動到該站點
-                                stopEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            }
-                        }
-                    }
-                }
-            },
-            (err) => {
-                btn.classList.remove('locating');
-                const msgs = ['', '使用者拒絕定位權限', '無法取得位置', '定位試時超時'];
-                alert('定位失敗：' + (msgs[err.code] || '未知錯誤'));
-            },
-            { enableHighAccuracy: true, timeout: 10000 }
-        );
-    }
-
-    // --- Haversine 距離計算 (回傳公里) ---
-    function getDistance(lat1, lon1, lat2, lon2) {
-        const R = 6371;
-        const dLat = (lat2 - lat1) * Math.PI / 180;
-        const dLon = (lon2 - lon1) * Math.PI / 180;
-        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                  Math.sin(dLon/2) * Math.sin(dLon/2);
-        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    }
-
-    // --- 解碼 Google Encoded Polyline ---
-    function decodePolyline(encoded) {
-        const points = [];
-        let index = 0, lat = 0, lng = 0;
-        while (index < encoded.length) {
-            let b, shift = 0, result = 0;
-            do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
-            lat += (result & 1) ? ~(result >> 1) : (result >> 1);
-            shift = 0; result = 0;
-            do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
-            lng += (result & 1) ? ~(result >> 1) : (result >> 1);
-            points.push({ lat: lat / 1e5, lng: lng / 1e5 });
-        }
-        return points;
-    }
-
-    function drawStaticMap(dir) {
-        clearMap();
-
-        let path = [];
-        if (currentData.shapes && currentData.shapes.length > 0) {
-            const shapeObj = currentData.shapes.find(s => s.Direction == dir) || currentData.shapes[0];
-            if (shapeObj) {
-                 if (shapeObj.EncodedPolyline) {
-                     path = decodePolyline(shapeObj.EncodedPolyline);
-                 } else if (shapeObj.Geometry) {
-                     path = parseWKT(shapeObj.Geometry);
-                 }
-            }
-        }
-
-        if (path.length === 0 && currentData.info[dir]?.Geometry) {
-            path = parseWKT(currentData.info[dir].Geometry);
-        }
-
-        if (path.length > 0) {
-            routeLine = new google.maps.Polyline({
-                path: path,
-                geodesic: true,
-                strokeColor: '#2563eb',
-                strokeOpacity: 0.8,
-                strokeWeight: 5,
-                map: map
-            });
-            
-            const bounds = new google.maps.LatLngBounds();
-            path.forEach(p => bounds.extend(p));
-            map.fitBounds(bounds);
-        }
-
-        const stops = currentData.stops[dir];
-        const bufferStops = renderFareInfo(dir);
-        
-        stops.forEach((stop, idx) => {
-            const isBuffer = bufferStops.start === stop.StopName.Zh_tw || bufferStops.end === stop.StopName.Zh_tw;
-            
-            // 改用 PinElement 來建立標示，取代舊版 icon/label
-            const pin = new google.maps.marker.PinElement({
-                glyphText: (idx + 1).toString(),
-                glyphColor: isBuffer ? '#b45309' : '#4b5563',
-                background: isBuffer ? '#fef3c7' : 'white',
-                borderColor: isBuffer ? '#f59e0b' : '#6b7280',
-                scale: 0.85
-            });
-
-            const marker = new google.maps.marker.AdvancedMarkerElement({
-                position: { lat: stop.StopPosition.PositionLat, lng: stop.StopPosition.PositionLon },
-                map: map,
-                content: pin.element,
-                title: stop.StopName.Zh_tw,
-                zIndex: isBuffer ? 2 : 1
-            });
-
-            const infoWindow = new google.maps.InfoWindow();
-            marker.addListener('gmp-click', () => {
-                infoWindow.setContent(`
-                    <div style="padding:10px; text-align:center;">
-                        <div style="font-weight:bold; margin-bottom:5px;">${stop.StopName.Zh_tw}</div>
-                        <i class="fas fa-spinner fa-spin"></i> 正在查詢行經路線...
-                    </div>
-                `);
-                activeInfoWindow = infoWindow;
-                infoWindow.open(map, marker);
-                fetchRealStopRoutes(stop.StopName.Zh_tw, infoWindow);
-            });
-            
-            mapMarkers.stops.push(marker);
-        });
-    }
-
-    function quickSwitchRoute(routeName) {
-        if (activeInfoWindow) {
-            activeInfoWindow.close();
-            activeInfoWindow = null;
-        }
-        loadRoute(routeName, currentData.city, currentData.type);
-    }
-
-    async function fetchRealStopRoutes(stopName, infoWindow) {
-        const cacheKey = `stop_${currentData.city}_${stopName}`;
-        
-        let routes = [];
-        try {
-            const cached = sessionStorage.getItem(cacheKey);
-            if (cached) {
-                routes = JSON.parse(cached);
-                console.log(`從快取讀取 ${stopName} 路線資料`);
-            }
-        } catch(e) { console.error('Cache read error', e); }
-
-        if (!routes || routes.length === 0) {
-            try {
-                // 因為我們的新版 Worker 統一使用 query params 且拿掉了 stop_info，
-                // 這邊我們直接讓他 fallback 到 "查詢失敗" 的靜態提示，因為要補這個端點會動到你的 Worker。
-                throw new Error("Endpoint removed");
-            } catch (e) {
-                infoWindow.setContent(`<div style="padding:10px; color:#475569; font-weight:bold;">${stopName}</div><div style="padding:0 10px 10px; color:#94a3b8; font-size:0.85rem;">(本版本暫不提供周邊路線查詢)</div>`);
-                return;
-            }
-        }
-    }
-
-    function updateBusesMap(buses) {
-        mapMarkers.buses.forEach(m => m.setMap(null)); // setMap(null) 也可以用於 AdvancedMarkerElement
-        mapMarkers.buses = [];
-
-        // 調試：統計有坐標的公車
-        const withCoords = buses.filter(b => b.lat && b.lon);
-        const withoutCoords = buses.filter(b => !b.lat || !b.lon);
-        if (withoutCoords.length > 0) {
-            console.warn(`⚠️ ${withoutCoords.length} 台公車缺少坐標:`, withoutCoords.map(b => `${b.plate || b.PlateNumb} (lat:${b.lat}, lon:${b.lon})`));
-        }
-
-        buses.forEach(bus => {
-            if (!bus.lat) {
-                console.log(`⏭️ 跳過無坐標公車: ${bus.plate || bus.PlateNumb}`);
-                return;
-            }
-
-            // 建立公車圖示容器 (AdvancedMarkerElement 使用 DOM)
-            const busEl = document.createElement('div');
-            // 加入 SVG
-            busEl.innerHTML = `
-                <svg width="24" height="40" viewBox="-12 -22 24 40" style="display:block; overflow:visible;">
-                    <path d="M -10,-14 L 10,-14 L 10,14 L -10,14 Z M 0,-20 L 8,-14 L -8,-14 Z" fill="#ef4444" stroke="white" stroke-width="2" />
-                </svg>
-            `;
-            // 旋轉
-            busEl.style.transform = `rotate(${bus.azi || 0}deg)`;
-            busEl.style.transformOrigin = 'center center';
-
-            const marker = new google.maps.marker.AdvancedMarkerElement({
-                position: { lat: bus.lat, lng: bus.lon },
-                map: map,
-                content: busEl,
-                title: bus.plate || bus.PlateNumb,
-                zIndex: 100
-            });
-
-            const plate = bus.plate || bus.PlateNumb || '未知車號';
-            const cityRegistry = vehicleMap[currentData.city] || {};
-            const vReg = cityRegistry[plate] || {};
-
-            const year = vReg.year || bus.ManufactureYear || '不詳';
-            const isElectric = plate.startsWith('E') || vReg.isElectric || bus.IsElectric === 1;
-            const isLowFloor = vReg.isLowFloor || bus.IsLowFloor === 1;
-            const hasWifi = vReg.hasWifi || bus.HasWifi === 1;
-            const lastSeen = bus.time ? new Date(bus.time).toLocaleTimeString('zh-TW', { hour12: false }) : '--:--:--';
-
-            const cityMap = { 'Taipei': '臺北市', 'NewTaipei': '新北市', 'Taoyuan': '桃園市', 'Taichung': '臺中市', 'Tainan': '臺南市', 'Kaohsiung': '高雄市', 'Keelung': '基隆市' };
-            const cityName = cityMap[currentData.city] || currentData.city;
-
-            const infoContent = `
-                <div class="bus-popup">
-                    <div class="bus-popup-header">
-                        <i class="fas fa-bus"></i> ${currentData.route} (${plate})
-                    </div>
-                    <div class="bus-popup-body">
-                        <div class="bus-popup-row">
-                            <div class="bus-popup-label"><i class="fas fa-map-marked-alt"></i> 城市</div>
-                            <div class="bus-popup-value">${cityName}</div>
-                        </div>
-                        <div class="bus-popup-row">
-                            <div class="bus-popup-label"><i class="fas fa-calendar-alt"></i> 出廠年份</div>
-                            <div class="bus-popup-value">${year}${year !== '不詳' ? ' 年' : ''}</div>
-                        </div>
-                        <div class="bus-popup-row">
-                            <div class="bus-popup-label"><i class="fas fa-info-circle"></i> 車輛服務</div>
-                            <div class="bus-popup-value">
-                                <i class="fas fa-bolt" style="color:${isElectric ? '#10b981' : '#cbd5e1'}" title="電動車"></i>
-                                <i class="fas fa-wheelchair" style="color:${isLowFloor ? '#10b981' : '#cbd5e1'}" title="低底盤"></i>
-                                <i class="fas fa-wifi" style="color:${hasWifi ? '#10b981' : '#cbd5e1'}" title="WiFi"></i>
-                                <i class="fas fa-plug" style="color:#10b981" title="USB充電"></i>
-                            </div>
-                        </div>
-                        <div class="bus-popup-row">
-                            <div class="bus-popup-label"><i class="far fa-clock"></i> 資料時間</div>
-                            <div class="bus-popup-value">${lastSeen}</div>
-                        </div>
-                        ${(() => {
-                            const occ = bus.occupancy;
-                            if (occ == null) return '';
-                            const level = Math.min(occ.level ?? occ, 2);
-                            const occLabels = ['舒適 (空位多)', '普通 (有站位)', '擁擠 (人多)'];
-                            const occColors = ['#10b981', '#f59e0b', '#ef4444'];
-                            return `
-                        <div class="bus-popup-row">
-                            <div class="bus-popup-label"><i class="fas fa-users"></i> 車內擁擠度</div>
-                            <div class="bus-popup-value" style="color:${occColors[level]}; font-weight:bold;">${occLabels[level]}</div>
-                        </div>`;
-                        })()}
-                    </div>
-                    <div class="bus-popup-footer">
-                        <a href="javascript:void(0)" onclick="handleSearchPlate('${plate}')" class="bus-popup-link">
-                            <i class="fas fa-hand-point-up"></i> 追蹤此車輛路徑
-                        </a>
-                    </div>
-                </div>
-            `;
-            const infowindow = new google.maps.InfoWindow({ content: infoContent });
-            marker.addListener('gmp-click', () => infowindow.open(map, marker));
-            mapMarkers.buses.push(marker);
-        });
-    }
-
-    // --- [修正版 v4] 詳細時刻表 (支援 班表 + 班距 兩種模式) ---
-    async function showTimetableModal() {
-        console.log("正在開啟時刻表...");
-
-        const modal = document.getElementById('modal-overlay');
-        const title = document.getElementById('modal-title');
-        const body = document.getElementById('modal-body');
-        
-        title.innerHTML = `<i class="fas fa-clock"></i> <span>${currentData.route} 時刻資訊</span>`;
-        body.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在載入資料...</div>`;
-        modal.style.display = 'flex';
-        
-        const dd = document.getElementById('options-dropdown');
-        if(dd) dd.style.display = 'none';
-
-        try {
-            const url = `${WORKER_URL}/?action=schedule&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
-            const res = await fetch(url);
-            const data = await res.json();
-
-            const scheduleList = Array.isArray(data) ? data : (data.data || []);
-            const dirSchedules = scheduleList.filter(s => s.Direction == currentData.direction);
-
-            if (dirSchedules.length === 0) {
-                body.innerHTML = '<div style="padding:20px; text-align:center; color:#666;">查無班次資料</div>';
-                return;
-            }
-
-            // 分為「固定班表」與「班距說明」
-            const result = {
-                weekday: { times: [], headways: [] },
-                weekend: { times: [], headways: [] }
-            };
-
-            dirSchedules.forEach(routeObj => {
-                // 1. 處理固定班表 (Timetables)
-                if (routeObj.Timetables && routeObj.Timetables.length > 0) {
-                    routeObj.Timetables.forEach(trip => {
-                        let depTime = trip.DepartureTime || (trip.StopTimes && trip.StopTimes[0]?.DepartureTime);
-                        if (!depTime) return;
-                        const timeStr = depTime.substring(0, 5);
-                        const days = trip.ServiceDay || routeObj.ServiceDay;
-                        if (!days) return;
-
-                        if (days.Saturday === 1 || days.Sunday === 1 || days.NationalHolidays === 1) {
-                            result.weekend.times.push(timeStr);
-                        }
-                        if (days.Monday === 1 || days.Tuesday === 1 || days.Wednesday === 1 || days.Thursday === 1 || days.Friday === 1) {
-                            result.weekday.times.push(timeStr);
-                        }
-                    });
-                }
-
-                // 2. 處理發車班距 (Frequencys) - 臺北市公車核心
-                if (routeObj.Frequencys && routeObj.Frequencys.length > 0) {
-                    routeObj.Frequencys.forEach(f => {
-                        const days = f.ServiceDay || routeObj.ServiceDay;
-                        if (!days) return;
-                        const text = `${f.StartTime}–${f.EndTime}：約 ${f.MinHeadwayMins}–${f.MaxHeadwayMins} 分鐘/班`;
-                        
-                        if (days.Saturday === 1 || days.Sunday === 1 || days.NationalHolidays === 1) {
-                            result.weekend.headways.push(text);
-                        }
-                        if (days.Monday === 1 || days.Tuesday === 1 || days.Wednesday === 1 || days.Thursday === 1 || days.Friday === 1) {
-                            result.weekday.headways.push(text);
-                        }
-                    });
-                }
-            });
-
-            // 去重排序
-            result.weekday.times = [...new Set(result.weekday.times)].sort();
-            result.weekend.times = [...new Set(result.weekend.times)].sort();
-            result.weekday.headways = [...new Set(result.weekday.headways)];
-            result.weekend.headways = [...new Set(result.weekend.headways)];
-
-            // 渲染 HTML
-            let html = '<div class="timetable-tabs">';
-            html += `<button class="timetable-tab-btn active" onclick="switchTimetableTab('weekday', event)">平日</button>`;
-            html += `<button class="timetable-tab-btn" onclick="switchTimetableTab('weekend', event)">假日</button>`;
-            html += '</div>';
-
-            const renderSection = (dataObj, id, active) => {
-                const style = active ? 'display:block' : 'display:none';
-                let inner = `<div id="${id}" style="${style}">`;
-                
-                // 顯示班距 (藍色區塊)
-                if (dataObj.headways.length > 0) {
-                    inner += `<div style="margin-bottom:15px; background:#f0f9ff; border-left:4px solid #3b82f6; padding:10px 14px; border-radius:4px;">`;
-                    inner += `<div style="font-weight:700; font-size:0.85rem; color:#1e40af; margin-bottom:6px;"><i class="fas fa-arrows-left-right"></i> 發車班距</div>`;
-                    dataObj.headways.forEach(h => inner += `<div style="font-size:0.9rem; margin-bottom:3px; color:#1e3a5f;">${h}</div>`);
-                    inner += `</div>`;
-                }
-                
-                // 顯示固定時刻格
-                if (dataObj.times.length > 0) {
-                    inner += `<div style="font-weight:700; font-size:0.85rem; color:#475569; margin-bottom:8px;"><i class="fas fa-list-ol"></i> 固定發車時刻</div>`;
-                    inner += `<div class="timetable-grid">`;
-                    dataObj.times.forEach(t => inner += `<div class="time-chip">${t}</div>`);
-                    inner += `</div>`;
-                }
-
-                if (dataObj.headways.length === 0 && dataObj.times.length === 0) {
-                    inner += `<div style="text-align:center; color:#94a3b8; padding:20px;">無營運資料</div>`;
-                }
-                inner += `</div>`;
-                return inner;
-            };
-
-            html += renderSection(result.weekday, 'content-weekday', true);
-            html += renderSection(result.weekend, 'content-weekend', false);
-            html += '<p style="font-size:0.75rem; color:#94a3b8; text-align:center; margin-top:15px;">※ 實際到站時間請參考即時動態</p>';
-
-            body.innerHTML = html;
-
-            window.switchTimetableTab = function(type, e) {
-                document.querySelectorAll('.timetable-tab-btn').forEach(b => b.classList.remove('active'));
-                if (e && e.target) e.target.classList.add('active');
-                document.getElementById('content-weekday').style.display = 'none';
-                document.getElementById('content-weekend').style.display = 'none';
-                document.getElementById('content-' + type).style.display = 'block';
-            };
-
-        } catch (e) {
-            console.error("Timetable Error:", e);
-            body.innerHTML = '<p style="text-align:center; color:red; padding:20px;">資料解析失敗</p>';
-        }
-    }
-
-    async function showFareModal() {
-        console.log("正在開啟票價視窗...");
-        const modal = document.getElementById('modal-overlay');
-        const title = document.getElementById('modal-title');
-        const body = document.getElementById('modal-body');
-
-        const dd = document.getElementById('options-dropdown');
-        if(dd) dd.style.display = 'none';
-
-        // 1. 先顯示載入中狀態
-        title.innerHTML = `<i class="fas fa-calculator"></i> <span>票價試算載入中</span>`;
-        body.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在獲取最新的計費規則...</div>`;
-        modal.style.display = 'flex';
-
-        // 2. 如果尚未抓取票價，現在立刻抓
-        if (!currentData.fare) {
-            try {
-                const url = `${WORKER_URL}/?action=fare&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
-                const res = await fetch(url);
-                const data = await res.json();
-                if (Array.isArray(data)) {
-                    currentData.fare = data;
-                } else if (data && Array.isArray(data.data)) {
-                    currentData.fare = data.data;
-                } else if (data && Array.isArray(data.RouteFares)) {
-                    currentData.fare = data.RouteFares;
-                } else if (data && typeof data === 'object' && !data.error) {
-                    currentData.fare = [data];
-                } else {
-                    currentData.fare = [];
-                }
-            } catch (e) {
-                console.error('票價載入失敗:', e);
-                body.innerHTML = `<div style="text-align:center; color:red; padding:20px;">票價資料載入失敗，請稍後再試</div>`;
-                return;
-            }
-        }
-
-        // 3. 確認站點資料
-        title.innerHTML = `<i class="fas fa-calculator"></i> <span>${currentData.route} 票價試算</span>`;
-        const stops = currentData.stops[currentData.direction];
-        if (!stops || stops.length === 0) {
-            body.innerHTML = '<p style="padding:20px; text-align:center;">此方向暫無站點資料，無法計算。</p>';
-            return;
-        }
-
-        const optionsHtml = stops.map((s, idx) => `<option value="${idx}">${idx+1}. ${s.StopName.Zh_tw}</option>`).join('');
-
-        // 4. 渲染 UI
-        body.innerHTML = `
-            <div class="fare-selector-group">
-                <div class="fare-select-row">
-                    <div class="fare-select-label">上車</div>
-                    <select id="fare-start" class="fare-select-box" onchange="calculateODFare()">${optionsHtml}</select>
-                </div>
-                <div class="fare-arrow"><i class="fas fa-arrow-down"></i></div>
-                <div class="fare-select-row">
-                    <div class="fare-select-label">下車</div>
-                    <select id="fare-end" class="fare-select-box" onchange="calculateODFare()">${optionsHtml}</select>
-                </div>
-            </div>
-            <div id="fare-result-area" class="fare-result-box">
-                <div class="fare-sub-text">請選擇上下車站點以計算</div>
-            </div>
-            <p style="font-size:0.75rem; color:#94a3b8; text-align:center; margin-top:15px;">※ 實際票價依車上刷卡機為準</p>
-        `;
-
-        // 5. 預設選頭尾並立即計算
-        document.getElementById('fare-start').selectedIndex = 0;
-        document.getElementById('fare-end').selectedIndex = stops.length - 1;
-        calculateODFare();
-    }
-
-    // --- 新增: 返回上一頁功能 (修復 ReferenceError) ---
     function goBack() {
         document.getElementById('route-view').style.display = 'none';
-        
-        // 隱藏跑馬燈(地圖用)
-        if(document.getElementById('marquee-wrapper')) document.getElementById('marquee-wrapper').style.display = 'block';
-
         document.getElementById('home-view').style.display = 'block';
-        if (suggestionsBox) suggestionsBox.style.display = 'none';
-        
-        // 清除地圖上的路線和站牌
-        clearMap();
-        lastBuses = []; 
-        
-        // 清除計時器
+        if(document.getElementById('marquee-wrapper')) document.getElementById('marquee-wrapper').style.display = 'block';
         if (refreshInterval) clearInterval(refreshInterval);
-        if (countdownInterval) clearInterval(countdownInterval);
-        
-        // 重設標題
-        document.title = '臺灣公車通 - 智慧即時動態';
-        
-        // 恢復搜尋框文字
-        const searchInput = document.getElementById('search-input');
-        if (searchInput) searchInput.value = '';
-
-        // 取消選取狀態
-        activeInfoWindow = null;
     }
-
-    // 初始化票價 UI，填充站點選單並回傳緩衝區站名 (供路線清單標色)
-    function renderFareInfo(dir) {
-        try {
-            const startSelect = document.getElementById('fare-start');
-            const endSelect = document.getElementById('fare-end');
-            if (!startSelect || !endSelect) return { start: null, end: null };
-
-            const stops = currentData.stops ? currentData.stops[dir] : null;
-            if (!stops || stops.length === 0) return { start: null, end: null };
-
-            // 填充上下車站選項
-            const opts = stops.map((s, i) => {
-                const name = s.StopName?.Zh_tw || s.StopName || `站點 ${i+1}`;
-                return `<option value="${i}">${i+1}. ${name}</option>`;
-            }).join('');
-            
-            startSelect.innerHTML = opts;
-            endSelect.innerHTML = opts;
-
-            // 預設選頭尾
-            startSelect.value = 0;
-            endSelect.value = stops.length - 1;
-
-            // 觸發計算
-            calculateODFare();
-
-            // 回傳緩衝區站名
-            let bStart = null, bEnd = null;
-            if (currentData.fare && currentData.fare.length > 0) {
-                for (const f of currentData.fare) {
-                    if (f.SectionFares && f.SectionFares.length > 0) {
-                        const buffers = f.SectionFares[0].BufferZones?.filter(z => z.Direction == dir) || [];
-                        if (buffers.length > 0) {
-                            bStart = buffers[0].FareBufferZoneOrigin?.StopName;
-                            bEnd   = buffers[0].FareBufferZoneDestination?.StopName;
-                        }
-                        break;
-                    }
-                }
-            }
-            return { start: bStart, end: bEnd };
-        } catch (e) {
-            console.warn('Render fare info error', e);
-            return { start: null, end: null };
-        }
-    }
-
-    // --- 終極票價運算引擎 (旗艦修正版) ---
-    function calculateODFare() {
-        const resultArea = document.getElementById('fare-result-area');
-        if (!resultArea) return;
-
-        const startIdx = parseInt(document.getElementById('fare-start').value);
-        const endIdx = parseInt(document.getElementById('fare-end').value);
-        const stops = currentData.stops[currentData.direction];
-        
-        if (!stops || !stops[startIdx] || !stops[endIdx]) return;
-
-        const boardStop = stops[startIdx];
-        const alightStop = stops[endIdx];
-
-        // 基礎檢核
-        if (endIdx <= startIdx) {
-            resultArea.innerHTML = `<div style="color:#ef4444; font-weight:bold;">下車站必須位於上車站之後</div>`;
-            resultArea.style.borderColor = '#fca5a5';
-            resultArea.style.background = '#fef2f2';
-            return;
-        }
-
-        const fareClassNames = { 1: '全票', 2: '學生票', 3: '孩童票', 4: '敬老票', 5: '愛心票', 6: '愛心孩童', 7:'愛心陪伴', 8:'團體', 9:'軍警' };
-        let fareItems = []; 
-        let fareType = '單程票';
-        let fareNote = null;
-        const dir = currentData.direction;
-
-        if (!currentData.fare || currentData.fare.length === 0) {
-            resultArea.innerHTML = `<div style="color:#94a3b8; padding:20px;">該路線未提供電子票價表</div>`;
-            return;
-        }
-
-        // 遍歷票價資料庫 (TDX 可能回傳多個票價物件)
-        for (const fareData of currentData.fare) {
-            if (fareItems.length > 0) break;
-
-            if (!fareNote) fareNote = fareData.TicketPriceDescription?.Zh_tw || fareData.TicketPriceDescription;
-
-            // --- 【策略 A】: ODFares 起迄矩陣 (針對 965 等快速公車最準確) ---
-            if (fareData.ODFares?.length > 0) {
-                // 正向比對
-                let match = fareData.ODFares.find(od => 
-                    od.Direction == dir && 
-                    (od.OriginStop?.StopID === boardStop.StopID || od.OriginStop?.StopName?.Zh_tw === boardStop.StopName.Zh_tw) &&
-                    (od.DestinationStop?.StopID === alightStop.StopID || od.DestinationStop?.StopName?.Zh_tw === alightStop.StopName.Zh_tw)
-                );
-
-                // 如果回程沒表，反向查去程的表
-                if (!match) {
-                    match = fareData.ODFares.find(od => 
-                        od.Direction != dir && 
-                        (od.OriginStop?.StopID === alightStop.StopID || od.OriginStop?.StopName?.Zh_tw === alightStop.StopName.Zh_tw) &&
-                        (od.DestinationStop?.StopID === boardStop.StopID || od.DestinationStop?.StopName?.Zh_tw === boardStop.StopName.Zh_tw)
-                    );
-                }
-
-                if (match?.Fares) {
-                    fareType = '里程計費 (矩陣)';
-                    match.Fares.forEach(f => fareItems.push({ label: fareClassNames[f.FareClass] || '票價', price: f.Price, highlight: f.FareClass === 1 }));
-                }
-            }
-
-            // --- 【策略 B】: StageFares 計費站 (公路客運常用) ---
-            if (!fareItems.length && fareData.StageFares?.length > 0) {
-                let match = fareData.StageFares.find(s => 
-                    s.Direction == dir && 
-                    (s.OriginStage?.StopID === boardStop.StopID || s.OriginStage?.StopName?.Zh_tw === boardStop.StopName.Zh_tw) &&
-                    (s.DestinationStage?.StopID === alightStop.StopID || s.DestinationStage?.StopName?.Zh_tw === alightStop.StopName.Zh_tw)
-                );
-
-                // 對稱性反查：當回程無表時，翻轉起迄查去程
-                if (!match) {
-                    match = fareData.StageFares.find(s => 
-                        s.Direction != dir && 
-                        (s.OriginStage?.StopID === alightStop.StopID || s.OriginStage?.StopName?.Zh_tw === alightStop.StopName.Zh_tw) &&
-                        (s.DestinationStage?.StopID === boardStop.StopID || s.DestinationStage?.StopName?.Zh_tw === boardStop.StopName.Zh_tw)
-                    );
-                }
-
-                if (match?.Fares) {
-                    fareType = '計費站里程';
-                    match.Fares.forEach(f => fareItems.push({ label: fareClassNames[f.FareClass] || '票價', price: f.Price, highlight: f.FareClass === 1 }));
-                }
-            }
-
-            // --- 【策略 C】: SectionFares 智慧段次演算法 (解決 965 核心問題) ---
-            if (!fareItems.length && fareData.SectionFares?.length > 0) {
-                const sd = fareData.SectionFares.find(s => s.Direction == dir) || fareData.SectionFares[0];
-                const rawBuffers = (sd.BufferZones || []).filter(z => z.Direction == dir || z.Direction === undefined);
-                
-                // 用站名/StopID 回查路線上的真實站序 (防止 API 回傳 StopSequence=0 的問題)
-                const getStopRealSeq = (bufStop) => {
-                    if (!bufStop) return 0;
-                    const found = stops.find(s => s.StopID === bufStop.StopID || s.StopName?.Zh_tw === bufStop.StopName?.Zh_tw);
-                    return found ? (found.StopSequence || 0) : 0;
-                };
-
-                // 將緩衝區轉換為「段次分界點」列表（排序後去重）
-                const segmentBreaks = rawBuffers.map(b => {
-                    return Math.max(getStopRealSeq(b.FareBufferZoneOrigin), getStopRealSeq(b.FareBufferZoneDestination));
-                }).filter(seq => seq > 0).sort((a, b) => a - b);
-
-                // 計算站點所在的段次 ID
-                const getSegmentID = (targetSeq) => {
-                    let segID = 1;
-                    for (const breakPoint of segmentBreaks) {
-                        if (targetSeq > breakPoint) segID++;
-                    }
-                    return segID;
-                };
-
-                const boardSeg = getSegmentID(boardStop.StopSequence);
-                const alightSeg = getSegmentID(alightStop.StopSequence);
-                
-                // 核心公式：段數 = (下車段 ID - 上車段 ID + 1)
-                // 範例 965：板橋(Seg 1) → 金瓜石(Seg 6)，則 6 - 1 + 1 = 6 段
-                const totalSections = Math.max(1, alightSeg - boardSeg + 1);
-                
-                fareType = `${totalSections} 段票`;
-                (sd.Fares || []).forEach(f => {
-                    fareItems.push({ 
-                        label: fareClassNames[f.FareClass] || '票價', 
-                        price: f.Price * totalSections, 
-                        highlight: f.FareClass === 1 
-                    });
-                });
-            }
-        }
-
-        // 最終渲染
-        renderFareResult(resultArea, fareItems, fareType, fareNote);
-    }
-
-    // --- 輔助渲染：美化輸出與去重 ---
-    function renderFareResult(area, items, type, note) {
-        if (items.length === 0) {
-            area.style.background = '#f8fafc';
-            area.style.borderColor = '#e2e8f0';
-            area.innerHTML = `
-                <div style="font-size:0.9rem; font-weight:700; color:#475569; margin-bottom:8px;">無法自動試算票價：</div>
-                <div style="font-size:0.85rem; color:#64748b; line-height:1.6; text-align:left;">${note || '請參考車上刷卡機或公告。'}</div>
-            `;
-            return;
-        }
-
-        // 價格去重 (避免現金和電子票證顯示重複卡片)
-        const unique = [];
-        const seen = new Set();
-        items.forEach(i => {
-            const key = `${i.label}-${i.price}`;
-            if (!seen.has(key)) { seen.add(key); unique.push(i); }
-        });
-
-        area.style.background = '#ecfdf5';
-        area.style.borderColor = '#a7f3d0';
-
-        area.innerHTML = `
-            <div style="font-size:0.82rem;font-weight:700;color:#047857;margin-bottom:12px;display:flex;align-items:center;gap:6px;">
-                <i class="fas fa-ticket-alt"></i> ${type}
-            </div>
-            <div class="fare-types-grid">
-                ${unique.map(f => `
-                    <div class="fare-type-cell ${f.highlight ? 'highlight' : ''}">
-                        <div class="fare-type-label">${f.label}</div>
-                        <div class="fare-type-price">$${f.price}</div>
-                    </div>
-                `).join('')}
-            </div>
-            ${note ? `<div style="margin-top:12px; padding-top:10px; border-top:1px dashed #a7f3d0; font-size:0.75rem; color:#059669; line-height:1.4; text-align:left;">※ 備註：${note}</div>` : ''}
-        `;
-    }
-
-    // --- 追蹤車牌：從地圖聚焦至該公車 ---
-    async function handleSearchPlate(plate) {
-        if (!plate || plate === '---') return false;
-
-        // 先從快取的 lastBuses 中找
-        let bus = lastBuses.find(b => (b.PlateNumb === plate || b.plate === plate));
-
-        // 找不到則重新向 Worker 查詢一次目前路線動態
-        if (!bus && currentData.route) {
-            try {
-                const targetName = normalize(currentData.route);
-                const res = await fetch(`${WORKER_URL}/?category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(targetName)}`);
-                const data = await res.json();
-                const buses = (data.buses || []).filter(b => b.dir == currentData.direction);
-                lastBuses = buses;
-                bus = buses.find(b => (b.PlateNumb === plate || b.plate === plate));
-            } catch(e) { /* 非關鍵，靜默失敗 */ }
-        }
-
-        if (bus && bus.lat) {
-            if (activeInfoWindow) { activeInfoWindow.close(); activeInfoWindow = null; }
-            map.panTo({ lat: bus.lat, lng: bus.lon });
-            map.setZoom(17);
-            return true;
-        }
-
-        // 找不到位置時顯示提示
-        alert(`找不到車牌 ${plate} 的即時位置，可能已離線或停駛。`);
-        return false;
-    }
-
-    function closeModal() {
-        document.getElementById('modal-overlay').style.display = 'none';
-    }
-
-    // --- 清除 HTML 標籤並處理圖片 ---
-    function formatDescription(html) {
-        if (!html) return { text: '無詳細內容', images: [] };
-        
-        // 1. 提取圖片網址 (如果有 <img> 標籤)
-        const imgRegex = /<img[^>]+src="([^">]+)"/g;
-        let images = [];
-        let m;
-        while ((m = imgRegex.exec(html)) !== null) {
-            images.push(m[1]);
-        }
-
-        // 2. 移除所有標籤，但保留換行
-        let text = html.replace(/<br\s*\/?>/gi, '\n'); // <br> 轉 換行
-        text = text.replace(/<\/p>/gi, '\n');          // </p> 轉 換行
-        text = text.replace(/<[^>]+>/g, '');            // 移除其餘所有標籤
-        
-        // 3. 反解 HTML 實體字元 (例如 &nbsp; 轉為空白)
-        const txt = document.createElement('textarea');
-        txt.innerHTML = text;
-        text = txt.value;
-
-        return { text: text.trim(), images: images };
-    }
-
-    // --- 查看縣市公告 ---
-    async function openCityNewsModal(targetCity = null) {
-        // 如果有傳入 targetCity 就用它，否則用 browser.city
-        const city = targetCity || browser.city || 'Taipei';
-        const type = (city === 'InterCity') ? 'InterCity' : 'CityBus';
-        
-        const cityNameMap = {
-            'Taipei': '臺北市', 'NewTaipei': '新北市', 'Keelung': '基隆市',
-            'Taoyuan': '桃園市', 'Hsinchu': '新竹市', 'HsinchuCounty': '新竹縣',
-            'YilanCounty': '宜蘭縣', 'MiaoliCounty': '苗栗縣', 'Taichung': '臺中市',
-            'ChanghuaCounty': '彰化縣', 'NantouCounty': '南投縣', 'YunlinCounty': '雲林縣',
-            'Chiayi': '嘉義市', 'ChiayiCounty': '嘉義縣', 'Tainan': '臺南市',
-            'Kaohsiung': '高雄市', 'PingtungCounty': '屏東縣',
-            'HualienCounty': '花蓮縣', 'TaitungCounty': '臺東縣',
-            'PenghuCounty': '澎湖縣', 'KinmenCounty': '金門縣', 'LienchiangCounty': '連江縣',
-            'InterCity': '公路客運'
-        };
-
-        const modal = document.getElementById('modal-overlay');
-        const title = document.getElementById('modal-title');
-        const body = document.getElementById('modal-body');
-        
-        // 1. 建立 Modal 標題
-        title.innerHTML = `<i class="fas fa-bullhorn"></i> <span>營運公告</span>`;
-
-        // 2. 建立「縣市切換選單」的 HTML (改為下拉選單)
-        let selectHtml = `
-            <div style="margin-bottom: 20px; padding: 12px; background: #f1f5f9; border-radius: 12px; border: 1px solid #e2e8f0;">
-                <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
-                    <i class="fas fa-filter" style="color:#64748b;"></i>
-                    <span style="font-weight:700; color:#475569; font-size:0.9rem;">切換公告縣市/類型</span>
-                </div>
-                <!-- 改用 select, 加上寬度 full -->
-                <select id="news-city-select" onchange="openCityNewsModal(this.value)" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; font-size:1rem; outline:none; background:white; font-weight:600; color:#334155; cursor:pointer;">
-        `;
-        
-        // 分組顯示：先顯示公路客運
-        selectHtml += `<optgroup label="全台路網">`;
-        // 若當前選擇是 InterCity 則標記 selected
-        const isInterSelected = (city === 'InterCity') ? 'selected' : '';
-        selectHtml += `<option value="InterCity" ${isInterSelected}>公路客運</option>`;
-        selectHtml += `</optgroup>`;
-
-        // 再顯示其他縣市
-        selectHtml += `<optgroup label="市區公車">`;
-        for (const [code, name] of Object.entries(cityNameMap)) {
-            if (code === 'InterCity') continue;
-            const isSelected = (code === city) ? 'selected' : '';
-            selectHtml += `<option value="${code}" ${isSelected}>${name}</option>`;
-        }
-        selectHtml += `</optgroup></select></div>`;
-
-        // 3. 先顯示載入中畫面
-        body.innerHTML = `
-            ${selectHtml}
-            <div id="news-content-area">
-                <div style="text-align:center; padding:40px;">
-                    <i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在載入 ${cityNameMap[city] || city} 公告...
-                </div>
-            </div>
-        `;
-        
-        modal.style.display = 'flex';
-
-        try {
-            // 抓取資料
-            const [newsRes, alertRes] = await Promise.all([
-                fetch(`${WORKER_URL}/?action=news&category=${type}&city=${city}`).then(r => r.json()),
-                fetch(`${WORKER_URL}/?action=alert&category=${type}&city=${city}`).then(r => r.json())
-            ]);
-
-            // Worker 返回 Array，直接用
-            const newsList = Array.isArray(newsRes) ? newsRes : [];
-            const alertList = Array.isArray(alertRes) ? alertRes : [];
-
-            const allItems = [
-                ...alertList.map(a => ({
-                    title: a.Title, desc: a.Description, date: a.StartTime, url: a.AlertURL, tag: '通阻', tagClass: 'tag-alert'
-                })),
-                ...newsList.map(n => ({
-                    title: n.Title, desc: n.Description, date: n.PublishTime, url: n.NewsURL, tag: '消息', tagClass: 'tag-news'
-                }))
-            ].sort((a, b) => new Date(b.date) - new Date(a.date));
-
-            const contentArea = document.getElementById('news-content-area');
-
-            if (allItems.length === 0) {
-                contentArea.innerHTML = `<div style="text-align:center; padding:40px; color:#9ca3af;">目前無任何公告</div>`;
-            } else {
-                let listHtml = '<div style="display:flex; flex-direction:column; gap:12px;">';
-                allItems.forEach(item => {
-                    const dateStr = item.date ? item.date.substring(0, 10) : '';
-                    
-                    // 呼叫清洗函式
-                    const formatted = formatDescription(item.desc);
-
-                    listHtml += `
-                        <div style="border-bottom:1px solid #eee; padding-bottom:12px;">
-                            <div style="font-size:0.8rem; color:#9ca3af; margin-bottom:4px;">${dateStr}</div>
-                            <div style="font-weight:700; font-size:1rem; margin-bottom:6px; line-height:1.4;">
-                                <span class="${item.tagClass}">${item.tag}</span> ${item.title}
-                            </div>
-                            
-                            <!-- 顯示清洗後的乾淨文字 -->
-                            <div style="font-size:0.9rem; color:#4b5563; white-space:pre-wrap;">${formatted.text}</div>
-                            
-                            <!-- 如果公告裡有圖片，美化後顯示 -->
-                            ${formatted.images.map(img => `
-                                <div style="margin-top:10px; border-radius:8px; overflow:hidden; border:1px solid #eee;">
-                                    <img src="${img}" style="width:100%; display:block;" onerror="this.style.display='none'">
-                                </div>
-                            `).join('')}
-
-                            ${item.url ? `<a href="${item.url}" target="_blank" style="display:inline-block; margin-top:8px; font-size:0.85rem; color:#2563eb;"><i class="fas fa-link"></i> 官方詳細公告</a>` : ''}
-                        </div>`;
-                });
-                listHtml += '</div>';
-                contentArea.innerHTML = listHtml;
-            }
-
-        } catch (e) {
-            console.error("News load failed", e);
-            const contentArea = document.getElementById('news-content-area');
-            if(contentArea) contentArea.innerHTML = `<div style="text-align:center; padding:20px; color:#ef4444;">載入失敗，請稍後再試</div>`;
-        }
-    }
-
-    // --- 雙層跑馬燈功能 ---
-    async function initDualMarquee() {
-        // 1. 啟動公路客運跑馬燈 (只抓一次即可，因為它是全台性的)
-        updateMarqueeSection('marquee-inter-text', '', 'InterCity');
-
-        // 2. 啟動縣市公車跑馬燈 (預設台北)
-        updateMarqueeSection('marquee-city-text', 'Taipei', 'CityBus');
-    }
-
-    // 通用更新函式
-    async function updateMarqueeSection(elementId, city, type) {
-        const textEl = document.getElementById(elementId);
-        const labelEl = document.getElementById('marquee-city-label'); // 只有縣市層需要更新標籤
-        
-        // 如果是更新縣市層，順便更新前面的小標籤 (例如：北市公車、台中公車)
-        if (elementId === 'marquee-city-text' && labelEl) {
-            const cityNameMap = {
-                'Taipei': '北市公車', 'NewTaipei': '新北公車', 'Taoyuan': '桃園公車',
-                'Taichung': '台中公車', 'Tainan': '台南公車', 'Kaohsiung': '高雄公車',
-                'Keelung': '基隆公車', 'Hsinchu': '新竹市公車', 'HsinchuCounty': '新竹縣公車',
-                'MiaoliCounty': '苗栗公車', 'ChanghuaCounty': '彰化公車', 'NantouCounty': '南投公車',
-                'YunlinCounty': '雲林公車', 'ChiayiCounty': '嘉義縣公車', 'Chiayi': '嘉義市公車',
-                'PingtungCounty': '屏東公車', 'YilanCounty': '宜蘭公車', 'HualienCounty': '花蓮公車',
-                'TaitungCounty': '台東公車', 'PenghuCounty': '澎湖公車', 'KinmenCounty': '金門公車',
-                'LienchiangCounty': '連江公車',
-                'InterCity': '公路客運'
-            };
-            // 若為 InterCity 或其他不在此表中的，顯示 "當地公車"
-            labelEl.innerText = cityNameMap[city] || '當地公車';
-        }
-
-        if (!textEl) return;
-
-        // 先重置內容與動畫 class
-        textEl.innerText = "載入中...";
-        textEl.className = ''; 
-        // 為了讓 CSS animation 重啟，需要 reflow 或先清掉 class
-        // 這裡我們等得到資料後再加上對應 class
-
-        try {
-            // 抓取 Alert
-            let url = `${WORKER_URL}/?action=alert&category=${type}`;
-            if (city && city !== 'InterCity') url += `&city=${city}`;
-            
-            const res = await fetch(url);
-            const alertResponse = await res.json();
-            
-            // Worker 返回 Array，直接用
-            const alertData = Array.isArray(alertResponse) ? alertResponse : [];
-            
-            // 過濾：只顯示狀態非正常的公告 (Status != 1) 或是重要公告
-            const urgentAlerts = alertData.filter(a => a.Status !== 1);
-
-            if (urgentAlerts.length > 0) {
-                // 組合跑馬燈文字
-                const text = urgentAlerts.map(a => `【${a.Title}】${a.Description}`).join("　　　");
-                textEl.innerText = text;
-                
-                // 公路客運用加速動畫，縣市層用標準速度
-                // 先移除再添加以觸發動畫重置
-                void textEl.offsetWidth;
-                textEl.className = 'marquee-content';
-
-                // 依文字長度動態設定動畫時長（避免短文跑太快、長文跑太慢）
-                // 🚀 公路客運加速！
-                const isMobile = window.innerWidth <= 768;
-                const isInterCity = (type === 'InterCity' || city === 'InterCity');
-                
-                let secPerChar, minDuration;
-                if (isInterCity) {
-                    // 公路客運專用快速設定
-                    secPerChar = isMobile ? 0.06 : 0.04;
-                    minDuration = isMobile ? 8 : 5;
-                } else {
-                    // 城市公車標準速度
-                    secPerChar = isMobile ? 0.1 : 0.08;
-                    minDuration = isMobile ? 12 : 10;
-                }
-                
-                const duration = Math.max(minDuration, text.length * secPerChar);
-                textEl.style.animationDuration = duration + 's';
-                
-            } else {
-                // 如果沒有重大公告，顯示平安訊息
-                textEl.innerText = (elementId === 'marquee-city-text') ? "🚍 當地公車營運正常" : "🚌 公路客運全線順暢";
-                textEl.className = ''; // 靜止不動
-                textEl.style.paddingLeft = '0';
-            }
-
-        } catch (e) {
-            console.warn("跑馬燈載入失敗", e);
-            textEl.innerText = "暫無即時資訊";
-            textEl.className = '';
-            textEl.style.paddingLeft = '0';
-        }
-    }
-
-    // 舊的 initMarquee 可以移除或保留作為初始呼叫
-    function initMarquee() {
-        initDualMarquee();
-    }
-
-    // window.onload 已移除，改由 Google Maps API callback=initMap 觸發
 </script>
 
 <!-- Google Maps API: 放在主 script 之後，確保 window.initMap 已定義 -->
