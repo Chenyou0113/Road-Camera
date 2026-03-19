@@ -1,4 +1,6 @@
-<!DOCTYPE html>
+import os
+
+html_content = r"""<!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
@@ -3285,3 +3287,11 @@
 
 </body>
 </html>
+"""
+
+file_path = r"c:\Users\xiaoy\OneDrive\桌面\Camera\Road-Camera\bus-liveboard.html"
+
+with open(file_path, "w", encoding="utf-8") as f:
+    f.write(html_content)
+
+print("File updated successfully.")
