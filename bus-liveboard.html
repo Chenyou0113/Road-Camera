@@ -1533,7 +1533,7 @@
         loadRoute(name, city, type);
     }
 
-    // 🌟 修正 3：對齊 Worker v29.0 的 info/shape 請求格式
+    // 🌟 修正 3：對齊 Worker v29.0 的 info/shape 請求格式，並補回副標題更新邏輯
     async function loadRoute(name, city, type) {
         const searchInput = document.getElementById('search-input');
         if (searchInput) searchInput.value = name;
@@ -1541,7 +1541,6 @@
         document.getElementById('home-view').style.display = 'none';
         document.getElementById('route-view').style.display = 'flex';
         document.getElementById('loading').style.display = 'flex';
-        // 隱藏跑馬燈以避免遮擋 (雖然 initDualMarquee 空了，但元素還在)
         if(document.getElementById('marquee-wrapper')) document.getElementById('marquee-wrapper').style.display = 'none';
         
         currentData.route = name;
@@ -1549,9 +1548,10 @@
         currentData.type = type;
 
         try {
+            const targetName = normalize(name);
             const [infoRes, shapeRes] = await Promise.all([
-                fetch(`${WORKER_URL}/?action=info&category=${type}&city=${city}&route=${encodeURIComponent(name)}`).then(r => r.json()),
-                fetch(`${WORKER_URL}/?action=shape&category=${type}&city=${city}&route=${encodeURIComponent(name)}`).then(r => r.json())
+                fetch(`${WORKER_URL}/?action=info&category=${type}&city=${city}&route=${encodeURIComponent(targetName)}`).then(r => r.json()),
+                fetch(`${WORKER_URL}/?action=shape&category=${type}&city=${city}&route=${encodeURIComponent(targetName)}`).then(r => r.json())
             ]);
 
             const infoList = Array.isArray(infoRes) ? infoRes : [];
@@ -1561,13 +1561,32 @@
             currentData.stops = { 0: dir0 ? dir0.Stops : [], 1: dir1 ? dir1.Stops : [] };
             currentData.info = { 0: dir0, 1: dir1 };
 
+            // 1. 更新主標題 (路線名稱)
             const titleEl = document.getElementById('route-title');
             if(titleEl) titleEl.innerText = name;
             
+            // 2. 🌟 補回更新副標題 (起迄站) 的邏輯！
+            const getStopName = (dirObj, isDep) => {
+                if (!dirObj || !dirObj.Stops || !dirObj.Stops.length) return '';
+                const idx = isDep ? 0 : dirObj.Stops.length - 1;
+                return dirObj.Stops[idx].StopName?.Zh_tw || dirObj.Stops[idx].StopName || '';
+            };
+            const dep0 = getStopName(dir0, true);
+            const dest0 = getStopName(dir0, false);
+            const subTitleEl = document.getElementById('route-subtitle');
+            if (subTitleEl) {
+                if (dep0 && dest0) {
+                    subTitleEl.innerHTML = `${dep0} <i class="fas fa-arrow-right" style="font-size:0.8em; margin:0 4px;"></i> ${dest0}`;
+                } else {
+                    subTitleEl.innerText = dest0 || dep0 || '路線詳情';
+                }
+            }
+
+            // 3. 更新分頁標籤 (往 XXX)
             const dest0El = document.getElementById('dest-0');
             const dest1El = document.getElementById('dest-1');
-            if(dest0El) dest0El.innerText = dir0?.DestinationStopName?.Zh_tw || '終點';
-            if(dest1El) dest1El.innerText = dir1?.DestinationStopName?.Zh_tw || '終點';
+            if(dest0El) dest0El.innerText = dest0 || '終點';
+            if(dest1El) dest1El.innerText = getStopName(dir1, false) || '終點';
             
             const tab1 = document.getElementById('tab-1');
             if(tab1) tab1.style.display = dir1 ? 'block' : 'none';
