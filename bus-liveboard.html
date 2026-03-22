@@ -841,6 +841,10 @@
         }, 1000);
     }
 
+    function normalize(value) {
+        return String(value || '').replace(/\s+/g, ' ').trim();
+    }
+
     // --- 1. 列表渲染 (依賴新版 Worker) ---
     async function selectCity(cityKey) {
         if (!cityKey) return;
@@ -865,7 +869,7 @@
                 const rName = r.name || '';
                 const safeName = rName.replace(/'/g, '&#39;');
                 const routeSubText = `${r.departure || ''} → ${r.destination || ''}`;
-                return `<button class="route-card-btn" onclick="loadRoute('${safeName}')">
+                return `<button class="route-card-btn" onclick="loadRoute('${safeName}', '${cityKey}', '${currentData.type}')">
                     <div class="route-card-num">${rName}</div>
                     <div class="route-card-dest">${routeSubText}</div>
                 </button>`;
@@ -878,27 +882,38 @@
     }
 
     // --- 2. 路線詳情載入 (靜態站牌) ---
-    async function loadRoute(name) {
+    async function loadRoute(name, city, type) {
+        const searchInput = document.getElementById('search-input');
+        if (searchInput) searchInput.value = name;
+        
         document.getElementById('home-view').style.display = 'none';
         document.getElementById('route-view').style.display = 'flex';
         document.getElementById('loading').style.display = 'flex';
         if(document.getElementById('marquee-wrapper')) document.getElementById('marquee-wrapper').style.display = 'none';
         
         currentData.route = name;
+        currentData.city = city;
+        currentData.type = type;
 
         try {
-            // 注意：我們不需要自己做 normalize，因為傳過去的 name 本身就是乾淨的
-            const url = `${WORKER_URL}/?action=info&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`;
-            const res = await fetch(url);
-            const data = await res.json();
+            const targetName = normalize(name);
+            const [infoRes, shapeRes] = await Promise.all([
+                fetch(`${WORKER_URL}/?action=info&category=${type}&city=${city}&route=${encodeURIComponent(targetName)}`).then(r => r.json()),
+                fetch(`${WORKER_URL}/?action=shape&category=${type}&city=${city}&route=${encodeURIComponent(targetName)}`).then(r => r.json())
+            ]);
+
+            const infoList = Array.isArray(infoRes) ? infoRes : [];
             
-            const dir0 = data.find(d => d.Direction == 0);
-            const dir1 = data.find(d => d.Direction == 1);
+            // 🌟 智慧分配：不再死板要求 Direction == 0 或 1，而是照順序分配，解決單向或迴圈線問題
+            const dir0 = infoList.find(d => d.Direction == 0) || infoList[0];
+            const dir1 = infoList.find(d => d.Direction == 1) || (infoList.length > 1 && infoList[1] !== dir0 ? infoList[1] : null);
             
             currentData.stops = { 0: dir0 ? dir0.Stops : [], 1: dir1 ? dir1.Stops : [] };
+            currentData.info = { 0: dir0, 1: dir1 };
 
-            // 🌟 修正：完美更新副標題 (起迄站)
-            document.getElementById('route-title').innerText = name;
+            // 更新主標題
+            const titleEl = document.getElementById('route-title');
+            if(titleEl) titleEl.innerText = name;
             
             const getStop = (dirObj, isDep) => {
                 if (!dirObj || !dirObj.Stops || !dirObj.Stops.length) return '';
@@ -918,12 +933,16 @@
 
             document.getElementById('dest-0').innerText = dest0 || '終點';
             document.getElementById('dest-1').innerText = getStop(dir1, false) || '終點';
-            document.getElementById('tab-1').style.display = dir1 ? 'block' : 'none';
             
-            switchDirection(0);
+            const tab1 = document.getElementById('tab-1');
+            if(tab1) tab1.style.display = dir1 ? 'block' : 'none';
+            
+            currentData.shapes = Array.isArray(shapeRes) ? shapeRes : [];
+
+            // 預設選擇有資料的第一個方向
+            switchDirection(dir0 ? 0 : 1);
         } catch (e) {
             console.error(e);
-            alert('載入失敗，請重試');
         } finally {
             document.getElementById('loading').style.display = 'none';
         }
