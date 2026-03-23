@@ -764,6 +764,31 @@
                         <button class="refresh-btn" onclick="refreshLiveData()" title="重新整理">
                             <i class="fas fa-sync-alt" id="refresh-icon"></i>
                         </button>
+                        
+                        <!-- 🌟 補回：更多功能選單 (三個點點) -->
+                        <div style="position: relative; display: inline-block;">
+                            <button class="more-options-btn" id="more-btn" onclick="toggleOptionsMenu(event)" title="更多查詢">
+                                <i class="fas fa-ellipsis-v"></i>
+                            </button>
+                            <!-- 🌟 補回：下拉選單內容 -->
+                            <div id="options-dropdown" class="options-dropdown">
+                                <div class="option-item" onclick="showTimetableModal()">
+                                    <div class="label-box"><i class="fas fa-clock"></i> <span>時刻詳細資訊</span></div>
+                                    <i class="fas fa-chevron-right" style="font-size: 0.7rem;"></i>
+                                </div>
+                                <div class="option-item" onclick="showFareModal()">
+                                    <div class="label-box"><i class="fas fa-dollar-sign"></i> <span>票價資訊查詢</span></div>
+                                    <i class="fas fa-chevron-right" style="font-size: 0.7rem;"></i>
+                                </div>
+                                <div class="option-item" onclick="event.stopPropagation()">
+                                    <div class="label-box"><i class="fas fa-traffic-light"></i> <span>顯示交通情形</span></div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="traffic-toggle" onchange="toggleTrafficLayer(this.checked)">
+                                        <span class="slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="tabs">
@@ -822,6 +847,7 @@
     let activeInfoWindow = null;
     let currentData = { city: 'Taipei', route: '', type: 'CityBus', direction: 0, stops: {}, info: {}, fare: null };
     let lastBuses = [];   
+    let vehicleMap = {}; // 🌟 確保這行存在，用來存車籍資料
     let refreshInterval, countdownInterval;
     let refreshDuration = 10000;
     let trafficLayer = null;
@@ -1013,15 +1039,28 @@
         suggestionsBox.style.display = 'block';
     }
 
-    function loadRouteGuarded(name, city, type) {
-        loadRoute(name, city, type);
+    // --- 3. 載入路線與車籍字典 ---
+    async function loadVehicleData(city) {
+        if (vehicleMap[city]) return;
+        vehicleMap[city] = {};
+        try {
+            const res = await fetch(`${WORKER_URL}/?action=vehicle&city=${city}`);
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                data.forEach(v => {
+                    vehicleMap[city][v.PlateNumb] = {
+                        year: v.ManufactureYear || (v.PurchaseTime ? v.PurchaseTime.substring(0, 4) : '不詳'),
+                        isLowFloor: v.IsLowFloor === 1,
+                        hasWifi: v.HasWifi === 1,
+                        isElectric: v.IsElectric === 1 || v.VehicleType === 1,
+                        hasLift: v.HasLiftOrRamp === 1
+                    };
+                });
+            }
+        } catch (e) { console.warn(`車籍字典載入異常 (${city})`, e); }
     }
 
-    // --- 3. 路線詳情載入 ---
     async function loadRoute(name, city, type) {
-        const suggestionsBox = document.getElementById('suggestions');
-        if (suggestionsBox) suggestionsBox.style.display = 'none';
-        
         const searchInput = document.getElementById('search-input');
         if (searchInput) searchInput.value = name;
         
@@ -1033,12 +1072,16 @@
         currentData.route = name;
         currentData.city = city || browser.city;
         currentData.type = type || browser.type;
-        currentData.fare = null; // 重置票價快取
+        currentData.fare = null;
+
+        // 🌟 確保在載入路線時，也把車籍字典抓下來
+        loadVehicleData(currentData.city);
 
         try {
+            const targetName = normalize(name);
             const [infoRes, shapeRes] = await Promise.all([
-                fetch(`${WORKER_URL}/?action=info&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`).then(r => r.json()),
-                fetch(`${WORKER_URL}/?action=shape&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`).then(r => r.json())
+                fetch(`${WORKER_URL}/?action=info&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(targetName)}`).then(r => r.json()),
+                fetch(`${WORKER_URL}/?action=shape&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(targetName)}`).then(r => r.json())
             ]);
 
             const infoList = Array.isArray(infoRes) ? infoRes : [];
@@ -1063,10 +1106,8 @@
             if (dep0 && dest0) subtitleEl.innerHTML = `${dep0} <i class="fas fa-arrow-right" style="font-size:0.8em; margin:0 4px;"></i> ${dest0}`;
             else subtitleEl.innerText = dest0 || dep0 || '路線詳情';
 
-            const dest0El = document.getElementById('dest-0');
-            const dest1El = document.getElementById('dest-1');
-            if(dest0El) dest0El.innerText = dest0 || '終點';
-            if(dest1El) dest1El.innerText = getStop(dir1, false) || '終點';
+            document.getElementById('dest-0').innerText = dest0 || '終點';
+            document.getElementById('dest-1').innerText = getStop(dir1, false) || '終點';
             
             const tab1 = document.getElementById('tab-1');
             if(tab1) tab1.style.display = dir1 ? 'block' : 'none';
@@ -1237,32 +1278,32 @@
             }
 
             if (targetBus) {
-                const plate = targetBus.plate || targetBus.PlateNumb || '---';
+                const plate = targetBus.plate || '---';
                 assignedBuses.add(plate);
 
-                // 1. 抓取客運業者名稱
                 let operator = '客運公司';
-                if (currentData.info && currentData.info[currentData.direction]) {
-                    const info = currentData.info[currentData.direction];
-                    const ops = info.Operators || info.OperatorName || [];
+                if (currentData.info && currentData.info[currentData.direction]?.Operators) {
+                    const ops = currentData.info[currentData.direction].Operators;
                     if (Array.isArray(ops) && ops.length > 0) {
                         operator = ops[0].OperatorName?.Zh_tw || ops[0].OperatorName || '客運公司';
                     }
                 }
 
-                // 2. 從車籍字典抓取車輛規格 (假設全域有 vehicleMap)
-                const vehicleMap = window.vehicleMap || {};
+                // 🌟 修正：從字典中獲取車輛資料，並判定電動車條件 (包含 E 開頭與 FV 結尾)
                 const cityRegistry = vehicleMap[currentData.city] || {};
                 const vReg = cityRegistry[plate] || {};
 
-                const year = vReg.year || '不詳';
-                const isElectric = plate.startsWith('E') || vReg.isElectric; 
+                const year = vReg.year && vReg.year !== '不詳' ? `${vReg.year}年車` : '年份不詳';
+                
+                // 新增：如果是 E 開頭，或是 FV 結尾，強制判定為電動車
+                const isElectric = plate.startsWith('E') || plate.endsWith('FV') || vReg.isElectric; 
                 const isLowFloor = vReg.isLowFloor || false;
                 const hasWifi = vReg.hasWifi || false;
                 const hasLift = vReg.hasLift || false;
-                const lastSeen = targetBus.time ? new Date(targetBus.time).toLocaleTimeString('zh-TW', { hour12: false }) : '--:--:--';
 
-                // 3. 畫出車牌 + 下方的詳細資訊卡片
+                // 修正：如果車輛尚未發車 (status===1) 但被吸附，時間顯示 "--:--:--" 避免誤導
+                const lastSeen = (targetBus.time && est.status !== 1) ? new Date(targetBus.time).toLocaleTimeString('zh-TW', { hour12: false }) : '--:--:--';
+
                 busEl.innerHTML = `
                     <div class="bus-badge">
                         <i class="fas fa-bus"></i><span>${plate}</span>
@@ -1270,7 +1311,7 @@
                     <div class="bus-details-card">
                         <div class="bus-header">
                             <span class="bus-operator">${operator}</span>
-                            <span class="bus-year">${year}${year !== '不詳' ? '年車' : ''}</span>
+                            <span class="bus-year">${year}</span>
                         </div>
                         <div class="bus-equipments">
                             <i class="fas fa-bolt ${isElectric ? 'active' : ''}" title="電動公車"></i>
@@ -1564,13 +1605,71 @@
         // 畫站牌
         const stops = currentData.stops[dir] || [];
         stops.forEach((s, idx) => {
+            const pin = new google.maps.marker.PinElement({
+                glyphText: (idx + 1).toString(),
+                background: 'white',
+                borderColor: '#6b7280',
+                scale: 0.85
+            });
+
             const marker = new google.maps.marker.AdvancedMarkerElement({
                 position: { lat: s.StopPosition.PositionLat, lng: s.StopPosition.PositionLon },
                 map: map,
+                content: pin.element,
                 title: s.StopName?.Zh_tw || s.StopName
             });
+
+            // 🌟 補回：點擊站牌顯示經過路線
+            marker.addListener('gmp-click', () => {
+                if (activeInfoWindow) activeInfoWindow.close();
+                const infoWindow = new google.maps.InfoWindow();
+                infoWindow.setContent(`
+                    <div style="padding:10px; text-align:center;">
+                        <div style="font-weight:bold; margin-bottom:5px;">${s.StopName?.Zh_tw || s.StopName}</div>
+                        <i class="fas fa-spinner fa-spin"></i> 正在查詢行經路線...
+                    </div>
+                `);
+                activeInfoWindow = infoWindow;
+                infoWindow.open(map, marker);
+                fetchRealStopRoutes(s.StopName?.Zh_tw || s.StopName, infoWindow);
+            });
+            
             mapMarkers.stops.push(marker);
         });
+    }
+
+    // 🌟 補回：抓取站牌行駛路線 API 呼叫
+    async function fetchRealStopRoutes(stopName, infoWindow) {
+        try {
+            const url = `${WORKER_URL}/?action=stop_info&name=${encodeURIComponent(stopName)}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            const routes = data.routes || [];
+            
+            if (routes.length === 0) {
+                infoWindow.setContent(`<div style="padding:10px; color:#999;">查無其他路線</div>`);
+                return;
+            }
+            
+            let content = `
+                <div class="stop-popup">
+                    <div class="stop-popup-header">
+                        <i class="fas fa-map-marker-alt"></i><h3>${stopName}</h3>
+                    </div>
+                    <div class="stop-popup-section-title">
+                        <i class="fas fa-bus"></i> 經過的路線 (${routes.length})
+                    </div>
+                    <div class="stop-popup-grid">
+                        ${routes.map(r => `
+                            <button class="stop-popup-btn" onclick="event.stopPropagation(); loadRoute('${r}', '${currentData.city}', '${currentData.type}')">${r}</button>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+            infoWindow.setContent(content);
+        } catch (e) {
+            infoWindow.setContent(`<div style="padding:10px; color:red;">查詢失敗</div>`);
+        }
     }
 
     function updateBusesMap(buses) {
@@ -1600,6 +1699,35 @@
                 content: busEl,
                 title: bus.plate || bus.PlateNumb || '',
                 zIndex: 100 // 確保公車永遠蓋在站牌上面
+            });
+
+            // 🌟 補回：點擊地圖上的公車顯示詳細資料
+            marker.addListener('gmp-click', () => {
+                if (activeInfoWindow) activeInfoWindow.close();
+                const plate = bus.plate || bus.PlateNumb || '未知';
+                
+                const cityRegistry = vehicleMap[currentData.city] || {};
+                const vReg = cityRegistry[plate] || {};
+                const year = vReg.year && vReg.year !== '不詳' ? `${vReg.year}年` : '不詳';
+                const isElectric = plate.startsWith('E') || plate.endsWith('FV') || vReg.isElectric; 
+
+                const infoWindow = new google.maps.InfoWindow();
+                infoWindow.setContent(`
+                    <div style="padding:10px; font-family: 'Noto Sans TC', sans-serif;">
+                        <div style="font-size:1.1rem; font-weight:900; color:#2563eb; margin-bottom:8px;">
+                            <i class="fas fa-bus"></i> ${plate}
+                        </div>
+                        <div style="font-size:0.9rem; color:#4b5563;">
+                            <div>出廠年份：${year}</div>
+                            <div style="margin-top:6px; color:#10b981; font-weight:bold;">
+                                ${isElectric ? '<i class="fas fa-bolt"></i> 電動公車' : ''}
+                                ${vReg.isLowFloor ? '<i class="fas fa-wheelchair"></i> 低底盤' : ''}
+                            </div>
+                        </div>
+                    </div>
+                `);
+                activeInfoWindow = infoWindow;
+                infoWindow.open(map, marker);
             });
             
             mapMarkers.buses.push(marker);
