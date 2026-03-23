@@ -1602,40 +1602,89 @@
             map.fitBounds(bounds);
         }
 
-        // 畫站牌
+        // 🌟 智慧縮放站牌邏輯
         const stops = currentData.stops[dir] || [];
+        
         stops.forEach((s, idx) => {
-            const pin = new google.maps.marker.PinElement({
+            // 建立兩種不同外觀的內容
+            
+            // 1. 遠距離模式：簡單的藍色小圓點
+            const dotEl = document.createElement('div');
+            dotEl.style.width = '8px';
+            dotEl.style.height = '8px';
+            dotEl.style.backgroundColor = '#2563eb'; // Tailwind blue-600
+            dotEl.style.borderRadius = '50%';
+            dotEl.style.border = '1px solid white';
+            dotEl.style.boxShadow = '0 1px 2px rgba(0,0,0,0.3)';
+            
+            // 2. 近距離模式：帶有站序的藍底白字標籤
+            const pinEl = new google.maps.marker.PinElement({
                 glyphText: (idx + 1).toString(),
-                background: 'white',
-                borderColor: '#6b7280',
-                scale: 0.85
+                glyphColor: 'white',
+                background: '#2563eb', // Tailwind blue-600
+                borderColor: 'white',
+                scale: 0.8
             });
 
+            // 初始建立標記，預設使用「遠距離小圓點」
             const marker = new google.maps.marker.AdvancedMarkerElement({
                 position: { lat: s.StopPosition.PositionLat, lng: s.StopPosition.PositionLon },
                 map: map,
-                content: pin.element,
-                title: s.StopName?.Zh_tw || s.StopName
+                content: dotEl, 
+                title: s.StopName?.Zh_tw || s.StopName,
+                zIndex: 10 // 站牌在底層，公車(100)在上層
             });
 
-            // 🌟 補回：點擊站牌顯示經過路線
+            // 將原本的元素儲存在 marker 裡面，方便切換
+            marker.dotContent = dotEl;
+            marker.pinContent = pinEl.element;
+
+            // 加入點擊事件 (查周邊路線)
             marker.addListener('gmp-click', () => {
                 if (activeInfoWindow) activeInfoWindow.close();
                 const infoWindow = new google.maps.InfoWindow();
+                const stopName = s.StopName?.Zh_tw || s.StopName;
                 infoWindow.setContent(`
                     <div style="padding:10px; text-align:center;">
-                        <div style="font-weight:bold; margin-bottom:5px;">${s.StopName?.Zh_tw || s.StopName}</div>
-                        <i class="fas fa-spinner fa-spin"></i> 正在查詢行經路線...
+                        <div style="font-weight:bold; margin-bottom:5px; color:#1e40af;">${stopName}</div>
+                        <i class="fas fa-spinner fa-spin" style="color:#2563eb;"></i> 查詢行經路線...
                     </div>
                 `);
                 activeInfoWindow = infoWindow;
                 infoWindow.open(map, marker);
-                fetchRealStopRoutes(s.StopName?.Zh_tw || s.StopName, infoWindow);
+                fetchRealStopRoutes(stopName, infoWindow);
             });
-            
+
             mapMarkers.stops.push(marker);
         });
+
+        // 🌟 監聽地圖縮放事件，動態切換所有站牌外觀
+        if (window.zoomListener) {
+            google.maps.event.removeListener(window.zoomListener);
+        }
+        
+        window.zoomListener = map.addListener('zoom_changed', () => {
+            const currentZoom = map.getZoom();
+            // 設定臨界點：Zoom Level >= 15 視為近距離 (放大)
+            const threshold = 15; 
+            
+            mapMarkers.stops.forEach(marker => {
+                if (currentZoom >= threshold) {
+                    // 放大時：顯示詳細站序 Pin
+                    if (marker.content !== marker.pinContent) {
+                        marker.content = marker.pinContent;
+                    }
+                } else {
+                    // 縮小時：顯示簡潔小藍點
+                    if (marker.content !== marker.dotContent) {
+                        marker.content = marker.dotContent;
+                    }
+                }
+            });
+        });
+        
+        // 畫完之後，手動觸發一次事件，讓它根據當下縮放比例決定外觀
+        google.maps.event.trigger(map, 'zoom_changed');
     }
 
     // 🌟 補回：抓取站牌行駛路線 API 呼叫
