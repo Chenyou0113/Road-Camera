@@ -1177,6 +1177,8 @@
             rowEl.classList.remove('coming', 'has-bus');
             busEl.innerHTML = ''; 
 
+            let isActive = false; // 🌟 判斷這站是不是真的有車要來
+
             if (!est) {
                 timeEl.innerText = '--';
                 timeEl.classList.add('none');
@@ -1187,12 +1189,27 @@
                 timeEl.innerText = '今日停駛';
                 timeEl.classList.add('none');
             } else if (est.status === 1) {
-                timeEl.innerText = '未發車';
-                timeEl.classList.add('none');
+                let showTime = false;
+                if (est.nextBusTime) {
+                    const nextDate = new Date(est.nextBusTime);
+                    if (!isNaN(nextDate.getTime())) {
+                        const hours = nextDate.getHours().toString().padStart(2, '0');
+                        const mins = nextDate.getMinutes().toString().padStart(2, '0');
+                        timeEl.innerText = `${hours}:${mins}`; 
+                        timeEl.classList.add('badge-time', 'normal'); 
+                        timeEl.style.fontSize = '0.9rem'; 
+                        showTime = true;
+                    }
+                }
+                if (!showTime) {
+                    timeEl.innerText = '未發車';
+                    timeEl.classList.add('none');
+                }
             } else if (est.status === 2) {
                 timeEl.innerText = '不停靠';
                 timeEl.classList.add('none');
             } else if (est.sec != null) {
+                isActive = true; // 🌟 只有真的有倒數秒數，才允許吸附 GPS
                 const min = Math.floor(est.sec / 60);
                 if (min < 1) {
                     timeEl.innerText = '進站中';
@@ -1207,15 +1224,17 @@
                 }
             }
 
-            // 車輛配對
+            // 🌟 嚴格車輛配對
             let targetBus = null;
-            if (est && est.plate && est.plate !== '-1' && !assignedBuses.has(est.plate) && est.sec != null && est.sec <= 120) {
+            if (est && est.plate && est.plate !== '-1' && !assignedBuses.has(est.plate)) {
                 targetBus = buses.find(b => b.plate === est.plate);
             }
-            if (!targetBus) {
+            
+            // 縮小捕捉範圍，且只在該站牌處於「等車狀態 (isActive)」時才捕捉
+            if (!targetBus && isActive) {
                 targetBus = buses.find(b => {
                     if (!b.lat || assignedBuses.has(b.plate)) return false;
-                    return getDistance(b.lat, b.lon, stop.StopPosition?.PositionLat, stop.StopPosition?.PositionLon) < 0.05; 
+                    return getDistance(b.lat, b.lon, stop.StopPosition?.PositionLat, stop.StopPosition?.PositionLon) < 0.02; // 縮小到20公尺
                 });
             }
 
