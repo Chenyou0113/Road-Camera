@@ -1468,10 +1468,42 @@
     // --- 6. 地圖操作 ---
     function drawStaticMap(dir) {
         if(!map) return;
+        
+        // 清除舊站牌
         mapMarkers.stops.forEach(m => m.setMap(null));
         mapMarkers.stops = [];
+        
+        // 清除舊路線
+        if (routeLine) routeLine.setMap(null); 
+
+        // 🌟 畫路線 (Polyline)
+        let path = [];
+        if (currentData.shapes && currentData.shapes.length > 0) {
+            const shapeObj = currentData.shapes.find(s => s.Direction == dir) || currentData.shapes[0];
+            if (shapeObj && shapeObj.Geometry) {
+                path = parseWKT(shapeObj.Geometry);
+            }
+        }
+
+        if (path.length > 0) {
+            routeLine = new google.maps.Polyline({
+                path: path,
+                geodesic: true,
+                strokeColor: '#2563eb', // 漂亮的藍色
+                strokeOpacity: 0.8,
+                strokeWeight: 5,
+                map: map
+            });
+            
+            // 讓地圖自動縮放，把整條路線完美塞進畫面中
+            const bounds = new google.maps.LatLngBounds();
+            path.forEach(p => bounds.extend(p));
+            map.fitBounds(bounds);
+        }
+
+        // 畫站牌
         const stops = currentData.stops[dir] || [];
-        stops.forEach(s => {
+        stops.forEach((s, idx) => {
             const marker = new google.maps.marker.AdvancedMarkerElement({
                 position: { lat: s.StopPosition.PositionLat, lng: s.StopPosition.PositionLon },
                 map: map,
@@ -1483,17 +1515,33 @@
 
     function updateBusesMap(buses) {
         if(!map) return;
+        
+        // 清除舊公車
         mapMarkers.buses.forEach(m => m.setMap(null));
         mapMarkers.buses = [];
+
         buses.forEach(bus => {
             if(!bus.lat || !bus.lon) return;
+
+            // 🌟 建立公車圖示容器 (會旋轉的 SVG 指標)
+            const busEl = document.createElement('div');
+            busEl.innerHTML = `
+                <svg width="24" height="40" viewBox="-12 -22 24 40" style="display:block; overflow:visible;">
+                    <path d="M -10,-14 L 10,-14 L 10,14 L -10,14 Z M 0,-20 L 8,-14 L -8,-14 Z" fill="#ef4444" stroke="white" stroke-width="2" />
+                </svg>
+            `;
+            // 根據方位角 (Azimuth) 旋轉車頭方向
+            busEl.style.transform = `rotate(${bus.azi || 0}deg)`;
+            busEl.style.transformOrigin = 'center center';
+
             const marker = new google.maps.marker.AdvancedMarkerElement({
                 position: { lat: bus.lat, lng: bus.lon },
                 map: map,
-                content: document.createElement('div')
+                content: busEl,
+                title: bus.plate || bus.PlateNumb || '',
+                zIndex: 100 // 確保公車永遠蓋在站牌上面
             });
-            marker.content.innerHTML = '<i class="fas fa-bus" style="color:red; font-size:1.5rem; text-shadow: 0 0 3px white;"></i>';
-            marker.title = bus.plate || '';
+            
             mapMarkers.buses.push(marker);
         });
     }
@@ -1578,6 +1626,21 @@
     // 輔助函數
     function getDistance(lat1, lon1, lat2, lon2) {
         return Math.sqrt(Math.pow(lat2 - lat1, 2) + Math.pow(lon2 - lon1, 2));
+    }
+
+    // --- 輔助函數：解析 TDX 的 WKT 路線格式 ---
+    function parseWKT(wkt) {
+        if (!wkt) return [];
+        const points = [];
+        // 抓取所有的 經度 緯度 數字對
+        const matches = wkt.match(/-?\d+\.\d+\s+-?\d+\.\d+/g);
+        if (matches) {
+            matches.forEach(match => {
+                const [lng, lat] = match.split(/\s+/);
+                points.push({ lat: parseFloat(lat), lng: parseFloat(lng) });
+            });
+        }
+        return points;
     }
 </script>
 
