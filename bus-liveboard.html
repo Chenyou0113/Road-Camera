@@ -1457,25 +1457,32 @@
 
     // --- 3. 載入路線與車籍資料 ---
     
-    // 🌟 獲取車籍字典 (解決卡片沒有年份跟圖示的問題)
+    // 🌟 獲取車籍字典 (相容 Worker 的效能優化版 Dictionary)
     async function loadVehicleData(city) {
         if (vehicleMap[city]) return;
-        vehicleMap[city] = {};
+        vehicleMap[city] = {}; // 預設空字典
         try {
             const res = await fetch(`${WORKER_URL}/?action=vehicle&city=${city}`);
             const data = await res.json();
+            
             if (Array.isArray(data)) {
+                // 相容舊版陣列格式
                 data.forEach(v => {
                     vehicleMap[city][v.PlateNumb] = {
                         year: v.ManufactureYear || (v.PurchaseTime ? v.PurchaseTime.substring(0, 4) : '不詳'),
-                        isLowFloor: v.IsLowFloor === 1,
+                        isLowFloor: v.IsLowFloor === 1 || v.HasLiftOrRamp === 1,
                         hasWifi: v.HasWifi === 1,
                         isElectric: v.IsElectric === 1 || v.VehicleType === 1,
                         hasLift: v.HasLiftOrRamp === 1
                     };
                 });
+            } else if (typeof data === 'object' && data !== null) {
+                // 🌟 完美接軌 Worker 優化後直接回傳的 Dictionary
+                vehicleMap[city] = data;
             }
-        } catch (e) { console.warn(`車籍字典載入異常 (${city})`, e); }
+        } catch (e) { 
+            console.warn(`車籍字典載入異常 (${city})`, e); 
+        }
     }
 
     async function loadRoute(name, city, type) {
@@ -2132,62 +2139,86 @@
         }
     }
 
+    // 🌟 平滑更新公車地圖標記 (避免重繪造成的閃爍與 InfoWindow 關閉)
     function updateBusesMap(buses) {
         if(!map) return;
-        mapMarkers.buses.forEach(m => m.setMap(null));
-        mapMarkers.buses = [];
+        
+        // 建立本次應顯示的公車車牌 Set
+        const currentPlates = new Set(buses.filter(b => b.lat && b.lon).map(b => b.plate));
+
+        // 1. 移除已經不在路線上(或沒訊號)的公車
+        mapMarkers.buses = mapMarkers.buses.filter(marker => {
+            if (!currentPlates.has(marker.title)) {
+                marker.setMap(null);
+                return false;
+            }
+            return true;
+        });
 
         buses.forEach(bus => {
             if(!bus.lat || !bus.lon) return;
+            const plate = bus.plate || bus.PlateNumb || '';
 
-            // 🌟 補回：會旋轉的公車圖示
-            const busEl = document.createElement('div');
-            busEl.innerHTML = `
-                <svg width="24" height="40" viewBox="-12 -22 24 40" style="display:block; overflow:visible;">
-                    <path d="M -10,-14 L 10,-14 L 10,14 L -10,14 Z M 0,-20 L 8,-14 L -8,-14 Z" fill="#ef4444" stroke="white" stroke-width="2" />
-                </svg>
-            `;
-            busEl.style.transform = `rotate(${bus.azi || 0}deg)`;
-            busEl.style.transformOrigin = 'center center';
+            // 尋找地圖上是否已經有這台車
+            let existingMarker = mapMarkers.buses.find(m => m.title === plate);
 
-            const marker = new google.maps.marker.AdvancedMarkerElement({
-                position: { lat: bus.lat, lng: bus.lon },
-                map: map,
-                content: busEl,
-                title: bus.plate || bus.PlateNumb || '',
-                zIndex: 100 
-            });
+            if (existingMarker) {
+                // 2A. 如果存在，直接更新它的位置與旋轉角度
+                existingMarker.position = { lat: bus.lat, lng: bus.lon };
+                const svgContainer = existingMarker.content;
+                if(svgContainer) {
+                    svgContainer.style.transform = `rotate(${bus.azi || 0}deg)`;
+                }
+            } else {
+                // 2B. 如果不存在，才建立新的 Marker
+                const busEl = document.createElement('div');
+                busEl.innerHTML = `
+                    <svg width="24" height="40" viewBox="-12 -22 24 40" style="display:block; overflow:visible;">
+                        <path d="M -10,-14 L 10,-14 L 10,14 L -10,14 Z M 0,-20 L 8,-14 L -8,-14 Z" fill="#ef4444" stroke="white" stroke-width="2" />
+                    </svg>
+                `;
+                busEl.style.transform = `rotate(${bus.azi || 0}deg)`;
+                busEl.style.transformOrigin = 'center center';
+                busEl.style.transition = 'transform 0.5s ease-out'; // 加入一點平滑旋轉動畫
 
-            // 🌟 補回：點擊地圖上的公車顯示詳細資料
-            marker.addListener('gmp-click', () => {
-                if (activeInfoWindow) activeInfoWindow.close();
-                const plate = bus.plate || bus.PlateNumb || '未知';
-                
-                const cityRegistry = vehicleMap[currentData.city] || {};
-                const vReg = cityRegistry[plate] || {};
-                const year = vReg.year && vReg.year !== '不詳' ? `${vReg.year}年` : '不詳';
-                const isElectric = plate.startsWith('E') || plate.endsWith('FV') || vReg.isElectric; 
+                const marker = new google.maps.marker.AdvancedMarkerElement({
+                    position: { lat: bus.lat, lng: bus.lon },
+                    map: map,
+                    content: busEl,
+                    title: plate,
+                    zIndex: 100 
+                });
 
-                const infoWindow = new google.maps.InfoWindow();
-                infoWindow.setContent(`
-                    <div style="padding:10px; font-family: 'Noto Sans TC', sans-serif;">
-                        <div style="font-size:1.1rem; font-weight:900; color:#2563eb; margin-bottom:8px;">
-                            <i class="fas fa-bus"></i> ${plate}
-                        </div>
-                        <div style="font-size:0.9rem; color:#4b5563;">
-                            <div>出廠年份：${year}</div>
-                            <div style="margin-top:6px; color:#10b981; font-weight:bold;">
-                                ${isElectric ? '<i class="fas fa-bolt"></i> 電動公車' : ''}
-                                ${vReg.isLowFloor ? '<i class="fas fa-wheelchair"></i> 低底盤' : ''}
+                // 綁定點擊事件 (同你原本的邏輯)
+                marker.addListener('gmp-click', () => {
+                    if (activeInfoWindow) activeInfoWindow.close();
+                    const cityRegistry = vehicleMap[currentData.city] || {};
+                    const vReg = cityRegistry[plate] || {};
+                    // 因應 Worker 字典化，若無 year 屬性則顯示未知
+                    const year = vReg.year && vReg.year !== '不詳' ? `${vReg.year}年` : '年份未知';
+                    const isElectric = plate.startsWith('E') || plate.endsWith('FV') || vReg.isElectric; 
+
+                    const infoWindow = new google.maps.InfoWindow();
+                    infoWindow.setContent(`
+                        <div style="padding:10px; font-family: 'Noto Sans TC', sans-serif;">
+                            <div style="font-size:1.1rem; font-weight:900; color:#2563eb; margin-bottom:8px;">
+                                <i class="fas fa-bus"></i> ${plate}
+                            </div>
+                            <div style="font-size:0.9rem; color:#4b5563;">
+                                <div>出廠年份：${year}</div>
+                                <div style="margin-top:6px; color:#10b981; font-weight:bold;">
+                                    ${isElectric ? '<i class="fas fa-bolt"></i> 電動公車' : ''}
+                                    ${vReg.isLowFloor ? '<i class="fas fa-wheelchair"></i> 低底盤' : ''}
+                                </div>
                             </div>
                         </div>
-                    </div>
-                `);
-                activeInfoWindow = infoWindow;
-                infoWindow.open(map, marker);
-            });
-            
-            mapMarkers.buses.push(marker);
+                    `);
+                    activeInfoWindow = infoWindow;
+                    infoWindow.open(map, marker);
+                });
+                
+                mapMarkers.buses.push(marker);
+            }
         });
     }
 
@@ -2195,6 +2226,85 @@
         if (!map) return;
         map.panTo({ lat, lng });
         map.setZoom(17);
+    }
+
+    // --- 補回：GPS 定位與尋找最近站牌 ---
+    let userLocationMarker = null;
+
+    function locateMe() {
+        if (!navigator.geolocation) {
+            alert("您的瀏覽器不支援地理定位功能。");
+            return;
+        }
+
+        const btn = document.getElementById('locate-btn');
+        btn.classList.add('locating');
+
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                const lat = position.coords.latitude;
+                const lng = position.coords.longitude;
+                btn.classList.remove('locating');
+
+                if (!map) return;
+                
+                // 移動地圖視角
+                map.panTo({ lat, lng });
+                map.setZoom(16);
+
+                // 標示用戶位置的小藍點
+                if (!userLocationMarker) {
+                    const dot = document.createElement('div');
+                    dot.style.width = '16px';
+                    dot.style.height = '16px';
+                    dot.style.backgroundColor = '#3b82f6';
+                    dot.style.border = '3px solid white';
+                    dot.style.borderRadius = '50%';
+                    dot.style.boxShadow = '0 0 10px rgba(59, 130, 246, 0.5)';
+                    
+                    userLocationMarker = new google.maps.marker.AdvancedMarkerElement({
+                        position: { lat, lng },
+                        map: map,
+                        content: dot,
+                        title: "您的位置",
+                        zIndex: 200
+                    });
+                } else {
+                    userLocationMarker.position = { lat, lng };
+                }
+
+                // 檢查是否在某個路線頁面中，自動滑動左側選單到最近的站牌
+                if (currentData.route && currentData.stops[currentData.direction]) {
+                    let minDistance = Infinity;
+                    let nearestStopId = null;
+
+                    currentData.stops[currentData.direction].forEach(s => {
+                        if(s.StopPosition) {
+                            const d = getDistance(lat, lng, s.StopPosition.PositionLat, s.StopPosition.PositionLon);
+                            if (d < minDistance) {
+                                minDistance = d;
+                                nearestStopId = s.StopUID;
+                            }
+                        }
+                    });
+
+                    if (nearestStopId) {
+                        const stopEl = document.getElementById(`stop-${nearestStopId}`);
+                        if (stopEl) {
+                            stopEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            // 給個閃爍提示
+                            stopEl.style.backgroundColor = '#ecfdf5';
+                            setTimeout(() => stopEl.style.backgroundColor = '', 2000);
+                        }
+                    }
+                }
+            },
+            () => {
+                btn.classList.remove('locating');
+                alert("無法獲取您的位置，請確認是否開啟定位權限。");
+            },
+            { enableHighAccuracy: true, timeout: 5000 }
+        );
     }
 
     // --- 7. 其它輔助與公告 ---
