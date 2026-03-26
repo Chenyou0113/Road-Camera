@@ -1938,7 +1938,8 @@
             return;
         }
 
-        const fareClassNames = { 1: '全票', 2: '學生票', 3: '孩童票', 4: '敬老票', 5: '愛心票' };
+        // 擴充票種名稱對應 (10通常是半票)
+        const fareClassNames = { 1: '全票', 2: '學生票', 3: '孩童票', 4: '敬老票', 5: '愛心票', 6: '半票', 10: '半票' };
         let fareItems = [], fareType = '單程票', fareNote = null;
 
         if (!currentData.fare || currentData.fare.length === 0) {
@@ -1954,40 +1955,111 @@
             if (fareItems.length > 0) break;
             fareNote = fareData.TicketPriceDescription?.Zh_tw || fareData.TicketPriceDescription;
 
+            // --- 模式 1：段次計費 (市區公車) ---
             if (fareData.SectionFares?.length > 0) {
                 const sd = fareData.SectionFares.find(s => s.Direction == dir) || fareData.SectionFares[0];
                 const rawBuffers = (sd.BufferZones || []).filter(z => z.Direction == dir || z.Direction === undefined);
+                
                 const getStopRealSeq = (bufStop) => {
                     if (!bufStop) return 0;
                     const found = stops.find(s => s.StopID === bufStop.StopID || s.StopName?.Zh_tw === bufStop.StopName?.Zh_tw);
                     return found ? (found.StopSequence || 0) : 0;
                 };
+                
                 const segmentBreaks = rawBuffers.map(b => Math.max(getStopRealSeq(b.FareBufferZoneOrigin), getStopRealSeq(b.FareBufferZoneDestination))).filter(seq => seq > 0).sort((a, b) => a - b);
+                
                 const getSegmentID = (targetSeq) => {
                     let segID = 1;
                     for (const breakPoint of segmentBreaks) if (targetSeq > breakPoint) segID++;
                     return segID;
                 };
+                
                 const totalSections = Math.max(1, getSegmentID(alightStop.StopSequence) - getSegmentID(boardStop.StopSequence) + 1);
                 
                 fareType = `${totalSections} 段票`;
-                (sd.Fares || []).forEach(f => fareItems.push({ label: fareClassNames[f.FareClass] || '票價', price: f.Price * totalSections, highlight: f.FareClass === 1 }));
+                (sd.Fares || []).forEach(f => {
+                    fareItems.push({ 
+                        label: fareClassNames[f.FareClass] || '票價', 
+                        price: f.Price * totalSections, 
+                        highlight: f.FareClass === 1 
+                    });
+                });
+            }
+            // --- 模式 2：里程/區間計費 (公路客運/長途公車) ---
+            else if (fareData.StageFares?.length > 0) {
+                // 取得使用者選擇的上/下車點的站牌順序 (若無則用 index 推算)
+                const bSeq = boardStop.StopSequence || startIdx + 1;
+                const aSeq = alightStop.StopSequence || endIdx + 1;
+
+                // 篩選符合當前方向的計費表
+                const dirFares = fareData.StageFares.filter(s => s.Direction == dir || s.Direction === undefined);
+                
+                let bestMatch = null;
+
+                // 核心邏輯：尋找涵蓋使用者「上車站~下車站」的最精準計費區間
+                for (const stage of dirFares) {
+                    const oSeq = stage.OriginStage?.Sequence || 0;
+                    const dSeq = stage.DestinationStage?.Sequence || 999;
+
+                    // 條件：計費起點要在上車前(或剛好)，計費終點要在下車後(或剛好)
+                    if (oSeq <= bSeq && dSeq >= aSeq) {
+                        if (!bestMatch) {
+                            bestMatch = stage;
+                        } else {
+                            // 若有多個涵蓋區間，找「範圍最小、最精準」的那一個
+                            const bestOSeq = bestMatch.OriginStage?.Sequence || 0;
+                            const bestDSeq = bestMatch.DestinationStage?.Sequence || 999;
+                            if (oSeq >= bestOSeq && dSeq <= bestDSeq) {
+                                bestMatch = stage;
+                            }
+                        }
+                    }
+                }
+
+                if (bestMatch && bestMatch.Fares) {
+                    // 美化票價類型文字
+                    const startName = bestMatch.OriginStage.StopName?.Zh_tw || bestMatch.OriginStage.StopName;
+                    const endName = bestMatch.DestinationStage.StopName?.Zh_tw || bestMatch.DestinationStage.StopName;
+                    fareType = `里程計費 (${startName} ➔ ${endName})`;
+                    
+                    bestMatch.Fares.forEach(f => {
+                        // 處理 TDX 回傳的名稱過長問題 (例如 "全票_不分時段_四排座" 取 "全票")
+                        let rawName = f.FareName?.Zh_tw || f.FareName || '';
+                        let cleanLabel = rawName.split('_')[0] || fareClassNames[f.FareClass] || '票價';
+                        
+                        fareItems.push({
+                            label: cleanLabel,
+                            price: f.Price,
+                            highlight: f.FareClass === 1 // 全票標示為綠色
+                        });
+                    });
+                }
             }
         }
 
         if (fareItems.length === 0) {
-            resultArea.innerHTML = `<div style="font-size:0.85rem; color:#64748b;">${fareNote || '請參考車上刷卡機或公告。'}</div>`;
+            resultArea.innerHTML = `<div style="font-size:0.85rem; color:#64748b;">${fareNote || '系統暫無該區間票價，請參考車上公告。'}</div>`;
             return;
         }
 
+        // 去重複 (因為同一票種可能有不同時段，取第一筆)
         const unique = [];
         const seen = new Set();
-        fareItems.forEach(i => { const key = `${i.label}-${i.price}`; if (!seen.has(key)) { seen.add(key); unique.push(i); } });
+        fareItems.forEach(i => { 
+            const key = `${i.label}-${i.price}`; 
+            if (!seen.has(key)) { seen.add(key); unique.push(i); } 
+        });
 
         resultArea.innerHTML = `
-            <div style="font-size:0.82rem;font-weight:700;color:#047857;margin-bottom:12px;"><i class="fas fa-ticket-alt"></i> ${fareType}</div>
+            <div style="font-size:0.82rem;font-weight:700;color:#047857;margin-bottom:12px;">
+                <i class="fas fa-ticket-alt"></i> ${fareType}
+            </div>
             <div class="fare-types-grid">
-                ${unique.map(f => `<div class="fare-type-cell ${f.highlight ? 'highlight' : ''}"><div class="fare-type-label">${f.label}</div><div class="fare-type-price">$${f.price}</div></div>`).join('')}
+                ${unique.map(f => `
+                    <div class="fare-type-cell ${f.highlight ? 'highlight' : ''}">
+                        <div class="fare-type-label">${f.label}</div>
+                        <div class="fare-type-price">$${f.price}</div>
+                    </div>`).join('')}
             </div>
             ${fareNote ? `<div style="margin-top:12px; font-size:0.75rem; color:#059669;">※ ${fareNote}</div>` : ''}
         `;
