@@ -2392,37 +2392,87 @@
         return false;
     }
 
-    async function openCityNewsModal() {
+    async function openCityNewsModal(targetCity = null) {
         const modal = document.getElementById('modal-overlay');
+        const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
-        document.getElementById('modal-title').innerHTML = `<i class="fas fa-bullhorn"></i> <span>營運公告</span>`;
-        body.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>載入中...</div>`;
+        
+        // 取得要查詢的縣市，優先使用 targetCity，或者是目前路線的縣市，預設台北市
+        const city = targetCity || (currentData.city ? currentData.city : 'Taipei');
+        const type = (city === 'InterCity') ? 'InterCity' : 'CityBus';
+
+        const cityNameMap = {
+            'Taipei': '臺北市', 'NewTaipei': '新北市', 'Keelung': '基隆市',
+            'Taoyuan': '桃園市', 'Hsinchu': '新竹市', 'HsinchuCounty': '新竹縣',
+            'YilanCounty': '宜蘭縣', 'MiaoliCounty': '苗栗縣', 'Taichung': '臺中市',
+            'ChanghuaCounty': '彰化縣', 'NantouCounty': '南投縣', 'YunlinCounty': '雲林縣',
+            'Chiayi': '嘉義市', 'ChiayiCounty': '嘉義縣', 'Tainan': '臺南市',
+            'Kaohsiung': '高雄市', 'PingtungCounty': '屏東縣',
+            'HualienCounty': '花蓮縣', 'TaitungCounty': '臺東縣',
+            'PenghuCounty': '澎湖縣', 'KinmenCounty': '金門縣', 'LienchiangCounty': '連江縣',
+            'InterCity': '公路客運'
+        };
+
+        title.innerHTML = `<i class="fas fa-bullhorn"></i> <span>營運公告</span>`;
+
+        let selectHtml = `
+            <div style="margin-bottom: 20px; padding: 12px; background: #f1f5f9; border-radius: 12px; border: 1px solid #e2e8f0;">
+                <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                    <i class="fas fa-filter" style="color:#64748b;"></i>
+                    <span style="font-weight:700; color:#475569; font-size:0.9rem;">切換公告縣市/類型</span>
+                </div>
+                <select id="news-city-select" onchange="openCityNewsModal(this.value)" style="width:100%; padding:10px 12px; border:1px solid #cbd5e1; border-radius:8px; font-size:1rem; outline:none; background:white; font-weight:600; color:#334155; cursor:pointer;">
+        `;
+        
+        selectHtml += `<optgroup label="全台路網">`;
+        const isInterSelected = (city === 'InterCity') ? 'selected' : '';
+        selectHtml += `<option value="InterCity" ${isInterSelected}>公路客運</option>`;
+        selectHtml += `</optgroup>`;
+
+        selectHtml += `<optgroup label="市區公車">`;
+        for (const [code, name] of Object.entries(cityNameMap)) {
+            if (code === 'InterCity') continue;
+            const isSelected = (code === city) ? 'selected' : '';
+            selectHtml += `<option value="${code}" ${isSelected}>${name}</option>`;
+        }
+        selectHtml += `</optgroup></select></div>`;
+
+        body.innerHTML = `
+            ${selectHtml}
+            <div id="news-content-area">
+                <div style="text-align:center; padding:40px;">
+                    <i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在載入 ${cityNameMap[city] || city} 公告...
+                </div>
+            </div>
+        `;
         modal.style.display = 'flex';
 
         try {
             const [newsRes, alertRes] = await Promise.all([
-                fetch(`${WORKER_URL}/?action=news&category=${currentData.type}&city=${currentData.city}`).then(r => r.json()),
-                fetch(`${WORKER_URL}/?action=alert&category=${currentData.type}&city=${currentData.city}`).then(r => r.json())
+                fetch(`${WORKER_URL}/?action=news&category=${type}&city=${city}`).then(r => r.json()),
+                fetch(`${WORKER_URL}/?action=alert&category=${type}&city=${city}`).then(r => r.json())
             ]);
 
             const allItems = [...(Array.isArray(alertRes) ? alertRes : []).map(a => ({ title: a.Title, desc: a.Description, date: a.StartTime, tag: '通阻', cls: 'tag-alert' })),
                               ...(Array.isArray(newsRes) ? newsRes : []).map(n => ({ title: n.Title, desc: n.Description, date: n.PublishTime, tag: '消息', cls: 'tag-news' }))]
                               .sort((a, b) => new Date(b.date) - new Date(a.date));
 
+            const contentArea = document.getElementById('news-content-area');
+
             if (!allItems.length) {
-                body.innerHTML = `<div style="text-align:center; color:#9ca3af;">無公告</div>`;
+                contentArea.innerHTML = `<div style="text-align:center; color:#9ca3af; padding:40px;">無公告</div>`;
                 return;
             }
 
-            body.innerHTML = '<div style="display:flex; flex-direction:column; gap:12px;">' + 
+            contentArea.innerHTML = '<div style="display:flex; flex-direction:column; gap:12px;">' + 
                 allItems.map(i => `
                     <div style="border-bottom:1px solid #eee; padding-bottom:12px;">
                         <div style="font-size:0.8rem; color:#9ca3af; margin-bottom:4px;">${i.date ? i.date.substring(0, 10) : ''}</div>
                         <div style="font-weight:700; font-size:1rem; margin-bottom:6px;"><span class="${i.cls}">${i.tag}</span> ${i.title}</div>
-                        <div style="font-size:0.9rem; color:#4b5563;">${i.desc.replace(/<[^>]+>/g, '')}</div>
+                        <div style="font-size:0.9rem; color:#4b5563; line-height: 1.5;">${i.desc.replace(/<[^>]+>/g, '')}</div>
                     </div>`).join('') + '</div>';
         } catch (e) {
-            body.innerHTML = `<div style="text-align:center; color:#ef4444;">載入失敗</div>`;
+            document.getElementById('news-content-area').innerHTML = `<div style="text-align:center; color:#ef4444; padding:40px;">載入失敗</div>`;
         }
     }
 
