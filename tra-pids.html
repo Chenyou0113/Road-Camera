@@ -1911,28 +1911,31 @@
 
         function setupVideo(urls) {
             const con = document.getElementById('videoContainer');
-            _videoIds = [];
+            let rawIds = [];
 
-            // 🔥 強化的 YouTube ID 擷取邏輯 (支援直接傳入 11 碼 ID、Shorts、手機版連結等)
+            // 🔥 更嚴格的 YouTube ID 擷取
             urls.forEach(url => {
-                if (!url) return;
+                if (!url || typeof url !== 'string') return;
                 
-                // 如果已經是剛好 11 碼的合法 YouTube ID
-                if (typeof url === 'string' && url.length === 11 && /^[a-zA-Z0-9_-]{11}$/.test(url)) {
-                    _videoIds.push(url);
+                // 若已經是剛好 11 碼的 YouTube ID
+                if (/^[a-zA-Z0-9_-]{11}$/.test(url.trim())) {
+                    rawIds.push(url.trim());
                     return;
                 }
 
-                // 解析包含 youtube.com 或 youtu.be 的網址
-                const regExp = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
+                // 支援各種 YouTube 網址格式
+                const regExp = /(?:v=|v\/|vi=|vi\/|youtu\.be\/|embed\/|e\/)([^#&?\n<>\s]{11})/i;
                 const match = url.match(regExp);
-                if (match && match[1].length === 11) {
-                    _videoIds.push(match[1]);
+                if (match && /^[a-zA-Z0-9_-]{11}$/.test(match[1])) {
+                    rawIds.push(match[1]);
                 }
             });
 
+            // 確保陣列內 100% 都是乾淨的 11 碼 ID
+            _videoIds = [...new Set(rawIds.filter(id => id && id.length === 11))];
+
             if (_videoIds.length > 0) {
-                // 確保 YouTube IFrame API បាន載入
+                console.log(`✅ 成功解析 ${_videoIds.length} 個有效的 YouTube ID`);
                 if (typeof YT === 'undefined' || typeof YT.Player === 'undefined') {
                     if (!document.getElementById('yt-api-script')) {
                         const tag = document.createElement('script');
@@ -1942,13 +1945,10 @@
                         firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
                     }
                 }
-                // 從第一部開始順序播放
                 _videoIdx = 0;
                 _playVideoAt(_videoIdx);
             } else if (urls.length > 0 && typeof urls[0] === 'string' && !urls[0].includes('youtube')) {
-                // 原生影片檔案 (.mp4)
                 con.innerHTML = `<video src="${urls[0]}" autoplay muted loop playsinline style="width:100%;height:100%;object-fit:contain;"></video>`;
-                console.log(`✅ 本地影片已載入: ${urls[0]}`);
             } else {
                 con.innerHTML = `<div style="padding:20px; color:#666; text-align:center; font-size:1.2rem;">📹 暫無影音內容</div>`;
             }
@@ -1960,68 +1960,59 @@
 
             const originParam = location.protocol.startsWith('http') ? location.origin : '';
 
-            // 清空容器，建立給 YT.Player 使用的 div
             con.innerHTML = '<div id="ytPlayerDiv" style="width:100%; height:100%;"></div>';
-            console.log(`▶️ 播放清單模式載入: 共 ${_videoIds.length} 首影片`);
 
             if (_videoRetryTimer) clearTimeout(_videoRetryTimer);
 
-            // 確保 YT API 已準備就緒
             if (typeof YT === 'undefined' || typeof YT.Player === 'undefined') {
-                console.warn('⚠️ YouTube API 尚未載入，2 秒後重試...');
-                setTimeout(() => _playVideoAt(idx), 2000);
+                _videoRetryTimer = setTimeout(() => _playVideoAt(idx), 2000);
                 return;
             }
 
-            // 使用官方 API 建立播放器 (播放清單模式)
+            // 🔥 限制清單長度 (YouTube Player API 一次最多處理 50 首)
+            const maxPlaylist = _videoIds.slice(0, 50);
+
             let hasLoaded = false;
             window.ytPlayer = new YT.Player('ytPlayerDiv', {
                 playerVars: {
                     autoplay: 1,
                     mute: 1,
-                    controls: 0,     // 隱藏控制列
-                    rel: 0,          // 不顯示相關影片
+                    controls: 0,
+                    rel: 0,
                     enablejsapi: 1,
-                    origin: originParam
+                    origin: originParam,
+                    playsinline: 1
                 },
                 events: {
                     'onReady': function(event) {
                         hasLoaded = true;
                         clearTimeout(_videoRetryTimer);
-                        // 強制靜音和載入清單
                         event.target.mute();
-                        event.target.loadPlaylist({
-                            playlist: _videoIds,
-                            index: idx
-                        });
-                        event.target.setLoop(true); // 讓清單一直輪播
+                        // 採用陣列寫法載入播放清單
+                        event.target.loadPlaylist(maxPlaylist, idx);
+                        event.target.setLoop(true);
                     },
                     'onStateChange': function(event) {
-                        // 確保播放器處於靜音
                         if (event.data === YT.PlayerState.PLAYING) {
                            event.target.mute();
                         }
                     },
                     'onError': function(event) {
-                        console.warn(`⚠️ YouTube 返回錯誤 (代碼: ${event.data})，播放器將自動跳過無法播放的影片...`);
-                        hasLoaded = true; // 取消超時
+                        console.warn(`⚠️ YouTube 發生錯誤 (代碼: ${event.data})，跳過當前影片...`);
+                        hasLoaded = true;
                         clearTimeout(_videoRetryTimer);
+                        
+                        // 當遇到 2 (無效參數), 100 (找不到影片), 101/150 (不允許嵌入) 時自動播放下一首
                         if (event.target && typeof event.target.nextVideo === 'function') {
-                            setTimeout(() => {
-                                event.target.nextVideo();
-                            }, 1000);
+                            setTimeout(() => { event.target.nextVideo(); }, 1500);
                         }
                     }
                 }
             });
 
-            // 逾時保護：20 秒內還沒 ready 才重新嘗試
             _videoRetryTimer = setTimeout(() => {
-                if (!hasLoaded) {
-                    console.warn(`⚠️ YouTube API 無法建立，重新嘗試載入`);
-                    _playVideoAt(idx);
-                }
-            }, 20000);
+                if (!hasLoaded) _playVideoAt(idx);
+            }, 15000);
         }
 
         function startMarquee(id) {
