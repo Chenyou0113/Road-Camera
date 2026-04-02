@@ -1949,20 +1949,11 @@
             const con = document.getElementById('videoContainer');
             if (!con || _videoIds.length === 0) return;
 
-            // 1. 把清單重排：讓它從指定的 idx 開始播
-            const ordered = [..._videoIds.slice(idx), ..._videoIds.slice(0, idx)];
-            const first = ordered[0];
-            
-            // 2. 播放清單 (playlist) 不能包含第一部影片
-            const others = ordered.slice(1);
-            // 當只有一部影片時，讓它以自己為 playlist 以達成無限循環
-            const playlistString = others.length > 0 ? others.join(',') : first;
-
             const originParam = location.protocol.startsWith('http') ? location.origin : '';
 
             // 清空容器，建立給 YT.Player 使用的 div
             con.innerHTML = '<div id="ytPlayerDiv" style="width:100%; height:100%;"></div>';
-            console.log(`▶️ 影片清單載入: 首播 [${first}], 後續 [${playlistString}]`);
+            console.log(`▶️ 播放清單模式載入: 共 ${_videoIds.length} 首影片`);
 
             if (_videoRetryTimer) clearTimeout(_videoRetryTimer);
 
@@ -1973,15 +1964,12 @@
                 return;
             }
 
-            // 使用官方 API 建立播放器
+            // 使用官方 API 建立播放器 (播放清單模式)
             let hasLoaded = false;
             window.ytPlayer = new YT.Player('ytPlayerDiv', {
-                videoId: first,
                 playerVars: {
                     autoplay: 1,
                     mute: 1,
-                    loop: 1,         // 配合下面的 playlist 達到循環
-                    playlist: playlistString,
                     controls: 0,     // 隱藏控制列
                     rel: 0,          // 不顯示相關影片
                     enablejsapi: 1,
@@ -1991,42 +1979,35 @@
                     'onReady': function(event) {
                         hasLoaded = true;
                         clearTimeout(_videoRetryTimer);
-                        // 強制靜音和播放
+                        // 強制靜音和載入清單
                         event.target.mute();
-                        event.target.playVideo();
+                        event.target.loadPlaylist({
+                            playlist: _videoIds,
+                            index: idx
+                        });
+                        event.target.setLoop(true); // 讓清單一直輪播
                     },
                     'onStateChange': function(event) {
                         // 確保播放器處於靜音
                         if (event.data === YT.PlayerState.PLAYING) {
                            event.target.mute();
                         }
-                        // 只有一個影片時，某些環境 loop 失效，我們強迫重播
-                        if (event.data === YT.PlayerState.ENDED && _videoIds.length === 1) {
-                            event.target.seekTo(0);
-                            event.target.playVideo();
-                        }
                     },
                     'onError': function(event) {
-                        console.warn(`⚠️ 影片 ${first} 發生錯誤 (代碼: ${event.data})，跳過播放下一部`);
+                        console.warn(`⚠️ YouTube 返回錯誤 (代碼: ${event.data})，播放器將自動跳過無法播放的影片...`);
                         hasLoaded = true; // 取消超時
                         clearTimeout(_videoRetryTimer);
-                        _advanceVideo();
                     }
                 }
             });
 
-            // 逾時保護：20 秒內還沒 ready 才跳過
+            // 逾時保護：20 秒內還沒 ready 才重新嘗試
             _videoRetryTimer = setTimeout(() => {
-                if (!hasLoaded && _videoIds.length > 1) {
-                    console.warn(`⚠️ 影片 ${first} API 無法載入，跳過播放下一部`);
-                    _advanceVideo();
+                if (!hasLoaded) {
+                    console.warn(`⚠️ YouTube API 無法建立，重新嘗試載入`);
+                    _playVideoAt(idx);
                 }
             }, 20000);
-        }
-
-        function _advanceVideo() {
-            _videoIdx = (_videoIdx + 1) % _videoIds.length;
-            _playVideoAt(_videoIdx);
         }
 
         function startMarquee(id) {
