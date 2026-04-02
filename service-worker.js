@@ -155,12 +155,12 @@ self.addEventListener('fetch', (event) => {
                         }
                         // 如果是導航請求（HTML），返回離線頁面
                         if (event.request.mode === 'navigate') {
-                            return caches.match('/index.html').catch(() => 
-                                new Response(
+                            return caches.match('/index.html').then(fallback => {
+                                return fallback || new Response(
                                     '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>離線</title></head><body style="font-family:sans-serif;text-align:center;padding:20px;"><h1>網路連線失敗</h1><p>無法連接到伺服器。</p></body></html>',
                                     { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
-                                )
-                            );
+                                );
+                            });
                         }
                         return Response.error();
                     });
