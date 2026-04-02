@@ -135,7 +135,7 @@ self.addEventListener('fetch', (event) => {
                                 }
                             );
                         }
-                        throw error;
+                        return Response.error();
                     });
             })
         );
@@ -162,7 +162,7 @@ self.addEventListener('fetch', (event) => {
                                 )
                             );
                         }
-                        throw error;
+                        return Response.error();
                     });
             })
     );
