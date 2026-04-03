@@ -1033,10 +1033,11 @@
             } catch (err) { document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><p>查詢失敗</p></div>'; }
         }
 
-        /* === 3. 車次追蹤改進功能 === */
+        /* === 3. 車次追蹤改進功能 (修復 TDX JSON 解析與標題重置) === */
         async function fetchTrainDetail(isBackgroundRefresh = false) {
             const trainNo = document.getElementById('trainNoInput').value.trim();
             if (!trainNo) return;
+            
             if (!isBackgroundRefresh) {
                 clearInterval(trainRefreshTimer);
                 document.getElementById('trainsBoard').innerHTML = '<div style="padding:50px;text-align:center;"><i class="fas fa-spinner fa-spin fa-2x"></i></div>';
@@ -1048,11 +1049,29 @@
                 const infoProm = tdxApi.fetch(`/v2/Rail/TRA/DailyTrainInfo/Today?$filter=TrainNo eq '${trainNo}'&$format=JSON`).catch(()=>null);
                 
                 const [schRes, liveRes, infoRes] = await Promise.all([scheduleProm, liveProm, infoProm]);
-                let stopTimes = (schRes?.value?.[0]?.StopTimes) || [];
+                
+                // 🔥 修復：精準兼容 TDX 的各種 JSON 外層包裝格式 (TrainTimetables 或 value)
+                let stopTimes = [];
+                if (schRes?.TrainTimetables?.[0]?.StopTimes) {
+                    stopTimes = schRes.TrainTimetables[0].StopTimes;
+                } else if (schRes?.value?.[0]?.StopTimes) {
+                    stopTimes = schRes.value[0].StopTimes;
+                } else if (Array.isArray(schRes) && schRes[0]?.StopTimes) {
+                    stopTimes = schRes[0].StopTimes;
+                }
+
                 let liveData = (liveRes?.TrainLiveBoards?.[0]) || (Array.isArray(liveRes) ? liveRes[0] : liveRes) || null;
                 let trainInfo = infoRes?.[0] || null;
 
-                if (!stopTimes.length) { if(!isBackgroundRefresh) document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><p>查無今日此車次時刻表</p></div>'; return; }
+                // 🔥 修復：找不到時，確實重置標題，不要殘留上一次的站到站名稱
+                if (!stopTimes || stopTimes.length === 0) { 
+                    if(!isBackgroundRefresh) {
+                        document.getElementById('trainsBoard').innerHTML = '<div class="no-data" style="padding: 40px; text-align: center;"><i class="fas fa-search-minus" style="font-size: 3rem; color: #ccc; margin-bottom: 15px;"></i><p>查無今日此車次時刻表，可能尚未發車或無此班次。</p></div>'; 
+                        document.getElementById('stationTitle').innerHTML = `<i class="fas fa-train"></i> 車次查詢：${trainNo}`;
+                        document.getElementById('stationInfo').textContent = '--';
+                    }
+                    return; 
+                }
 
                 let facilityHtml = '';
                 if (trainInfo) {
@@ -1097,8 +1116,15 @@
                     html += `<div class="timeline-item ${isCurrent?'current-loc':(passedLoc?'passed':'')}"><div style="display:flex;align-items:center;"><span class="st-name">${stName}</span> ${badge}</div><div>${timeDisplay}</div></div>`;
                 });
                 document.getElementById('trainsBoard').innerHTML = html + '</div></div>';
-                if (!isBackgroundRefresh) trainRefreshTimer = setInterval(() => fetchTrainDetail(true), 30000);
-            } catch (error) { if(!isBackgroundRefresh) document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><p>載入失敗</p></div>'; }
+                
+                if (!isBackgroundRefresh) {
+                    trainRefreshTimer = setInterval(() => fetchTrainDetail(true), 30000);
+                }
+            } catch (error) { 
+                if(!isBackgroundRefresh) {
+                    document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><p>載入失敗，無法連線至 TDX</p></div>'; 
+                }
+            }
         }
 
         let allTodayTrains = [];
