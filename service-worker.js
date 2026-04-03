@@ -112,14 +112,14 @@ self.addEventListener('fetch', (event) => {
                 }
                 
                 // 處理 Cloudflare Pages 乾淨 URL (如果找不到 /tra-pids，試著找 /tra-pids.html)
-                let altReq = event.request;
+                let altReqMatch = event.request;
                 if (isHtmlPage && !url.pathname.endsWith('.html') && url.pathname !== '/') {
                     const altUrl = new URL(url.href);
                     altUrl.pathname += '.html';
-                    altReq = new Request(altUrl, event.request);
+                    altReqMatch = altUrl.href;
                 }
 
-                return caches.match(altReq).then(altCached => {
+                return caches.match(altReqMatch).then(altCached => {
                     if (altCached) {
                         return altCached;
                     }
