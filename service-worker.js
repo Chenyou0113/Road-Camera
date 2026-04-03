@@ -92,8 +92,11 @@ self.addEventListener('fetch', (event) => {
         return;
     }
     
+    // 判斷是否為 HTML 頁面 (包含省略 .html 的乾淨 URL)
+    const isHtmlPage = url.pathname.endsWith('.html') || (event.request.mode === 'navigate' && !url.pathname.includes('.'));
+
     // 🔥 靜態資源：Cache First（優先緩存，加速載入）
-    if (url.pathname.includes('/assets/') || url.pathname.endsWith('.html') || url.pathname.endsWith('.css')) {
+    if (url.pathname.includes('/assets/') || isHtmlPage || url.pathname.endsWith('.css')) {
         event.respondWith(
             caches.match(event.request).then(cached => {
                 if (cached) {
@@ -104,39 +107,42 @@ self.addEventListener('fetch', (event) => {
                                 cache.put(event.request, response);
                             });
                         }
-                    }).catch(() => {
-                        // 背景更新失敗時，保留現有緩存
-                    });
+                    }).catch(() => {});
                     return cached;
                 }
                 
-                // 無緩存：從網路獲取並緩存
-                return fetch(event.request)
-                    .then(response => {
-                        // 只緩存成功的回應（200-299）
+                // 處理 Cloudflare Pages 乾淨 URL (如果找不到 /tra-pids，試著找 /tra-pids.html)
+                let altReq = event.request;
+                if (isHtmlPage && !url.pathname.endsWith('.html') && url.pathname !== '/') {
+                    const altUrl = new URL(url.href);
+                    altUrl.pathname += '.html';
+                    altReq = new Request(altUrl, event.request);
+                }
+
+                return caches.match(altReq).then(altCached => {
+                    if (altCached) {
+                        return altCached;
+                    }
+                    
+                    // 無緩存：從網路獲取並緩存
+                    return fetch(event.request).then(response => {
                         if (!response || response.status < 200 || response.status >= 300) {
                             return response;
                         }
                         const responseClone = response.clone();
-                        caches.open(CACHE_NAME).then(cache => {
-                            cache.put(event.request, responseClone);
-                        });
+                        caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseClone));
                         return response;
-                    })
-                    .catch(error => {
+                    }).catch(error => {
                         console.warn('[Service Worker] 無法獲取資源:', event.request.url, error);
-                        // 如果是 HTML 請求且無緩存，返回一個簡單的離線頁面
-                        if (url.pathname.endsWith('.html')) {
+                        if (isHtmlPage) {
                             return new Response(
                                 '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>離線</title></head><body style="font-family:sans-serif;text-align:center;padding:20px;"><h1>資源無法載入</h1><p>請檢查網路連線或檔案是否存在。</p><a href="/">返回首頁</a></body></html>',
-                                {
-                                    status: 503,
-                                    headers: { 'Content-Type': 'text/html; charset=utf-8' }
-                                }
+                                { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
                             );
                         }
                         return Response.error();
                     });
+                });
             })
         );
         return;
