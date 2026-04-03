@@ -485,36 +485,45 @@
             if (mode === 'train') loadAllTodayTrains();
         }
 
-        // ============ 公告載入 ============
+        // ============ 公告載入 (完整原版還原 + 串接 Worker) ============
         async function loadTraAlerts() {
             try {
-                const response = await tdxApi.fetch('/v3/Rail/TRA/Alert?$format=JSON&$top=5&$orderby=PublishTime%20desc');
+                // 🔥 改為呼叫你剛剛更新的 Worker 端點，速度更快且不會被 TDX 擋
+                const response = await fetch(`${TRA_CONFIG.API_WORKER_URL}/api/alerts`);
+                const alertList = await response.json();
+                
                 const panel = document.getElementById('traAlertPanel');
                 const content = document.getElementById('traAlertContent');
                 const marqueeEl = document.getElementById('marqueeText');
                 
-                let alertList = response.Alerts || response || [];
-                
+                // 1. 處理上方跑馬燈
                 if (marqueeEl) {
-                    marqueeEl.style.animation = 'none'; marqueeEl.offsetHeight; 
+                    marqueeEl.style.animation = 'none';
+                    marqueeEl.offsetHeight; 
+                    
                     let marqueeHTML = '';
-                    if (alertList.length > 0) {
+                    
+                    if (alertList && alertList.length > 0) {
                         alertList.forEach(alert => {
                             const cleanDesc = UI.escape((alert.Description || '')).replace(/[\r\n]+/g, ' ');
                             const cleanTitle = UI.escape(alert.Title || '');
                             marqueeHTML += `【${cleanTitle}】${cleanDesc}  —  `; 
                         });
+                        marqueeHTML = marqueeHTML.replace(/—\s+$/, ' ');
                         marqueeHTML += "⚠️ 詳情請見上方的通阻公告面板。";
                     } else {
                         marqueeHTML = '歡迎搭乘臺鐵。本看板資料由 TDX 提供，僅供參考，實際運行請以車站現場為主。';
                     }
+                    
                     marqueeEl.innerHTML = marqueeHTML;
                     marqueeEl.style.animation = 'marquee-announce 20s linear infinite';
                 }
 
+                // 2. 處理公告面板
                 if (panel && content) {
-                    if (alertList.length === 0) panel.style.display = 'none';
-                    else {
+                    if (!alertList || alertList.length === 0) {
+                        panel.style.display = 'none';
+                    } else {
                         let html = '';
                         alertList.forEach(alert => {
                             let icon = (alert.Status === 2 || alert.Level > 1) ? '🚨' : 'ℹ️';
@@ -527,15 +536,26 @@
                                 const endStation = UI.escape(alert.Scope.LineSections[0].EndingStationName || '');
                                 scopeInfo = `<br><span style="color:#d84315;">🛑 受影響：${startStation} ↔ ${endStation}</span>`;
                             }
+                            
                             const cleanTitle = UI.escape(alert.Title || '');
                             const cleanDesc = UI.escape(alert.Description || '').replace(/\n/g, '<br>');
                             
-                            html += `<div class="news-item"><div class="news-title" style="color: ${titleColor}"><span>${icon}</span><span>${cleanTitle}</span></div><div class="news-desc">${cleanDesc}${scopeInfo}</div><div class="news-time">發布：${timeStr}</div></div>`;
+                            html += `<div class="news-item">
+                                <div class="news-title" style="color: ${titleColor}">
+                                    <span>${icon}</span>
+                                    <span>${cleanTitle}</span>
+                                </div>
+                                <div class="news-desc">${cleanDesc}${scopeInfo}</div>
+                                <div class="news-time">發布：${timeStr}</div>
+                            </div>`;
                         });
-                        content.innerHTML = html; panel.style.display = 'block';
+                        content.innerHTML = html;
+                        panel.style.display = 'block';
                     }
                 }
-            } catch (error) { console.warn('⚠️ 公告載入失敗:', error); }
+            } catch (error) { 
+                console.warn('⚠️ 公告載入失敗:', error); 
+            }
         }
 
         // ============ 1. 站點與原版 LiveBoard 邏輯 ============
