@@ -93,12 +93,15 @@ self.addEventListener('fetch', (event) => {
     }
     
     // 判斷是否為 HTML 頁面 (包含省略 .html 的乾淨 URL)
-    const isHtmlPage = url.pathname.endsWith('.html') || (event.request.mode === 'navigate' && !url.pathname.includes('.'));
+    const isHtmlPage = url.pathname.endsWith('.html') || 
+                       event.request.mode === 'navigate' || 
+                       (event.request.headers.get('accept') && event.request.headers.get('accept').includes('text/html')) ||
+                       (!url.pathname.includes('.') && !url.pathname.startsWith('/api/'));
 
     // 🔥 靜態資源：Cache First（優先緩存，加速載入）
-    if (url.pathname.includes('/assets/') || isHtmlPage || url.pathname.endsWith('.css')) {
+    if (url.pathname.includes('/assets/') || isHtmlPage || url.pathname.endsWith('.css') || url.pathname.endsWith('.js')) {
         event.respondWith(
-            caches.match(event.request).then(cached => {
+            caches.match(event.request, { ignoreSearch: isHtmlPage }).then(cached => {
                 if (cached) {
                     // 背景更新策略（Stale-While-Revalidate）
                     fetch(event.request).then(response => {
@@ -119,7 +122,7 @@ self.addEventListener('fetch', (event) => {
                     altReqMatch = altUrl.href;
                 }
 
-                return caches.match(altReqMatch).then(altCached => {
+                return caches.match(altReqMatch, { ignoreSearch: isHtmlPage }).then(altCached => {
                     if (altCached) {
                         return altCached;
                     }
