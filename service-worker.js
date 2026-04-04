@@ -103,9 +103,17 @@ self.addEventListener('fetch', (event) => {
         event.respondWith(
             caches.match(event.request, { ignoreSearch: isHtmlPage }).then(cached => {
                 if (cached) {
+                    // ✅ 🔴 真正的問題修復：快取內儲存了重新導向回應
+                    // 禁止將重新導向回應直接回傳給瀏覽器
+                    if (cached.type === 'opaqueredirect' || cached.redirected) {
+                        // 刪除無效的快取項目，強制重新取得
+                        caches.open(CACHE_NAME).then(cache => cache.delete(event.request));
+                        return fetch(event.request, { redirect: 'follow' });
+                    }
+                    
                     // 背景更新策略（Stale-While-Revalidate）
-                    fetch(event.request).then(response => {
-                        if (response && response.status === 200) {
+                    fetch(event.request, { redirect: 'follow' }).then(response => {
+                        if (response && response.status === 200 && response.type !== 'opaqueredirect' && !response.redirected) {
                             caches.open(CACHE_NAME).then(cache => {
                                 cache.put(event.request, response);
                             });
@@ -128,9 +136,15 @@ self.addEventListener('fetch', (event) => {
                     }
                     
                     // 無緩存：從網路獲取並緩存
-                    return fetch(event.request).then(response => {
-                        if (!response || response.status < 200 || response.status >= 300) {
+                    return fetch(event.request, { redirect: 'follow' }).then(response => {
+                        // ✅ 修復 Chrome 重新導向安全錯誤
+                        if (!response || response.status < 200 || response.status >= 400) {
                             return response;
+                        }
+                        
+                        // ✅ 過濾不透明重新導向回應
+                        if (response.type === 'opaqueredirect') {
+                            return fetch(response.url, { redirect: 'follow' });
                         }
                         const responseClone = response.clone();
                         caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseClone));
