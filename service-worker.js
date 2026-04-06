@@ -146,9 +146,12 @@ self.addEventListener('fetch', (event) => {
                         if (response.type === 'opaqueredirect') {
                             return fetch(response.url, { redirect: 'follow' });
                         }
-                        const responseClone = response.clone();
-                        caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseClone));
-                        return response;
+const responseClone = response.clone();
+// 只緩存 GET 請求，POST 等其他方法不緩存
+if (event.request.method === 'GET') {
+    caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseClone));
+}
+return response;
                     }).catch(error => {
                         console.warn('[Service Worker] 無法獲取資源:', event.request.url, error);
                         if (isHtmlPage) {
