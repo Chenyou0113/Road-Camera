@@ -631,6 +631,24 @@
         .option-item i { width: 18px; text-align: center; color: var(--text-sub); }
         .option-item:hover i { color: var(--primary); }
 
+        /* --- 公告內容專用樣式 --- */
+        .news-desc-content {
+            font-size: 0.9rem; 
+            color: #4b5563; 
+            line-height: 1.6; 
+            overflow-x: auto;
+        }
+        
+        /* 強制公告內的圖片不能超過螢幕，避免破版 */
+        .news-desc-content img {
+            max-width: 100% !important;
+            height: auto !important;
+            border-radius: 8px;
+            margin: 10px 0;
+            display: block;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
         /* Modal 樣式 */
         .modal-overlay {
             position: fixed;
@@ -2398,6 +2416,14 @@
         return false;
     }
 
+    // 💡 新增：用來解碼被編碼的 HTML 字串 (例如 &lt;p&gt; 轉回 <p>)
+    function decodeHtmlEntities(str) {
+        if (!str) return "";
+        const txt = document.createElement("textarea");
+        txt.innerHTML = str;
+        return txt.value;
+    }
+
     async function openCityNewsModal(targetCity = null) {
         const modal = document.getElementById('modal-overlay');
         const title = document.getElementById('modal-title');
@@ -2472,18 +2498,24 @@
 
             contentArea.innerHTML = '<div style="display:flex; flex-direction:column; gap:12px;">' + 
                 allItems.map(i => {
-                    // 🌟 改进：安全处理 HTML 内容，保留图片和格式
-                    let descHtml = i.desc;
-                    // 移除脚本标签防止 XSS
+                    // 🌟 核心修正：正確解析包含圖片的 HTML 公告
+                    
+                    // 1. 先解碼 HTML 實體
+                    let descHtml = decodeHtmlEntities(i.desc);
+                    
+                    // 2. 移除 script 標籤防止 XSS 攻擊
                     descHtml = descHtml.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-                    // 图片标签添加响应式样式
-                    descHtml = descHtml.replace(/<img\s/g, '<img style="max-width:100%; height:auto; border-radius:6px; margin:8px 0;" ');
+                    
+                    // 3. 判斷如果是純文字 (不包含任何 HTML 標籤)，就將 \n 換行符號轉成 <br>
+                    if (!/<[a-z][\s\S]*>/i.test(descHtml)) {
+                        descHtml = descHtml.replace(/\n/g, '<br>');
+                    }
                     
                     return `
                     <div style="border-bottom:1px solid #eee; padding-bottom:12px;">
                         <div style="font-size:0.8rem; color:#9ca3af; margin-bottom:4px;">${i.date ? i.date.substring(0, 10) : ''}</div>
                         <div style="font-weight:700; font-size:1rem; margin-bottom:6px;"><span class="${i.cls}">${i.tag}</span> ${i.title}</div>
-                        <div style="font-size:0.9rem; color:#4b5563; line-height: 1.5;">${descHtml}</div>
+                        <div class="news-desc-content">${descHtml}</div>
                     </div>`;
                 }).join('') + '</div>';
         } catch (e) {
