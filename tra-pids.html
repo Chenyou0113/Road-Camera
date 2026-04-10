@@ -1969,11 +1969,16 @@
                 return;
             }
 
-            // 🔥 限制清單長度 (YouTube Player API 一次最多處理 50 首)
+            // 🔥 限制最大數量並分離出「第一部」與「剩下的清單」
             const maxPlaylist = _videoIds.slice(0, 50);
+            const firstVideo = maxPlaylist[0]; 
+            // YouTube 要求 playlist 參數是逗號分隔的字串
+            const restOfPlaylist = maxPlaylist.length > 1 ? maxPlaylist.slice(1).join(',') : '';
 
             let hasLoaded = false;
+            
             window.ytPlayer = new YT.Player('ytPlayerDiv', {
+                videoId: firstVideo, // ✅ 直接指定第一部影片，防止黑屏
                 playerVars: {
                     autoplay: 1,
                     mute: 1,
@@ -1981,20 +1986,28 @@
                     rel: 0,
                     enablejsapi: 1,
                     origin: originParam,
-                    playsinline: 1
+                    playsinline: 1,
+                    playlist: restOfPlaylist, // ✅ 直接在初始化時傳入後續播放清單
+                    loop: 1 // ✅ 讓整個清單自動循環
                 },
                 events: {
                     'onReady': function(event) {
                         hasLoaded = true;
                         clearTimeout(_videoRetryTimer);
+                        
+                        // 雙重保證靜音與自動播放
                         event.target.mute();
-                        // 採用陣列寫法載入播放清單
-                        event.target.loadPlaylist(maxPlaylist, idx);
-                        event.target.setLoop(true);
+                        setTimeout(() => {
+                            event.target.playVideo();
+                        }, 500); // 給一點緩衝時間再呼叫播放，突破瀏覽器限制
                     },
                     'onStateChange': function(event) {
+                        // 確保播放時維持靜音，且影片結束時能自動換下一首
                         if (event.data === YT.PlayerState.PLAYING) {
                            event.target.mute();
+                        } else if (event.data === YT.PlayerState.ENDED) {
+                            // 防呆：如果 YouTube API 的 loop 失效，手動觸發下一首
+                            event.target.nextVideo();
                         }
                     },
                     'onError': function(event) {
@@ -2002,7 +2015,6 @@
                         hasLoaded = true;
                         clearTimeout(_videoRetryTimer);
                         
-                        // 當遇到 2 (無效參數), 100 (找不到影片), 101/150 (不允許嵌入) 時自動播放下一首
                         if (event.target && typeof event.target.nextVideo === 'function') {
                             setTimeout(() => { event.target.nextVideo(); }, 1500);
                         }
@@ -2268,7 +2280,10 @@
             // 多語言目的地
             let destName = translateStation(t.EndingStationName);
 
-            let msg = `<span style="color:#ffeb3b;font-weight:bold">${t.TrainNo} ${info.name} ${lang.toward}${destName}</span>`;
+            // 根據語言設定車次顯示格式 (中文加「次」，英文加「Train」)
+            const trainNoText = PIDS_APP.STATE.currentLang === 'zh' ? `${t.TrainNo}次` : `Train ${t.TrainNo}`;
+
+            let msg = `<span style="color:#ffeb3b;font-weight:bold">${trainNoText} ${info.name} ${lang.toward}${destName}</span>`;
             msg += `<span style="margin:0 15px;color:#555">|</span>`;
 
             let liveData = null;
@@ -2344,10 +2359,16 @@
                 let idx = stops.findIndex(s => String(s.StationID) === GLOBAL_STATION_ID);
                 console.log(`[${t.TrainNo}] 尋找本站 ${GLOBAL_STATION_ID}: 找到索引=${idx}, 總停靠站數=${stops.length}`);
                 
-                // 🔥 小幫手：格式化站名+時間
+                // 🔥 小幫手：格式化站名+時間 (自動加上誤點時間)
                 const formatStation = (s) => {
                     const name = translateStation(s.StationName.Zh_tw);
-                    const time = s.ArrivalTime ? s.ArrivalTime.slice(0, 5) : "";
+                    let time = s.ArrivalTime ? s.ArrivalTime.slice(0, 5) : "";
+                    
+                    // 如果有時間且有誤點，重新計算預計抵達時間
+                    if (time && delay > 0) {
+                        time = getExpectedTime(time, delay);
+                    }
+                    
                     return time ? `${name}(${time})` : name;
                 };
 
