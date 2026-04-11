@@ -1905,24 +1905,36 @@
         }
 
         // 影音專區狀態管理
-        let _playlistId = ""; // 儲存 PL... 開頭的清單 ID
+        let _videoIds = []; 
         let _isVideoPlaying = false;
 
         function setupVideo(urls) {
             const con = document.getElementById('videoContainer');
-            _playlistId = "";
+            _videoIds = [];
 
-            // 🔥 1. 從 API 回傳的網址中提取 Playlist ID (list=PL...)
+            // 🔥 1. 從個別網址中提取 11 碼影片 ID
             urls.forEach(url => {
                 if (!url || typeof url !== 'string') return;
-                const match = url.match(/[?&]list=([^#&?]+)/);
-                if (match && match[1].startsWith('PL')) {
-                    _playlistId = match[1];
+                
+                // 支援：watch?v=..., shorts/..., 或直接是 11 碼 ID
+                const regExp = /(?:v=|v\/|vi=|vi\/|youtu\.be\/|embed\/|e\/|shorts\/)([^#&?\n<>\s]{11})/i;
+                const match = url.match(regExp);
+                
+                let id = null;
+                if (match && match[1].length === 11) {
+                    id = match[1];
+                } else if (url.trim().length === 11) {
+                    id = url.trim();
                 }
+
+                if (id) _videoIds.push(id);
             });
 
-            if (_playlistId) {
-                console.log(`✅ 偵測到官方播放清單 ID: ${_playlistId}`);
+            // 去除重複的 ID
+            _videoIds = [...new Set(_videoIds)];
+
+            if (_videoIds.length > 0) {
+                console.log(`✅ 偵測到 ${_videoIds.length} 部影片，準備建立動態清單`);
                 con.innerHTML = '<div id="ytPlayerDiv" style="width:100%; height:100%;"></div>';
                 
                 if (typeof YT === 'undefined' || typeof YT.Player === 'undefined') {
@@ -1933,17 +1945,16 @@
                         document.body.appendChild(tag);
                     }
                     // API 載入後的全局回呼
-                    window.onYouTubeIframeAPIReady = () => _createPlaylistPlayer();
+                    window.onYouTubeIframeAPIReady = () => _createDynamicPlayer();
                 } else {
-                    _createPlaylistPlayer();
+                    _createDynamicPlayer();
                 }
             } else {
-                // 如果沒有清單 ID，顯示提示或預設內容
-                con.innerHTML = `<div style="padding:20px; color:#666; text-align:center; font-size:1.2rem;">📹 請於後端設定有效的 YouTube 播放清單網址</div>`;
+                con.innerHTML = `<div style="padding:20px; color:#666; text-align:center; font-size:1.2rem;">📹 請於後端設定有效的 YouTube 影片網址</div>`;
             }
         }
 
-        function _createPlaylistPlayer() {
+        function _createDynamicPlayer() {
             if (window.ytPlayer) {
                 try { window.ytPlayer.destroy(); } catch(e) {}
             }
@@ -1953,9 +1964,6 @@
             window.ytPlayer = new YT.Player('ytPlayerDiv', {
                 host: 'https://www.youtube.com',
                 playerVars: {
-                    // 🔥 關鍵設定：直接指定載入播放清單
-                    listType: 'playlist',
-                    list: _playlistId,
                     autoplay: 1,
                     mute: 1,
                     controls: 0,
@@ -1963,13 +1971,21 @@
                     enablejsapi: 1,
                     origin: originParam,
                     widget_referrer: originParam,
-                    playsinline: 1,
-                    loop: 1
+                    playsinline: 1
                 },
                 events: {
                     'onReady': (event) => {
                         event.target.mute();
-                        // 只有目前分頁可見時才播放，解決「多開分頁報錯」
+                        
+                        // 🔥 2. 使用 loadPlaylist 指令將陣列轉為清單
+                        // 這樣就能像官方清單一樣，一部接一部播，且支援無限循環
+                        event.target.loadPlaylist({
+                            playlist: _videoIds,
+                            index: 0
+                        });
+                        event.target.setLoop(true);
+
+                        // 只有目前分頁可見時才播放，解決「多開分頁衝突」
                         if (!document.hidden) {
                             event.target.playVideo();
                         }
@@ -1979,16 +1995,17 @@
                             _isVideoPlaying = true;
                             event.target.mute();
                         }
-                        // 處理循環播放
+                        // 如果影片結束了卻沒自動跳下一首，手動補刀
                         if (event.data === YT.PlayerState.ENDED) {
-                            event.target.playVideo();
+                            event.target.nextVideo();
                         }
                     },
                     'onError': (event) => {
-                        console.warn(`❌ 播放清單內影片錯誤 (代碼: ${event.data})，自動跳過...`);
-                        // 播放清單模式下，直接呼叫下一部
+                        console.warn(`❌ 影片錯誤 (代碼: ${event.data})，自動跳過...`);
                         if (event.target && event.target.nextVideo) {
-                            event.target.nextVideo();
+                            setTimeout(() => {
+                                event.target.nextVideo();
+                            }, 1000);
                         }
                     }
                 }
@@ -2001,7 +2018,6 @@
                 const state = window.ytPlayer.getPlayerState();
                 // 只要回到這個分頁，且影片沒在播，就強制喚醒
                 if (state !== 1) { 
-                    console.log('👀 偵測到分頁喚醒，恢復影片播放');
                     window.ytPlayer.playVideo();
                 }
             }
