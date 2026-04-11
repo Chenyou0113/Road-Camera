@@ -1904,26 +1904,23 @@
             }, 10000);
         }
 
-        // 影片播放狀態
+        // 影片播放狀態全局變數
         let _videoIds = [];
         let _videoIdx = 0;
         let _videoRetryTimer = null;
+        let _isVideoPlaying = false; // 記錄是否已經開始播放
 
         function setupVideo(urls) {
             const con = document.getElementById('videoContainer');
             let rawIds = [];
 
-            // 🔥 更嚴格的 YouTube ID 擷取
+            // 嚴格過濾 ID
             urls.forEach(url => {
                 if (!url || typeof url !== 'string') return;
-                
-                // 若已經是剛好 11 碼的 YouTube ID
                 if (/^[a-zA-Z0-9_-]{11}$/.test(url.trim())) {
                     rawIds.push(url.trim());
                     return;
                 }
-
-                // 支援各種 YouTube 網址格式
                 const regExp = /(?:v=|v\/|vi=|vi\/|youtu\.be\/|embed\/|e\/)([^#&?\n<>\s]{11})/i;
                 const match = url.match(regExp);
                 if (match && /^[a-zA-Z0-9_-]{11}$/.test(match[1])) {
@@ -1931,11 +1928,10 @@
                 }
             });
 
-            // 確保陣列內 100% 都是乾淨的 11 碼 ID
             _videoIds = [...new Set(rawIds.filter(id => id && id.length === 11))];
 
             if (_videoIds.length > 0) {
-                console.log(`✅ 成功解析 ${_videoIds.length} 個有效的 YouTube ID`);
+                console.log(`✅ 成功解析 ${_videoIds.length} 個 YouTube ID`);
                 if (typeof YT === 'undefined' || typeof YT.Player === 'undefined') {
                     if (!document.getElementById('yt-api-script')) {
                         const tag = document.createElement('script');
@@ -1945,8 +1941,14 @@
                         firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
                     }
                 }
-                _videoIdx = 0;
-                _playVideoAt(_videoIdx);
+                
+                // 🔥 檢查分頁是否在背景，如果在背景就先不播，等切換回來再播
+                if (document.hidden) {
+                    console.log('💤 分頁在背景，延遲載入影片...');
+                    con.innerHTML = `<div style="padding:20px; color:#666; text-align:center; font-size:1.2rem;">💤 等待畫面顯示後播放影片</div>`;
+                } else {
+                    _playVideoAt(0);
+                }
             } else if (urls.length > 0 && typeof urls[0] === 'string' && !urls[0].includes('youtube')) {
                 con.innerHTML = `<video src="${urls[0]}" autoplay muted loop playsinline style="width:100%;height:100%;object-fit:contain;"></video>`;
             } else {
@@ -1958,15 +1960,15 @@
             const con = document.getElementById('videoContainer');
             if (!con || _videoIds.length === 0) return;
 
-            const originParam = location.protocol.startsWith('http') ? location.origin : '';
+            // 如果已經在播了就不要重複載入
+            if (_isVideoPlaying && window.ytPlayer) return;
 
-            // 清空容器，建立給 YT.Player 使用的 div
+            const originParam = location.protocol.startsWith('http') ? location.origin : '';
             con.innerHTML = '<div id="ytPlayerDiv" style="width:100%; height:100%;"></div>';
             console.log(`▶️ 播放清單模式載入: 共 ${_videoIds.length} 首影片`);
 
             if (_videoRetryTimer) clearTimeout(_videoRetryTimer);
 
-            // 確保 YT API 已準備就緒
             if (typeof YT === 'undefined' || typeof YT.Player === 'undefined') {
                 console.warn('⚠️ YouTube API 尚未載入，2 秒後重試...');
                 _videoRetryTimer = setTimeout(() => _playVideoAt(idx), 2000);
@@ -1978,8 +1980,8 @@
                 playerVars: {
                     autoplay: 1,
                     mute: 1,
-                    controls: 0,     // 隱藏控制列
-                    rel: 0,          // 不顯示相關影片
+                    controls: 0,
+                    rel: 0,
                     enablejsapi: 1,
                     origin: originParam,
                     playsinline: 1
@@ -1988,44 +1990,55 @@
                     'onReady': function(event) {
                         hasLoaded = true;
                         clearTimeout(_videoRetryTimer);
+                        _isVideoPlaying = true;
                         
-                        // 強制靜音和載入「一整個」清單
                         event.target.mute();
                         event.target.loadPlaylist({
-                            playlist: _videoIds, // ✅ 直接傳入完整陣列，不限制數量
+                            playlist: _videoIds,
                             index: idx
                         });
-                        event.target.setLoop(true); // 讓整個清單無限輪播
+                        event.target.setLoop(true);
                     },
                     'onStateChange': function(event) {
-                        // 確保播放器處於靜音
                         if (event.data === YT.PlayerState.PLAYING) {
                            event.target.mute();
                         }
                     },
                     'onError': function(event) {
-                        console.warn(`⚠️ YouTube 返回錯誤 (代碼: ${event.data})，播放器將自動跳過無法播放的影片...`);
-                        hasLoaded = true; // 取消超時
+                        console.warn(`⚠️ YouTube 返回錯誤 (代碼: ${event.data})`);
+                        hasLoaded = true;
                         clearTimeout(_videoRetryTimer);
                         
-                        // 防呆：如果某部影片有版權限制等問題，自動跳下一部
                         if (event.target && typeof event.target.nextVideo === 'function') {
-                            setTimeout(() => {
-                                event.target.nextVideo();
-                            }, 1500);
+                            setTimeout(() => { event.target.nextVideo(); }, 1500);
                         }
                     }
                 }
             });
 
-            // 逾時保護：15 秒內還沒 ready 才重新嘗試
             _videoRetryTimer = setTimeout(() => {
-                if (!hasLoaded) {
-                    console.warn(`⚠️ YouTube API 無法建立，重新嘗試載入`);
-                    _playVideoAt(idx);
-                }
+                if (!hasLoaded) _playVideoAt(idx);
             }, 15000);
         }
+
+        // 🔥 監聽瀏覽器分頁切換事件 (完美解決多開分頁崩潰問題)
+        document.addEventListener("visibilitychange", () => {
+            if (!document.hidden) {
+                // 當分頁切回到前景時
+                if (_videoIds.length > 0 && !_isVideoPlaying) {
+                    console.log('👀 分頁回到前景，開始載入影片...');
+                    _playVideoAt(0);
+                } else if (window.ytPlayer && typeof window.ytPlayer.playVideo === 'function') {
+                    // 如果原本就有播放器，確保它繼續播
+                    window.ytPlayer.playVideo();
+                }
+            } else {
+                // 當分頁切到背景時，暫停播放以節省資源並防止報錯
+                if (window.ytPlayer && typeof window.ytPlayer.pauseVideo === 'function') {
+                    window.ytPlayer.pauseVideo();
+                }
+            }
+        });
 
         function startMarquee(id) {
             const el = document.getElementById(id);
