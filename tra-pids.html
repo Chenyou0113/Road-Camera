@@ -1904,9 +1904,19 @@
             }, 10000);
         }
 
-        // 影音專區狀態管理
-        let _videoIds = []; 
-        let _isVideoPlaying = false;
+        // 影片播放狀態全局變數
+        let _videoIds = [];
+        let _isYTReady = false;
+
+        // 🔥 YouTube API 要求的全局回呼名稱
+        window.onYouTubeIframeAPIReady = function() {
+            console.log("🎥 YouTube API 已就緒");
+            _isYTReady = true;
+            // 如果 ID 已經準備好了，就直接建立播放器
+            if (_videoIds.length > 0) {
+                _createDynamicPlayer();
+            }
+        };
 
         function setupVideo(urls) {
             const con = document.getElementById('videoContainer');
@@ -1930,6 +1940,8 @@
 
             if (_videoIds.length > 0) {
                 con.innerHTML = '<div id="ytPlayerDiv" style="width:100%; height:100%;"></div>';
+                
+                // 檢查 API 是否已載入
                 if (typeof YT === 'undefined' || typeof YT.Player === 'undefined') {
                     if (!document.getElementById('yt-api-script')) {
                         const tag = document.createElement('script');
@@ -1938,66 +1950,37 @@
                         document.body.appendChild(tag);
                     }
                 } else {
+                    _isYTReady = true;
                     _createDynamicPlayer();
                 }
             } else {
-                con.innerHTML = `<div style="padding:20px; color:#666; text-align:center;">📹 無有效的影片網址</div>`;
+                con.innerHTML = `<div style="padding:20px; color:#666; text-align:center;">📹 暫無影音內容</div>`;
             }
         }
 
         function _createDynamicPlayer() {
-            if (window.ytPlayer) {
-                try { window.ytPlayer.destroy(); } catch(e) {}
-            }
-
+            if (!_isYTReady || window.ytPlayer) return;
+            
+            console.log(`🎬 啟動播放器：首播 ${_videoIds[0]}`);
             const originParam = window.location.origin;
 
             window.ytPlayer = new YT.Player('ytPlayerDiv', {
-                host: 'https://www.youtube.com',
+                height: '100%', width: '100%',
+                videoId: _videoIds[0],
                 playerVars: {
-                    autoplay: 1,
-                    mute: 1,
-                    controls: 0,
-                    rel: 0,
-                    enablejsapi: 1,
-                    origin: originParam,
-                    widget_referrer: originParam,
-                    playsinline: 1
+                    autoplay: 1, mute: 1, controls: 0, rel: 0,
+                    enablejsapi: 1, origin: originParam, playsinline: 1,
+                    playlist: _videoIds.slice(1).join(','),
+                    loop: 1
                 },
                 events: {
                     'onReady': (event) => {
                         event.target.mute();
-                        
-                        // 🔥 2. 使用 loadPlaylist 指令將陣列轉為清單
-                        // 這樣就能像官方清單一樣，一部接一部播，且支援無限循環
-                        event.target.loadPlaylist({
-                            playlist: _videoIds,
-                            index: 0
-                        });
-                        event.target.setLoop(true);
-
-                        // 只有目前分頁可見時才播放，解決「多開分頁衝突」
-                        if (!document.hidden) {
-                            event.target.playVideo();
-                        }
-                    },
-                    'onStateChange': (event) => {
-                        if (event.data === YT.PlayerState.PLAYING) {
-                            _isVideoPlaying = true;
-                            event.target.mute();
-                        }
-                        // 如果影片結束了卻沒自動跳下一首，手動補刀
-                        if (event.data === YT.PlayerState.ENDED) {
-                            event.target.nextVideo();
-                        }
+                        if (!document.hidden) event.target.playVideo();
                     },
                     'onError': (event) => {
-                        console.warn(`❌ 影片錯誤 (代碼: ${event.data})，自動跳過...`);
-                        if (event.target && event.target.nextVideo) {
-                            setTimeout(() => {
-                                event.target.nextVideo();
-                            }, 1000);
-                        }
+                        console.warn(`❌ 影片錯誤 (${event.data})，跳過...`);
+                        if (event.target && event.target.nextVideo) event.target.nextVideo();
                     }
                 }
             });
@@ -2346,9 +2329,10 @@
                 let idx = stops.findIndex(s => String(s.StationID) === GLOBAL_STATION_ID);
                 console.log(`[${t.TrainNo}] 尋找本站 ${GLOBAL_STATION_ID}: 找到索引=${idx}, 總停靠站數=${stops.length}`);
                 
-                // 🔥 小幫手：格式化站名+時間 (自動加上誤點時間)
+                // 🔥 修正後的小幫手：強制使用 currentLangCode
                 const formatStation = (s) => {
-                    const name = translateStation(s.StationName.Zh_tw);
+                    const currentLangCode = PIDS_APP.STATE.currentLang;
+                    const name = translateStation(s.StationName.Zh_tw, currentLangCode);
                     let time = s.ArrivalTime ? s.ArrivalTime.slice(0, 5) : "";
                     
                     // 如果有時間且有誤點，重新計算預計抵達時間
@@ -2361,10 +2345,11 @@
 
                 if (idx !== -1) {
                     // ✅ 使用 PIDS_APP.STATE.currentLang
-                    let next = stops.slice(idx + 1).map(formatStation).join(PIDS_APP.STATE.currentLang === 'zh' ? '、' : ' → ');
+                    const currentLangCode = PIDS_APP.STATE.currentLang;
+                    let next = stops.slice(idx + 1).map(formatStation).join(currentLangCode === 'zh' ? '、' : ' → ');
                     console.log(`[${t.TrainNo}] 後續停靠站：${next || '無(終點)'}`);
                     if (next) {
-                        const stopsLabel = PIDS_APP.STATE.currentLang === 'zh' ? '沿途停靠：' : 'Stops: ';
+                        const stopsLabel = currentLangCode === 'zh' ? '沿途停靠：' : 'Stops: ';
                         msg += `<span style="margin:0 15px;color:#555">|</span>${stopsLabel}${next}`;
                     }
                     else {
