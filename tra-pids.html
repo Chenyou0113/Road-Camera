@@ -1960,70 +1960,70 @@
 
             const originParam = location.protocol.startsWith('http') ? location.origin : '';
 
+            // 清空容器，建立給 YT.Player 使用的 div
             con.innerHTML = '<div id="ytPlayerDiv" style="width:100%; height:100%;"></div>';
+            console.log(`▶️ 播放清單模式載入: 共 ${_videoIds.length} 首影片`);
 
             if (_videoRetryTimer) clearTimeout(_videoRetryTimer);
 
+            // 確保 YT API 已準備就緒
             if (typeof YT === 'undefined' || typeof YT.Player === 'undefined') {
+                console.warn('⚠️ YouTube API 尚未載入，2 秒後重試...');
                 _videoRetryTimer = setTimeout(() => _playVideoAt(idx), 2000);
                 return;
             }
 
-            // 🔥 限制最大數量並分離出「第一部」與「剩下的清單」
-            const maxPlaylist = _videoIds.slice(0, 50);
-            const firstVideo = maxPlaylist[0]; 
-            // YouTube 要求 playlist 參數是逗號分隔的字串
-            const restOfPlaylist = maxPlaylist.length > 1 ? maxPlaylist.slice(1).join(',') : '';
-
             let hasLoaded = false;
-            
             window.ytPlayer = new YT.Player('ytPlayerDiv', {
-                videoId: firstVideo, // ✅ 直接指定第一部影片，防止黑屏
                 playerVars: {
                     autoplay: 1,
                     mute: 1,
-                    controls: 0,
-                    rel: 0,
+                    controls: 0,     // 隱藏控制列
+                    rel: 0,          // 不顯示相關影片
                     enablejsapi: 1,
                     origin: originParam,
-                    playsinline: 1,
-                    playlist: restOfPlaylist, // ✅ 直接在初始化時傳入後續播放清單
-                    loop: 1 // ✅ 讓整個清單自動循環
+                    playsinline: 1
                 },
                 events: {
                     'onReady': function(event) {
                         hasLoaded = true;
                         clearTimeout(_videoRetryTimer);
                         
-                        // 雙重保證靜音與自動播放
+                        // 強制靜音和載入「一整個」清單
                         event.target.mute();
-                        setTimeout(() => {
-                            event.target.playVideo();
-                        }, 500); // 給一點緩衝時間再呼叫播放，突破瀏覽器限制
+                        event.target.loadPlaylist({
+                            playlist: _videoIds, // ✅ 直接傳入完整陣列，不限制數量
+                            index: idx
+                        });
+                        event.target.setLoop(true); // 讓整個清單無限輪播
                     },
                     'onStateChange': function(event) {
-                        // 確保播放時維持靜音，且影片結束時能自動換下一首
+                        // 確保播放器處於靜音
                         if (event.data === YT.PlayerState.PLAYING) {
                            event.target.mute();
-                        } else if (event.data === YT.PlayerState.ENDED) {
-                            // 防呆：如果 YouTube API 的 loop 失效，手動觸發下一首
-                            event.target.nextVideo();
                         }
                     },
                     'onError': function(event) {
-                        console.warn(`⚠️ YouTube 發生錯誤 (代碼: ${event.data})，跳過當前影片...`);
-                        hasLoaded = true;
+                        console.warn(`⚠️ YouTube 返回錯誤 (代碼: ${event.data})，播放器將自動跳過無法播放的影片...`);
+                        hasLoaded = true; // 取消超時
                         clearTimeout(_videoRetryTimer);
                         
+                        // 防呆：如果某部影片有版權限制等問題，自動跳下一部
                         if (event.target && typeof event.target.nextVideo === 'function') {
-                            setTimeout(() => { event.target.nextVideo(); }, 1500);
+                            setTimeout(() => {
+                                event.target.nextVideo();
+                            }, 1500);
                         }
                     }
                 }
             });
 
+            // 逾時保護：15 秒內還沒 ready 才重新嘗試
             _videoRetryTimer = setTimeout(() => {
-                if (!hasLoaded) _playVideoAt(idx);
+                if (!hasLoaded) {
+                    console.warn(`⚠️ YouTube API 無法建立，重新嘗試載入`);
+                    _playVideoAt(idx);
+                }
             }, 15000);
         }
 
