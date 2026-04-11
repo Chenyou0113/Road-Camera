@@ -1954,13 +1954,15 @@
                 try { window.ytPlayer.destroy(); } catch(e) {}
             }
 
-            const originParam = location.protocol.startsWith('http') ? location.origin : '';
+            // 🔥 修正 1：確保 Origin 絕對精準，不要有結尾斜槓
+            const originParam = window.location.origin;
             
-            // 🔥 2. 使用最原始的「清單模式」初始化
-            // 這種寫法將第一部影片與後續清單直接綁定，最不容易被瀏覽器阻擋
+            console.log(`🎬 正在啟動原始清單模式，總計 ${_videoIds.length} 部影片`);
+
             window.ytPlayer = new YT.Player('ytPlayerDiv', {
-                host: 'https://www.youtube-nocookie.com',
-                videoId: _videoIds[0], // 第一部影片
+                // 🔥 修正 2：改回 youtube.com 增加相容性 (nocookie 有時會造成 postMessage 失敗)
+                host: 'https://www.youtube.com', 
+                videoId: _videoIds[0], 
                 playerVars: {
                     autoplay: 1,
                     mute: 1,
@@ -1969,23 +1971,42 @@
                     enablejsapi: 1,
                     origin: originParam,
                     playsinline: 1,
-                    playlist: _videoIds.slice(1).join(','), // ✅ 原始模式：其餘影片作為清單傳入
+                    // 🔥 修正 3：加入這個參數，告訴 YouTube 這是一個清單
+                    listType: 'playlist', 
+                    playlist: _videoIds.slice(1).join(','),
                     loop: 1
                 },
                 events: {
                     'onReady': (event) => {
                         event.target.mute();
-                        event.target.playVideo();
+                        // 雙重保證播放
+                        setTimeout(() => {
+                            if (event.target && event.target.playVideo) event.target.playVideo();
+                        }, 1000);
                     },
                     'onStateChange': (event) => {
-                        // 處理循環播放邏輯
+                        if (event.data === YT.PlayerState.PLAYING) {
+                            event.target.mute();
+                        }
+                        // 處理循環播放
                         if (event.data === YT.PlayerState.ENDED) {
-                            event.target.playVideo(); 
+                            event.target.playVideo();
                         }
                     },
                     'onError': (event) => {
-                        console.warn('影片播放錯誤，自動跳過', event.data);
+                        // 🔥 修正 4：遇到 Code 150 (禁止嵌入) 時，加速跳過
+                        const errorMsg = {
+                            2: "無效參數",
+                            5: "HTML5 播放器錯誤",
+                            100: "影片已移除或私有",
+                            101: "不允許在嵌入式播放器播放",
+                            150: "不允許在嵌入式播放器播放"
+                        };
+                        
+                        console.warn(`❌ 影片無法播放 (${errorMsg[event.data] || event.data})，正在跳過...`);
+                        
                         if (event.target && typeof event.target.nextVideo === 'function') {
+                            // 遇到 101/150 這種版權阻擋，直接無秒差跳下一部
                             event.target.nextVideo();
                         }
                     }
