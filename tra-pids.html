@@ -1904,30 +1904,25 @@
             }, 10000);
         }
 
-        // 影音專區狀態
-        let _videoIds = [];
+        // 影音專區狀態管理
+        let _playlistId = ""; // 儲存 PL... 開頭的清單 ID
+        let _isVideoPlaying = false;
 
         function setupVideo(urls) {
             const con = document.getElementById('videoContainer');
-            let rawIds = [];
+            _playlistId = "";
 
-            // 🔥 1. 依然保留這個嚴格過濾，這是防止「炸開」的第一道防線
+            // 🔥 1. 從 API 回傳的網址中提取 Playlist ID (list=PL...)
             urls.forEach(url => {
                 if (!url || typeof url !== 'string') return;
-                if (/^[a-zA-Z0-9_-]{11}$/.test(url.trim())) {
-                    rawIds.push(url.trim());
-                    return;
-                }
-                const regExp = /(?:v=|v\/|vi=|vi\/|youtu\.be\/|embed\/|e\/)([^#&?\n<>\s]{11})/i;
-                const match = url.match(regExp);
-                if (match && /^[a-zA-Z0-9_-]{11}$/.test(match[1])) {
-                    rawIds.push(match[1]);
+                const match = url.match(/[?&]list=([^#&?]+)/);
+                if (match && match[1].startsWith('PL')) {
+                    _playlistId = match[1];
                 }
             });
 
-            _videoIds = [...new Set(rawIds.filter(id => id && id.length === 11))];
-
-            if (_videoIds.length > 0) {
+            if (_playlistId) {
+                console.log(`✅ 偵測到官方播放清單 ID: ${_playlistId}`);
                 con.innerHTML = '<div id="ytPlayerDiv" style="width:100%; height:100%;"></div>';
                 
                 if (typeof YT === 'undefined' || typeof YT.Player === 'undefined') {
@@ -1937,55 +1932,51 @@
                         tag.src = "https://www.youtube.com/iframe_api";
                         document.body.appendChild(tag);
                     }
-                    // 等待 API 載入
-                    window.onYouTubeIframeAPIReady = () => _createOriginalPlayer();
+                    // API 載入後的全局回呼
+                    window.onYouTubeIframeAPIReady = () => _createPlaylistPlayer();
                 } else {
-                    _createOriginalPlayer();
+                    _createPlaylistPlayer();
                 }
-            } else if (urls.length > 0 && typeof urls[0] === 'string' && !urls[0].includes('youtube')) {
-                con.innerHTML = `<video src="${urls[0]}" autoplay muted loop playsinline style="width:100%;height:100%;object-fit:contain;"></video>`;
             } else {
-                con.innerHTML = `<div style="padding:20px; color:#666; text-align:center; font-size:1.2rem;">📹 暫無影音內容</div>`;
+                // 如果沒有清單 ID，顯示提示或預設內容
+                con.innerHTML = `<div style="padding:20px; color:#666; text-align:center; font-size:1.2rem;">📹 請於後端設定有效的 YouTube 播放清單網址</div>`;
             }
         }
 
-        function _createOriginalPlayer() {
+        function _createPlaylistPlayer() {
             if (window.ytPlayer) {
                 try { window.ytPlayer.destroy(); } catch(e) {}
             }
 
-            // 🔥 修正 1：確保 Origin 絕對精準，不要有結尾斜槓
             const originParam = window.location.origin;
-            
-            console.log(`🎬 正在啟動原始清單模式，總計 ${_videoIds.length} 部影片`);
 
             window.ytPlayer = new YT.Player('ytPlayerDiv', {
-                // 🔥 修正 2：改回 youtube.com 增加相容性 (nocookie 有時會造成 postMessage 失敗)
-                host: 'https://www.youtube.com', 
-                videoId: _videoIds[0], 
+                host: 'https://www.youtube.com',
                 playerVars: {
+                    // 🔥 關鍵設定：直接指定載入播放清單
+                    listType: 'playlist',
+                    list: _playlistId,
                     autoplay: 1,
                     mute: 1,
                     controls: 0,
                     rel: 0,
                     enablejsapi: 1,
                     origin: originParam,
+                    widget_referrer: originParam,
                     playsinline: 1,
-                    // 🔥 修正 3：加入這個參數，告訴 YouTube 這是一個清單
-                    listType: 'playlist', 
-                    playlist: _videoIds.slice(1).join(','),
                     loop: 1
                 },
                 events: {
                     'onReady': (event) => {
                         event.target.mute();
-                        // 雙重保證播放
-                        setTimeout(() => {
-                            if (event.target && event.target.playVideo) event.target.playVideo();
-                        }, 1000);
+                        // 只有目前分頁可見時才播放，解決「多開分頁報錯」
+                        if (!document.hidden) {
+                            event.target.playVideo();
+                        }
                     },
                     'onStateChange': (event) => {
                         if (event.data === YT.PlayerState.PLAYING) {
+                            _isVideoPlaying = true;
                             event.target.mute();
                         }
                         // 處理循環播放
@@ -1994,19 +1985,9 @@
                         }
                     },
                     'onError': (event) => {
-                        // 🔥 修正 4：遇到 Code 150 (禁止嵌入) 時，加速跳過
-                        const errorMsg = {
-                            2: "無效參數",
-                            5: "HTML5 播放器錯誤",
-                            100: "影片已移除或私有",
-                            101: "不允許在嵌入式播放器播放",
-                            150: "不允許在嵌入式播放器播放"
-                        };
-                        
-                        console.warn(`❌ 影片無法播放 (${errorMsg[event.data] || event.data})，正在跳過...`);
-                        
-                        if (event.target && typeof event.target.nextVideo === 'function') {
-                            // 遇到 101/150 這種版權阻擋，直接無秒差跳下一部
+                        console.warn(`❌ 播放清單內影片錯誤 (代碼: ${event.data})，自動跳過...`);
+                        // 播放清單模式下，直接呼叫下一部
+                        if (event.target && event.target.nextVideo) {
                             event.target.nextVideo();
                         }
                     }
@@ -2014,12 +1995,15 @@
             });
         }
 
-        // 🔥 3. 唯獨保留這個「喚醒」機制
-        // 這是為了解決「多個分頁」同時開啟時，瀏覽器強制暫停背景分頁的問題
+        // 🔥 解決多開分頁與背景分頁自動播放限制
         document.addEventListener("visibilitychange", () => {
             if (!document.hidden && window.ytPlayer && typeof window.ytPlayer.playVideo === 'function') {
-                // 當您點回這個分頁時，強制它「醒過來」播放
-                window.ytPlayer.playVideo();
+                const state = window.ytPlayer.getPlayerState();
+                // 只要回到這個分頁，且影片沒在播，就強制喚醒
+                if (state !== 1) { 
+                    console.log('👀 偵測到分頁喚醒，恢復影片播放');
+                    window.ytPlayer.playVideo();
+                }
             }
         });
 
