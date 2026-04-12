@@ -2071,40 +2071,37 @@
                 let r = await fetch(`${TRA_WORKER_URL}/api/liveboard/station?station=${id}`);
                 let d = await r.json();
 
-                // 🔥 新增：篩選已開出的列車 (預計發車時間 < 現在時間)
                 const now = new Date();
-                const currentHours = now.getHours();
-                const currentMins = now.getMinutes();
-                const nowTotalMinutes = currentHours * 60 + currentMins;
+                const nowMins = now.getHours() * 60 + now.getMinutes();
 
                 let filtered = d.filter(t => {
                     const [h, m] = (t.ScheduledDepartureTime || "00:00").split(':').map(Number);
-                    const schedMins = h * 60 + m;
                     const delayMins = parseInt(t.DelayTime || 0);
-                    const actualMins = schedMins + delayMins;
-
-                    // 停駛列車保留，未來班次也保留
+                    const actualMins = (h * 60 + m) + delayMins;
+                    
                     const isCancelled = String(t.TrainStatus) === '2';
-                    const shouldShow = actualMins >= nowTotalMinutes || isCancelled;
+                    // 為了處理跨日，如果實際時間小於現在時間超過 12 小時，視為隔日班次
+                    let adjustedActualMins = actualMins;
+                    if (actualMins < nowMins - 720) adjustedActualMins += 1440;
 
-                    console.log(`[${t.TrainNo}] ${t.ScheduledDepartureTime} 實際=${actualMins}分 現在=${nowTotalMinutes}分 停駛=${isCancelled} 顯示=${shouldShow}`);
-                    return shouldShow;
+                    return adjustedActualMins >= nowMins || isCancelled;
                 });
 
-                // 🔥 修正: 按「實際開車時間」排序（純粹按分鐘數）
+                // 🔥 核心排序修正：計算相對於「現在時間」的分鐘差
                 filtered.forEach(t => {
                     let [h, m] = (t.ScheduledDepartureTime || "00:00").split(':').map(Number);
                     let delayMins = parseInt(t.DelayTime || 0);
-                    // 實際時間 = 表定時間 + 誤點
                     let actualMins = (h * 60 + m) + delayMins;
-                    // 只按實際時間的相對分鐘數排序（取 mod 1440 確保凌晨班次排在前面）
-                    t._sort = actualMins % 1440;
+                    
+                    // 計算該車次距離現在還有幾分鐘 (考慮 24 小時循環)
+                    // 使用 (A - B + 1440) % 1440 可以精準算出「未來的分鐘數」
+                    t._sort = (actualMins - nowMins + 1440) % 1440;
                 });
+
+                // 按距離現在的時長排序，越近的排越前面
                 filtered.sort((a, b) => a._sort - b._sort);
 
-                // 儲存到快取
                 lastTrainData = filtered;
-
                 refreshDisplay();
 
             } catch (e) {
