@@ -496,6 +496,18 @@
                     <div class="status" id="annStatus"></div>
                 </div>
 
+                <div class="card" style="border-top: 4px solid #00bcd4;">
+                    <h3 style="color: #00bcd4;"><i class="fas fa-sync"></i> PIDS 數據維護</h3>
+                    <p style="font-size:0.8rem; color:#888; margin-bottom:10px;">手動強制從 TDX 抓取最新資料至 D1 資料庫</p>
+                    <button onclick="triggerSync('live')" style="background: #00bcd4; margin-bottom:10px;">
+                        <i class="fas fa-bolt"></i> 同步即時動態 (Live)
+                    </button>
+                    <button onclick="triggerSync('schedule')" style="background: #0097a7;">
+                        <i class="fas fa-calendar-alt"></i> 同步時刻表 (Schedule)
+                    </button>
+                    <div class="status" id="syncStatus"></div>
+                </div>
+
                 <div class="card" style="border-top: 4px solid #673ab7;">
                     <h3 style="color: #b388ff;"><i class="fas fa-ticket-alt"></i> 邀請碼產生器</h3>
                     <div id="newCodeBox" class="code-display" onclick="copyCode()" title="點擊複製"></div>
@@ -511,9 +523,9 @@
     </div>
 
     <script>
-        // ★ Worker API 網址
+        // ★ 修改 1: 修正 Worker 網址 (請確保這與你實際運行的網址一致)
         const API_BASE = 'https://wang-weather.xiaoyouwu5-fd3.workers.dev';
-        const PIDS_WORKER_URL = 'https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev';
+        const PIDS_WORKER_URL = 'https://tra-schedule-worker.weacamm.org'; // 🔥 這裡改回你實際的網域
 
         // 檢查是否已登入
         function checkAuth() {
@@ -673,6 +685,36 @@
         }
 
         // === PIDS 控制 ===
+
+        // ★ 修改 2: 增加手動同步函式
+        async function triggerSync(type) {
+            const statusEl = document.getElementById('syncStatus');
+            const user = localStorage.getItem('wangwei_user');
+            const pass = localStorage.getItem('wangwei_pass');
+            
+            statusEl.innerText = `⏳正在進行 ${type} 同步，請稍候...`;
+            statusEl.style.color = "#aaa";
+
+            try {
+                // 如果是 schedule，因為資料量大，我們把 timeout 設長一點
+                const res = await fetch(`${PIDS_WORKER_URL}/api/sync?type=${type}`, {
+                    method: 'GET',
+                    headers: { 'X-Username': user, 'X-Password': pass }
+                });
+                const text = await res.text();
+                if (res.ok) {
+                    statusEl.innerText = "✅ " + text;
+                    statusEl.style.color = "#4caf50";
+                } else {
+                    statusEl.innerText = "❌ 同步失敗：" + text;
+                    statusEl.style.color = "#ff5252";
+                }
+            } catch (e) {
+                statusEl.innerText = "❌ 連線錯誤或請求超時";
+                statusEl.style.color = "#ff5252";
+            }
+        }
+
         async function loadPidsMarquee() {
             try {
                 // 🔥 加上 ?raw=true，告訴 Worker 只要給「純宣導文字」，不要混入即時通阻！
@@ -688,10 +730,13 @@
             }
         }
 
+        // ★ 修改 3: 更新 PIDS 文字發送 (加入驗證 Header)
         async function updatePidsMarquee() {
             const btn = event.target;
             const newText = document.getElementById('pidsMarqueeInput').value;
             const statusEl = document.getElementById('pidsStatus');
+            const user = localStorage.getItem('wangwei_user');
+            const pass = localStorage.getItem('wangwei_pass');
 
             if (!newText.trim()) return showError('pidsStatus', "內容不能為空");
 
@@ -701,16 +746,20 @@
             try {
                 const res = await fetch(`${PIDS_WORKER_URL}/api/admin/update-pids`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-Username': user, 
+                        'X-Password': pass 
+                    },
                     body: JSON.stringify({ text: newText })
                 });
                 const result = await res.json();
                 if (res.ok && result.success) {
-                    statusEl.innerText = "✅ 發送成功！PIDS 將自動更新。";
+                    statusEl.innerText = "✅ 發送成功！";
                     statusEl.style.color = "#4caf50";
                     document.getElementById('pidsCurrentText').innerText = newText;
                 } else {
-                    statusEl.innerText = "❌ 發送失敗：" + (result.error || "未知錯誤");
+                    statusEl.innerText = "❌ 錯誤：" + (result.error || "權限不足");
                     statusEl.style.color = "#ff5252";
                 }
             } catch (e) {
@@ -738,32 +787,38 @@
             }
         }
 
+        // ★ 修改 4: 更新多媒體儲存 (加入驗證 Header)
         async function savePidsAssets() {
             const btn = event.target;
             const images = document.getElementById('pidsImagesInput').value.split('\n').map(s => s.trim()).filter(s => s);
             const videoUrls = document.getElementById('pidsVideoInput').value.split('\n').map(s => s.trim()).filter(s => s);
             const statusEl = document.getElementById('pidsAssetsStatus');
+            const user = localStorage.getItem('wangwei_user');
+            const pass = localStorage.getItem('wangwei_pass');
 
             btn.disabled = true;
             statusEl.innerText = "⏳ 儲存中...";
-            statusEl.style.color = "#aaa";
 
             try {
                 const res = await fetch(`${PIDS_WORKER_URL}/api/admin/update-assets`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'X-Username': user, 
+                        'X-Password': pass 
+                    },
                     body: JSON.stringify({ images, video: videoUrls })
                 });
                 const result = await res.json();
                 if (res.ok && result.success) {
-                    statusEl.innerText = "✅ 多媒體設定已儲存！PIDS 將於下次刷新時顯示新素材。";
+                    statusEl.innerText = "✅ 多媒體設定已儲存！";
                     statusEl.style.color = "#4caf50";
                 } else {
-                    statusEl.innerText = "❌ 儲存失敗：" + (result.error || "未知錯誤");
+                    statusEl.innerText = "❌ 儲存失敗：" + (result.error || "權限不足");
                     statusEl.style.color = "#ff5252";
                 }
             } catch (e) {
-                statusEl.innerText = "❌ 連線錯誤：" + e.message;
+                statusEl.innerText = "❌ 連線錯誤";
                 statusEl.style.color = "#ff5252";
             } finally {
                 btn.disabled = false;
