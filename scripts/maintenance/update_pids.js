@@ -3,35 +3,14 @@ let html = fs.readFileSync('tra-pids.html', 'utf8');
 
 // Find the start and end of PIDS_APP.
 const startIdx = html.indexOf('const PIDS_APP = {');
-// Find the end of PIDS_APP. It ends around line 1497 with "    };"
-let matchEnd = html.match(/\n\s*};\n\s*\/\/\s*============ UI 安全工具/);
-if (!matchEnd) {
-    console.error('Cannot find end of PIDS_APP');
-    process.exit(1);
-}
-const endIdx = matchEnd.index + matchEnd[0].indexOf('};') + 2;
+let endMatch = html.indexOf('// ============ UI 安全工具');
+if (endMatch === -1) endMatch = html.indexOf('const UI_Helper = {');
+// The PIDS_APP ends right before this. Let's find the closing brace.
+const pidsChunk = html.substring(startIdx, endMatch);
+const lastBrace = pidsChunk.lastIndexOf('};');
+const endIdx = startIdx + lastBrace + 2;
 
-const pidsAppBody = html.substring(startIdx, endIdx);
-
-// Extract the ui object
-const uiMatch = pidsAppBody.match(/ui: \{([\s\S]*?)\n\s*\},?\n\s+(?:startTimers|loadInitialData)/);
-let uiContent = '';
-if (uiMatch) {
-    uiContent = uiMatch[1];
-} else {
-    // If not matching, just extract up to startTimers
-    const uiMatch2 = pidsAppBody.match(/ui: \{([\s\S]*?)\n\s*\},?\n\s+startTimers/);
-    if(uiMatch2) uiContent = uiMatch2[1];
-}
-
-// Extract subscribe and initKeyboardNavigation
-const subscribeMatch = pidsAppBody.match(/(\/\/\s*訂閱狀態變化[\s\S]*?)(?=\/\/\s*初始化|\n\s+init\(\))/);
-const subscribeCode = subscribeMatch ? subscribeMatch[1] : '';
-
-const initKBMatch = pidsAppBody.match(/(\/\/\s*🔥 鍵盤導航支援[\s\S]*?)(?=\n\s+(?:\/\/|updateClock|startAutoLangSwitch))/);
-const initKBCode = initKBMatch ? initKBMatch[1] : '';
-
-const newPidsApp = const PIDS_APP = {
+const newPidsApp = \const PIDS_APP = {
             CONFIG: {
                 API_BASE: "https://tra-schedule-worker.weacamm.org",
                 INTERVALS: {
@@ -69,7 +48,7 @@ const newPidsApp = const PIDS_APP = {
                     if (['currentLang', 'lastTrainData', 'propagandaText', 'alertText'].includes(prop)) {
                         clearTimeout(target._renderTimer);
                         target._renderTimer = setTimeout(() => {
-                            refreshDisplay(); 
+                            if (typeof refreshDisplay === 'function') refreshDisplay(); 
                             PIDS_APP.ui.renderTopMarquee();
                         }, 50);
                     }
@@ -99,8 +78,10 @@ const newPidsApp = const PIDS_APP = {
                 const minutes = now.getMinutes();
 
                 // 1. 更新時鐘顯示
-                UI_Helper.setText('unifiedTime', now.toLocaleTimeString('en-GB'));
-                UI_Helper.setText('unifiedDate', now.toISOString().split('T')[0].replace(/-/g, '/'));
+                if (typeof UI_Helper !== 'undefined') {
+                    UI_Helper.setText('unifiedTime', now.toLocaleTimeString('en-GB'));
+                    UI_Helper.setText('unifiedDate', now.toISOString().split('T')[0].replace(/-/g, '/'));
+                }
 
                 // 2. 語言切換 (每 1 分鐘且秒數為 0 時切換)
                 const langIdx = Math.floor(t / this.CONFIG.INTERVALS.LANG_CYCLE) % 2;
@@ -129,18 +110,16 @@ const newPidsApp = const PIDS_APP = {
                 if (this.STATE.stationID) this.updatePids();
                 this.fetchAlerts();
                 this.fetchPropaganda();
-                // Call updateMediaAssets from outside to retain asset logic
                 if (typeof updateMediaAssets === 'function') updateMediaAssets();
             },
 
             async updatePids() {
                 try {
                     const res = await fetch(\\/api/liveboard/station?station=\\);
+                    if(!res.ok) throw new Error('Liveboard API Error');
                     const data = await res.json();
                     
-                    // The original code was updating lastTrainData which triggers the Proxy.
-                    // But in original updatePids, there's logic to abort fetch and format data. 
-                    // We'll trust the user's snippet for the proxy update here.
+                    // Trigger Proxy update
                     this.STATE.lastTrainData = data;
                 } catch (e) { console.error("PIDS Sync Error", e); }
             },
@@ -148,17 +127,19 @@ const newPidsApp = const PIDS_APP = {
             async fetchAlerts() {
                 try {
                     const res = await fetch(\\/api/alerts\);
+                    if(!res.ok) throw new Error('Alerts API Error');
                     const data = await res.json();
-                    // 根據目前語言過濾通阻
-                    const isZh = this.STATE.currentLang === 'zh';
-                    const alertMsg = data.map(a => \⚠️ 【\】 \\).join("   ❖   ");
-                    this.STATE.alertText = alertMsg;
+                    if(data && Array.isArray(data)) {
+                        const alertMsg = data.map(a => \⚠️ 【\】 \\).join("   ❖   ");
+                        this.STATE.alertText = alertMsg;
+                    }
                 } catch (e) { console.error("Alerts Sync Error", e); }
             },
 
             async fetchPropaganda() {
                 try {
                     const res = await fetch(\\/api/pids/marquee?raw=true\);
+                    if(!res.ok) throw new Error('Marquee API Error');
                     const data = await res.json();
                     this.STATE.propagandaText = data.text || "歡迎搭乘臺鐵。";
                 } catch (e) { console.error("Propaganda Sync Error", e); }
@@ -191,7 +172,9 @@ const newPidsApp = const PIDS_APP = {
                 },
 
                 updateUIStrings() {
+                    if (typeof i18n === 'undefined') return;
                     const lang = i18n[PIDS_APP.STATE.currentLang];
+                    if (!lang) return;
 
                     const dir1Title = document.getElementById('dirTitle1');
                     const dir0Title = document.getElementById('dirTitle0');
@@ -218,9 +201,9 @@ const newPidsApp = const PIDS_APP = {
                     const el = document.getElementById('unifiedTopMarquee');
                     if (!el) return;
                     const separator = "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;";
-                    const newText = this.STATE.alertText 
+                    const newText = PIDS_APP.STATE.alertText 
                         ? \\\\\
-                        : this.STATE.propagandaText;
+                        : PIDS_APP.STATE.propagandaText;
                     
                     // 只有內容真的有變時才重新啟動跑馬燈
                     if (el.innerHTML !== newText) {
@@ -229,7 +212,7 @@ const newPidsApp = const PIDS_APP = {
                     }
                 }
             }
-        };;
+        };\;
 
 const newHtml = html.substring(0, startIdx) + newPidsApp + html.substring(endIdx);
 fs.writeFileSync('tra-pids.html', newHtml, 'utf8');
