@@ -1155,9 +1155,13 @@ initKeyboardNavigation() {
             async fetchAlerts() {
                 try {
                     const res = await fetch(`${this.CONFIG.API_BASE}/api/alerts`);
-                    if(!res.ok) throw new Error('Alerts Fetch Error');
+                    // 🔥 防呆：如果回傳的不是 JSON (例如文字)，就跳過
+                    const contentType = res.headers.get("content-type");
+                    if (!contentType || !contentType.includes("application/json")) {
+                        console.warn("⚠️ Alerts API 尚未準備好資料");
+                        return;
+                    }
                     const data = await res.json();
-                    
                     if (data && Array.isArray(data) && data.length > 0) {
                         const alertMsg = data.map(a => `⚠️ 【${a.Title}】 ${a.Description}`).join("   ❖   ");
                         this.STATE.alertText = alertMsg;
@@ -1244,6 +1248,25 @@ initKeyboardNavigation() {
 
             }
         };
+
+        // 🔥 補回核心判斷函式
+        function getInfo(t, langCode = PIDS_APP.STATE.currentLang) {
+            let rawName = t.TrainTypeName?.Zh_tw || t.TrainTypeName || '列車';
+            let name = rawName.replace(/\(.*\)/g, ''); // 強制簡化名稱
+            let cls = '其他';
+
+            if (name.includes('新自強') || name.includes('3000')) { name = '新自強'; cls = '新自強'; }
+            else if (name.includes('自強')) { name = '自強'; cls = '自強'; }
+            else if (name.includes('普悠瑪')) { name = '普悠瑪'; cls = '普悠瑪'; }
+            else if (name.includes('太魯閣')) { name = '太魯閣'; cls = '太魯閣'; }
+            else if (name.includes('莒光')) { name = '莒光'; cls = '莒光'; }
+            else if (name.includes('區間快')) { name = '區間快'; cls = '區間快'; }
+            else if (name.includes('區間')) { name = '區間'; cls = '區間'; }
+
+            const lang = i18n[langCode];
+            const displayName = lang.types[name] || name;
+            return { name: displayName, cls };
+        }
 
         // ============ UI 安全工具（防 XSS） ============
         const UI_Helper = {
@@ -1433,12 +1456,12 @@ initKeyboardNavigation() {
 
             urls.forEach(url => {
                 if (!url) return;
-                // 強力過濾所有不可見字元與換行
-                const rawLine = String(url).replace(/[\r\n\t]/g, '').trim();
-                if (!rawLine) return;
+                // 🔥 終極清理：移除所有換行、Tab、空白
+                const cleanLine = String(url).replace(/[\r\n\t]/g, '').trim();
+                if (!cleanLine) return;
 
                 const regExp = /(?:v=|v\/|vi=|vi\/|youtu\.be\/|embed\/|e\/|shorts\/|^)([a-zA-Z0-9_-]{11})/i;
-                const match = rawLine.match(regExp);
+                const match = cleanLine.match(regExp);
                 
                 if (match && match[1].length === 11) {
                     _videoIds.push(match[1]);
