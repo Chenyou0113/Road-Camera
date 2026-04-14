@@ -1,330 +1,1157 @@
+
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>台鐵即時看板 - 專業控制中心</title>
+    <title>台鐵即時看板 - 真實列車動態</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="assets/dark-mode.css">
+    <link rel="stylesheet" href="assets/mobile-responsive.css">
+    <script>window.CURRENT_PAGE = 'train-liveboard';</script>
+    <script src="assets/config.js"></script>
+    <script src="assets/tdx-api.js"></script>
+    <script src="assets/train-line-classification.js"></script>
     <style>
-        :root { --primary: #D84315; --bg: #0a0a0a; --card: #181818; --border: #333; --accent: #ff9800; --blue: #03a9f4; --success: #2ecc71; --danger: #e74c3c; }
-        body { background: var(--bg); color: #fff; font-family: 'Noto Sans TC', sans-serif; margin: 0; padding-bottom: 60px; }
-        
-        /* Header */
-        .header { background: #000; padding: 15px 20px; border-bottom: 2px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 2000; }
-        .back-btn { background: #016d68; color: #fff; padding: 8px 15px; border-radius: 5px; text-decoration: none; font-size: 0.85rem; font-weight: bold; }
-        #updateTime { color: #ffeb3b; font-family: monospace; font-size: 1.1rem; }
+        /* === CSS 設計系統 (完全保留原版) === */
+        :root {
+            --primary-color: #D84315;
+            --secondary-color: #016d68;
+            --bg-gradient: linear-gradient(135deg, #3575ff 0%, #15bbd8 100%);
+            --card-bg: #ffffff;
+            --text-main: #333333;
+            --text-muted: #666666;
+            --delay-red: #C62828;
+            --ontime-green: #2E7D32;
+            --border-color: #e0e0e0;
+            --transition-speed: 0.3s;
+            --shadow-sm: 0 2px 8px rgba(0,0,0,0.1);
+            --shadow-md: 0 4px 20px rgba(0,0,0,0.1);
+        }
 
-        .container { max-width: 900px; margin: 0 auto; padding: 15px; }
+        body.dark-mode {
+            --primary-color: #ffab91;
+            --card-bg: #1e1e1e;
+            --text-main: #e0e0e0;
+            --text-muted: #aaaaaa;
+            --bg-gradient: #121212;
+            --border-color: #333333;
+        }
+
+        /* === CSS 樣式區域 (完全保留原版) === */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Microsoft JhengHei', Arial, sans-serif; 
+            background: var(--bg-gradient); 
+            color: var(--text-main);
+            min-height: 100vh; 
+            padding-bottom: 80px;
+            transition: background var(--transition-speed), color var(--transition-speed);
+        }
+        
+        .header { background: white; padding: 20px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.1); position: relative; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+        .header h1 { color: #D84315; text-align: center; margin-bottom: 10px; }
+        .back-btn { display: inline-block; padding: 10px 20px; background: #016d68; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; transition: background 0.3s; }
+        .back-btn:hover { background: #034d64; }
+        
+        #themeToggle {
+            position: absolute; top: 20px; right: 20px; z-index: 100;
+        }
+        body.dark-mode #themeToggle {
+            background-color: #f39c12 !important;
+            border-color: rgba(255, 255, 255, 0.5) !important;
+            color: #fff !important;
+        }
+        body.dark-mode #themeToggle:hover {
+            background-color: #e67e22 !important;
+            border-color: #ffffff !important;
+        }
+
+        .control-panel { 
+            background: linear-gradient(135deg, rgba(53, 134, 255, 0.9) 0%, rgba(21, 144, 216, 0.9) 100%); margin: 20px 0; padding: 25px; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.2); border: 1px solid rgba(255,107,53,0.5);
+        }
+        
+        .control-panel h3 { color: white; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; font-size: 1.1rem; }
+        .selector-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr auto; gap: 15px; align-items: end; }
+        .selector-group { display: flex; flex-direction: column; }
+        .selector-group label { margin-bottom: 8px; font-weight: 600; color: white; font-size: 0.95rem; }
+        .selector-group select, .selector-group input { padding: 12px 15px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.3); background: white; color: #333; font-size: 1rem; }
+        
+        .query-btn {
+            padding: 12px 30px; background: #4CAF50; color: white; border: none; border-radius: 10px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: all 0.3s; display: flex; align-items: center; gap: 8px;
+        }
+        .query-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4); }
+        .query-btn:disabled { background: #ccc; cursor: not-allowed; }
+
+        /* === 站到站查詢專用 UI === */
+        .route-inputs {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr 1fr auto;
+            gap: 15px;
+            align-items: end;
+        }
+        .swap-btn {
+            background: rgba(255,255,255,0.2); color: white; border: 2px solid rgba(255,255,255,0.5); width: 42px; height: 42px; border-radius: 50%; cursor: pointer; font-size: 1.1rem; transition: all 0.3s; display: flex; align-items: center; justify-content: center; margin-bottom: 2px;
+        }
+        .swap-btn:hover { background: white; color: #D84315; transform: rotate(180deg); }
+
+        /* === 車次自動補全選單 === */
+        .autocomplete-wrapper { position: relative; width: 100%; }
+        .autocomplete-suggestions {
+            position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ccc; border-radius: 0 0 10px 10px; box-shadow: 0 8px 16px rgba(0,0,0,0.15); z-index: 1000; max-height: 250px; overflow-y: auto; display: none;
+        }
+        .autocomplete-item { padding: 12px 15px; cursor: pointer; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 10px; transition: background 0.2s; }
+        .autocomplete-item:last-child { border-bottom: none; }
+        .autocomplete-item:hover { background: #f0f7ff; }
+        .ac-no { font-weight: 900; color: #D84315; font-size: 1.1rem; min-width: 50px; }
+        .ac-name { background: #e0e0e0; padding: 3px 8px; border-radius: 6px; font-size: 0.85rem; color: #333; font-weight: bold; }
+        .ac-route { color: #666; font-size: 0.9rem; margin-left: auto; white-space: nowrap; }
+
+        body.dark-mode .autocomplete-suggestions { background: #2c2c2c; border-color: #444; box-shadow: 0 8px 16px rgba(0,0,0,0.5); }
+        body.dark-mode .autocomplete-item { border-bottom-color: #444; }
+        body.dark-mode .autocomplete-item:hover { background: #3d3d3d; }
+        body.dark-mode .ac-name { background: #444; color: #eee; }
+        body.dark-mode .ac-route { color: #aaa; }
 
         /* 公告面板 */
-        .info-panel { background: #3e2723; border-left: 5px solid var(--accent); padding: 15px; border-radius: 8px; margin-bottom: 15px; display: none; }
-        .tra-marquee { background: #fff; color: #333; height: 45px; border-radius: 8px; overflow: hidden; display: flex; align-items: center; padding: 0 15px; margin-bottom: 15px; font-weight: bold; }
-        .marquee-content { white-space: nowrap; animation: marquee 25s linear infinite; }
-        @keyframes marquee { from { transform: translateX(100%); } to { transform: translateX(-100%); } }
+        .info-panel { background: #fff3e0; border-left: 5px solid #ff9800; padding: 15px 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); display: none; }
+        .info-panel h3 { color: #e65100; margin-bottom: 15px; }
+        .news-item { padding: 12px 0; border-bottom: 1px solid rgba(0,0,0,0.1); }
+        .news-title { font-weight: bold; color: #bf360c; margin-bottom: 5px; }
+        .news-desc { color: #5d4037; font-size: 0.95rem; }
+        .news-time { font-size: 0.85rem; color: #8d6e63; margin-top: 5px; }
 
-        /* 控制台 */
-        .control-panel { background: #1565c0; border-radius: 15px; padding: 20px; margin-bottom: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-        .tab-nav { display: flex; gap: 8px; margin-bottom: 15px; background: rgba(0,0,0,0.2); padding: 5px; border-radius: 12px; }
-        .tab-btn { flex: 1; border: none; padding: 10px; border-radius: 8px; background: transparent; color: #fff; font-weight: bold; cursor: pointer; opacity: 0.6; }
-        .tab-btn.active { background: #fff; color: #1565c0; opacity: 1; }
+        /* 上方跑馬燈 */
+        .tra-marquee {
+            background: #ffffff; color: #333333; border: 1px solid #e0e0e0; display: flex; align-items: center; padding: 0 15px; font-size: 1.1rem; font-weight: 600; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.08); position: relative; height: 60px; overflow: hidden;
+        }
+        .marquee-icon { margin-right: 15px; color: #e65100; font-size: 1.4rem; z-index: 2; background: inherit; }
+        .marquee-wrapper { flex: 1; overflow: hidden; position: relative; height: 100%; display: block; }
+        .marquee-content { display: inline-block; white-space: nowrap; padding-left: 100%; animation: marquee-announce 20s linear infinite; line-height: 60px; position: absolute; top: 0; left: 0; }
+        @keyframes marquee-announce { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
 
-        .form-row { display: grid; grid-template-columns: 1fr 1fr 120px; gap: 10px; align-items: flex-end; }
-        .form-group { position: relative; display: flex; flex-direction: column; gap: 5px; }
-        .form-group label { font-size: 0.75rem; color: rgba(255,255,255,0.8); font-weight: bold; }
-        input, select { background: #fff; border: none; color: #333; padding: 12px; border-radius: 8px; outline: none; font-size: 0.95rem; }
+        /* 列車列表 (完全保留你的原版排版) */
+        .train-container { background: white; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); overflow: hidden; margin: 20px 0; display: none; }
+        .board-header { background: linear-gradient(135deg, #FF6B35 0%, #D84315 100%); color: white; padding: 20px; display: flex; justify-content: space-between; align-items: center; }
+        .pids-btn { display: inline-flex; align-items: center; gap: 8px; background: #212121; color: #ffb74d; padding: 8px 15px; border-radius: 5px; text-decoration: none; font-weight: bold; font-size: 0.9rem; cursor: pointer; }
+        .direction-header { background: #f5f5f5; padding: 15px 20px; font-weight: 600; color: #333; border-left: 4px solid #FF6B35; }
+        
+        .train-card {
+            display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 15px; align-items: center; padding: 15px 20px; border-bottom: 1px solid #eee; transition: background 0.3s; position: relative;
+        }
+        .train-card:hover { background: #f9f9f9; }
+        .train-info { display: flex; align-items: center; gap: 12px; }
+        .train-type-badge { padding: 4px 10px; border-radius: 4px; color: white; font-size: 0.85rem; font-weight: bold; }
+        
+        .type-自強 { background-color: #FF5722; }
+        .type-新自強 { background: linear-gradient(135deg, #000000 0%, #333333 100%); }
+        .type-普悠瑪 { background: linear-gradient(135deg, #E91E63 0%, #C2185B 100%); }
+        .type-太魯閣 { background: linear-gradient(135deg, #9C27B0 0%, #7B1FA2 100%); }
+        .type-莒光 { background-color: #FF9800; }
+        .type-區間快 { background-color: #3F51B5; }
+        .type-區間 { background-color: #2196F3; }
+        .type-其他 { background-color: #607D8B; }
+        
+        .train-no { font-weight: bold; color: #333; }
+        .schedule-time { text-align: center; font-weight: 600; color: #333; font-size: 1.1rem; }
+        .schedule-label { font-size: 0.75rem; color: #999; }
+        .delay-badge { display: inline-block; padding: 6px 10px; border-radius: 6px; font-weight: bold; }
+        .delay-ok { background-color: #E8F5E9; color: #2E7D32; }
+        .delay-warn { background-color: #FFEBEE; color: #C62828; }
+        .status-cancelled { background-color: #212121; color: #FF5252; border: 1px solid #FF5252; }
+        .train-cancelled-row { opacity: 0.6; filter: grayscale(100%); background-color: #1a1a1a !important; }
+        .delay-status { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+        
+        /* 底部跑馬燈 (全寬版) */
+        .marquee-bar {
+            position: fixed; bottom: 0; left: 0; width: 100%; height: 60px; background-color: #212121; color: #ffffff; display: flex; align-items: center; z-index: 9999; box-shadow: 0 -4px 15px rgba(0,0,0,0.4); border-top: 3px solid #ff9800;
+        }
+        .marquee-content-wrapper { flex: 1; overflow: hidden; position: relative; height: 100%; background: #212121; display: flex; align-items: center; }
+        .marquee-content { position: absolute; white-space: nowrap; font-size: 1.3rem; font-weight: bold; line-height: 60px; padding-left: 100%; color: inherit; will-change: transform; }
+        .station-stop { color: #ffeb3b; }
+        .station-arrow { color: #aaa; margin: 0 5px; font-size: 1rem; }
+        .marquee-close { background: #222; border: none; border-left: 1px solid #444; color: #999; width: 50px; height: 100%; font-size: 1.8rem; cursor: pointer; }
 
-        /* 🔥 Autocomplete 修復：鎖定在 Input 下方 */
-        .suggestions { position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1px solid #ccc; border-radius: 8px; z-index: 3000; box-shadow: 0 10px 30px rgba(0,0,0,0.3); display: none; max-height: 200px; overflow-y: auto; color: #333; }
-        .sugg-item { padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
-        .sugg-item:hover { background: #f0f0f0; color: var(--primary); }
+        /* 警示框容器 */
+        .warning-alert {
+            display: flex; align-items: flex-start; gap: 16px; background-color: rgba(60, 40, 30, 0.6); border-left: 6px solid #ff9800; border-radius: 8px; padding: 20px; margin: 20px 0; color: #ffd180; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+        .alert-icon { flex-shrink: 0; font-size: 1.5rem; color: #ff9800; padding-top: 2px; }
+        .alert-content { flex: 1; }
+        .alert-title { margin: 0 0 8px 0; font-size: 1.1rem; font-weight: 700; color: #ffab40; line-height: 1.4; }
+        .alert-text { margin: 0 0 12px 0; font-size: 1rem; line-height: 1.6; color: #e0e0e0; text-align: justify; }
+        .alert-subtext { margin: 0; font-size: 0.95rem; color: #bdbdbd; line-height: 1.5; }
+        .highlight { color: #ff5252; font-weight: 700; background: rgba(255, 82, 82, 0.1); padding: 0 4px; border-radius: 4px; }
+        .danger-text { color: #ff5252; font-weight: 700; border-bottom: 1px dashed #ff5252; }
 
-        /* 結果顯示 */
-        .dir-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin: 25px 0 15px; }
-        .dir-title { font-size: 1.1rem; font-weight: 900; color: var(--accent); }
-        .btn-switch { background: var(--blue); color: #000; border: none; padding: 5px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: bold; cursor: pointer; }
-        .pids-btn { background: #222; color: #ffeb3b; border: 1px solid #ffeb3b; padding: 5px 12px; border-radius: 5px; text-decoration: none; font-size: 0.8rem; font-weight: bold; }
+        /* === 查詢模式切換 (Tabs) === */
+        .search-tabs { display: flex; gap: 10px; margin-bottom: 15px; border-bottom: 1px solid rgba(255,255,255,0.3); padding-bottom: 10px; }
+        .tab-btn { background: transparent; color: rgba(255,255,255,0.7); border: none; font-size: 1.05rem; font-weight: bold; cursor: pointer; padding: 8px 16px; border-radius: 20px; transition: all 0.3s; }
+        .tab-btn:hover { color: #fff; background: rgba(255,255,255,0.1); }
+        .tab-btn.active { background: #fff; color: #D84315; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
 
-        .train-card { background: #111; border-radius: 12px; border: 1px solid #222; margin-bottom: 10px; overflow: hidden; transition: 0.2s; }
-        .train-card:hover { border-color: #555; }
-        .train-summary { padding: 15px; display: grid; grid-template-columns: 110px 1fr 80px 100px; align-items: center; cursor: pointer; }
-        .t-badge { padding: 3px 8px; border-radius: 4px; font-size: 0.75rem; color: #fff; margin-right: 8px; font-weight: bold; }
-        .type-tc { background: #e74c3c; } .type-ck { background: #d35400; } .type-lc { background: #2980b9; } .type-ot { background: #7f8c8d; }
+        /* === 列車詳細時刻表 (時間軸) === */
+        .train-detail-header { padding: 20px; background: #f5f5f5; border-bottom: 1px solid #e0e0e0; text-align: center; }
+        .train-detail-status { font-size: 1.2rem; font-weight: bold; margin-top: 10px; padding: 10px; border-radius: 8px; background: white; display: inline-block; box-shadow: var(--shadow-sm); }
+        .timeline-container { padding: 20px 30px; }
+        .timeline { border-left: 4px solid #e0e0e0; padding-left: 25px; margin-left: 10px; }
+        .timeline-item { position: relative; margin-bottom: 20px; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center; }
+        .timeline-item::before { content: ''; position: absolute; left: -33px; top: 50%; transform: translateY(-50%); width: 12px; height: 12px; border-radius: 50%; background: #bbb; border: 3px solid #f5f5f5; z-index: 2; }
+        .timeline-item.passed { opacity: 0.6; }
+        .timeline-item.passed::before { background: #4CAF50; }
+        .timeline-item.current-loc::before { background: #FF9800; box-shadow: 0 0 0 4px rgba(255, 152, 0, 0.3); transform: translateY(-50%) scale(1.3); }
+        .timeline-item.current-loc { border: 2px solid #FF9800; }
+        .st-time { font-size: 1.2rem; font-weight: bold; color: #333; }
+        .st-name { font-size: 1.2rem; font-weight: bold; color: #1565C0; margin: 0 15px; }
+        
+        /* 設施圖示 & 票價 Badge */
+        .facility-icon { font-size: 1rem; color: #fff; background: rgba(0,0,0,0.2); padding: 4px; border-radius: 4px; margin-left: 4px; }
+        .fare-badge { position: absolute; bottom: 15px; right: 20px; font-size: 0.9rem; font-weight: bold; color: #016d68; background: #e0f2f1; padding: 4px 8px; border-radius: 6px; }
 
-        .t-no { font-weight: 900; }
-        .t-dest { color: var(--blue); font-weight: bold; }
-        .t-time { font-family: monospace; font-size: 1.2rem; font-weight: bold; text-align: center; }
-        .t-status { text-align: right; font-weight: bold; font-size: 0.9rem; }
-        .status-ok { color: var(--success); }
-        .status-late { color: var(--danger); }
+        /* Live 呼吸燈 */
+        .live-indicator { display: inline-block; width: 10px; height: 10px; background-color: #4CAF50; border-radius: 50%; margin-right: 5px; animation: blinker 1.5s linear infinite; }
+        @keyframes blinker { 50% { opacity: 0.2; } }
 
-        /* 詳情面板 */
-        .detail-pane { display: none; background: #050505; padding: 15px; border-top: 1px solid #222; }
-        .hist-info { background: #222; padding: 10px; border-radius: 8px; margin-bottom: 15px; font-size: 0.9rem; border: 1px solid #444; }
-        .timeline { border-left: 2px solid #333; margin-left: 10px; padding-left: 20px; }
-        .step { position: relative; margin-bottom: 12px; display: flex; justify-content: space-between; font-size: 0.9rem; }
-        .step::before { content: ''; position: absolute; left: -26px; top: 6px; width: 10px; height: 10px; background: #444; border-radius: 50%; }
-        .step.passed { color: #555; } .step.passed::before { background: var(--success); }
-        .step.current { color: var(--accent); font-weight: bold; } .step.current::before { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+        /* 深色模式適配 */
+        body.dark-mode .header { background: #1e1e1e; border-bottom: 1px solid #333; }
+        body.dark-mode .header h1 { color: #ffab91; }
+        body.dark-mode .control-panel { background: #1e1e1e; border: 1px solid #333; }
+        body.dark-mode select, body.dark-mode input { background-color: #2c2c2c; color: #fff; border-color: #444; }
+        body.dark-mode .train-container { background: #1e1e1e; }
+        body.dark-mode .board-header { background: linear-gradient(135deg, #bf360c 0%, #d84315 100%); }
+        body.dark-mode .train-card { background-color: #1e1e1e; border-bottom: 1px solid #333; }
+        body.dark-mode .train-card:hover { background-color: #2c2c2c; }
+        body.dark-mode .train-no, body.dark-mode .schedule-time { color: #fff; }
+        body.dark-mode .direction-header { background-color: #263238; color: #eceff1; }
+        body.dark-mode .tra-marquee { background: #212121; color: #ffeb3b; border-color: #424242; }
+        body.dark-mode .info-panel { background: #3e2723; border-left-color: #ffb74d; }
+        body.dark-mode .news-title { color: #ffab91; }
+        body.dark-mode .news-desc { color: #d7ccc8; }
+        body.dark-mode .train-detail-header { background: #263238; border-bottom-color: #333; }
+        body.dark-mode .train-detail-status { background: #1e1e1e; color: #fff; }
+        body.dark-mode .timeline { border-left-color: #444; }
+        body.dark-mode .timeline-item { background: #2c2c2c; }
+        body.dark-mode .st-time { color: #eee; }
+        body.dark-mode .st-name { color: #64B5F6; }
+        body.dark-mode .fare-badge { background: #004d40; color: #b2dfdb; }
 
-        .disclaimer { background: #1a1a1a; border-left: 4px solid var(--accent); padding: 15px; font-size: 0.85rem; color: #888; line-height: 1.6; margin-top: 10px; }
+        .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
         
         @media (max-width: 768px) {
-            .form-row { grid-template-columns: 1fr; }
-            .train-summary { grid-template-columns: 1fr 1fr; gap: 8px; }
-            .t-time, .t-status { text-align: left; }
+            .route-inputs { grid-template-columns: 1fr; gap: 10px; }
+            .swap-btn { margin: 0 auto; transform: rotate(90deg); }
+            .swap-btn:hover { transform: rotate(270deg); }
+            .selector-row { grid-template-columns: 1fr; }
+            .train-card { grid-template-columns: 1fr; }
+            .train-info { flex-direction: column; align-items: flex-start; }
+            .tra-marquee { height: 50px !important; overflow: hidden; padding: 0 15px; margin-bottom: 15px; }
+            .marquee-wrapper { height: 50px; overflow: hidden; }
+            .marquee-content { line-height: 50px; font-size: 0.9rem; }
+            .marquee-icon { font-size: 1.2rem; line-height: 50px; }
         }
     </style>
+    <link rel="stylesheet" href="assets/theme-toggle-unified.css">
 </head>
 <body>
-
-<header class="header">
-    <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 返回</a>
-    <h1 style="color:#ff5722; font-weight:900;">台鐵即時看板</h1>
-    <div id="updateTime">--:--:--</div>
-</header>
-
-<div class="container">
-    <div id="traAlertPanel" class="info-panel">
-        <h3 style="margin:0 0 10px 0; color:var(--accent);">⚠️ 營運通阻</h3>
-        <div id="traAlertContent"></div>
+    <div class="header">
+        <div class="container">
+            <a href="index.html" class="back-btn"><i class="fas fa-arrow-left"></i> 返回首頁</a>
+            <h1><i class="fas fa-train"></i> 台鐵即時看板</h1>
+            <p style="text-align: center; color: #666; font-size: 0.95rem;">
+                全台鐵路即時列車動態、誤點資訊查詢
+            </p>
+            <button id="themeToggle" title="切換深色模式"><i class="fas fa-moon"></i></button>
+        </div>
     </div>
 
-    <div class="tra-marquee">
-        <div class="marquee-content" id="marqueeText">正在與台鐵資料庫同步...</div>
-    </div>
+    <div class="container">
+        <!-- 營運通阻 -->
+        <div class="info-panel rail-news" id="traAlertPanel">
+            <h3><span><i class="fas fa-bullhorn"></i> 台鐵營運通阻</span></h3>
+            <div id="traAlertContent" class="news-content"></div>
+        </div>
 
-    <section class="control-panel">
-        <nav class="tab-nav">
-            <button class="tab-btn active" onclick="switchTab('station')"><i class="fas fa-torii-gate"></i> 車站看板</button>
-            <button class="tab-btn" onclick="switchTab('route')"><i class="fas fa-route"></i> 站到站</button>
-            <button class="tab-btn" onclick="switchTab('train')"><i class="fas fa-history"></i> 車次歷史</button>
-        </nav>
-
-        <!-- 1. 車站看板 -->
-        <div id="tab-station">
-            <div class="form-row">
-                <div class="form-group">
-                    <label>搜尋車站</label>
-                    <input type="text" id="stationIn" placeholder="輸入站名 (如：台北)" oninput="handleSearch(this, 'st')" autocomplete="off">
-                    <div id="suggestions-st" class="suggestions"></div>
-                    <input type="hidden" id="stationID">
+        <!-- 跑馬燈 -->
+        <div class="tra-marquee">
+            <div class="marquee-icon"><i class="fas fa-bell"></i></div>
+            <div class="marquee-wrapper">
+                <div class="marquee-content" id="marqueeText">
+                    <span>歡迎搭乘台鐵。本看板資料由 TDX 提供，僅供參考，實際運行請以車站現場為主。</span>
                 </div>
-                <div class="form-group">
-                    <label>過濾方向</label>
-                    <select id="dirIn"><option value="">全部方向</option><option value="0">順行 (南下)</option><option value="1">逆行 (北上)</option></select>
-                </div>
-                <button class="btn-query" onclick="queryStation()"><i class="fas fa-search"></i> 查詢</button>
             </div>
         </div>
 
-        <!-- 2. 站到站 -->
-        <div id="tab-route" style="display:none;">
-            <div class="form-row" style="grid-template-columns: 1fr 1fr auto;">
-                <div class="form-group">
-                    <label>起點站</label>
-                    <input type="text" id="startIn" placeholder="起點" oninput="handleSearch(this, 'start')" autocomplete="off">
-                    <div id="suggestions-start" class="suggestions"></div>
-                    <input type="hidden" id="startID">
+        <div class="control-panel">
+            <!-- 3個 Tabs -->
+            <div class="search-tabs">
+                <button class="tab-btn active" id="tabStation" onclick="switchSearchMode('station')"><i class="fas fa-torii-gate"></i> 車站看板</button>
+                <button class="tab-btn" id="tabRoute" onclick="switchSearchMode('route')"><i class="fas fa-route"></i> 站到站查詢</button>
+                <button class="tab-btn" id="tabTrain" onclick="switchSearchMode('train')"><i class="fas fa-train"></i> 車次追蹤</button>
+            </div>
+
+            <!-- 1. 原本的車站查詢區塊 (完全保留) -->
+            <div id="searchStationMode">
+                <div class="selector-row">
+                    <div class="selector-group">
+                        <label for="lineSelect">路線分類</label>
+                        <select id="lineSelect" onchange="filterStations()"><option value="all">全部路線</option></select>
+                    </div>
+                    <div class="selector-group">
+                        <label for="stationSearch">搜尋車站</label>
+                        <input type="text" id="stationSearch" placeholder="輸入站名" oninput="filterStations()">
+                    </div>
+                    <div class="selector-group">
+                        <label for="stationSelect">選擇車站</label>
+                        <select id="stationSelect"><option value="">請選擇車站...</option></select>
+                    </div>
+                    <div class="selector-group">
+                        <label for="directionFilter">方向</label>
+                        <select id="directionFilter">
+                            <option value="">全部</option>
+                            <option value="0">順行</option>
+                            <option value="1">逆行</option>
+                        </select>
+                    </div>
+                    <button class="query-btn" id="queryBtn" onclick="fetchTrainLiveBoard()">
+                        <i class="fas fa-sync-alt"></i> 查詢看板
+                    </button>
                 </div>
-                <div class="form-group">
-                    <label>終點站</label>
-                    <input type="text" id="endIn" placeholder="終點" oninput="handleSearch(this, 'end')" autocomplete="off">
-                    <div id="suggestions-end" class="suggestions"></div>
-                    <input type="hidden" id="endID">
+            </div>
+
+            <!-- 2. 站到站查詢區塊 -->
+            <div id="searchRouteMode" style="display: none;">
+                <div class="route-inputs">
+                    <div class="selector-group">
+                        <label>起點站</label>
+                        <input type="text" id="routeStartInput" placeholder="輸入站名 (如 台北)" oninput="handleStationAutocomplete('start')" autocomplete="off">
+                        <input type="hidden" id="startStationId" value="1000">
+                        <div id="startSuggestions" class="autocomplete-suggestions"></div>
+                    </div>
+                    <button class="swap-btn" onclick="swapRouteStations()" title="起訖站互換"><i class="fas fa-exchange-alt"></i></button>
+                    <div class="selector-group">
+                        <label>終點站</label>
+                        <input type="text" id="routeEndInput" placeholder="輸入站名 (如 高雄)" oninput="handleStationAutocomplete('end')" autocomplete="off">
+                        <input type="hidden" id="endStationId" value="4400">
+                        <div id="endSuggestions" class="autocomplete-suggestions"></div>
+                    </div>
+                    <div class="selector-group">
+                        <label>日期</label>
+                        <input type="date" id="routeDateInput">
+                    </div>
+                    <button class="query-btn" id="queryRouteBtn" onclick="fetchRouteSchedule()">
+                        <i class="fas fa-search"></i> 查班次
+                    </button>
                 </div>
-                <button class="btn-query" onclick="queryOD()"><i class="fas fa-ticket-alt"></i> 查票價</button>
+            </div>
+
+            <!-- 3. 車次查詢區塊 -->
+            <div id="searchTrainMode" style="display: none;">
+                <div class="selector-row" style="grid-template-columns: 1fr auto;">
+                    <div class="selector-group autocomplete-wrapper">
+                        <label for="trainNoInput">輸入車次代碼</label>
+                        <input type="text" inputmode="numeric" id="trainNoInput" placeholder="輸入車次 (例如: 408, 3187)" autocomplete="off" oninput="handleTrainNoInput(event)" onfocus="handleTrainNoInput(event)" onkeypress="if(event.key === 'Enter') fetchTrainDetail()">
+                        <div id="trainSuggestions" class="autocomplete-suggestions"></div>
+                    </div>
+                    <button class="query-btn" id="queryTrainBtn" onclick="fetchTrainDetail()" style="background: #FF9800;">
+                        <i class="fas fa-search"></i> 追蹤車次
+                    </button>
+                </div>
             </div>
         </div>
 
-        <!-- 3. 車次歷史 -->
-        <div id="tab-train" style="display:none;">
-            <div class="form-row" style="grid-template-columns: 1fr 1fr auto;">
-                <div class="form-group">
-                    <label>車次號碼</label>
-                    <input type="text" id="tNoIn" placeholder="如：408" inputmode="numeric">
-                </div>
-                <div class="form-group">
-                    <label>查詢日期 (支援近7日)</label>
-                    <input type="date" id="tDateIn">
-                </div>
-                <button class="btn-query" onclick="queryHistory()"><i class="fas fa-clock-rotate-left"></i> 查軌跡</button>
+        <div class="warning-alert">
+            <div class="alert-icon"><i class="fas fa-exclamation-triangle"></i></div>
+            <div class="alert-content">
+                <h4 class="alert-title">資料準確性與延遲提醒：</h4>
+                <p class="alert-text">本看板資料來源為 TDX 平臺加值運算，與臺鐵官網一致但約有 <span class="highlight">1~3 分鐘延遲</span>。</p>
+                <p class="alert-subtext">此資料非直接介接車站現場系統，<span class="danger-text">請勿直接與月台 PIDS 看板比對</span>，若您已進入車站，請務必以現場資訊為主，以免延誤行程。</p>
             </div>
         </div>
-    </section>
 
-    <div class="disclaimer">
-        <strong>⚠️ 提醒：</strong> 資料約有 1~3 分鐘延遲。請以車站現場廣播為準。
+        <div id="trainContainer" class="train-container">
+            <div class="board-header">
+                <div class="board-title">
+                    <h2 id="stationTitle">台鐵即時看板</h2>
+                    <div class="board-info">
+                        <span id="stationInfo">選擇車站進行查詢</span>
+                        <span class="sync-time"><i class="fas fa-clock"></i> <span id="updateTime">--:--:--</span></span>
+                    </div>
+                </div>
+            </div>
+            <div id="trainsBoard">
+                <div class="no-data" style="padding: 50px; text-align: center; color: #999;">
+                    <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 10px;"></i>
+                    <p>請選擇車站查詢</p>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <div id="resultArea"></div>
-</div>
+    <!-- 底部跑馬燈 (完全保留) -->
+    <div id="trainMarqueeBar" class="marquee-bar" style="display: none;">
+        <div class="marquee-content-wrapper">
+            <div class="marquee-content" id="mqContent"></div>
+        </div>
+        <button class="marquee-close" onclick="closeMarquee()" title="關閉跑馬燈">×</button>
+    </div>
 
-<script src="assets/station-code-mapping.js"></script>
-<script>
-    const API = "https://tra-schedule-worker.weacamm.org";
-    let stations = [];
-    let curStation = { id: "", name: "" };
-
-    document.addEventListener('DOMContentLoaded', () => {
-        if (typeof stationDataMap !== 'undefined') {
-            stations = Object.entries(stationDataMap).map(([id, d]) => ({ id, name: d.name.replace('站','') }));
-        }
-        document.getElementById('tDateIn').valueAsDate = new Date();
-        loadAlerts();
-        setInterval(() => {
-            const now = new Date();
-            document.getElementById('updateTime').textContent = now.toLocaleTimeString('en-GB');
-            if (now.getSeconds() === 0 && curStation.id) queryStation(true);
-        }, 1000);
-    });
-
-    async function loadAlerts() {
-        try {
-            const res = await fetch(`${API}/api/alerts`);
-            const data = await res.json();
-            if (data.length > 0) {
-                document.getElementById('traAlertPanel').style.display = 'block';
-                document.getElementById('traAlertContent').innerHTML = data.map(a => `<div>${a.Description}</div>`).join('');
-                document.getElementById('marqueeText').innerHTML = data.map(a => `【${a.Title}】${a.Description}`).join('   ❖   ');
-            }
-        } catch (e) {}
-    }
-
-    function switchTab(tab) {
-        document.getElementById('resultArea').innerHTML = "";
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        event.target.classList.add('active');
-        ['station','route','train'].forEach(t => document.getElementById(`tab-${t}`).style.display = (t === tab ? 'block' : 'none'));
-    }
-
-    function handleSearch(el, type) {
-        const val = el.value.trim().replace(/台/g, '臺');
-        const box = document.getElementById(`suggestions-${type}`);
-        if (!val) { box.style.display = 'none'; return; }
-        const matches = stations.filter(s => s.name.includes(val) || s.id.includes(val)).slice(0, 6);
-        if (matches.length) {
-            box.innerHTML = matches.map(s => `<div class="sugg-item" onclick="selectStation('${type}', '${s.id}', '${s.name}')"><span>${s.name}站</span><span style="color:#999">${s.id}</span></div>`).join('');
-            box.style.display = 'block';
-        } else box.style.display = 'none';
-    }
-
-    function selectStation(type, id, name) {
-        const prefix = type === 'st' ? 'station' : type;
-        document.getElementById(`${prefix}In`).value = name;
-        document.getElementById(`${prefix}ID`).value = id;
-        document.getElementById(`suggestions-${type}`).style.display = 'none';
-        if (type === 'st') { curStation = { id, name }; }
-    }
-
-    async function queryStation(isAuto = false) {
-        const id = document.getElementById('stationID').value;
-        const dirFilter = document.getElementById('dirIn').value;
-        if (!id) return alert("請選車站");
-        if (!isAuto) document.getElementById('resultArea').innerHTML = '<div style="text-align:center; padding:40px;">⏳ 同步 D1 資料庫中...</div>';
-        
-        try {
-            const res = await fetch(`${API}/api/liveboard/station?station=${id}`);
-            const data = await res.json();
-            renderBoard(data, dirFilter);
-        } catch (e) { document.getElementById('resultArea').innerHTML = "❌ 連線失敗"; }
-    }
-
-    function renderBoard(data, filter) {
-        const resArea = document.getElementById('resultArea');
-        resArea.innerHTML = "";
-        const pidsUrl = `tra-pids.html?station=${curStation.id}&name=${encodeURIComponent(curStation.name)}`;
-
-        const renderGroup = (dir, title) => {
-            let list = data.filter(t => String(t.Direction) === dir).slice(0, 10);
-            if (list.length === 0) return "";
-            let html = `<div class="dir-header"><span class="dir-title">${title}</span>`;
-            if (filter !== "") {
-                const nextDir = dir === '0' ? '1' : '0';
-                html += `<button class="btn-switch" onclick="setDir('${nextDir}')">切換方向</button>`;
-            }
-            html += `<a href="${pidsUrl}" target="_blank" class="pids-btn">大螢幕 PIDS</a></div>`;
-            list.forEach(t => {
-                const delay = parseInt(t.DelayTime || 0);
-                const status = t.TrainStatus == 2 ? "停駛" : (delay === 0 ? "準點" : `晚 ${delay} 分`);
-                const type = t.TrainTypeName.Zh_tw.replace(/\(.*\)/g, '');
-                const cls = type.includes('自強')||type.includes('普優') ? 'type-tc' : (type.includes('莒光')?'type-ck':'type-lc');
-                html += `
-                    <div class="train-card">
-                        <div class="train-summary" onclick="showDetail('${t.TrainNo}', this)">
-                            <div><span class="t-badge ${cls}">${type}</span><span class="t-no">${t.TrainNo}</span></div>
-                            <div class="t-dest">往 ${t.EndingStationName}</div>
-                            <div class="t-time">${t.ScheduledDepartureTime.slice(0,5)}</div>
-                            <div class="t-status ${delay>0?'status-late':'status-ok'}">${status}</div>
-                        </div>
-                        <div class="detail-pane" id="detail-${t.TrainNo}"></div>
-                    </div>`;
-            });
-            return html;
+    <script src="assets/dark-mode.js"></script>
+    <script>
+        // ============ 全域配置 ============
+        const TRA_CONFIG = {
+            API_WORKER_URL: "https://tra-schedule-worker.weacamm.org",
+            STATION_GAP_THRESHOLD: 50,
+            MAX_DISPLAY_TRAINS: 7,
+            MARQUEE_SPEED_FACTOR: 0.2,
+            FETCH_TIMEOUT: 10000
         };
-        resArea.innerHTML = (filter==="" || filter==="1") ? renderGroup('1', "逆行 (北上/東行)") : "";
-        resArea.innerHTML += (filter==="" || filter==="0") ? renderGroup('0', "順行 (南下/西行)") : "";
-    }
 
-    function setDir(d) { document.getElementById('dirIn').value = d; queryStation(); }
-
-    async function showDetail(trainNo, el, date = "") {
-        const pane = el.nextElementSibling;
-        if (pane.style.display === 'block') { pane.style.display = 'none'; return; }
-        document.querySelectorAll('.detail-pane').forEach(p => p.style.display = 'none');
-        pane.style.display = 'block';
-        pane.innerHTML = '⏳ 讀取時刻與位置...';
-
-        try {
-            const urlDate = date ? `&date=${date}` : "";
-            const [schRes, liveRes] = await Promise.all([
-                fetch(`${API}/api/schedule?trainNo=${trainNo}${urlDate}`).then(r => r.json()),
-                fetch(`${API}/api/live?trainNo=${trainNo}`).then(r => r.json()).catch(()=>({}))
-            ]);
-
-            let histHtml = "";
-            if (schRes.FinalDelayTime !== undefined) {
-                const hStatus = schRes.TrainStatus == 2 ? "本日停駛" : (schRes.FinalDelayTime > 0 ? `最終晚 ${schRes.FinalDelayTime} 分` : "最終準點");
-                histHtml = `<div class="hist-info">📅 歷史紀錄：${schRes.TrainDate} | ${hStatus}</div>`;
+        const UI = {
+            escape: (str) => {
+                if (!str) return "";
+                return String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
+            },
+            setLoading: (elementId, isLoading) => {
+                const el = document.getElementById(elementId);
+                if (!el) return;
+                el.innerHTML = isLoading ? '<div class="loader" style="padding:50px;text-align:center;"><i class="fas fa-spinner fa-spin" style="font-size:2rem;"></i><p style="margin-top:10px;">資料傳輸中...</p></div>' : '';
+            },
+            showError: (elementId, message) => {
+                const el = document.getElementById(elementId);
+                if (!el) return;
+                el.innerHTML = `<div class="error-msg" style="padding:50px;text-align:center;color:#ff5252;"><i class="fas fa-exclamation-circle" style="font-size:2rem;"></i><p style="margin-top:10px;">${UI.escape(message)}</p></div>`;
             }
+        };
 
-            const currentPos = liveRes.TrainLiveBoards?.[0]?.StationName?.Zh_tw || "";
-            let html = histHtml + '<div class="timeline">';
-            let passed = true;
-            schRes.StopTimes.forEach(s => {
-                let cls = passed ? "passed" : "";
-                if (s.StationName.Zh_tw === currentPos) { cls = "current"; passed = false; }
-                if (s.StationName.Zh_tw === curStation.name) passed = false;
-                html += `<div class="step ${cls}"><span>${s.StationName.Zh_tw}站</span><span>${s.ArrivalTime.slice(0,5)}</span></div>`;
+        let currentStationID = '';
+        let currentStationName = '';
+        let allStationsFlat = []; 
+        const stopsCache = {};
+        const TRA_WORKER_URL = TRA_CONFIG.API_WORKER_URL;
+
+        const TRAIN_TYPE_DB = [
+          { "id": "1100", "name": "自強", "code": "3" }, { "id": "1101", "name": "太魯閣", "code": "1" },
+          { "id": "1107", "name": "普悠瑪", "code": "2" }, { "id": "110G", "name": "新自強", "code": "11" },
+          { "id": "1110", "name": "莒光", "code": "4" }, { "id": "1120", "name": "復興", "code": "5" },
+          { "id": "1131", "name": "區間", "code": "6" }, { "id": "1132", "name": "區間快", "code": "6" }
+        ];
+        const trainTypeMap = new Map();
+        TRAIN_TYPE_DB.forEach(item => trainTypeMap.set(item.id, item.name));
+
+        let trainRefreshTimer = null; // 用於車次追蹤自動更新
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('routeDateInput').value = new Date().toLocaleDateString('en-CA');
+            initStationControls();
+            loadTraAlerts();
+            
+            // 通阻一分鐘更新一次
+            setInterval(() => loadTraAlerts(), 60000);
+
+            // 檢查 URL 參數
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('train')) {
+                switchSearchMode('train');
+                document.getElementById('trainNoInput').value = urlParams.get('train');
+                fetchTrainDetail();
+            }
+        });
+
+        // ============ 模式切換 ============
+        const originalSwitchSearchMode = function(mode) {
+            clearInterval(trainRefreshTimer);
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('searchStationMode').style.display = 'none';
+            document.getElementById('searchRouteMode').style.display = 'none';
+            document.getElementById('searchTrainMode').style.display = 'none';
+
+            if (mode === 'station') {
+                document.getElementById('tabStation').classList.add('active');
+                document.getElementById('searchStationMode').style.display = 'block';
+            } else if (mode === 'route') {
+                document.getElementById('tabRoute').classList.add('active');
+                document.getElementById('searchRouteMode').style.display = 'block';
+            } else {
+                document.getElementById('tabTrain').classList.add('active');
+                document.getElementById('searchTrainMode').style.display = 'block';
+                document.getElementById('trainNoInput').focus();
+            }
+        };
+
+        function switchSearchMode(mode) {
+            originalSwitchSearchMode(mode); 
+            if (mode === 'train') loadAllTodayTrains();
+        }
+
+        // ============ 公告載入 (完整原版還原 + 串接 Worker) ============
+        async function loadTraAlerts() {
+            try {
+                // 🔥 改為呼叫你剛剛更新的 Worker 端點，速度更快且不會被 TDX 擋
+                const response = await fetch(`${TRA_CONFIG.API_WORKER_URL}/api/alerts`);
+                const alertList = await response.json();
+                
+                const panel = document.getElementById('traAlertPanel');
+                const content = document.getElementById('traAlertContent');
+                const marqueeEl = document.getElementById('marqueeText');
+                
+                // 1. 處理上方跑馬燈
+                if (marqueeEl) {
+                    marqueeEl.style.animation = 'none';
+                    marqueeEl.offsetHeight; 
+                    
+                    let marqueeHTML = '';
+                    
+                    if (alertList && alertList.length > 0) {
+                        alertList.forEach(alert => {
+                            const cleanDesc = UI.escape((alert.Description || '')).replace(/[\r\n]+/g, ' ');
+                            const cleanTitle = UI.escape(alert.Title || '');
+                            marqueeHTML += `【${cleanTitle}】${cleanDesc}  —  `; 
+                        });
+                        marqueeHTML = marqueeHTML.replace(/—\s+$/, ' ');
+                        marqueeHTML += "⚠️ 詳情請見上方的通阻公告面板。";
+                    } else {
+                        marqueeHTML = '歡迎搭乘臺鐵。本看板資料由 TDX 提供，僅供參考，實際運行請以車站現場為主。';
+                    }
+                    
+                    marqueeEl.innerHTML = marqueeHTML;
+                    marqueeEl.style.animation = 'marquee-announce 20s linear infinite';
+                }
+
+                // 2. 處理公告面板
+                if (panel && content) {
+                    if (!alertList || alertList.length === 0) {
+                        panel.style.display = 'none';
+                    } else {
+                        let html = '';
+                        alertList.forEach(alert => {
+                            let icon = (alert.Status === 2 || alert.Level > 1) ? '🚨' : 'ℹ️';
+                            let titleColor = (alert.Status === 2 || alert.Level > 1) ? '#d32f2f' : '#e65100';
+                            const timeStr = new Date(alert.PublishTime).toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+                            
+                            let scopeInfo = '';
+                            if (alert.Scope?.LineSections?.[0]) {
+                                const startStation = UI.escape(alert.Scope.LineSections[0].StartingStationName || '');
+                                const endStation = UI.escape(alert.Scope.LineSections[0].EndingStationName || '');
+                                scopeInfo = `<br><span style="color:#d84315;">🛑 受影響：${startStation} ↔ ${endStation}</span>`;
+                            }
+                            
+                            const cleanTitle = UI.escape(alert.Title || '');
+                            const cleanDesc = UI.escape(alert.Description || '').replace(/\n/g, '<br>');
+                            
+                            html += `<div class="news-item">
+                                <div class="news-title" style="color: ${titleColor}">
+                                    <span>${icon}</span>
+                                    <span>${cleanTitle}</span>
+                                </div>
+                                <div class="news-desc">${cleanDesc}${scopeInfo}</div>
+                                <div class="news-time">發布：${timeStr}</div>
+                            </div>`;
+                        });
+                        content.innerHTML = html;
+                        panel.style.display = 'block';
+                    }
+                }
+            } catch (error) { 
+                console.warn('⚠️ 公告載入失敗:', error); 
+            }
+        }
+
+        // ============ 1. 站點與原版 LiveBoard 邏輯 ============
+        function initStationControls() {
+            const lineSelect = document.getElementById('lineSelect');
+            const categories = {};
+            for (const [key, data] of Object.entries(trainLineClassification)) {
+                const category = data.category || '其他';
+                if (!categories[category]) categories[category] = [];
+                categories[category].push({ key, ...data });
+            }
+            for (const [category, routes] of Object.entries(categories)) {
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = category;
+                routes.forEach(route => {
+                    const option = document.createElement('option');
+                    option.value = route.key;
+                    option.textContent = route.name;
+                    optgroup.appendChild(option);
+                    route.stations.forEach(station => {
+                        if (!allStationsFlat.find(s => s.code === station.code)) {
+                            allStationsFlat.push({ code: station.code, name: station.name, lineKey: route.key });
+                        }
+                    });
+                });
+                lineSelect.appendChild(optgroup);
+            }
+            
+            // 預設站到站起訖點
+            document.getElementById('routeStartInput').value = '台北';
+            document.getElementById('routeEndInput').value = '高雄';
+            
+            filterStations();
+        }
+
+        function fuzzyMatchStation(stationName, keyword) {
+            if (!keyword) return true;
+            const normalizedName = stationName.replace(/台/g, '臺');
+            const normalizedKeyword = keyword.replace(/台/g, '臺');
+            return stationName.toLowerCase().includes(keyword.toLowerCase()) || normalizedName.toLowerCase().includes(normalizedKeyword.toLowerCase());
+        }
+
+        function filterStations() {
+            const selectedLine = document.getElementById('lineSelect').value;
+            const keyword = document.getElementById('stationSearch').value.trim();
+            let filtered = (selectedLine === 'all') ? allStationsFlat : trainLineClassification[selectedLine].stations.map(s => ({ code: s.code, name: s.name }));
+            if (keyword) filtered = filtered.filter(s => fuzzyMatchStation(s.name, keyword) || s.code.includes(keyword));
+            
+            const select = document.getElementById('stationSelect');
+            select.innerHTML = '';
+            if (filtered.length === 0) { select.add(new Option("查無符合車站", "")); return; }
+            select.add(new Option(`請選擇車站 (${filtered.length})`, ""));
+            filtered.forEach(s => select.add(new Option(`${s.code} - ${s.name}`, s.code)));
+            if (filtered.length === 1) select.selectedIndex = 1;
+        }
+
+        // --- 完全還原你原本的 getTrainDisplayInfo (過濾掉落落長括號) ---
+        function getTrainDisplayInfo(train) {
+            let trainTypeName = train.TrainTypeName;
+            if (typeof trainTypeName === 'object' && trainTypeName !== null) {
+                trainTypeName = trainTypeName.Zh_tw || trainTypeName.name || String(trainTypeName);
+            }
+            
+            let name = String(trainTypeName || train.TrainTypeNameZh || train.TrainTypeID || '列車').trim();
+            let cssClass = '其他';
+            const typeID = train.TrainTypeID;
+            
+            if (typeID && trainTypeMap.has(typeID)) {
+                name = String(trainTypeMap.get(typeID) || '列車').trim();
+            } else {
+                if (name.includes('普悠瑪')) name = '普悠瑪';
+                else if (name.includes('太魯閣')) name = '太魯閣';
+                else if (name.includes('3000')) name = '新自強';
+                else if (name.includes('區間快')) name = '區間快';
+                else if (name.includes('區間')) name = '區間';
+                else if (name.includes('自強')) name = '自強';
+                else if (name.includes('莒光')) name = '莒光';
+            }
+            
+            if (name.includes('3000') || name === '新自強') cssClass = '新自強';
+            else if (name.includes('普悠瑪')) cssClass = '普悠瑪';
+            else if (name.includes('太魯閣')) cssClass = '太魯閣';
+            else if (name.includes('自強')) cssClass = '自強';
+            else if (name.includes('莒光')) cssClass = '莒光';
+            else if (name.includes('區間快')) cssClass = '區間快';
+            else if (name.includes('區間')) cssClass = '區間';
+            
+            return { name, class: cssClass };
+        }
+
+        function formatTime(t) { 
+            if (!t || typeof t !== 'string') return '--:--';
+            return t.length >= 5 ? t.substring(0, 5) : '--:--'; 
+        }
+
+        function getExpectedTime(timeStr, delayMins) {
+            if (!timeStr || delayMins === 0) return timeStr;
+            const [h, m] = timeStr.split(':').map(Number);
+            const totalMins = h * 60 + m + delayMins;
+            const newH = Math.floor(totalMins / 60) % 24;
+            const newM = totalMins % 60;
+            return `${String(newH).padStart(2, '0')}:${String(newM).padStart(2, '0')}`;
+        }
+        
+        function getDelayStatus(train) {
+            if (String(train.TrainStatus) === '2' || train.TrainStatus === 2) {
+                return '<span class="delay-badge status-cancelled"><i class="fas fa-ban"></i> 停駛</span>';
+            }
+            if (train.IsTomorrow) {
+                return '<span class="delay-badge" style="background-color: #ECEFF1; color: #546E7A;"><i class="fas fa-hourglass-start"></i> 未發車</span>';
+            }
+            const d = parseInt(train.DelayTime || 0);
+            if (d >= 120) {
+                // 🔥 嚴重延誤判定
+                return '<span class="delay-badge delay-warn"><i class="fas fa-exclamation-triangle"></i> 時間未定</span>';
+            }
+            if (d === 0) return '<span class="delay-badge delay-ok"><i class="fas fa-check"></i> 準點</span>';
+            return `<span class="delay-badge delay-warn"><i class="fas fa-clock"></i> 晚 ${d} 分</span>`;
+        }
+
+        // 時鐘更新
+        function updateTime() {
+            const el = document.getElementById('updateTime');
+            if(el) el.textContent = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+        setInterval(updateTime, 1000);
+
+        // --- 完全還原你原本的 fetchTrainLiveBoard ---
+        async function fetchTrainLiveBoard() {
+            const stationSelect = document.getElementById('stationSelect');
+            const queryBtn = document.getElementById('queryBtn');
+            currentStationID = stationSelect.value;
+            
+            if (!currentStationID) { alert('請先選擇車站'); return; }
+            
+            const selectedOption = stationSelect.options[stationSelect.selectedIndex];
+            currentStationName = selectedOption.text.split(' - ')[1];
+            queryBtn.disabled = true; queryBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 載入中...';
+            
+            document.getElementById('trainContainer').style.display = 'block';
+            UI.setLoading('trainsBoard', true);
+
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), TRA_CONFIG.FETCH_TIMEOUT);
+                const response = await fetch(`${TRA_CONFIG.API_WORKER_URL}/api/liveboard/station?station=${currentStationID}`, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                
+                if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+                const finalDisplayList = await response.json(); 
+
+                if (finalDisplayList && finalDisplayList.length > 0) renderBoard(finalDisplayList);
+                else UI.showError('trainsBoard', '目前該時段無列車資訊');
+
+            } catch (error) {
+                UI.showError('trainsBoard', error.name === 'AbortError' ? '連線超時，請稍後再試' : 'Worker API 故障，請稍後再試');
+            } finally {
+                queryBtn.disabled = false; queryBtn.innerHTML = '<i class="fas fa-sync-alt"></i> 查詢看板';
+            }
+        }
+
+        // --- 完全還原你原本的 renderBoard (保留 PIDS、原版卡片排版、原版點擊跑馬燈事件) ---
+        function renderBoard(trains) {
+            const trainsBoard = document.getElementById('trainsBoard');
+            const directionFilter = document.getElementById('directionFilter').value;
+            const pidsLink = `tra-pids.html?station=${currentStationID}&name=${encodeURIComponent(currentStationName)}`;
+            
+            document.getElementById('stationTitle').innerHTML = `${currentStationName} 即時看板 <a href="${pidsLink}" target="_blank" class="pids-btn"><i class="fas fa-desktop"></i> 開啟 PIDS 模擬</a>`;
+            document.getElementById('stationInfo').textContent = `車站代碼：${currentStationID}`;
+            
+            const now = new Date();
+            const finalFilteredTrains = [];
+            const seenTrains = new Set();
+            
+            trains.forEach(t => {
+                if (seenTrains.has(t.TrainNo)) return;
+                seenTrains.add(t.TrainNo);
+
+                const timeStr = t.ScheduledDepartureTime || t.ScheduledArrivalTime || "00:00";
+                const delay = parseInt(t.DelayTime || 0);
+                const isCancelled = (String(t.TrainStatus) === '2' || t.TrainStatus === 2);
+
+                const dateStr = t.IsTomorrow ? new Date(now.getTime() + 86400000).toISOString().split('T')[0] : now.toISOString().split('T')[0];
+                const scheduledTs = new Date(`${dateStr}T${timeStr}:00+08:00`).getTime();
+                const estimatedTs = isCancelled ? scheduledTs : (scheduledTs + (delay * 60000));
+
+                finalFilteredTrains.push({ ...t, _sortKey: estimatedTs });
             });
-            pane.innerHTML = html + '</div>';
-        } catch (e) { pane.innerHTML = "無法載入詳情"; }
-    }
+            
+            finalFilteredTrains.sort((a, b) => a._sortKey - b._sortKey);
+            
+            const grouped = { '0': { title: '順行 (南下/西行)', trains: [] }, '1': { title: '逆行 (北上/東上)', trains: [] } };
+            finalFilteredTrains.forEach(train => {
+                const dir = String(train.Direction);
+                if (grouped[dir] && grouped[dir].trains.length < TRA_CONFIG.MAX_DISPLAY_TRAINS) {
+                    grouped[dir].trains.push(train);
+                }
+            });
+            
+            let displayGroups = [];
+            if (directionFilter === '') displayGroups = Object.entries(grouped);
+            else if (grouped[directionFilter]) displayGroups.push([directionFilter, grouped[directionFilter]]);
 
-    async function queryOD() {
-        const s = document.getElementById('startID').value, e = document.getElementById('endID').value;
-        if(!s || !e) return alert("請選站");
-        document.getElementById('resultArea').innerHTML = '⏳ 正在查詢票價...';
-        try {
-            const res = await fetch(`${API}/api/fare?start=${s}&end=${e}`);
-            const data = await res.json();
-            const fares = data[0]?.Fares || [];
-            let html = `<div class="dir-header"><span class="dir-title">票價查詢結果</span></div><div class="train-card" style="padding:20px; display:grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap:10px;">`;
-            html += fares.map(f => `<div><div style="font-size:0.8rem; color:#888;">${f.TicketType}</div><div style="font-size:1.2rem; font-weight:900; color:var(--accent);">$${f.Price}</div></div>`).join('');
-            document.getElementById('resultArea').innerHTML = html + '</div>';
-        } catch(e) { alert("查詢失敗"); }
-    }
+            let html = '';
+            displayGroups.forEach(([dir, data]) => {
+                if (data.trains.length === 0) return;
+                html += `<div class="direction-section"><div class="direction-header"><i class="fas fa-arrow-right"></i> ${data.title}</div>`;
+                
+                data.trains.forEach(train => {
+                    const timeText = formatTime(train.ScheduledDepartureTime);
+                    const delay = parseInt(train.DelayTime || 0);
+                    const isCancelled = (String(train.TrainStatus) === '2' || train.TrainStatus === 2);
+                    
+                    let timeHtml = '';
+                    if (isCancelled) {
+                        timeHtml = `<span style="text-decoration: line-through; color: #777;">${timeText}</span><div class="schedule-label" style="color: #ff5252; font-weight: bold;">停駛</div>`;
+                    } else if (delay >= 120) {
+                        // 🔥 嚴重延誤不推算時間，直接打叉
+                        timeHtml = `<span style="text-decoration: line-through; color: #888;">${timeText}</span><div class="schedule-label" style="color: #ff9800; font-weight: bold;">時間未定</div>`;
+                    } else if (delay > 0) {
+                        const expectedTime = getExpectedTime(train.ScheduledDepartureTime, delay);
+                        timeHtml = `<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1;"><span style="text-decoration: line-through; color: #888; font-size: 0.85rem;">${timeText}</span><span style="color: #00e5ff; font-weight: 900; font-size: 1.4rem; text-shadow: 0 0 5px rgba(0, 229, 255, 0.4);">${expectedTime}</span></div>`;
+                    } else {
+                        let label = train.IsTomorrow ? '(明日)' : '表定';
+                        timeHtml = `<span style="font-size: 1.2rem; font-weight: 600;">${timeText}</span><div class="schedule-label">${label}</div>`;
+                    }
 
-    async function queryHistory() {
-        const no = document.getElementById('tNoIn').value, date = document.getElementById('tDateIn').value;
-        if(!no || !date) return alert("請輸入車次與日期");
-        document.getElementById('resultArea').innerHTML = `<div class="train-card"><div class="train-summary"><div><span class="t-badge type-ot">歷史</span><span class="t-no">${no}次</span></div><div>車次軌跡追蹤</div></div><div class="detail-pane" id="hist-detail" style="display:block"></div></div>`;
-        showDetail(no, { nextElementSibling: document.getElementById('hist-detail') }, date);
-    }
+                    const rowClass = isCancelled ? 'train-card train-cancelled-row' : 'train-card';
+                    const endStation = UI.escape(train.EndingStationName || '未知');
+                    const trainInfo = getTrainDisplayInfo(train); // 原版函數，不會太長
+                    const delayStatus = getDelayStatus(train);
+                    const noteDisplay = train.Note ? `<span style="color:#ff9800;font-size:0.75rem;">${UI.escape(train.Note)}</span>` : '';
+                    const noteParam = encodeURIComponent(train.Note || '');
+                    const trainNoEscaped = UI.escape(train.TrainNo);
+                    
+                    // 完全保留原版的點擊觸發跑馬燈 (showTrainStops)
+                    html += `<div class="${rowClass}" style="cursor: pointer;" onclick="showTrainStops('${trainNoEscaped}', '${UI.escape(currentStationID)}', '${endStation}', '${UI.escape(trainInfo.name)}', '${noteParam}')">
+                            <div class="train-info">
+                                <span class="train-type-badge type-${trainInfo.class}">${trainInfo.name}</span>
+                                <div class="train-destination"><div class="train-no">${train.TrainNo} 次</div><div class="destination">往 ${endStation}</div></div>
+                            </div>
+                            <div class="schedule-time">${timeHtml}</div>
+                            <div class="delay-status">${delayStatus}${noteDisplay}</div>
+                        </div>`;
+                });
+                html += '</div>';
+            });
 
-    document.addEventListener('click', e => {
-        if (!e.target.closest('.form-group')) document.querySelectorAll('.suggestions').forEach(b => b.style.display = 'none');
-    });
-</script>
+            if (html === '') document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><p>該方向目前無列車</p></div>';
+            else trainsBoard.innerHTML = html;
+        }
+
+        // === 完全還原你原本的跑馬燈與時刻表拉取邏輯 ===
+        function addMinutesToTime(timeStr, minutesToAdd) {
+            if (!timeStr) return '--:--';
+            if (minutesToAdd === 0) return timeStr;
+            const [hours, minutes] = timeStr.split(':').map(Number);
+            const date = new Date(); date.setHours(hours); date.setMinutes(minutes + minutesToAdd);
+            return `${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`;
+        }
+
+        async function fetchSchedule(trainNo) {
+            try {
+                const r = await fetch(`${TRA_WORKER_URL}/api/schedule?trainNo=${trainNo}`);
+                const d = await r.json();
+                if (d && Array.isArray(d) && d[0]?.StopTimes) return d[0].StopTimes;
+                if (d && d.StopTimes) return d.StopTimes;
+            } catch(e) {}
+            try {
+                const r = await tdxApi.fetch(`/v3/Rail/TRA/DailyTrainTimetable/Today?$filter=TrainInfo/TrainNo eq '${trainNo}'&$format=JSON`);
+                if (r?.value?.[0]?.StopTimes) return r.value[0].StopTimes;
+                if (r?.[0]?.StopTimes) return r[0].StopTimes;
+            } catch(e) {}
+            return [];
+        }
+
+        function isLocationReasonable(stopTimes, currentStationID, reportedName) {
+            if (!stopTimes || stopTimes.length === 0) return true;
+            const currentIdx = stopTimes.findIndex(s => s.StationID === currentStationID);
+            const nameStr = (typeof reportedName === 'object') ? reportedName.Zh_tw : reportedName;
+            const reportedIdx = stopTimes.findIndex(s => s.StationName.Zh_tw === nameStr);
+            if (currentIdx === -1 || reportedIdx === -1) return true;
+            const gap = Math.abs(currentIdx - reportedIdx);
+            if (gap > TRA_CONFIG.STATION_GAP_THRESHOLD) return false;
+            return true;
+        }
+
+        async function showTrainStops(trainNo, currentStationID, destName, trainTypeName, noteParam = '') {
+            const bar = document.getElementById('trainMarqueeBar');
+            const content = document.getElementById('mqContent');
+            bar.style.display = 'flex';
+            content.innerHTML = '<span style="color:#aaa; font-size:1.2rem;"><i class="fas fa-satellite-dish fa-pulse"></i> 讀取中...</span>';
+            content.style.animation = 'none'; 
+            
+            const trainNote = UI.escape(decodeURIComponent(noteParam || ''));
+            
+            try {
+                const liveWorkerPromise = fetch(`${TRA_WORKER_URL}/api/live?trainNo=${trainNo}`).then(r=>r.json()).catch(()=>null);
+                const schedulePromise = fetchSchedule(trainNo);
+                
+                let [stopTimes, liveRawData] = await Promise.all([schedulePromise, liveWorkerPromise]);
+                
+                let liveData = null;
+                if (liveRawData) {
+                    if (liveRawData.TrainLiveBoards?.length > 0) liveData = liveRawData.TrainLiveBoards[0];
+                    else if (Array.isArray(liveRawData) && liveRawData.length > 0) liveData = liveRawData[0];
+                    else if (liveRawData.StationName) liveData = liveRawData;
+                }
+
+                let html = '';
+                const delayTime = parseInt(liveData?.DelayTime || 0);
+                const safeDestName = UI.escape(destName);
+                const safeTrainTypeName = UI.escape(trainTypeName);
+                
+                html += `<span style="color: #ffeb3b; font-size: 1.5rem; margin-right: 10px;">${trainNo} 次</span>`;
+                html += `<span style="color: #fff; margin-right: 15px;">往 ${safeDestName} ${safeTrainTypeName}</span>`;
+                if (trainNote) html += `<span style="border-left: 2px solid #555; margin: 0 15px;"></span><span style="color: #ff9800; font-weight: bold;">備註：${trainNote}</span>`;
+                
+                if (stopTimes.length > 0) {
+                    const idx = stopTimes.findIndex(s => s.StationID === currentStationID);
+                    if (idx !== -1) {
+                        const tableTime = stopTimes[idx].ArrivalTime || stopTimes[idx].DepartureTime;
+                        const predicted = addMinutesToTime(tableTime, delayTime);
+                        const color = delayTime > 0 ? '#ff5252' : '#00e676';
+                        html += `<span style="border-left: 2px solid #555; margin: 0 15px;"></span>本站預計 <span style="color:${color}; font-size: 1.3rem;">${predicted}</span> 抵達`;
+                    }
+                }
+
+                html += `<span style="border-left: 2px solid #555; margin: 0 15px;"></span>`;
+                if (liveData?.StationName) {
+                    const stName = UI.escape(liveData.StationName.Zh_tw || liveData.StationName);
+                    if (isLocationReasonable(stopTimes, currentStationID, liveData.StationName.Zh_tw || liveData.StationName)) {
+                        const delayText = delayTime <= 0 ? `<span style="color:#00e676;">(準點)</span>` : `<span style="color:#ff5252;">(晚 ${delayTime} 分)</span>`;
+                        let nextSt = "";
+                        if (stopTimes.length > 0) {
+                            const idx = stopTimes.findIndex(s => s.StationName.Zh_tw === (liveData.StationName.Zh_tw || liveData.StationName));
+                            if (idx !== -1 && idx < stopTimes.length-1) nextSt = UI.escape(stopTimes[idx+1].StationName.Zh_tw);
+                        }
+                        html += nextSt ? `列車目前位置：<span style="color: #4fc3f7;">${stName} ➡ ${nextSt}</span> ${delayText}` : `列車目前位置：<span style="color: #4fc3f7;">${stName}</span> ${delayText}`;
+                    } else html += `<span style="color:#aaa;">(訊號偵測中...)</span>`;
+                } else {
+                    html += `<span style="color:#aaa;">(列車尚未發車或訊號偵測中...)</span>`;
+                }
+
+                if (stopTimes && stopTimes.length > 0) {
+                    const idx = stopTimes.findIndex(s => s.StationID === currentStationID);
+                    const showStops = (idx !== -1) ? stopTimes.slice(idx + 1) : stopTimes.slice(1);
+                    if (showStops && showStops.length > 0) {
+                        html += `<span style="border-left: 2px solid #555; margin: 0 15px;"></span><span style="color:#ddd;">沿途停靠：</span>`;
+                        html += showStops.map(s => `<span class="station-stop">${UI.escape(s.StationName.Zh_tw)}</span> <span style="font-size:0.9em;color:#aaa;">(${s.ArrivalTime ? s.ArrivalTime.slice(0,5) : '--:--'})</span>`).join('<span class="station-arrow">▶</span>');
+                    } else if (idx !== -1) {
+                        html += `<span style="border-left: 2px solid #555; margin: 0 15px;"></span><span style="color:#999;">▶ 終點站</span>`;
+                    }
+                } else html += `<span style="border-left: 2px solid #555; margin: 0 15px;"></span><span style="color:#999;">(時刻表讀取中...)</span>`;
+
+                content.innerHTML = html; void content.offsetHeight;
+                const duration = Math.max(6, content.innerText.length * TRA_CONFIG.MARQUEE_SPEED_FACTOR);
+                content.style.animation = `marquee-announce ${duration}s linear infinite`;
+
+            } catch (error) { content.innerHTML = '<span style="color:#ff5252;">無法取得詳細資訊</span>'; }
+        }
+
+        function closeMarquee() { document.getElementById('trainMarqueeBar').style.display = 'none'; }
+
+
+        /* === 2. 站到站查詢與票價功能 === */
+        function handleStationAutocomplete(type) {
+            const input = document.getElementById(type === 'start' ? 'routeStartInput' : 'routeEndInput');
+            const box = document.getElementById(type === 'start' ? 'startSuggestions' : 'endSuggestions');
+            const val = input.value.trim().replace(/台/g, '臺');
+            if (!val) { box.style.display = 'none'; return; }
+            const matches = allStationsFlat.filter(s => s.name.includes(val) || s.code.includes(val)).slice(0, 5);
+            if (matches.length === 0) { box.innerHTML = '<div class="autocomplete-item">查無車站</div>'; box.style.display = 'block'; return; }
+            box.innerHTML = matches.map(s => `<div class="autocomplete-item" onclick="selectRouteStation('${type}', '${s.code}', '${s.name}')"><span class="ac-no">${s.code}</span><span class="ac-name">${s.name}</span></div>`).join('');
+            box.style.display = 'block';
+        }
+
+        function selectRouteStation(type, code, name) {
+            document.getElementById(type === 'start' ? 'routeStartInput' : 'routeEndInput').value = name.replace(/臺/g, '台');
+            document.getElementById(type === 'start' ? 'startStationId' : 'endStationId').value = code;
+            document.getElementById(type === 'start' ? 'startSuggestions' : 'endSuggestions').style.display = 'none';
+        }
+
+        function swapRouteStations() {
+            const sInput = document.getElementById('routeStartInput'), eInput = document.getElementById('routeEndInput');
+            const sId = document.getElementById('startStationId'), eId = document.getElementById('endStationId');
+            [sInput.value, eInput.value] = [eInput.value, sInput.value];
+            [sId.value, eId.value] = [eId.value, sId.value];
+        }
+
+        async function fetchRouteSchedule() {
+            const startId = document.getElementById('startStationId').value;
+            const endId = document.getElementById('endStationId').value;
+            const selectDate = document.getElementById('routeDateInput').value;
+            const isToday = selectDate === new Date().toLocaleDateString('en-CA');
+            const startName = document.getElementById('routeStartInput').value;
+            const endName = document.getElementById('routeEndInput').value;
+            
+            document.getElementById('trainsBoard').innerHTML = '<div style="padding:50px;text-align:center;"><i class="fas fa-spinner fa-spin fa-2x"></i></div>';
+            document.getElementById('trainContainer').style.display = 'block';
+            document.getElementById('stationTitle').innerHTML = `<i class="fas fa-route"></i> ${startName} ➡ ${endName}`;
+            document.getElementById('stationInfo').textContent = `日期：${selectDate}`;
+
+            try {
+                const odPromise = tdxApi.fetch(`/v3/Rail/TRA/DailyTrainTimetable/OD/${startId}/to/${endId}/${selectDate}?$format=JSON`);
+                const livePromise = isToday ? fetch(`${TRA_CONFIG.API_WORKER_URL}/api/liveboard/station?station=${startId}`).then(r=>r.json()).catch(()=>[]) : Promise.resolve([]);
+                const farePromise = fetch(`${TRA_CONFIG.API_WORKER_URL}/api/fare?start=${startId}&end=${endId}`).then(r=>r.json()).catch(()=>null);
+
+                const [odRes, liveRes, fareRes] = await Promise.all([odPromise, livePromise, farePromise]);
+                let trainsList = odRes.TrainTimetables || odRes.value || odRes || [];
+                let faresData = (fareRes && fareRes.length > 0 && fareRes[0].Fares) ? fareRes[0].Fares : [];
+                const validTrains = [];
+                const nowTotalMinutes = isToday ? new Date().getHours() * 60 + new Date().getMinutes() : 0;
+
+                trainsList.forEach(t => {
+                    if (!t.StopTimes || t.StopTimes.length < 2) return;
+                    const originStop = t.StopTimes[0], destStop = t.StopTimes[t.StopTimes.length - 1];
+                    const depTime = originStop.DepartureTime || originStop.ArrivalTime;
+                    const arrTime = destStop.ArrivalTime || destStop.DepartureTime;
+                    const [depH, depM] = depTime.split(':').map(Number);
+                    const liveMatch = liveRes.find(l => l.TrainNo === t.TrainInfo.TrainNo);
+                    const delayMins = liveMatch ? parseInt(liveMatch.DelayTime || 0) : 0;
+                    
+                    if (!isToday || ((depH * 60 + depM + delayMins) >= (nowTotalMinutes - 30))) {
+                        let [arrH, arrM] = arrTime.split(':').map(Number);
+                        if (arrH < depH) arrH += 24; 
+                        const durationMins = (arrH * 60 + arrM) - (depH * 60 + depM);
+                        
+                        let price = null;
+                        const trainTypeNameStr = t.TrainInfo.TrainTypeName.Zh_tw || "";
+                        let ticketTypeCode = "成復"; 
+                        if (trainTypeNameStr.includes("自強") || trainTypeNameStr.includes("太魯閣") || trainTypeNameStr.includes("普悠瑪") || trainTypeNameStr.includes("3000")) ticketTypeCode = "成自";
+                        else if (trainTypeNameStr.includes("莒光")) ticketTypeCode = "成莒";
+                        else if (trainTypeNameStr.includes("普快")) ticketTypeCode = "成普";
+
+                        if (faresData.length > 0) {
+                            const matchedFare = faresData.find(ticket => ticket.TicketType === ticketTypeCode);
+                            if (matchedFare) price = matchedFare.Price;
+                        }
+
+                        // 站到站仍然保留美化的車種名稱 (用原版的函數)
+                        const beautifyInfo = getTrainDisplayInfo(t.TrainInfo);
+
+                        validTrains.push({
+                            TrainNo: t.TrainInfo.TrainNo, TrainTypeName: beautifyInfo.name, TypeClass: beautifyInfo.class,
+                            DepartureTime: depTime, ArrivalTime: arrTime, Duration: `${Math.floor(durationMins/60)}時${durationMins%60}分`,
+                            DelayTime: delayMins, TrainStatus: liveMatch ? liveMatch.TrainStatus : 0, Price: price, IsToday: isToday
+                        });
+                    }
+                });
+
+                validTrains.sort((a, b) => a.DepartureTime.localeCompare(b.DepartureTime));
+                let html = '<div class="direction-section">';
+                if (validTrains.length === 0) { document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><p>查無直達班次或已駛離</p></div>'; return; }
+
+                validTrains.slice(0, 20).forEach(t => {
+                    const isCancelled = String(t.TrainStatus) === '2';
+                    let timeHtml = `<span style="font-size: 1.3rem;">${t.DepartureTime}</span>`;
+                    let statusBadge = t.IsToday ? `<span class="delay-badge delay-ok">準點</span>` : '';
+
+                    if (isCancelled) {
+                        timeHtml = `<span style="color:#F44336; text-decoration:line-through;">${t.DepartureTime}</span>`; statusBadge = '<span class="delay-badge status-cancelled">停駛</span>';
+                    } else if (t.DelayTime > 0 && t.IsToday) {
+                        const date = new Date(); date.setHours(...t.DepartureTime.split(':')); date.setMinutes(date.getMinutes() + t.DelayTime);
+                        const expStr = `${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`;
+                        timeHtml = `<div style="line-height:1.2;"><span style="color:#999;text-decoration:line-through;font-size:0.9rem;">${t.DepartureTime}</span><br><span style="color:#00e5ff;font-weight:900;font-size:1.3rem;">${expStr}</span></div>`;
+                        statusBadge = `<span class="delay-badge delay-warn">晚 ${t.DelayTime} 分</span>`;
+                    }
+
+                    const priceBadge = t.Price ? `<div class="fare-badge">$${t.Price}</div>` : '';
+
+                    html += `
+                        <div class="train-card ${isCancelled?'train-cancelled-row':''}" style="cursor:pointer;" onclick="switchSearchMode('train'); document.getElementById('trainNoInput').value='${t.TrainNo}'; fetchTrainDetail();">
+                            <div class="train-info"><span class="train-type-badge type-${t.TypeClass}">${t.TrainTypeName}</span><div class="train-no">${t.TrainNo} 次</div></div>
+                            <div class="schedule-time" style="text-align:center;">${timeHtml}<div class="schedule-label">出發</div></div>
+                            <div class="schedule-time" style="text-align:center; color:#555;"><span style="font-size: 1.1rem; font-weight: bold;"><i class="fas fa-arrow-right" style="color:#ccc; margin-right:5px;"></i> ${t.ArrivalTime}</span><div class="schedule-label">抵達 ⏱️ ${t.Duration}</div></div>
+                            <div class="delay-status">${statusBadge} <span style="color:#2196F3; font-size:0.8rem; margin-top:4px;"><i class="fas fa-crosshairs"></i> 追蹤</span></div>
+                            ${priceBadge}
+                        </div>`;
+                });
+                document.getElementById('trainsBoard').innerHTML = html + '</div>';
+            } catch (err) { document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><p>查詢失敗</p></div>'; }
+        }
+
+        /* === 3. 車次追蹤改進功能 (修復 TDX JSON 解析與標題重置) === */
+        async function fetchTrainDetail(isBackgroundRefresh = false) {
+            const trainNo = document.getElementById('trainNoInput').value.trim();
+            if (!trainNo) return;
+            
+            if (!isBackgroundRefresh) {
+                clearInterval(trainRefreshTimer);
+                document.getElementById('trainsBoard').innerHTML = '<div style="padding:50px;text-align:center;"><i class="fas fa-spinner fa-spin fa-2x"></i></div>';
+                document.getElementById('trainContainer').style.display = 'block';
+            }
+            try {
+                const scheduleProm = tdxApi.fetch(`/v3/Rail/TRA/DailyTrainTimetable/Today?$filter=TrainInfo/TrainNo eq '${trainNo}'&$format=JSON`);
+                const liveProm = fetch(`${TRA_CONFIG.API_WORKER_URL}/api/live?trainNo=${trainNo}`).then(r=>r.json()).catch(()=>null);
+                const infoProm = tdxApi.fetch(`/v2/Rail/TRA/DailyTrainInfo/Today?$filter=TrainNo eq '${trainNo}'&$format=JSON`).catch(()=>null);
+                
+                const [schRes, liveRes, infoRes] = await Promise.all([scheduleProm, liveProm, infoProm]);
+                
+                // 🔥 修復：精準兼容 TDX 的各種 JSON 外層包裝格式 (TrainTimetables 或 value)
+                let stopTimes = [];
+                if (schRes?.TrainTimetables?.[0]?.StopTimes) {
+                    stopTimes = schRes.TrainTimetables[0].StopTimes;
+                } else if (schRes?.value?.[0]?.StopTimes) {
+                    stopTimes = schRes.value[0].StopTimes;
+                } else if (Array.isArray(schRes) && schRes[0]?.StopTimes) {
+                    stopTimes = schRes[0].StopTimes;
+                }
+
+                let liveData = (liveRes?.TrainLiveBoards?.[0]) || (Array.isArray(liveRes) ? liveRes[0] : liveRes) || null;
+                let trainInfo = infoRes?.[0] || null;
+
+                // 🔥 修復：找不到時，確實重置標題，不要殘留上一次的站到站名稱
+                if (!stopTimes || stopTimes.length === 0) { 
+                    if(!isBackgroundRefresh) {
+                        document.getElementById('trainsBoard').innerHTML = '<div class="no-data" style="padding: 40px; text-align: center;"><i class="fas fa-search-minus" style="font-size: 3rem; color: #ccc; margin-bottom: 15px;"></i><p>查無今日此車次時刻表，可能尚未發車或無此班次。</p></div>'; 
+                        document.getElementById('stationTitle').innerHTML = `<i class="fas fa-train"></i> 車次查詢：${trainNo}`;
+                        document.getElementById('stationInfo').textContent = '--';
+                    }
+                    return; 
+                }
+
+                let facilityHtml = '';
+                if (trainInfo) {
+                    if (trainInfo.WheelChairFlag) facilityHtml += '<i class="fas fa-wheelchair facility-icon" title="無障礙座位"></i>';
+                    if (trainInfo.BreastFeedingFlag) facilityHtml += '<i class="fas fa-baby facility-icon" title="哺集乳室"></i>';
+                    if (trainInfo.BikeFlag) facilityHtml += '<i class="fas fa-bicycle facility-icon" title="可攜帶自行車"></i>';
+                }
+
+                const destStation = stopTimes[stopTimes.length - 1].StationName.Zh_tw;
+                const startStation = stopTimes[0].StationName.Zh_tw;
+                const delayTime = parseInt(liveData?.DelayTime || 0);
+                const isCancelled = String(liveData?.TrainStatus) === '2';
+                const currentStationName = liveData?.StationName?.Zh_tw || liveData?.StationName;
+
+                document.getElementById('stationTitle').innerHTML = `<i class="fas fa-train"></i> ${trainNo} 次追蹤 ${facilityHtml}`;
+                document.getElementById('stationInfo').textContent = `${startStation} ➡ ${destStation}`;
+
+                let statusHtml = '';
+                if (isCancelled) statusHtml = `<span style="color:#F44336;"><i class="fas fa-ban"></i> 本車次今日停駛</span>`;
+                else if (currentStationName) {
+                    let delayStr = delayTime <= 0 ? `<span style="color:#4CAF50;">準點</span>` : `<span style="color:#F44336;">晚 ${delayTime} 分</span>`;
+                    statusHtml = `<span class="live-indicator"></span> 列車接近/停靠 <span style="color:#2196F3;">${currentStationName}</span> (${delayStr})`;
+                } else statusHtml = `<span style="color:#757575;"><i class="fas fa-hourglass-half"></i> 尚未發車 或無訊號</span>`;
+
+                let html = `<div class="train-detail-header"><div class="train-detail-status">${statusHtml}</div></div><div class="timeline-container"><div class="timeline">`;
+
+                let passedLoc = !!currentStationName && !isCancelled;
+                stopTimes.forEach((stop, index) => {
+                    const stName = stop.StationName.Zh_tw;
+                    const arrTime = (stop.ArrivalTime || stop.DepartureTime).substring(0,5);
+                    const isCurrent = currentStationName === stName;
+                    if (isCurrent) passedLoc = false;
+
+                    let timeDisplay = `<span class="st-time">${arrTime}</span>`;
+                    if (!passedLoc && !isCurrent && delayTime > 0 && !isCancelled) {
+                        const d = new Date(); d.setHours(...arrTime.split(':')); d.setMinutes(d.getMinutes() + delayTime);
+                        const expTime = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+                        timeDisplay = `<div style="text-align:right;"><span style="text-decoration:line-through;color:#999;font-size:0.9rem;">${arrTime}</span><br><span style="color:#FF5252;">${expTime}</span></div>`;
+                    }
+
+                    let badge = index===0?'<span style="font-size:0.8rem;background:#eee;color:#666;padding:2px 6px;border-radius:4px;margin-left:8px;">起點</span>':(index===stopTimes.length-1?'<span style="font-size:0.8rem;background:#eee;color:#666;padding:2px 6px;border-radius:4px;margin-left:8px;">終點</span>':'');
+                    html += `<div class="timeline-item ${isCurrent?'current-loc':(passedLoc?'passed':'')}"><div style="display:flex;align-items:center;"><span class="st-name">${stName}</span> ${badge}</div><div>${timeDisplay}</div></div>`;
+                });
+                document.getElementById('trainsBoard').innerHTML = html + '</div></div>';
+                
+                if (!isBackgroundRefresh) {
+                    trainRefreshTimer = setInterval(() => fetchTrainDetail(true), 30000);
+                }
+            } catch (error) { 
+                if(!isBackgroundRefresh) {
+                    document.getElementById('trainsBoard').innerHTML = '<div class="no-data"><p>載入失敗，無法連線至 TDX</p></div>'; 
+                }
+            }
+        }
+
+        let allTodayTrains = [];
+        async function loadAllTodayTrains() {
+            if(allTodayTrains.length) return;
+            try {
+                const res = await tdxApi.fetch('/v2/Rail/TRA/DailyTrainInfo/Today?$select=TrainNo,TrainTypeName,StartingStationName,EndingStationName&$format=JSON');
+                allTodayTrains = res.map(t => ({ no: t.TrainNo, name: t.TrainTypeName.Zh_tw.replace(/\(.*\)/g, '').replace('列車', '').trim(), start: t.StartingStationName.Zh_tw, end: t.EndingStationName.Zh_tw }));
+            } catch(e){}
+        }
+        function handleTrainNoInput(e) {
+            const val = e.target.value.trim();
+            const box = document.getElementById('trainSuggestions');
+            if(!val) { box.style.display = 'none'; return; }
+            const matches = allTodayTrains.filter(t => t.no.startsWith(val)).slice(0, 8);
+            if(!matches.length) { box.innerHTML = '<div class="autocomplete-item">查無車次</div>'; box.style.display='block'; return;}
+            box.innerHTML = matches.map(t => `<div class="autocomplete-item" onclick="document.getElementById('trainNoInput').value='${t.no}'; document.getElementById('trainSuggestions').style.display='none'; fetchTrainDetail();"><span class="ac-no">${t.no}</span><span class="ac-name">${t.name}</span><span class="ac-route">${t.start} ➡ ${t.end}</span></div>`).join('');
+            box.style.display = 'block';
+        }
+        document.addEventListener('click', e => { if(!e.target.closest('.autocomplete-wrapper')) { const b = document.getElementById('trainSuggestions'); if(b) b.style.display='none'; }});
+        document.addEventListener('click', e => { if(!e.target.closest('.route-inputs')) { document.getElementById('startSuggestions').style.display='none'; document.getElementById('endSuggestions').style.display='none'; }});
+    </script>
 </body>
 </html>
