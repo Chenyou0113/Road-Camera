@@ -1754,34 +1754,20 @@
         }
 
         function getInfo(t, langCode = PIDS_APP.STATE.currentLang) {
-            // 🔥 修正: 增強名稱判斷，支援物件型與字串型 TrainTypeName，並補上 missing ID 的防護
-            let rawName = t.TrainTypeName?.Zh_tw || t.TrainTypeName || '';
-            let name = String(TRAIN_TYPES[t.TrainTypeID] || rawName || '列車');
+            let rawName = t.TrainTypeName?.Zh_tw || t.TrainTypeName || '列車';
+            let name = rawName.replace(/\(.*\)/g, ''); // 移除括號
             let cls = '其他';
 
-            if (name.includes('新自強') || name.includes('3000')) {
-                name = '新自強';
-                cls = '新自強';
-            }
-            else if (name.includes('自強') || name.includes('推拉式自強')) {
-                name = '自強';
-                cls = '自強';
-            }
-            else if (name.includes('普悠瑪')) { cls = '普悠瑪'; }
-            else if (name.includes('太魯閣')) { cls = '太魯閣'; }
-            else if (name.includes('莒光')) { cls = '莒光'; }
-            else if (name.includes('區間快')) { cls = '區間快'; }
-            else if (name.includes('區間')) { cls = '區間'; }
-            else if (name.includes('專車')) { cls = '專車'; }
-            else if (name === '列車') {
-                cls = '區間';
-            }
+            if (name.includes('新自強') || name.includes('3000')) { name = '新自強'; cls = '新自強'; }
+            else if (name.includes('自強')) { name = '自強'; cls = '自強'; }
+            else if (name.includes('普悠瑪')) { name = '普悠瑪'; cls = '普悠瑪'; }
+            else if (name.includes('太魯閣')) { name = '太魯閣'; cls = '太魯閣'; }
+            else if (name.includes('莒光')) { name = '莒光'; cls = '莒光'; }
+            else if (name.includes('區間快')) { name = '區間快'; cls = '區間快'; }
+            else if (name.includes('區間')) { name = '區間'; cls = '區間'; }
 
-            // 多語言支援
-            // 🔥 根據傳入的行語言去抓翻譯
             const lang = i18n[langCode];
-            const displayName = lang.types[cls] || name;
-
+            const displayName = lang.types[name] || name;
             return { name: displayName, cls };
         }
 
@@ -1915,40 +1901,38 @@
         let _videoIds = [];
         let _isYTReady = false;
 
-        // 🔥 YouTube API 要求的全局回呼名稱
+        // 🔥 YouTube API 要求的全局回呼
         window.onYouTubeIframeAPIReady = function() {
-            console.log("🎥 YouTube API 已就緒");
+            console.log("🎥 YouTube API 載入完成");
             _isYTReady = true;
-            // 如果 ID 已經準備好了，就直接建立播放器
-            if (_videoIds.length > 0) {
-                _createDynamicPlayer();
-            }
+            if (_videoIds.length > 0) _createDynamicPlayer();
         };
 
         function setupVideo(urls) {
             const con = document.getElementById('videoContainer');
+            if (!con) return;
+            
             _videoIds = [];
-
             urls.forEach(url => {
                 if (!url) return;
-                // 強力過濾所有不可見字元與換行
-                const rawLine = String(url).replace(/[\r\n\t]/g, '').trim();
-                if (!rawLine) return;
+                // 🔥 1. 超強效清理：移除所有換行、Tab、不可見字元與前後空白
+                const cleanLine = String(url).replace(/[\r\n\t\f\v]/g, '').trim();
+                if (!cleanLine) return;
 
+                // 支援各類 YouTube 網址格式與純 11 碼 ID
                 const regExp = /(?:v=|v\/|vi=|vi\/|youtu\.be\/|embed\/|e\/|shorts\/|^)([a-zA-Z0-9_-]{11})/i;
-                const match = rawLine.match(regExp);
+                const match = cleanLine.match(regExp);
                 
                 if (match && match[1].length === 11) {
                     _videoIds.push(match[1]);
                 }
             });
 
-            _videoIds = [...new Set(_videoIds)];
+            _videoIds = [...new Set(_videoIds)]; // 去重
 
             if (_videoIds.length > 0) {
                 con.innerHTML = '<div id="ytPlayerDiv" style="width:100%; height:100%;"></div>';
                 
-                // 檢查 API 是否已載入
                 if (typeof YT === 'undefined' || typeof YT.Player === 'undefined') {
                     if (!document.getElementById('yt-api-script')) {
                         const tag = document.createElement('script');
@@ -1966,11 +1950,10 @@
         }
 
         function _createDynamicPlayer() {
+            // 防止重複初始化與確保網域正確
             if (!_isYTReady || window.ytPlayer) return;
             
-            // 取得最純淨的 Origin
             const cleanOrigin = window.location.protocol + '//' + window.location.hostname + (window.location.port ? ':' + window.location.port : '');
-
             console.log(`🎬 啟動播放器：首播 ${_videoIds[0]} (Origin: ${cleanOrigin})`);
 
             window.ytPlayer = new YT.Player('ytPlayerDiv', {
@@ -1981,47 +1964,48 @@
                     controls: 0,
                     rel: 0,
                     enablejsapi: 1,
-                    origin: cleanOrigin, 
+                    origin: cleanOrigin,
                     widget_referrer: cleanOrigin,
                     playsinline: 1
                 },
                 events: {
                     'onReady': (event) => {
                         event.target.mute();
-                        
-                        // 延遲 500ms 確保 postMessage 通道建立後再塞入清單
+                        // 🔥 2. 使用 API 方法載入清單，避免 URL 參數過長導致 Code 2 報錯
+                        // 這是最穩定的做法，不受 URL 長度限制
                         setTimeout(() => {
                             event.target.loadPlaylist({
                                 playlist: _videoIds,
                                 index: 0
                             });
                             event.target.setLoop(true);
-                            
-                            if (!document.hidden) {
-                                event.target.playVideo();
-                            }
-                        }, 500);
+                            // 只有在分頁可見時才正式播放
+                            if (!document.hidden) event.target.playVideo();
+                        }, 800); // 延長緩衝時間確保 postMessage 握手完成
                     },
                     'onStateChange': (event) => {
                         if (event.data === YT.PlayerState.PLAYING) event.target.mute();
+                        // 防止播放完畢後沒自動切換
+                        if (event.data === YT.PlayerState.ENDED) event.target.nextVideo();
                     },
                     'onError': (event) => {
-                        console.warn(`❌ 影片無法播放 (代碼: ${event.data})，正在自動跳過...`);
+                        console.warn(`❌ 影片錯誤 (代碼: ${event.data})，自動跳過...`);
+                        // 遇到代碼 150 (禁播) 或其他錯誤，立即跳下一首
                         if (event.target && typeof event.target.nextVideo === 'function') {
-                            event.target.nextVideo(); // 遇到禁播快速跳下一首
+                            event.target.nextVideo();
                         }
                     }
                 }
             });
         }
 
-        // 🔥 修正 3: 針對多開分頁與安全性原則的喚醒機制
+        // 🔥 3. 修正分頁切換喚醒邏輯：徹底解決「第二個車站分頁報錯」的問題
         document.addEventListener("visibilitychange", () => {
             if (!document.hidden && window.ytPlayer && typeof window.ytPlayer.playVideo === 'function') {
                 const state = window.ytPlayer.getPlayerState();
-                // 如果目前的播放器是卡住的，強制它動起來
+                // 只有在非播放狀態時才補發播放指令，避免干擾正常播放
                 if (state !== 1) { 
-                    console.log('👀 偵測到分頁喚醒，正在嘗試恢復影片播放...');
+                    console.log('👀 偵測到分頁喚醒，恢復影片播放...');
                     window.ytPlayer.playVideo();
                 }
             }
