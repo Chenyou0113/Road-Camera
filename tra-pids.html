@@ -1961,51 +1961,47 @@
         function _createDynamicPlayer() {
             if (!_isYTReady || window.ytPlayer) return;
             
-            // 🔥 修正 1: 取得最乾淨的網域來源，不帶任何尾隨斜槓
-            const originParam = window.location.protocol + '//' + window.location.hostname;
+            // 取得最純淨的 Origin
+            const cleanOrigin = window.location.protocol + '//' + window.location.hostname + (window.location.port ? ':' + window.location.port : '');
 
-            console.log(`🎬 啟動播放器：首播 ${_videoIds[0]}`);
+            console.log(`🎬 啟動播放器：首播 ${_videoIds[0]} (Origin: ${cleanOrigin})`);
 
             window.ytPlayer = new YT.Player('ytPlayerDiv', {
-                height: '100%',
-                width: '100%',
-                videoId: _videoIds[0],
+                host: 'https://www.youtube.com',
                 playerVars: {
                     autoplay: 1,
                     mute: 1,
                     controls: 0,
                     rel: 0,
                     enablejsapi: 1,
-                    origin: originParam, // 強制對應
-                    widget_referrer: originParam,
-                    playsinline: 1,
-                    playlist: _videoIds.slice(1).join(','),
-                    loop: 1
+                    origin: cleanOrigin, 
+                    widget_referrer: cleanOrigin,
+                    playsinline: 1
                 },
                 events: {
                     'onReady': (event) => {
                         event.target.mute();
-                        // 針對背景分頁：只有在看這個分頁時才播放
-                        if (!document.hidden) {
-                            event.target.playVideo();
-                        }
+                        
+                        // 延遲 500ms 確保 postMessage 通道建立後再塞入清單
+                        setTimeout(() => {
+                            event.target.loadPlaylist({
+                                playlist: _videoIds,
+                                index: 0
+                            });
+                            event.target.setLoop(true);
+                            
+                            if (!document.hidden) {
+                                event.target.playVideo();
+                            }
+                        }, 500);
                     },
                     'onStateChange': (event) => {
-                        if (event.data === YT.PlayerState.PLAYING) {
-                            event.target.mute();
-                        }
-                        // 如果影片結束了，自動播下一首
-                        if (event.data === YT.PlayerState.ENDED) {
-                            event.target.nextVideo();
-                        }
+                        if (event.data === YT.PlayerState.PLAYING) event.target.mute();
                     },
                     'onError': (event) => {
-                        // 🔥 修正 2: 遇到 101/150 (禁止嵌入) 時，無秒差立即跳下一部
-                        console.warn(`❌ 影片無法播放 (代碼: ${event.data})，正在跳過...`);
-                        
+                        console.warn(`❌ 影片無法播放 (代碼: ${event.data})，正在自動跳過...`);
                         if (event.target && typeof event.target.nextVideo === 'function') {
-                            // 不要等待，立刻切換到下一首能播的
-                            event.target.nextVideo();
+                            event.target.nextVideo(); // 遇到禁播快速跳下一首
                         }
                     }
                 }
@@ -2181,18 +2177,31 @@
                 let delay = parseInt(t.DelayTime || 0);
                 let isCancel = String(t.TrainStatus) === '2';
 
-                let status = isCancel ? lang.cancelled : (delay > 0 ? lang.delay.replace('{min}', delay) : lang.onTime);
-                let cls = isCancel ? 'status-cancelled' : (delay > 0 ? 'status-delay' : 'status-ontime');
+                let status = "";
+                let cls = "";
+                if (isCancel) {
+                    status = lang.cancelled; cls = 'status-cancelled';
+                } else if (delay >= 120) {
+                    status = rowLangCode === 'zh' ? "時間未定" : "Delayed"; cls = 'status-delay';
+                } else if (delay > 0) {
+                    status = lang.delay.replace('{min}', delay); cls = 'status-delay';
+                } else {
+                    status = lang.onTime; cls = 'status-ontime';
+                }
 
                 let timeStr = (t.ScheduledDepartureTime || "").slice(0, 5);
                 let timeDisplay = timeStr;
                 let isDelayed = false;
                 
                 if (delay > 0 && !isCancel) {
-                    let [h, m] = timeStr.split(':').map(Number);
-                    let min = h * 60 + m + delay;
-                    timeDisplay = `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
                     isDelayed = true;
+                    if (delay >= 120) {
+                        timeDisplay = "--:--"; // 嚴重誤點不顯示錯誤的推算時間
+                    } else {
+                        let [h, m] = timeStr.split(':').map(Number);
+                        let min = h * 60 + m + delay;
+                        timeDisplay = `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+                    }
                     // timeStr = `<span class="delay-time">${timeDisplay}</span><span class="original-time">${timeStr}</span>`;
                 }
 
@@ -2279,6 +2288,15 @@
 
             let msg = `<span style="color:#ffeb3b;font-weight:bold">${trainNoText} ${info.name} ${lang.toward}${destName}</span>`;
             msg += `<span style="margin:0 15px;color:#555">|</span>`;
+
+            // 🔥 新增：如果停駛或嚴重誤點，在跑馬燈插入警示
+            if (isCancel || delay >= 60) {
+                const alertMsg = PIDS_APP.STATE.currentLang === 'zh' 
+                    ? `● 營運異常：請注意上方通阻公告或洽站務員 ●` 
+                    : `● Service Disruption: Please check alerts ●`;
+                msg += `<span style="color:#ff1744;font-weight:bold;animation:blink 1s infinite alternate">${alertMsg}</span>`;
+                msg += `<span style="margin:0 15px;color:#555">|</span>`;
+            }
 
             let liveData = null;
             try {
