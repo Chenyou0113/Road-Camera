@@ -1407,10 +1407,8 @@
             },
 
             async updatePids() {
-                // 🔥 取消上一次請求，防止 Race Condition
                 if (this._currentFetchController) {
                     this._currentFetchController.abort();
-                    console.log('⚠️ 已取消上一次請求');
                 }
 
                 this._currentFetchController = new AbortController();
@@ -1418,54 +1416,52 @@
 
                 try {
                     const url = `${this.CONFIG.API_BASE}/api/liveboard/station?station=${this.STATE.stationID}`;
-                    const response = await fetch(url, {
-                        signal,
-                        // 添加超時保護
-                        timeout: 15000
-                    });
+                    const response = await fetch(url, { signal, timeout: 15000 });
 
-                    if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                    }
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
                     const data = await response.json();
-
                     const now = new Date();
-                    const currentHours = now.getHours();
-                    const currentMins = now.getMinutes();
-                    const nowTotalMinutes = currentHours * 60 + currentMins;
+                    const nowTotalMinutes = now.getHours() * 60 + now.getMinutes();
 
-                    let filtered = data.filter(t => {
-                        const [h, m] = (t.ScheduledDepartureTime || "00:00").split(':').map(Number);
+                    // Worker v9.4.0: 同時相容 ScheduledDepartureTime 與 Dep/Arr
+                    let filtered = (Array.isArray(data) ? data : []).map(t => {
+                        const normalized = {
+                            ...t,
+                            TrainNo: t.TrainNo ?? t.No,
+                            Direction: t.Direction ?? t.Dir,
+                            TrainTypeName: t.TrainTypeName ?? t.Type,
+                            EndingStationName: t.EndingStationName ?? t.Dest,
+                            ScheduledDepartureTime: t.ScheduledDepartureTime ?? t.Dep ?? t.Arr,
+                            ScheduledArrivalTime: t.ScheduledArrivalTime ?? t.Arr ?? t.Dep,
+                            DelayTime: t.DelayTime ?? t.Delay ?? 0,
+                            TrainStatus: t.TrainStatus ?? t.Status,
+                            TripLine: t.TripLine ?? t.Line
+                        };
+
+                        const timeStr = normalized.ScheduledDepartureTime || "00:00";
+                        const [h, m] = timeStr.split(':').map(Number);
                         const schedMins = h * 60 + m;
-                        const delayMins = parseInt(t.DelayTime || 0);
+                        const delayMins = parseInt(normalized.DelayTime || 0);
                         const actualMins = schedMins + delayMins;
-                        const isCancelled = String(t.TrainStatus) === '2';
-                        return actualMins >= nowTotalMinutes || isCancelled;
-                    });
 
-                    filtered.forEach(t => {
-                        let [h, m] = (t.ScheduledDepartureTime || "00:00").split(':').map(Number);
-                        let delayMins = parseInt(t.DelayTime || 0);
-                        let actualMins = (h * 60 + m) + delayMins;
-                        t._sort = actualMins % 1440;
-                    });
+                        return {
+                            ...normalized,
+                            _sort: actualMins % 1440,
+                            _actualMins: actualMins,
+                            _isCancelled: String(normalized.TrainStatus) === '2'
+                        };
+                    }).filter(t => t._actualMins >= nowTotalMinutes - 30 || t._isCancelled);
+
                     filtered.sort((a, b) => a._sort - b._sort);
 
                     this.STATE.lastTrainData = filtered;
                     refreshDisplay();
 
                 } catch (error) {
-                    // 忽略被取消的請求（正常行為）
-                    if (error.name === 'AbortError') {
-                        console.log('🔄 請求已被新請求取代');
-                        return;
-                    }
-
+                    if (error.name === 'AbortError') return;
                     console.error("❌ PIDS 更新失敗:", error);
-                    UI_Helper.showErrorOverlay('列車資訊傳輸暫時中斷，請以車站現場資訊為主。');
-                    renderTable('1', []);
-                    renderTable('0', []);
+                    UI_Helper.showErrorOverlay('列車資訊傳輸暫時中斷');
                 } finally {
                     this._currentFetchController = null;
                 }
@@ -2294,9 +2290,23 @@
                 const liveWorkerPromise = fetch(`${TRA_WORKER_URL}/api/live?trainNo=${t.TrainNo}`).then(r => r.json()).catch(() => null);
                 liveData = await liveWorkerPromise;
 
-                if (liveData?.TrainLiveBoards?.length > 0) liveData = liveData.TrainLiveBoards[0];
-                else if (liveData?.StationName) liveData = liveData;
-                else liveData = null;
+                // 相容三種格式：
+                // 1) { TrainLiveBoards: [...] }
+                // 2) { StationName, DelayTime, TrainStatus }
+                // 3) { station, delay, status } (Worker v9+)
+                if (liveData?.TrainLiveBoards?.length > 0) {
+                    liveData = liveData.TrainLiveBoards[0];
+                } else if (liveData?.station || liveData?.delay !== undefined || liveData?.status !== undefined) {
+                    liveData = {
+                        StationName: liveData.station ? { Zh_tw: liveData.station } : null,
+                        DelayTime: liveData.delay ?? 0,
+                        TrainStatus: liveData.status ?? 0
+                    };
+                } else if (liveData?.StationName) {
+                    liveData = liveData;
+                } else {
+                    liveData = null;
+                }
             } catch (e) { }
 
             let locationText = "";
