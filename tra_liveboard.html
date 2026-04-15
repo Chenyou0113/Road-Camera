@@ -297,6 +297,7 @@
 
         // 與 PIDS 通阻跑馬燈體感一致：以每字秒數決定速度
         const TOP_MARQUEE_SEC_PER_CHAR = 0.12;
+        const LIVEBOARD_REFRESH_MS = 60000;
 
         document.addEventListener('DOMContentLoaded', async () => {
             quickDate(0); 
@@ -304,12 +305,49 @@
             
             initStations();
             loadTraAlerts();
+            startLiveboardAutoRefresh();
             
             setInterval(() => {
                 const clock = document.getElementById('updateTime');
                 if(clock) clock.textContent = "更新時間：" + new Date().toLocaleTimeString('zh-TW');
             }, 1000);
         });
+
+        function startLiveboardAutoRefresh() {
+            const delayToNextMinute = LIVEBOARD_REFRESH_MS - (Date.now() % LIVEBOARD_REFRESH_MS);
+            setTimeout(async () => {
+                await refreshLiveboardMinuteTasks();
+                setInterval(refreshLiveboardMinuteTasks, LIVEBOARD_REFRESH_MS);
+            }, delayToNextMinute);
+        }
+
+        async function refreshLiveboardMinuteTasks() {
+            await loadTraAlerts();
+            await refreshStationBoardSilently();
+        }
+
+        async function refreshStationBoardSilently() {
+            const stationPanel = document.getElementById('panel-station');
+            const trainContainer = document.getElementById('trainContainer');
+            if (!stationPanel || stationPanel.style.display === 'none') return;
+            if (!trainContainer || trainContainer.style.display === 'none') return;
+            if (!currentStationID) return;
+
+            const date = document.getElementById('queryDate').value;
+            if (!date) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/api/liveboard/station?station=${currentStationID}&date=${date}`);
+                if (!res.ok) throw new Error('station refresh failed');
+                renderStationBoard(await res.json());
+
+                const sname = getStationNameByCode(currentStationID);
+                document.getElementById('boardTitle').innerHTML = `<i class="fas fa-list-alt"></i> ${sname} 即時看板 (${date})`;
+                setStationPidsButtonVisible(true);
+            } catch (e) {
+                console.warn('自動更新車站看板失敗:', e);
+            }
+        }
 
         function normalizeStationName(name) {
             return String(name || '').replace(/站$/, '').replace(/台/g, '臺').trim();
