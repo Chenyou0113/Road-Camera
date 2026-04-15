@@ -264,14 +264,28 @@
     <script>
         const API_BASE = "https://tra-schedule-worker.weacamm.org";
         let allStationsFlat = []; 
+        let stationNameMap = {};
+        let stationsByLine = {};
         let currentStationID = "";
         let currentStationName = "";
 
-        document.addEventListener('DOMContentLoaded', () => {
+        const lineSelectMap = {
+            WL: 'western',
+            'WL-C': 'westernCoastal',
+            EL: 'eastern',
+            SL: 'southLink',
+            CZ: 'chengzhui',
+            PX: 'pingxi',
+            SUAO: 'eastern',
+            LJ: 'liujia',
+            NW: 'neiwan',
+            JJ: 'jiji',
+            SH: 'shalun'
+        };
+
+        document.addEventListener('DOMContentLoaded', async () => {
             quickDate(0); 
-            if (typeof stationDataMap !== 'undefined') {
-                allStationsFlat = Object.entries(stationDataMap).map(([id, d]) => ({ code: id, name: d.name.replace('站','') }));
-            }
+            await loadStationsData();
             
             initStations();
             loadTraAlerts();
@@ -281,6 +295,53 @@
                 if(clock) clock.textContent = "更新時間：" + new Date().toLocaleTimeString('zh-TW');
             }, 1000);
         });
+
+        function normalizeStationName(name) {
+            return String(name || '').replace(/站$/, '').replace(/台/g, '臺').trim();
+        }
+
+        async function loadStationsData() {
+            try {
+                const res = await fetch('assets/train-station-codes.json');
+                if (!res.ok) throw new Error('station json load failed');
+
+                const data = await res.json();
+                const lines = data?.lines || {};
+                const dedupeMap = new Map();
+                const byLine = {};
+
+                Object.entries(lines).forEach(([lineKey, lineObj]) => {
+                    const list = (lineObj?.stations || []).map(s => ({
+                        code: String(s.code),
+                        name: normalizeStationName(s.name)
+                    }));
+                    byLine[lineKey] = list;
+
+                    list.forEach(st => {
+                        if (!dedupeMap.has(st.code)) dedupeMap.set(st.code, st);
+                    });
+                });
+
+                stationsByLine = byLine;
+                allStationsFlat = Array.from(dedupeMap.values());
+                stationNameMap = Object.fromEntries(allStationsFlat.map(s => [s.code, s.name]));
+                return;
+            } catch (e) {
+                console.warn('載入 train-station-codes.json 失敗，回退 stationDataMap', e);
+            }
+
+            if (typeof stationDataMap !== 'undefined') {
+                allStationsFlat = Object.entries(stationDataMap).map(([id, d]) => ({
+                    code: id,
+                    name: normalizeStationName(d.name)
+                }));
+                stationNameMap = Object.fromEntries(allStationsFlat.map(s => [s.code, s.name]));
+            }
+        }
+
+        function getStationNameByCode(code) {
+            return stationNameMap[code] || code;
+        }
 
         // ================== UX 與工具邏輯 ==================
 
@@ -321,9 +382,14 @@
             const line = document.getElementById(lineSelectId).value;
             const kw = document.getElementById(inputId).value.trim().replace(/台/g, '臺');
             let source = allStationsFlat;
-            
-            if (line !== 'all' && typeof trainLineClassification !== 'undefined' && trainLineClassification[line]) {
-                source = trainLineClassification[line].stations;
+
+            if (line !== 'all') {
+                const mappedKey = lineSelectMap[line];
+                if (mappedKey && stationsByLine[mappedKey]) {
+                    source = stationsByLine[mappedKey];
+                } else if (typeof trainLineClassification !== 'undefined' && trainLineClassification[line]) {
+                    source = trainLineClassification[line].stations;
+                }
             }
             let filtered = kw ? source.filter(s => s.name.includes(kw) || s.code.includes(kw)) : source;
             const select = document.getElementById(selectId);
@@ -408,7 +474,7 @@
                 if (type === 'station') {
                     const sid = document.getElementById('stationSelect').value;
                     if (!sid) return alert("請選擇車站");
-                    const sname = typeof stationDataMap !== 'undefined' ? stationDataMap[sid].name : sid;
+                    const sname = getStationNameByCode(sid);
                     
                     currentStationID = sid;
                     currentStationName = sname;
@@ -424,8 +490,8 @@
                     if (!sid || !eid) return alert("請選擇車站");
                     if (sid === eid) return alert("起訖站不能相同");
                     
-                    const sname = typeof stationDataMap !== 'undefined' ? stationDataMap[sid].name : sid;
-                    const ename = typeof stationDataMap !== 'undefined' ? stationDataMap[eid].name : eid;
+                    const sname = getStationNameByCode(sid);
+                    const ename = getStationNameByCode(eid);
                     
                     document.getElementById('boardTitle').innerHTML = `<i class="fas fa-exchange-alt"></i> ${sname} ➔ ${ename} (${date})`;
                     
