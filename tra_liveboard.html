@@ -288,6 +288,9 @@
             SH: 'shalun'
         };
 
+        // 與 PIDS 通阻跑馬燈體感一致：以每字秒數決定速度
+        const TOP_MARQUEE_SEC_PER_CHAR = 0.12;
+
         document.addEventListener('DOMContentLoaded', async () => {
             quickDate(0); 
             await loadStationsData();
@@ -303,6 +306,10 @@
 
         function normalizeStationName(name) {
             return String(name || '').replace(/站$/, '').replace(/台/g, '臺').trim();
+        }
+
+        function normalizeTaiText(text) {
+            return String(text || '').replace(/台/g, '臺');
         }
 
         async function loadStationsData() {
@@ -345,7 +352,7 @@
         }
 
         function getStationNameByCode(code) {
-            return stationNameMap[code] || code;
+            return normalizeTaiText(stationNameMap[code] || code);
         }
 
         // ================== UX 與工具邏輯 ==================
@@ -472,9 +479,11 @@
 
         function startMarqueeAnimation() {
             const marquee = document.getElementById('marqueeText');
+            const text = (marquee.textContent || '').trim();
+            const duration = Math.max(8, text.length * TOP_MARQUEE_SEC_PER_CHAR);
             marquee.style.animation = 'none';
             void marquee.offsetWidth;
-            marquee.style.animation = 'top-marquee-scroll 25s linear infinite';
+            marquee.style.animation = `top-marquee-scroll ${duration}s linear infinite`;
         }
 
         async function doQuery(type) {
@@ -559,7 +568,7 @@
                 filtered.forEach(t => {
                     // 🔥 這裡對應您提供的 JSON 結構
                     const trainNo = t.No; 
-                    const dest = t.Dest;
+                    const dest = normalizeTaiText(t.Dest);
                     const typeName = (t.Type || "").replace(/\(.*\)/g, '');
                     const time = t.Dep || t.Arr || ""; // 優先顯示發車時間
                     
@@ -609,7 +618,7 @@
                 const noteStr = t.Note ? `<div style="font-size:0.8rem; color:#d84315; margin-top:4px;">*${t.Note}</div>` : "";
                 const dep = (t.DepartureTime || t.Dep || "").slice(0,5);
                 const arr = (t.ArrivalTime || t.Arr || "").slice(0,5);
-                const dest = t.EndingStationName || t.Dest;
+                const dest = normalizeTaiText(t.EndingStationName || t.Dest);
                 
                 html += `
                     <div class="route-card" onclick="document.getElementById('trainNoInp').value='${trainNo}'; switchTab('train'); doQuery('train');" style="cursor:pointer;" title="點擊追蹤此車次">
@@ -632,8 +641,8 @@
             const stopsArray = sch.Stops || sch.StopTimes;
             if (stopsArray && stopsArray.length > 0) {
                 const lastStop = stopsArray[stopsArray.length-1];
-                if (lastStop.StationName && lastStop.StationName.Zh_tw) dest = lastStop.StationName.Zh_tw;
-                else dest = lastStop.Name || lastStop.StationName;
+                if (lastStop.StationName && lastStop.StationName.Zh_tw) dest = normalizeTaiText(lastStop.StationName.Zh_tw);
+                else dest = normalizeTaiText(lastStop.Name || lastStop.StationName);
             }
 
             let html = `
@@ -653,7 +662,7 @@
             let passed = true;
             if (stopsArray) {
                 stopsArray.forEach((s, idx) => {
-                    const sName = s.Name || s.StationName?.Zh_tw || s.StationName;
+                    const sName = normalizeTaiText(s.Name || s.StationName?.Zh_tw || s.StationName);
                     const isCurrent = (sName === curSta);
                     if (isCurrent) passed = false;
                     
@@ -701,7 +710,7 @@
                     const liveRes = await fetch(`${API_BASE}/api/live?trainNo=${trainNo}`);
                     const liveData = await liveRes.json();
                     if (liveData.status === 2) statusText = "本車次今日停駛";
-                    else if (liveData.station) statusText = `列車目前位置：${liveData.station}`;
+                    else if (liveData.station) statusText = `列車目前位置：${normalizeTaiText(liveData.station)}`;
                 }
 
                 let expectedTime = schedTime.slice(0,5);
@@ -724,7 +733,7 @@
                             const sMins = sh * 60 + sm + delay;
                             st = `${String(Math.floor(sMins/60)%24).padStart(2,'0')}:${String(sMins%60).padStart(2,'0')}`;
                         }
-                        const sName = s.StationName?.Zh_tw || s.StationName || s.Name;
+                        const sName = normalizeTaiText(s.StationName?.Zh_tw || s.StationName || s.Name);
                         return `<span style="color:#ffeb3b;">${sName}</span> <span style="color:#ccc;">(${st})</span>`;
                     }).join(' <span style="color:#888; font-size:0.9em; margin: 0 8px;">►</span> ');
                 } else if (currentIndex === stops.length - 1) {
