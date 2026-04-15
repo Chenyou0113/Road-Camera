@@ -1451,7 +1451,7 @@
                             _actualMins: actualMins,
                             _isCancelled: String(normalized.TrainStatus) === '2'
                         };
-                    }).filter(t => t._actualMins >= nowTotalMinutes - 30 || t._isCancelled);
+                    }).filter(t => t._actualMins >= nowTotalMinutes || t._isCancelled);
 
                     filtered.sort((a, b) => a._sort - b._sort);
 
@@ -1684,6 +1684,21 @@
             const lang = i18n[PIDS_APP.STATE.currentLang];
             // 檢查是否有預設翻譯，否則回傳原字
             return lang.notes?.[note.trim()] || note;
+        }
+
+        function getViaTags(train, stops = []) {
+            const tripLine = Number(train?.TripLine || 0);
+            const names = (stops || []).map(s => s?.StationName?.Zh_tw || s?.StationName || s?.Name || "");
+            const hasAny = (keys) => keys.some(k => names.some(n => String(n).includes(k)));
+
+            const tags = [];
+            if (tripLine === 1) tags.push('山');
+            if (tripLine === 2) tags.push('海');
+            if (hasAny(['宜蘭', '羅東', '礁溪', '頭城', '蘇澳'])) tags.push('宜蘭');
+            if (hasAny(['臺東', '台東', '知本', '池上', '關山', '玉里'])) tags.push('臺東');
+            if (hasAny(['枋寮', '大武', '太麻里', '金崙', '瀧溪', '內獅', '枋山'])) tags.push('南迴線');
+
+            return [...new Set(tags)];
         }
 
         // --- 語言切換功能 ---
@@ -2194,8 +2209,6 @@
 
                  // 目的地處理 (傳入行語言)
                 let dest = translateStation(t.EndingStationName, rowLangCode);
-                if (t.TripLine == 1) dest += rowLangCode === 'zh' ? ' (山)' : ' (MT)';
-                else if (t.TripLine == 2) dest += rowLangCode === 'zh' ? ' (海)' : ' (CO)';
 
                 // 🔥 使用 Template 克隆（完全避免 innerHTML）
                 const clone = template.content.cloneNode(true);
@@ -2346,6 +2359,18 @@
 
             // 嘗試取得更精確的停靠站資料 (如果有的話)
             let stops = await fetchTrainStops(t.TrainNo);
+            const viaTags = getViaTags(t, stops);
+            if (viaTags.length > 0) {
+                const viaZh = viaTags.map(tag => tag.endsWith('線') ? tag : `${tag}線`);
+                const viaEnMap = { '山': 'Mountain Line', '海': 'Coastal Line', '宜蘭': 'Yilan Line', '臺東': 'Taitung Line', '南迴線': 'South-Link Line' };
+                const viaEn = viaTags.map(tag => viaEnMap[tag] || `${tag} Line`);
+                const viaText = PIDS_APP.STATE.currentLang === 'zh'
+                    ? `經由${viaZh.join('、')}`
+                    : `Via ${viaEn.join(' / ')}`;
+                msg += `<span style="color:#ffeb3b;font-weight:bold">${viaText}</span>`;
+                msg += `<span style="margin:0 15px;color:#555">|</span>`;
+            }
+
             if (stops && stops.length > 0) {
                 let stationStop = stops.find(s => String(s.StationID) === GLOBAL_STATION_ID);
                 if (stationStop && stationStop.ArrivalTime) {
