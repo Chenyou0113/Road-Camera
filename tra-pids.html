@@ -1922,6 +1922,7 @@
         let _videoWatchdogTimer = null;
         let _videoErrorBurstCount = 0;
         let _lastVideoErrorTs = 0;
+        let _currentVideoIndex = 0;
 
         function showVideoFallback(message) {
             const con = document.getElementById('videoContainer');
@@ -2002,6 +2003,7 @@
             _blockedVideoIds = new Set();
             _videoErrorBurstCount = 0;
             _lastVideoErrorTs = 0;
+            _currentVideoIndex = 0;
             urls.forEach(url => {
                 const id = extractYoutubeId(url);
                 if (id) _videoIds.push(id);
@@ -2059,6 +2061,7 @@
                                 playlist: _playableVideoIds,
                                 index: 0
                             });
+                            _currentVideoIndex = 0;
                             event.target.setLoop(true);
                             // 只有在分頁可見時才正式播放
                             if (!document.hidden) event.target.playVideo();
@@ -2069,10 +2072,23 @@
                             stopVideoWatchdog();
                             _videoErrorBurstCount = 0;
                             _lastVideoErrorTs = 0;
+                            if (typeof event.target.getPlaylistIndex === 'function') {
+                                const idx = Number(event.target.getPlaylistIndex());
+                                if (!Number.isNaN(idx) && idx >= 0) _currentVideoIndex = idx;
+                            }
                             event.target.mute();
                         }
                         // 防止播放完畢後沒自動切換
-                        if (event.data === YT.PlayerState.ENDED) event.target.nextVideo();
+                        if (event.data === YT.PlayerState.ENDED) {
+                            const total = _playableVideoIds.length;
+                            if (total > 0 && typeof event.target.playVideoAt === 'function') {
+                                const nextIdx = (_currentVideoIndex + 1) % total;
+                                _currentVideoIndex = nextIdx;
+                                event.target.playVideoAt(nextIdx);
+                            } else if (typeof event.target.nextVideo === 'function') {
+                                event.target.nextVideo();
+                            }
+                        }
                     },
                     'onError': (event) => {
                         stopVideoWatchdog();
@@ -2107,6 +2123,7 @@
 
                         if (event.target && typeof event.target.loadPlaylist === 'function') {
                             event.target.loadPlaylist({ playlist: _playableVideoIds, index: 0 });
+                            _currentVideoIndex = 0;
                             event.target.setLoop(true);
                             armVideoWatchdog();
                             if (!document.hidden && typeof event.target.playVideo === 'function') {
