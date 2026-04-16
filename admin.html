@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>天氣即時快訊 Ｘ 臺灣天氣視界管理後台 - V9.2.5 整合版</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -127,6 +130,7 @@
         // ★ 配置：請確保網址正確
         const WEATHER_API = 'https://wang-weather.xiaoyouwu5-fd3.workers.dev';
         const PIDS_API = 'https://tra-schedule-worker.weacamm.org';
+        const ADMIN_BUILD = '2026-04-16-reroute-v1';
 
         // 登入邏輯
         function doLogin() {
@@ -153,6 +157,11 @@
 
         // 統一請求函式 (帶認證 Header)
         async function apiRequest(url, method = 'GET', body = null, withAuth = true) {
+            // 防呆：PIDS 管理資料一律經由 WEATHER_API 寫入 D1
+            if (typeof url === 'string' && /\/api\/(admin\/update-(pids|assets)|pids\/(marquee|assets))/.test(url)) {
+                url = url.replace(PIDS_API, WEATHER_API);
+            }
+
             const headers = {};
 
             if (withAuth) {
@@ -208,6 +217,7 @@
             const statusEl = document.getElementById('pidsStatus');
             const newText = document.getElementById('pidsMarqueeInput').value;
             try {
+                console.log(`[admin ${ADMIN_BUILD}] savePidsMarquee -> ${WEATHER_API}/api/admin/update-pids`);
                 const res = await apiRequest(`${WEATHER_API}/api/admin/update-pids`, 'POST', { text: newText }, true);
                 const raw = await res.text();
                 if (res.ok) {
@@ -227,6 +237,7 @@
                 images: document.getElementById('pidsImagesInput').value.split('\n').filter(s => s.trim()),
                 video: document.getElementById('pidsVideoInput').value.split('\n').filter(s => s.trim())
             };
+            console.log(`[admin ${ADMIN_BUILD}] savePidsAssets -> ${WEATHER_API}/api/admin/update-assets`);
             const res = await apiRequest(`${WEATHER_API}/api/admin/update-assets`, 'POST', payload, true);
             statusEl.innerText = res.ok ? "✅ 媒體資源已儲存" : "❌ 儲存失敗";
         }
@@ -277,6 +288,8 @@
             navigator.clipboard.writeText(document.getElementById('newCodeBox').innerText);
             alert("已複製！");
         }
+
+        console.log(`[admin ${ADMIN_BUILD}] loaded. WEATHER_API=${WEATHER_API}`);
 
         checkAuth();
     </script>
