@@ -1924,6 +1924,22 @@
         let _lastVideoErrorTs = 0;
         let _currentVideoIndex = 0;
 
+        function destroyYtPlayer() {
+            if (window.ytPlayer && typeof window.ytPlayer.destroy === 'function') {
+                try { window.ytPlayer.destroy(); } catch (_) {}
+            }
+            window.ytPlayer = null;
+        }
+
+        function refreshPlayableVideoList() {
+            _playableVideoIds = _videoIds.filter(id => !_blockedVideoIds.has(id));
+            if (_playableVideoIds.length === 0) {
+                _currentVideoIndex = 0;
+            } else if (_currentVideoIndex >= _playableVideoIds.length) {
+                _currentVideoIndex = 0;
+            }
+        }
+
         function showVideoFallback(message) {
             const con = document.getElementById('videoContainer');
             if (!con) return;
@@ -1940,12 +1956,38 @@
         function armVideoWatchdog() {
             stopVideoWatchdog();
             _videoWatchdogTimer = setTimeout(() => {
-                if (window.ytPlayer) {
-                    try { window.ytPlayer.destroy(); } catch (_) {}
-                    window.ytPlayer = null;
-                }
+                destroyYtPlayer();
                 showVideoFallback('📹 影音來源暫時無法播放，請稍後再試');
             }, 12000);
+        }
+
+        function playCurrentVideo() {
+            if (!window.ytPlayer || _playableVideoIds.length === 0) return;
+            const id = _playableVideoIds[_currentVideoIndex];
+            if (!id) return;
+
+            armVideoWatchdog();
+            try {
+                window.ytPlayer.loadVideoById(id);
+                if (!document.hidden && typeof window.ytPlayer.playVideo === 'function') {
+                    window.ytPlayer.playVideo();
+                }
+            } catch (_) {
+                advanceToNextVideo('load-failed');
+            }
+        }
+
+        function advanceToNextVideo(reason = 'next') {
+            if (_playableVideoIds.length === 0) {
+                destroyYtPlayer();
+                showVideoFallback('📹 影音來源暫時無法播放，請稍後再試');
+                return;
+            }
+
+            const total = _playableVideoIds.length;
+            _currentVideoIndex = (_currentVideoIndex + 1) % total;
+            console.log(`🎬 切換下一部 (${reason}) -> ${_playableVideoIds[_currentVideoIndex]}`);
+            playCurrentVideo();
         }
 
         function extractYoutubeId(input) {
@@ -1992,10 +2034,7 @@
             const con = document.getElementById('videoContainer');
             if (!con) return;
 
-            if (window.ytPlayer && typeof window.ytPlayer.destroy === 'function') {
-                try { window.ytPlayer.destroy(); } catch (_) {}
-            }
-            window.ytPlayer = null;
+            destroyYtPlayer();
             stopVideoWatchdog();
             
             _videoIds = [];
@@ -2010,9 +2049,9 @@
             });
 
             _videoIds = [...new Set(_videoIds)]; // 去重
-            _playableVideoIds = [..._videoIds];
+            refreshPlayableVideoList();
 
-            if (_videoIds.length > 0) {
+            if (_playableVideoIds.length > 0) {
                 con.innerHTML = '<div id="ytPlayerDiv" style="width:100%; height:100%;"></div>';
                 
                 if (typeof YT === 'undefined' || typeof YT.Player === 'undefined') {
@@ -2036,10 +2075,11 @@
             if (!_isYTReady || window.ytPlayer || _playableVideoIds.length === 0) return;
             
             const cleanOrigin = window.location.protocol + '//' + window.location.hostname + (window.location.port ? ':' + window.location.port : '');
-            console.log(`🎬 啟動播放器：首播 ${_playableVideoIds[0]} (Origin: ${cleanOrigin})`);
+            console.log(`🎬 啟動播放器：首播 ${_playableVideoIds[_currentVideoIndex]} (Origin: ${cleanOrigin})`);
 
             window.ytPlayer = new YT.Player('ytPlayerDiv', {
                 host: 'https://www.youtube.com',
+                videoId: _playableVideoIds[_currentVideoIndex],
                 playerVars: {
                     autoplay: 1,
                     mute: 1,
@@ -2053,41 +2093,21 @@
                 events: {
                     'onReady': (event) => {
                         event.target.mute();
-                        armVideoWatchdog();
-                        // 🔥 2. 使用 API 方法載入清單，避免 URL 參數過長導致 Code 2 報錯
-                        // 這是最穩定的做法，不受 URL 長度限制
-                        setTimeout(() => {
-                            event.target.loadPlaylist({
-                                playlist: _playableVideoIds,
-                                index: 0
-                            });
-                            _currentVideoIndex = 0;
-                            event.target.setLoop(true);
-                            // 只有在分頁可見時才正式播放
-                            if (!document.hidden) event.target.playVideo();
-                        }, 800); // 延長緩衝時間確保 postMessage 握手完成
+                        setTimeout(() => playCurrentVideo(), 300);
                     },
                     'onStateChange': (event) => {
                         if (event.data === YT.PlayerState.PLAYING) {
                             stopVideoWatchdog();
                             _videoErrorBurstCount = 0;
                             _lastVideoErrorTs = 0;
-                            if (typeof event.target.getPlaylistIndex === 'function') {
-                                const idx = Number(event.target.getPlaylistIndex());
-                                if (!Number.isNaN(idx) && idx >= 0) _currentVideoIndex = idx;
-                            }
+                            const currentId = event?.target?.getVideoData?.()?.video_id;
+                            const idx = _playableVideoIds.indexOf(currentId);
+                            if (idx >= 0) _currentVideoIndex = idx;
                             event.target.mute();
                         }
                         // 防止播放完畢後沒自動切換
                         if (event.data === YT.PlayerState.ENDED) {
-                            const total = _playableVideoIds.length;
-                            if (total > 0 && typeof event.target.playVideoAt === 'function') {
-                                const nextIdx = (_currentVideoIndex + 1) % total;
-                                _currentVideoIndex = nextIdx;
-                                event.target.playVideoAt(nextIdx);
-                            } else if (typeof event.target.nextVideo === 'function') {
-                                event.target.nextVideo();
-                            }
+                            advanceToNextVideo('ended');
                         }
                     },
                     'onError': (event) => {
@@ -2097,8 +2117,7 @@
                         _lastVideoErrorTs = nowTs;
 
                         if (_videoErrorBurstCount >= 3) {
-                            try { event.target.destroy(); } catch (_) {}
-                            window.ytPlayer = null;
+                            destroyYtPlayer();
                             showVideoFallback('📹 影音來源受限制，暫時無法播放');
                             return;
                         }
@@ -2111,25 +2130,15 @@
                             _blockedVideoIds.add(_playableVideoIds[0]);
                         }
 
-                        _playableVideoIds = _videoIds.filter(id => !_blockedVideoIds.has(id));
+                        refreshPlayableVideoList();
                         console.warn(`❌ 影片錯誤 (代碼: ${event.data})，已封鎖 ${badId || 'unknown'}，剩餘 ${_playableVideoIds.length} 部`);
 
                         if (_playableVideoIds.length === 0) {
-                            try { event.target.destroy(); } catch (_) {}
-                            window.ytPlayer = null;
+                            destroyYtPlayer();
                             showVideoFallback('📹 影音來源暫時無法播放，請稍後再試');
                             return;
                         }
-
-                        if (event.target && typeof event.target.loadPlaylist === 'function') {
-                            event.target.loadPlaylist({ playlist: _playableVideoIds, index: 0 });
-                            _currentVideoIndex = 0;
-                            event.target.setLoop(true);
-                            armVideoWatchdog();
-                            if (!document.hidden && typeof event.target.playVideo === 'function') {
-                                event.target.playVideo();
-                            }
-                        }
+                        advanceToNextVideo('error');
                     }
                 }
             });
