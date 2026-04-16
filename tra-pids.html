@@ -1919,11 +1919,32 @@
         let _playableVideoIds = [];
         let _blockedVideoIds = new Set();
         let _isYTReady = false;
+        let _videoWatchdogTimer = null;
+        let _videoErrorBurstCount = 0;
+        let _lastVideoErrorTs = 0;
 
         function showVideoFallback(message) {
             const con = document.getElementById('videoContainer');
             if (!con) return;
             con.innerHTML = `<div style="padding:20px; color:#b0bec5; text-align:center; line-height:1.8;">${message}</div>`;
+        }
+
+        function stopVideoWatchdog() {
+            if (_videoWatchdogTimer) {
+                clearTimeout(_videoWatchdogTimer);
+                _videoWatchdogTimer = null;
+            }
+        }
+
+        function armVideoWatchdog() {
+            stopVideoWatchdog();
+            _videoWatchdogTimer = setTimeout(() => {
+                if (window.ytPlayer) {
+                    try { window.ytPlayer.destroy(); } catch (_) {}
+                    window.ytPlayer = null;
+                }
+                showVideoFallback('📹 影音來源暫時無法播放，請稍後再試');
+            }, 12000);
         }
 
         function extractYoutubeId(input) {
@@ -1974,10 +1995,13 @@
                 try { window.ytPlayer.destroy(); } catch (_) {}
             }
             window.ytPlayer = null;
+            stopVideoWatchdog();
             
             _videoIds = [];
             _playableVideoIds = [];
             _blockedVideoIds = new Set();
+            _videoErrorBurstCount = 0;
+            _lastVideoErrorTs = 0;
             urls.forEach(url => {
                 const id = extractYoutubeId(url);
                 if (id) _videoIds.push(id);
@@ -2027,6 +2051,7 @@
                 events: {
                     'onReady': (event) => {
                         event.target.mute();
+                        armVideoWatchdog();
                         // 🔥 2. 使用 API 方法載入清單，避免 URL 參數過長導致 Code 2 報錯
                         // 這是最穩定的做法，不受 URL 長度限制
                         setTimeout(() => {
@@ -2040,11 +2065,28 @@
                         }, 800); // 延長緩衝時間確保 postMessage 握手完成
                     },
                     'onStateChange': (event) => {
-                        if (event.data === YT.PlayerState.PLAYING) event.target.mute();
+                        if (event.data === YT.PlayerState.PLAYING) {
+                            stopVideoWatchdog();
+                            _videoErrorBurstCount = 0;
+                            _lastVideoErrorTs = 0;
+                            event.target.mute();
+                        }
                         // 防止播放完畢後沒自動切換
                         if (event.data === YT.PlayerState.ENDED) event.target.nextVideo();
                     },
                     'onError': (event) => {
+                        stopVideoWatchdog();
+                        const nowTs = Date.now();
+                        _videoErrorBurstCount = (nowTs - _lastVideoErrorTs < 8000) ? (_videoErrorBurstCount + 1) : 1;
+                        _lastVideoErrorTs = nowTs;
+
+                        if (_videoErrorBurstCount >= 3) {
+                            try { event.target.destroy(); } catch (_) {}
+                            window.ytPlayer = null;
+                            showVideoFallback('📹 影音來源受限制，暫時無法播放');
+                            return;
+                        }
+
                         const badId = event?.target?.getVideoData?.()?.video_id;
                         if (badId) {
                             _blockedVideoIds.add(badId);
@@ -2066,6 +2108,7 @@
                         if (event.target && typeof event.target.loadPlaylist === 'function') {
                             event.target.loadPlaylist({ playlist: _playableVideoIds, index: 0 });
                             event.target.setLoop(true);
+                            armVideoWatchdog();
                             if (!document.hidden && typeof event.target.playVideo === 'function') {
                                 event.target.playVideo();
                             }
