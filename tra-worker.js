@@ -171,7 +171,9 @@ export default {
             }
             if (request.method === "POST") {
                 const body = await request.json();
-                if (url.pathname.includes("update-pids")) await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('PIDS_TOP_MARQUEE', ?, 9999999999)").bind(body.text).run();
+                if (url.pathname.includes("update-pids")) {
+                    await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value, ExpiresAt) VALUES ('PIDS_TOP_MARQUEE', ?, ?)").bind(body.text || "", 9999999999).run();
+                }
                 else if (url.pathname.includes("update-assets")) {
                     if (body.images) await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('PIDS_IMAGES', ?)").bind(JSON.stringify(body.images)).run();
                     if (body.video) await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('PIDS_VIDEO', ?)").bind(JSON.stringify(body.video)).run();

@@ -133,6 +133,81 @@ export default {
         }
     }
 
+    // ============================
+    // API: PIDS 跑馬燈/素材管理 (for tra-worker AppConfig)
+    // ============================
+    if (url.pathname === '/api/pids/marquee' && request.method === 'GET') {
+        try {
+            const record = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'PIDS_TOP_MARQUEE'").first();
+            return new Response(JSON.stringify({ text: record?.Value || '' }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        } catch (e) {
+            return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    if (url.pathname === '/api/pids/assets' && request.method === 'GET') {
+        try {
+            const imgRes = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'PIDS_IMAGES'").first();
+            const vidRes = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'PIDS_VIDEO'").first();
+
+            let images = [];
+            let video = [];
+            try { images = JSON.parse(imgRes?.Value || '[]'); } catch (_) {}
+            try { video = JSON.parse(vidRes?.Value || '[]'); } catch (_) { video = vidRes?.Value ? [vidRes.Value] : []; }
+
+            return new Response(JSON.stringify({ images, video, marquee_speed: 40 }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        } catch (e) {
+            return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    if (url.pathname === '/api/admin/update-pids' && request.method === 'POST') {
+        const auth = await authenticate();
+        if (!auth.success) return new Response(JSON.stringify(auth), { status: 401, headers: corsHeaders });
+
+        try {
+            const body = await request.json();
+            const newText = String(body?.text || '').trim();
+            if (!newText) throw new Error('PIDS 文字不得為空');
+
+            await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value, ExpiresAt) VALUES (?, ?, ?)")
+                .bind('PIDS_TOP_MARQUEE', newText, 9999999999)
+                .run();
+
+            return new Response(JSON.stringify({ success: true, text: newText }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        } catch (e) {
+            return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    if (url.pathname === '/api/admin/update-assets' && request.method === 'POST') {
+        const auth = await authenticate();
+        if (!auth.success) return new Response(JSON.stringify(auth), { status: 401, headers: corsHeaders });
+
+        try {
+            const body = await request.json();
+            const images = Array.isArray(body?.images) ? body.images : [];
+            const video = Array.isArray(body?.video) ? body.video : [];
+
+            await env.DB.batch([
+                env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('PIDS_IMAGES', ?)").bind(JSON.stringify(images)),
+                env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('PIDS_VIDEO', ?)").bind(JSON.stringify(video))
+            ]);
+
+            return new Response(JSON.stringify({ success: true }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        } catch (e) {
+            return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
     return new Response("WangWei Admin API v2.1 Ready", { headers: corsHeaders });
   }
 };
