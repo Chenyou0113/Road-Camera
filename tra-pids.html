@@ -1769,16 +1769,19 @@
 
         function getInfo(t, langCode = PIDS_APP.STATE.currentLang) {
             let rawName = t.TrainTypeName?.Zh_tw || t.TrainTypeName || '列車';
-            let name = rawName.replace(/\(.*\)/g, ''); // 移除括號
+            const typeCode = String(t.TrainTypeCode || '');
+            const note = String(t.Note || '');
+            const merged = `${rawName} ${typeCode} ${note}`;
+            let name = rawName.replace(/\(.*\)/g, '').trim();
             let cls = '其他';
 
-            if (name.includes('新自強') || name.includes('3000')) { name = '新自強'; cls = '新自強'; }
-            else if (name.includes('自強')) { name = '自強'; cls = '自強'; }
-            else if (name.includes('普悠瑪')) { name = '普悠瑪'; cls = '普悠瑪'; }
-            else if (name.includes('太魯閣')) { name = '太魯閣'; cls = '太魯閣'; }
-            else if (name.includes('莒光')) { name = '莒光'; cls = '莒光'; }
-            else if (name.includes('區間快')) { name = '區間快'; cls = '區間快'; }
-            else if (name.includes('區間')) { name = '區間'; cls = '區間'; }
+            if (merged.includes('新自強') || merged.includes('3000') || ['110B', '110G', '110H', '110K', '110M'].includes(typeCode)) { name = '新自強'; cls = '新自強'; }
+            else if (merged.includes('普悠瑪')) { name = '普悠瑪'; cls = '普悠瑪'; }
+            else if (merged.includes('太魯閣')) { name = '太魯閣'; cls = '太魯閣'; }
+            else if (merged.includes('莒光')) { name = '莒光'; cls = '莒光'; }
+            else if (merged.includes('區間快')) { name = '區間快'; cls = '區間快'; }
+            else if (merged.includes('區間')) { name = '區間'; cls = '區間'; }
+            else if (merged.includes('自強')) { name = '自強'; cls = '自強'; }
 
             const lang = i18n[langCode];
             const displayName = lang.types[name] || name;
@@ -1913,7 +1916,48 @@
 
         // 影片播放狀態全局變數
         let _videoIds = [];
+        let _playableVideoIds = [];
+        let _blockedVideoIds = new Set();
         let _isYTReady = false;
+
+        function showVideoFallback(message) {
+            const con = document.getElementById('videoContainer');
+            if (!con) return;
+            con.innerHTML = `<div style="padding:20px; color:#b0bec5; text-align:center; line-height:1.8;">${message}</div>`;
+        }
+
+        function extractYoutubeId(input) {
+            const raw = String(input || '').replace(/[\r\n\t\f\v]/g, '').trim();
+            if (!raw) return null;
+
+            // 純 11 碼 ID
+            if (/^[a-zA-Z0-9_-]{11}$/.test(raw)) return raw;
+
+            // URL 格式
+            try {
+                const u = new URL(raw);
+                const host = (u.hostname || '').toLowerCase();
+                if (host.includes('youtu.be')) {
+                    const id = u.pathname.replace(/^\//, '').split('/')[0];
+                    return /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : null;
+                }
+                if (host.includes('youtube.com')) {
+                    const v = u.searchParams.get('v');
+                    if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+
+                    const parts = u.pathname.split('/').filter(Boolean);
+                    const key = parts[0];
+                    const id = parts[1];
+                    if (['embed', 'shorts', 'v', 'vi', 'e'].includes(key) && /^[a-zA-Z0-9_-]{11}$/.test(id || '')) {
+                        return id;
+                    }
+                }
+            } catch (_) {}
+
+            // 後備 regex
+            const match = raw.match(/(?:v=|v\/|vi=|vi\/|youtu\.be\/|embed\/|e\/|shorts\/)([a-zA-Z0-9_-]{11})/i);
+            return (match && match[1]) ? match[1] : null;
+        }
 
         // 🔥 YouTube API 要求的全局回呼
         window.onYouTubeIframeAPIReady = function() {
@@ -1925,24 +1969,22 @@
         function setupVideo(urls) {
             const con = document.getElementById('videoContainer');
             if (!con) return;
+
+            if (window.ytPlayer && typeof window.ytPlayer.destroy === 'function') {
+                try { window.ytPlayer.destroy(); } catch (_) {}
+            }
+            window.ytPlayer = null;
             
             _videoIds = [];
+            _playableVideoIds = [];
+            _blockedVideoIds = new Set();
             urls.forEach(url => {
-                if (!url) return;
-                // 🔥 1. 超強效清理：移除所有換行、Tab、不可見字元與前後空白
-                const cleanLine = String(url).replace(/[\r\n\t\f\v]/g, '').trim();
-                if (!cleanLine) return;
-
-                // 支援各類 YouTube 網址格式與純 11 碼 ID
-                const regExp = /(?:v=|v\/|vi=|vi\/|youtu\.be\/|embed\/|e\/|shorts\/|^)([a-zA-Z0-9_-]{11})/i;
-                const match = cleanLine.match(regExp);
-                
-                if (match && match[1].length === 11) {
-                    _videoIds.push(match[1]);
-                }
+                const id = extractYoutubeId(url);
+                if (id) _videoIds.push(id);
             });
 
             _videoIds = [...new Set(_videoIds)]; // 去重
+            _playableVideoIds = [..._videoIds];
 
             if (_videoIds.length > 0) {
                 con.innerHTML = '<div id="ytPlayerDiv" style="width:100%; height:100%;"></div>';
@@ -1959,16 +2001,16 @@
                     _createDynamicPlayer();
                 }
             } else {
-                con.innerHTML = `<div style="padding:20px; color:#666; text-align:center;">📹 暫無影音內容</div>`;
+                showVideoFallback('📹 暫無影音內容');
             }
         }
 
         function _createDynamicPlayer() {
             // 防止重複初始化與確保網域正確
-            if (!_isYTReady || window.ytPlayer) return;
+            if (!_isYTReady || window.ytPlayer || _playableVideoIds.length === 0) return;
             
             const cleanOrigin = window.location.protocol + '//' + window.location.hostname + (window.location.port ? ':' + window.location.port : '');
-            console.log(`🎬 啟動播放器：首播 ${_videoIds[0]} (Origin: ${cleanOrigin})`);
+            console.log(`🎬 啟動播放器：首播 ${_playableVideoIds[0]} (Origin: ${cleanOrigin})`);
 
             window.ytPlayer = new YT.Player('ytPlayerDiv', {
                 host: 'https://www.youtube.com',
@@ -1989,7 +2031,7 @@
                         // 這是最穩定的做法，不受 URL 長度限制
                         setTimeout(() => {
                             event.target.loadPlaylist({
-                                playlist: _videoIds,
+                                playlist: _playableVideoIds,
                                 index: 0
                             });
                             event.target.setLoop(true);
@@ -2003,10 +2045,30 @@
                         if (event.data === YT.PlayerState.ENDED) event.target.nextVideo();
                     },
                     'onError': (event) => {
-                        console.warn(`❌ 影片錯誤 (代碼: ${event.data})，自動跳過...`);
-                        // 遇到代碼 150 (禁播) 或其他錯誤，立即跳下一首
-                        if (event.target && typeof event.target.nextVideo === 'function') {
-                            event.target.nextVideo();
+                        const badId = event?.target?.getVideoData?.()?.video_id;
+                        if (badId) {
+                            _blockedVideoIds.add(badId);
+                        } else if (_playableVideoIds.length > 0) {
+                            // 有些 Code 2 拿不到 video_id，至少淘汰目前候選第一支，避免無限循環
+                            _blockedVideoIds.add(_playableVideoIds[0]);
+                        }
+
+                        _playableVideoIds = _videoIds.filter(id => !_blockedVideoIds.has(id));
+                        console.warn(`❌ 影片錯誤 (代碼: ${event.data})，已封鎖 ${badId || 'unknown'}，剩餘 ${_playableVideoIds.length} 部`);
+
+                        if (_playableVideoIds.length === 0) {
+                            try { event.target.destroy(); } catch (_) {}
+                            window.ytPlayer = null;
+                            showVideoFallback('📹 影音來源暫時無法播放，請稍後再試');
+                            return;
+                        }
+
+                        if (event.target && typeof event.target.loadPlaylist === 'function') {
+                            event.target.loadPlaylist({ playlist: _playableVideoIds, index: 0 });
+                            event.target.setLoop(true);
+                            if (!document.hidden && typeof event.target.playVideo === 'function') {
+                                event.target.playVideo();
+                            }
                         }
                     }
                 }
