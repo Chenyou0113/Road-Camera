@@ -516,6 +516,52 @@
             border: 2px solid #ffeb3b !important;
         }
 
+        /* 開車前 3 分鐘：車次旁上下雙點閃爍提示 */
+        .train-no-wrap {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .depart-soon-indicator {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            width: 10px;
+            height: 18px;
+        }
+
+        .depart-soon-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #ffeb3b;
+            box-shadow: 0 0 8px rgba(255, 235, 59, 0.9);
+            animation: depart-soon-blink 0.9s ease-in-out infinite;
+        }
+
+        .depart-soon-dot.bottom {
+            animation-delay: 0.45s;
+        }
+
+        @keyframes depart-soon-blink {
+            0% {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+            50% {
+                opacity: 0.25;
+                transform: translateY(-2px) scale(0.9);
+            }
+            100% {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
+        }
+
         @keyframes dynamic-marquee {
             from {
                 transform: translateX(var(--start-pos));
@@ -2304,6 +2350,8 @@
 
             const isMobile = window.innerWidth <= 900;
             const currentMaxRows = isMobile ? RWD_MAX_ROWS : MAX_ROWS;
+            const now = new Date();
+            const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
             // 🔥 使用 DocumentFragment 提升性能
             const fragment = document.createDocumentFragment();
@@ -2332,6 +2380,7 @@
                 let timeStr = (t.ScheduledDepartureTime || "").slice(0, 5);
                 let timeDisplay = timeStr;
                 let isDelayed = false;
+                let shouldShowDepartSoon = false;
                 
                 if (delay > 0 && !isCancel) {
                     isDelayed = true;
@@ -2343,6 +2392,15 @@
                         timeDisplay = `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
                     }
                     // timeStr = `<span class="delay-time">${timeDisplay}</span><span class="original-time">${timeStr}</span>`;
+                }
+
+                // 開車前三分鐘提示：以實際開車時間(表定+延誤)為準
+                if (!isCancel && !t.IsTomorrow && /^\d{2}:\d{2}$/.test(timeStr) && delay < 120) {
+                    const [depH, depM] = timeStr.split(':').map(Number);
+                    const adjustedDeparture = depH * 60 + depM + Math.max(0, delay);
+                    const departureMinutes = ((adjustedDeparture % 1440) + 1440) % 1440;
+                    const minutesToDeparture = (departureMinutes - nowMinutes + 1440) % 1440;
+                    shouldShowDepartSoon = minutesToDeparture <= 3;
                 }
 
                  // 目的地處理 (傳入行語言)
@@ -2361,7 +2419,29 @@
 
                 // 🔥 使用 textContent 安全設置內容（完全防止 XSS）
                 const cells = tr.querySelectorAll('td');
-                cells[0].textContent = String(t.TrainNo);
+                const trainNoWrap = document.createElement('span');
+                trainNoWrap.className = 'train-no-wrap';
+
+                const trainNoText = document.createElement('span');
+                trainNoText.textContent = String(t.TrainNo);
+                trainNoWrap.appendChild(trainNoText);
+
+                if (shouldShowDepartSoon) {
+                    const indicator = document.createElement('span');
+                    indicator.className = 'depart-soon-indicator';
+                    indicator.setAttribute('aria-hidden', 'true');
+
+                    const dotTop = document.createElement('span');
+                    dotTop.className = 'depart-soon-dot top';
+                    const dotBottom = document.createElement('span');
+                    dotBottom.className = 'depart-soon-dot bottom';
+
+                    indicator.appendChild(dotTop);
+                    indicator.appendChild(dotBottom);
+                    trainNoWrap.appendChild(indicator);
+                }
+
+                cells[0].appendChild(trainNoWrap);
 
                 // 車種 badge（唯一需要 HTML 的地方，但內容已被 textContent 保護）
                 const badge = document.createElement('span');
