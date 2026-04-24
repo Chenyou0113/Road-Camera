@@ -143,7 +143,7 @@ const stationDataMap = {
     "4250": { stationCode: "4250", stationId: "4250", name: "保安", ename: "Bao'an", gps: "22.93296 120.23158" },
     "4260": { stationCode: "4260", stationId: "4260", name: "仁德", ename: "Rende", gps: "22.92354 120.24054" },
     "4270": { stationCode: "4270", stationId: "4270", name: "中洲", ename: "Zhongzhou", gps: "22.90446 120.25284" },
-    "4271": { stationCode: "4271", stationId: "4271", name: "長榮大學", ename: "Chang Jung Christian University", gps: "22.90729 120.27263" },
+    "4271": { stationCode: "4271", stationId: "4271", name: "長榮大學", ename: "C. J. C. U.", gps: "22.90729 120.27263" },
     "4272": { stationCode: "4272", stationId: "4272", name: "沙崙", ename: "Shalun", gps: "22.92407 120.28622" },
     "4290": { stationCode: "4290", stationId: "4290", name: "大湖", ename: "Dahu", gps: "22.87821 120.25384" },
     "4300": { stationCode: "4300", stationId: "4300", name: "路竹", ename: "Luzhu", gps: "22.85404 120.26619" },
