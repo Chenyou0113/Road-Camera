@@ -35,9 +35,9 @@
             --header-inbound: linear-gradient(to right, #000080, #0d47a1);
             --header-outbound: linear-gradient(to right, #bf360c, #e65100);
             --row-odd-bg-inbound: #000;
-            --row-even-bg-inbound: #002f4b;
+            --row-even-bg-inbound: #2b2b2b;
             --row-odd-bg-outbound: #000;
-            --row-even-bg-outbound: #3e2723;
+            --row-even-bg-outbound: #2b2b2b;
         }
 
         * {
@@ -312,6 +312,11 @@
             /* 加大字體 */
         }
 
+        /* 車種類型欄統一藍色（無底色） */
+        .train-table td:nth-child(3) {
+            color: var(--accent-blue);
+        }
+
         .table-1 th {
             background: #000080;
         }
@@ -514,59 +519,8 @@
         }
 
         .highlight-row {
-            background-color: rgba(255, 255, 255, 0.15) !important;
-            outline: 2px solid #ffeb3b !important;
-            outline-offset: -2px;
-        }
-
-        /* 開車前 3 分鐘：車次旁上下雙點閃爍提示 */
-        .train-no-wrap {
-            display: inline-block;
-            min-width: 4ch;
-            text-align: center;
-        }
-
-        .depart-soon-indicator {
-            position: absolute;
-            left: 2px;
-            top: 50%;
-            transform: translateY(-50%);
-            display: inline-flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 5px;
-            width: 16px;
-            height: 30px;
-            pointer-events: none;
-        }
-
-        .depart-soon-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: #ffeb3b;
-            box-shadow: 0 0 12px rgba(255, 235, 59, 0.98);
-            animation: depart-soon-blink 0.9s ease-in-out infinite;
-        }
-
-        .depart-soon-dot.bottom {
-            animation-delay: 0.45s;
-        }
-
-        @keyframes depart-soon-blink {
-            0% {
-                opacity: 1;
-                transform: translateY(0) scale(1);
-            }
-            50% {
-                opacity: 0.25;
-                transform: translateY(-2px) scale(0.9);
-            }
-            100% {
-                opacity: 1;
-                transform: translateY(0) scale(1);
-            }
+            background-color: inherit !important;
+            outline: none !important;
         }
 
         @keyframes dynamic-marquee {
@@ -2365,8 +2319,6 @@
 
             const isMobile = window.innerWidth <= 900;
             const currentMaxRows = isMobile ? RWD_MAX_ROWS : MAX_ROWS;
-            const now = new Date();
-            const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
             // 🔥 使用 DocumentFragment 提升性能
             const fragment = document.createDocumentFragment();
@@ -2395,7 +2347,6 @@
                 let timeStr = (t.ScheduledDepartureTime || "").slice(0, 5);
                 let timeDisplay = timeStr;
                 let isDelayed = false;
-                let shouldShowDepartSoon = false;
                 
                 if (delay > 0 && !isCancel) {
                     isDelayed = true;
@@ -2409,15 +2360,6 @@
                     // timeStr = `<span class="delay-time">${timeDisplay}</span><span class="original-time">${timeStr}</span>`;
                 }
 
-                // 開車前三分鐘提示：以實際開車時間(表定+延誤)為準
-                if (!isCancel && !t.IsTomorrow && /^\d{2}:\d{2}$/.test(timeStr) && delay < 120) {
-                    const [depH, depM] = timeStr.split(':').map(Number);
-                    const adjustedDeparture = depH * 60 + depM + Math.max(0, delay);
-                    const departureMinutes = ((adjustedDeparture % 1440) + 1440) % 1440;
-                    const minutesToDeparture = (departureMinutes - nowMinutes + 1440) % 1440;
-                    shouldShowDepartSoon = minutesToDeparture <= 3;
-                }
-
                  // 目的地處理 (傳入行語言)
                 let dest = translateStation(t.EndingStationName, rowLangCode);
 
@@ -2426,7 +2368,6 @@
                 const tr = clone.querySelector('tr');
 
                 // 設置屬性
-                if (i === 0) tr.classList.add('highlight-row');
                 const noteText = (t.Note && String(t.Note).trim().length > 0)
                     ? translateNote(String(t.Note).trim())
                     : status;
@@ -2434,47 +2375,9 @@
 
                 // 🔥 使用 textContent 安全設置內容（完全防止 XSS）
                 const cells = tr.querySelectorAll('td');
-                cells[0].style.position = 'relative';
-
-                const trainNoWrap = document.createElement('span');
-                trainNoWrap.className = 'train-no-wrap';
-
-                const trainNoText = document.createElement('span');
-                trainNoText.textContent = String(t.TrainNo);
-
-                if (shouldShowDepartSoon) {
-                    const indicator = document.createElement('span');
-                    indicator.className = 'depart-soon-indicator';
-                    indicator.setAttribute('aria-hidden', 'true');
-
-                    const dotTop = document.createElement('span');
-                    dotTop.className = 'depart-soon-dot top';
-                    const dotBottom = document.createElement('span');
-                    dotBottom.className = 'depart-soon-dot bottom';
-
-                    indicator.appendChild(dotTop);
-                    indicator.appendChild(dotBottom);
-                    cells[0].appendChild(indicator);
-                }
-
-                trainNoWrap.appendChild(trainNoText);
-
-                cells[0].appendChild(trainNoWrap);
-
-                // 車種 badge（唯一需要 HTML 的地方，但內容已被 textContent 保護）
-                const badge = document.createElement('span');
-                badge.className = `train-type-badge type-${info.cls}`;
-                if (rowLangCode === 'en') {
-                    // 英文版固定同寬，至少可完整容納 "Fast Local"
-                    const fastLocalMinWidth = '11ch';
-                    badge.style.width = fastLocalMinWidth;
-                    badge.style.minWidth = fastLocalMinWidth;
-                    badge.style.maxWidth = fastLocalMinWidth;
-                    badge.style.textOverflow = 'clip';
-                }
-                badge.textContent = info.name;
+                cells[0].textContent = String(t.TrainNo);
                 cells[1].textContent = dest;
-                cells[2].appendChild(badge);
+                cells[2].textContent = info.name;
 
                 // 時間顯示
                 const timeSpan = document.createElement('span');
