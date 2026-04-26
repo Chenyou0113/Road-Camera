@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YouBike 2.0 / 2.0E 即時地圖</title>
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=places"></script>
+    <script src="https://unpkg.com/@googlemaps/markerclusterer/dist/index.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -45,6 +46,7 @@
         }
         .city-select { flex: 1; padding: 10px; font-size: 1rem; border: 1px solid #ddd; border-radius: 8px; background: white; outline: none; }
         .search-input { flex: 1.5; padding: 10px; font-size: 1rem; border: 1px solid #ddd; border-radius: 8px; outline: none; display: none; }
+        .sort-select { flex: 1.2; padding: 10px; font-size: 0.95rem; border: 1px solid #ddd; border-radius: 8px; background: white; outline: none; display: none; }
 
         .content-container { flex: 1; position: relative; overflow: hidden; }
         #map { width: 100%; height: 100%; background: #e5e5e5; z-index: 1; }
@@ -54,6 +56,7 @@
         .station-card {
             background: white; border-radius: 10px; padding: 15px; margin-bottom: 10px;
             box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-left: 5px solid #ccc; cursor: pointer;
+            position: relative;
         }
         .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
         .st-name { font-size: 1.1rem; font-weight: bold; color: #333; }
@@ -105,6 +108,31 @@
         .popup-row { display: flex; justify-content: space-between; margin-bottom: 5px; align-items: center;}
         .popup-label { color: #666; font-size: 0.9rem; }
         .popup-val { font-weight: bold; font-size: 1.1rem; }
+        .list-meta {
+            font-size: 0.85rem;
+            color: #777;
+            padding: 0 4px 10px;
+        }
+        .distance-tag {
+            margin-top: 4px;
+            font-size: 0.8rem;
+            color: #e67e22;
+            font-weight: bold;
+        }
+        .status-overlay {
+            position: absolute;
+            inset: 0;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.78);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #e74c3c;
+            font-size: 1.1rem;
+            font-weight: 800;
+            pointer-events: none;
+            z-index: 5;
+        }
 
     </style>
 </head>
@@ -141,7 +169,11 @@
             <option value="TaitungCounty">臺東縣</option>
             <option value="KinmenCounty">金門縣</option>
         </select>
-        <input type="text" id="searchInput" class="search-input" placeholder="搜尋站點..." oninput="filterList()">
+        <input type="text" id="searchInput" class="search-input" placeholder="搜尋站點..." oninput="debounceSearch()">
+        <select id="sortSelect" class="sort-select" onchange="refreshListView()">
+            <option value="default" selected>預設排序</option>
+            <option value="distance">距離由近到遠</option>
+        </select>
     </div>
 
     <div class="content-container">
@@ -164,6 +196,12 @@
         let allStations = [];
         let currentView = 'map';
         let infoWindow;
+        let userLocation = null;
+        let userMarker = null;
+        let markerCluster = null;
+        let searchTimeout = null;
+        let autoRefreshTimer = null;
+        const MAX_LIST_ITEMS = 100;
 
         function initMap() {
             map = new google.maps.Map(document.getElementById('map'), {
@@ -174,6 +212,7 @@
                 ]
             });
             infoWindow = new google.maps.InfoWindow();
+            startAutoRefresh();
             changeCity();
         }
 
@@ -182,6 +221,7 @@
             const mapDiv = document.getElementById('map');
             const listDiv = document.getElementById('list-view');
             const searchInput = document.getElementById('searchInput');
+            const sortSelect = document.getElementById('sortSelect');
             const locateBtn = document.getElementById('locateBtn');
             const btnMap = document.getElementById('btnMap');
             const btnList = document.getElementById('btnList');
@@ -190,6 +230,7 @@
                 mapDiv.style.display = 'block';
                 listDiv.style.display = 'none';
                 searchInput.style.display = 'none';
+                sortSelect.style.display = 'none';
                 locateBtn.style.display = 'flex';
                 btnMap.classList.add('active');
                 btnList.classList.remove('active');
@@ -198,16 +239,21 @@
                 mapDiv.style.display = 'none';
                 listDiv.style.display = 'block';
                 searchInput.style.display = 'block';
+                sortSelect.style.display = 'block';
                 locateBtn.style.display = 'none';
                 btnMap.classList.remove('active');
                 btnList.classList.add('active');
-                renderList(allStations); 
+                refreshListView();
             }
         }
 
         async function changeCity() {
             const city = document.getElementById('citySelect').value;
-            showLoading(true);
+            await loadCityData(city, true);
+        }
+
+        async function loadCityData(city, showOverlay) {
+            if (showOverlay) showLoading(true);
             
             try {
                 const res = await fetch(`${API_URL}?city=${city}`);
@@ -215,7 +261,7 @@
                 allStations = data.stations || [];
                 
                 renderMarkers();
-                if (currentView === 'list') renderList(allStations);
+                if (currentView === 'list') refreshListView();
                 
                 if (allStations.length > 0 && currentView === 'map') {
                     const sample = allStations.slice(0, 50);
@@ -228,12 +274,16 @@
                 console.error(e);
                 alert("資料讀取失敗");
             } finally {
-                showLoading(false);
+                if (showOverlay) showLoading(false);
             }
         }
 
         function renderMarkers() {
             markers.forEach(m => m.setMap(null));
+            if (markerCluster) {
+                markerCluster.clearMarkers();
+                markerCluster = null;
+            }
             markers = [];
 
             allStations.forEach(st => {
@@ -290,31 +340,49 @@
                 
                 markers.push(marker);
             });
+
+            const ClusterCtor = window.markerClusterer?.MarkerClusterer || window.MarkerClusterer;
+            if (ClusterCtor && markers.length > 0) {
+                markerCluster = new ClusterCtor({ map, markers });
+            }
         }
 
         function renderList(stations) {
             const container = document.getElementById('list-view');
+            const displayStations = stations.slice(0, MAX_LIST_ITEMS);
             
-            if (stations.length === 0) {
+            if (displayStations.length === 0) {
                 container.innerHTML = '<div style="text-align:center; padding:30px; color:#999;">查無站點資料</div>';
                 return;
             }
 
-            let html = '';
-            stations.forEach(st => {
+            let html = `<div class="list-meta">顯示 ${displayStations.length} / ${stations.length} 站</div>`;
+            displayStations.forEach(st => {
                 let statusClass = 'status-ok';
                 let bgClass = (st.rent_elec > 0) ? 'has-elec' : '';
+                let overlay = '';
+                let distanceHtml = '';
                 
                 if (st.status === 0) statusClass = 'status-stop'; 
                 else if (st.rent === 0) statusClass = 'status-empty'; 
                 else if (st.rent < 3) statusClass = 'status-warn'; 
 
+                if (st.status === 0) {
+                    overlay = '<div class="status-overlay">暫停服務</div>';
+                }
+
+                if (typeof st.distance === 'number' && Number.isFinite(st.distance)) {
+                    distanceHtml = `<div class="distance-tag"><i class="fas fa-route"></i> 距離 ${st.distance.toFixed(2)} km</div>`;
+                }
+
                 html += `
                 <div class="station-card ${statusClass} ${bgClass}" onclick="focusStation(${st.lat}, ${st.lng})">
+                    ${overlay}
                     <div class="card-header">
                         <div>
                             <div class="st-name">${st.name}</div>
                             <div class="st-addr"><i class="fas fa-map-marker-alt"></i> ${st.addr}</div>
+                            ${distanceHtml}
                         </div>
                         <a href="https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}" target="_blank" style="color:#2980b9; font-size:1.4rem;">
                             <i class="fas fa-directions"></i>
@@ -342,8 +410,41 @@
 
         function filterList() {
             const keyword = document.getElementById('searchInput').value.toLowerCase();
-            const filtered = allStations.filter(st => st.name.toLowerCase().includes(keyword));
+            return allStations.filter(st => st.name.toLowerCase().includes(keyword));
+        }
+
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        function refreshListView() {
+            const sortMode = document.getElementById('sortSelect').value;
+            const filtered = filterList().map(st => ({ ...st }));
+
+            if (sortMode === 'distance' && userLocation) {
+                filtered.forEach(st => {
+                    st.distance = getDistance(userLocation.lat, userLocation.lng, st.lat, st.lng);
+                });
+                filtered.sort((a, b) => a.distance - b.distance);
+            } else {
+                filtered.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
+            }
+
             renderList(filtered);
+        }
+
+        function debounceSearch() {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                refreshListView();
+            }, 300);
         }
 
         function focusStation(lat, lng) {
@@ -363,24 +464,61 @@
 
         function locateUser() {
             if (navigator.geolocation) {
+                showLoading(true);
                 navigator.geolocation.getCurrentPosition(p => {
                     const lat = p.coords.latitude;
                     const lng = p.coords.longitude;
+                    userLocation = { lat, lng };
+
                     map.setCenter({ lat, lng });
                     map.setZoom(16);
-                    
-                    const marker = new google.maps.Marker({
+
+                    if (userMarker) {
+                        userMarker.setMap(null);
+                    }
+                    userMarker = new google.maps.Marker({
                         position: { lat, lng },
                         map: map,
-                        title: "您的位置"
+                        title: "您的位置",
+                        icon: {
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 8,
+                            fillColor: '#4285F4',
+                            fillOpacity: 1,
+                            strokeColor: 'white',
+                            strokeWeight: 2
+                        }
                     });
-                    
+
                     infoWindow.setContent("您的位置");
-                    infoWindow.open(map, marker);
+                    infoWindow.open(map, userMarker);
+
+                    if (currentView === 'list') {
+                        refreshListView();
+                    }
+                    showLoading(false);
+                }, () => {
+                    showLoading(false);
+                    alert("無法取得位置，請確認是否開啟定位權限。");
+                }, {
+                    enableHighAccuracy: true,
+                    timeout: 8000,
+                    maximumAge: 0
                 });
             } else {
                 alert("無法取得位置");
             }
+        }
+
+        function startAutoRefresh() {
+            if (autoRefreshTimer) {
+                clearInterval(autoRefreshTimer);
+            }
+
+            autoRefreshTimer = setInterval(() => {
+                const city = document.getElementById('citySelect').value;
+                loadCityData(city, false);
+            }, 60000);
         }
 
         function showLoading(show) {

@@ -131,7 +131,7 @@
         
         .selector-row { 
             display: grid;
-            grid-template-columns: 1fr 1fr auto;
+            grid-template-columns: 1fr auto;
             gap: 15px; 
             align-items: end;
         }
@@ -202,6 +202,40 @@
         }
         .pids-btn:hover { transform: scale(1.05); background: #f57c00; }
 
+        .board-tabs {
+            display: flex;
+            background: #f5f5f5;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .tab-btn {
+            flex: 1;
+            border: none;
+            background: transparent;
+            color: #666;
+            font-weight: 700;
+            font-size: 1rem;
+            padding: 12px 16px;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .tab-btn.active.south {
+            color: #2e7d32;
+            border-bottom-color: #2e7d32;
+            background: #e8f5e9;
+        }
+
+        .tab-btn.active.north {
+            color: #1565c0;
+            border-bottom-color: #1565c0;
+            background: #e3f2fd;
+        }
+
         .direction-header {
             background: #f5f5f5;
             padding: 15px 20px;
@@ -216,7 +250,7 @@
         /* 列車卡片 */
         .train-card {
             display: grid;
-            grid-template-columns: 2fr 1fr 1fr 1fr;
+            grid-template-columns: 2fr 1fr 1.5fr;
             gap: 15px;
             align-items: center;
             padding: 20px;
@@ -279,6 +313,10 @@
         body.dark-mode .direction-header { background-color: #263238; color: #ffccbc; }
         body.dark-mode .top-marquee { background: #212121; color: #ffeb3b; border-color: #424242; }
         body.dark-mode .marquee-icon { background: #212121; }
+        body.dark-mode .board-tabs { background: #263238; border-bottom-color: #333; }
+        body.dark-mode .tab-btn { color: #b0bec5; }
+        body.dark-mode .tab-btn.active.south { background: #1b3a1d; color: #81c784; border-bottom-color: #66bb6a; }
+        body.dark-mode .tab-btn.active.north { background: #10283c; color: #64b5f6; border-bottom-color: #42a5f5; }
 
         /* 手機版適配 */
         @media (max-width: 768px) {
@@ -337,14 +375,6 @@
                         <option value="1050">嘉義 Chiayi</option>
                         <option value="1060">台南 Tainan</option>
                         <option value="1070">左營 Zuoying</option>
-                    </select>
-                </div>
-                <div class="selector-group">
-                    <label for="directionFilter">方向</label>
-                    <select id="directionFilter">
-                        <option value="">全部方向 All Directions</option>
-                        <option value="0">南下 Southbound</option>
-                        <option value="1">北上 Northbound</option>
                     </select>
                 </div>
                 <button class="query-btn" id="queryBtn" onclick="fetchTHSRData()">
@@ -411,7 +441,6 @@
         // 主要查詢函式
         async function fetchTHSRData() {
             const stationID = document.getElementById('stationSelect').value;
-            const direction = document.getElementById('directionFilter').value;
             const btn = document.getElementById('queryBtn');
             const board = document.getElementById('trainsBoard');
             const container = document.getElementById('trainContainer');
@@ -442,13 +471,12 @@
                                  now.getMinutes().toString().padStart(2,'0');
 
                 let trains = (data.trains || [])
-                    .filter(t => t.departure_time >= currentHm) // 過濾已發車
-                    .filter(t => direction === "" || String(t.direction) === direction); // 過濾方向
+                    .filter(t => t.departure_time >= currentHm); // 過濾已發車
 
                 // 排序 (依時間)
                 trains.sort((a, b) => a.departure_time.localeCompare(b.departure_time));
 
-                renderBoard(trains);
+                renderBoard(trains, stationID);
 
             } catch (e) {
                 console.error(e);
@@ -461,57 +489,104 @@
         }
 
         // 渲染列表 (仿 TRA 風格)
-        function renderBoard(trains) {
+        function renderBoard(trains, stationID) {
             const board = document.getElementById('trainsBoard');
             if (trains.length === 0) {
                 board.innerHTML = '<div style="padding:40px; text-align:center; color:#888;">目前無符合條件的班次</div>';
                 return;
             }
 
-            // 分組 (南下/北上)
-            const groups = {
-                '0': { title: '南下 Southbound', trains: [], color: '#2e7d32' },
-                '1': { title: '北上 Northbound', trains: [], color: '#00609c' }
-            };
+            const southTrains = trains.filter(t => String(t.direction) === '0');
+            const northTrains = trains.filter(t => String(t.direction) === '1');
+            const hasSouth = southTrains.length > 0;
+            const hasNorth = northTrains.length > 0;
 
-            trains.forEach(t => {
-                if(groups[t.direction]) groups[t.direction].trains.push(t);
-            });
+            let defaultTab = null;
+            if (hasSouth && hasNorth) {
+                if (stationID === '0990') {
+                    defaultTab = 'south';
+                } else if (stationID === '1070') {
+                    defaultTab = 'north';
+                } else {
+                    defaultTab = 'south';
+                }
+            } else if (hasSouth) {
+                defaultTab = 'south';
+            } else if (hasNorth) {
+                defaultTab = 'north';
+            }
 
             let html = '';
 
-            Object.entries(groups).forEach(([dir, group]) => {
-                if (group.trains.length === 0) return;
-
+            html += '<div class="board-tabs">';
+            if (hasSouth) {
                 html += `
-                <div style="background:#fff;">
-                    <div class="direction-header" style="border-left-color: ${group.color};">
-                        <i class="fas ${dir==='0'?'fa-arrow-down':'fa-arrow-up'}"></i> ${group.title}
-                    </div>
+                    <button class="tab-btn south ${defaultTab === 'south' ? 'active' : ''}" id="tab-south" onclick="switchTab('south')">
+                        <i class="fas fa-arrow-down"></i> 南下 Southbound
+                    </button>
                 `;
+            }
+            if (hasNorth) {
+                html += `
+                    <button class="tab-btn north ${defaultTab === 'north' ? 'active' : ''}" id="tab-north" onclick="switchTab('north')">
+                        <i class="fas fa-arrow-up"></i> 北上 Northbound
+                    </button>
+                `;
+            }
+            html += '</div>';
 
-                group.trains.forEach(t => {
-                    html += `
-                    <div class="train-card">
-                        <div class="train-info">
-                            <span class="train-type-badge">高鐵</span>
-                            <div class="train-destination">
-                                <div class="train-no">${t.train_no} 次</div>
-                                <div class="destination">往 ${t.destination.zh}</div>
-                            </div>
-                        </div>
-                        <div class="schedule-time">${t.departure_time}</div>
-                        <div class="delay-status">
-                            <span class="status-badge status-ok">準點</span>
-                            <div class="status-badge status-free">自由座 ${t.free_seating_cars || '10-12'}</div>
-                        </div>
-                    </div>
-                    `;
-                });
+            if (hasSouth) {
+                html += `<div id="list-south" style="display:${defaultTab === 'south' ? 'block' : 'none'};">`;
+                html += generateTrainCards(southTrains);
                 html += '</div>';
-            });
+            }
+
+            if (hasNorth) {
+                html += `<div id="list-north" style="display:${defaultTab === 'north' ? 'block' : 'none'};">`;
+                html += generateTrainCards(northTrains);
+                html += '</div>';
+            }
 
             board.innerHTML = html;
+        }
+
+        function generateTrainCards(trainList) {
+            return trainList.map(t => `
+                <div class="train-card">
+                    <div class="train-info">
+                        <span class="train-type-badge">高鐵</span>
+                        <div class="train-destination">
+                            <div class="train-no">${t.train_no} 次</div>
+                            <div class="destination">往 ${(t.destination && t.destination.zh) || '-'}</div>
+                        </div>
+                    </div>
+                    <div class="schedule-time">${t.departure_time}</div>
+                    <div class="delay-status">
+                        <span class="status-badge status-ok">準點</span>
+                        <div class="status-badge status-free">自由座 ${t.free_seating_cars || '10-12'}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function switchTab(direction) {
+            const tabSouth = document.getElementById('tab-south');
+            const tabNorth = document.getElementById('tab-north');
+            const listSouth = document.getElementById('list-south');
+            const listNorth = document.getElementById('list-north');
+
+            if (direction === 'south') {
+                if (tabSouth) tabSouth.classList.add('active');
+                if (tabNorth) tabNorth.classList.remove('active');
+                if (listSouth) listSouth.style.display = 'block';
+                if (listNorth) listNorth.style.display = 'none';
+                return;
+            }
+
+            if (tabNorth) tabNorth.classList.add('active');
+            if (tabSouth) tabSouth.classList.remove('active');
+            if (listNorth) listNorth.style.display = 'block';
+            if (listSouth) listSouth.style.display = 'none';
         }
 
         // 渲染上方跑馬燈
