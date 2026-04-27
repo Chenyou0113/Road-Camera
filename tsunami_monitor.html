@@ -31,6 +31,89 @@
         .tsunami-alert-content { font-size: 0.95rem; color: #333; }
         .tsunami-alert-time { font-size: 0.85rem; color: #666; margin-top: 5px; }
         .no-data { text-align: center; padding: 50px; color: #888; }
+
+        .eq-gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 14px;
+        }
+        .eq-gallery-item {
+            background: #ffffff;
+            border: 1px solid #e6eaf0;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            cursor: pointer;
+        }
+        .eq-gallery-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 14px rgba(0,0,0,0.12);
+        }
+        .eq-gallery-thumb {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+            background: #eef3f8;
+        }
+        .eq-gallery-meta {
+            padding: 10px;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            color: #334155;
+        }
+        .eq-gallery-meta strong { color: #0f172a; }
+
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.72);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            z-index: 999;
+        }
+        .modal-overlay.show { display: flex; }
+        .modal-card {
+            width: min(860px, 96vw);
+            max-height: 90vh;
+            overflow: auto;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 12px 30px rgba(0,0,0,0.25);
+            position: relative;
+        }
+        .modal-close {
+            position: absolute;
+            top: 10px;
+            right: 14px;
+            font-size: 1.8rem;
+            border: none;
+            background: transparent;
+            color: #64748b;
+            cursor: pointer;
+        }
+        .modal-body {
+            padding: 20px;
+        }
+        .modal-body h3 {
+            margin: 0 0 10px;
+            color: #0f172a;
+        }
+        .modal-detail {
+            margin-bottom: 12px;
+            color: #334155;
+            line-height: 1.7;
+            font-size: 0.95rem;
+        }
+        .modal-detail strong { color: #0f172a; }
+        .modal-image {
+            width: 100%;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+            background: #f8fafc;
+        }
         
         @keyframes marquee { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
     </style>
@@ -54,6 +137,19 @@
             </div>
         </div>
 
+        <!-- 最近五筆地震圖片 -->
+        <div class="tsunami-card">
+            <div class="tsunami-header" style="background-color:#2563eb;">
+                <i class="fas fa-images"></i> 最近五筆地震報告圖片
+            </div>
+            <div class="tsunami-body" id="earthquake-gallery-container">
+                <div class="no-data">
+                    <i class="fas fa-spinner fa-spin fa-2x"></i>
+                    <p style="margin-top: 10px;">載入最近地震報告...</p>
+                </div>
+            </div>
+        </div>
+
         <!-- 海嘯報告查詢 -->
         <div class="tsunami-card">
             <div class="tsunami-header">
@@ -68,54 +164,217 @@
         </div>
     </div>
 
+    <div id="eq-detail-modal" class="modal-overlay">
+        <div class="modal-card">
+            <button id="eq-detail-close" class="modal-close" aria-label="關閉">×</button>
+            <div class="modal-body">
+                <h3 id="eq-detail-title">地震詳細資料</h3>
+                <div id="eq-detail-content" class="modal-detail"></div>
+                <img id="eq-detail-image" class="modal-image" alt="地震報告圖">
+            </div>
+        </div>
+    </div>
+
     <script>
         const WORKER_URL = 'https://cwa-weather-proxy.weacamm.org';
+        const DEFAULT_EQ_IMG = 'https://placehold.co/800x500/e2e8f0/64748b?text=%E7%84%A1%E5%9C%B0%E9%9C%87%E5%A0%B1%E5%91%8A%E5%9C%96';
+        let latestFiveEarthquakes = [];
+
+        function formatObsTime(rawTime) {
+            if (!rawTime || typeof rawTime !== 'string') return '--/-- --:--';
+            if (rawTime.length >= 16) return rawTime.substring(5, 16).replace('-', '/');
+            return rawTime;
+        }
+
+        function escapeHtml(text) {
+            return String(text || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function normalizeTsunamiPayload(raw) {
+            if (!raw || typeof raw !== 'object') return {};
+            if (raw.msg) {
+                return {
+                    msg: raw.msg,
+                    obsTime: raw.obsTime || null,
+                    img: raw.img || ''
+                };
+            }
+
+            const report = raw.records?.Tsunami?.[0] || raw.records?.tsunami?.[0];
+            if (!report) return {};
+
+            const tsunamiInfo = report.TsunamiInfo || {};
+            return {
+                msg: report.ReportContent || tsunamiInfo.ReportContent || '',
+                obsTime: report.IssueTime || report.EarthquakeInfo?.OriginTime || tsunamiInfo.OriginTime || null,
+                img: report.ReportImageURI || report.Web || ''
+            };
+        }
+
+        function normalizeEarthquakePayload(raw) {
+            if (!raw || typeof raw !== 'object') return {};
+            if (raw.msg) {
+                return {
+                    msg: raw.msg,
+                    obsTime: raw.obsTime || null,
+                    magnitude: raw.magnitude ?? '--',
+                    location: raw.location || '位置未知',
+                    depth: raw.depth ?? '--',
+                    img: raw.img || ''
+                };
+            }
+
+            const report = raw.records?.Earthquake?.[0] || raw.records?.earthquake?.[0];
+            if (!report) return {};
+
+            const info = report.EarthquakeInfo || {};
+            const epicenter = info.Epicenter || {};
+            const magnitudeInfo = info.EarthquakeMagnitude || {};
+            return {
+                msg: `規模 ${magnitudeInfo.MagnitudeValue ?? '--'}，位於 ${epicenter.Location || '位置未知'}`,
+                obsTime: info.OriginTime || report.ReportTime || null,
+                magnitude: magnitudeInfo.MagnitudeValue ?? '--',
+                location: epicenter.Location || '位置未知',
+                depth: info.FocalDepth ?? '--',
+                img: report.ReportImageURI || report.Web || ''
+            };
+        }
 
         document.addEventListener('DOMContentLoaded', () => {
-            fetchLatestEarthquake();
+            setupEarthquakeModal();
+            fetchLatestEarthquakeReports();
             fetchTsunamiAlerts();
         });
 
-        // 🚀 修正：載入最近一次地震報告 (對接到 /api/weather/earthquake)
-        async function fetchLatestEarthquake() {
+        function setupEarthquakeModal() {
+            const modal = document.getElementById('eq-detail-modal');
+            const closeBtn = document.getElementById('eq-detail-close');
+            closeBtn.addEventListener('click', () => modal.classList.remove('show'));
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) modal.classList.remove('show');
+            });
+        }
+
+        function normalizeEarthquakeReportItem(raw, reportType = '地震報告') {
+            const info = raw?.EarthquakeInfo || {};
+            const epicenter = info.Epicenter || {};
+            const magnitudeInfo = info.EarthquakeMagnitude || {};
+            return {
+                id: raw?.EarthquakeNo || raw?.ReportNo || `${reportType}-${Math.random().toString(36).slice(2, 8)}`,
+                reportType,
+                obsTime: info.OriginTime || raw?.ReportTime || null,
+                magnitude: magnitudeInfo.MagnitudeValue ?? '--',
+                depth: info.FocalDepth ?? '--',
+                location: epicenter.Location || '位置未知',
+                img: raw?.ReportImageURI || raw?.Web || '',
+                reportContent: raw?.ReportContent || raw?.WebTitle || '',
+                latitude: epicenter.EpicenterLatitude || '',
+                longitude: epicenter.EpicenterLongitude || ''
+            };
+        }
+
+        function renderEarthquakeMarquee(items) {
+            const marquee = document.getElementById('latest-earthquake-marquee');
+            if (!items.length) {
+                marquee.textContent = '目前無最新有感地震報告';
+                return;
+            }
+
+            const marqueeText = items.map((eq, idx) => {
+                const time = formatObsTime(eq.obsTime);
+                return `${idx + 1}. ${time} | M${eq.magnitude} | ${eq.location}`;
+            }).join('   ｜   ');
+            marquee.textContent = marqueeText;
+        }
+
+        function renderEarthquakeGallery(items) {
+            const container = document.getElementById('earthquake-gallery-container');
+            if (!items.length) {
+                container.innerHTML = `
+                    <div class="no-data" style="text-align: center; padding: 50px; color: #888;">
+                        <i class="fas fa-info-circle fa-2x"></i>
+                        <p style="margin-top: 10px;">目前無地震報告資料</p>
+                    </div>`;
+                return;
+            }
+
+            const cards = items.map((eq, idx) => {
+                const thumb = eq.img || DEFAULT_EQ_IMG;
+                return `
+                    <button class="eq-gallery-item" data-eq-index="${idx}" type="button">
+                        <img class="eq-gallery-thumb" src="${thumb}" alt="地震報告圖${idx + 1}" loading="lazy">
+                        <div class="eq-gallery-meta">
+                            <div><strong>${formatObsTime(eq.obsTime)}</strong></div>
+                            <div>規模 M${escapeHtml(eq.magnitude)}</div>
+                            <div>${escapeHtml(eq.location)}</div>
+                        </div>
+                    </button>
+                `;
+            }).join('');
+
+            container.innerHTML = `<div class="eq-gallery-grid">${cards}</div>`;
+
+            container.querySelectorAll('[data-eq-index]').forEach((el) => {
+                el.addEventListener('click', () => {
+                    const idx = Number(el.getAttribute('data-eq-index'));
+                    const target = latestFiveEarthquakes[idx];
+                    if (target) openEarthquakeDetail(target);
+                });
+            });
+        }
+
+        function openEarthquakeDetail(eq) {
+            const modal = document.getElementById('eq-detail-modal');
+            const title = document.getElementById('eq-detail-title');
+            const content = document.getElementById('eq-detail-content');
+            const image = document.getElementById('eq-detail-image');
+
+            title.textContent = `${eq.reportType} | ${formatObsTime(eq.obsTime)}`;
+            content.innerHTML = `
+                <div><strong>規模：</strong>M${escapeHtml(eq.magnitude)}</div>
+                <div><strong>深度：</strong>${escapeHtml(eq.depth)} 公里</div>
+                <div><strong>震央：</strong>${escapeHtml(eq.location)}</div>
+                <div><strong>經緯度：</strong>${escapeHtml(eq.latitude || '--')} / ${escapeHtml(eq.longitude || '--')}</div>
+                <div><strong>補充：</strong>${escapeHtml(eq.reportContent || '無')}</div>
+            `;
+            image.src = eq.img || DEFAULT_EQ_IMG;
+            modal.classList.add('show');
+        }
+
+        // 載入最近五筆地震 (E-A0015 + E-A0016)
+        async function fetchLatestEarthquakeReports() {
             const marquee = document.getElementById('latest-earthquake-marquee');
             const noCache = Date.now();
-            
+
             try {
-                // 呼叫 V18.85 新增的精簡地震路由
-                // 注意：這裡直接使用 Worker 的万用路由 dataset=E-A0015-001 並手動解析，或使用您自定義的 /api/weather/earthquake 端點
-                // 根據先前的 Worker 代碼，/api/weather/earthquake 回傳的是處理過的 EQ_REPORT 物件
-                const response = await fetch(`${WORKER_URL}/api/weather/earthquake?nocache=${noCache}`);
-                const eq = await response.json();
-                
-                if (!eq || !eq.msg) {
-                    marquee.innerHTML = '目前無最新有感地震報告';
-                    marquee.style.animation = 'none';
-                    return;
-                }
+                const [resA0015, resA0016] = await Promise.all([
+                    fetch(`${WORKER_URL}/?dataset=E-A0015-001&nocache=${noCache}`),
+                    fetch(`${WORKER_URL}/?dataset=E-A0016-001&nocache=${noCache}`)
+                ]);
 
-                // 格式化時間 (從 2025-02-23 10:25:00 轉為 02/23 10:25)
-                const time = eq.obsTime ? eq.obsTime.substring(5, 16).replace('-', '/') : '--/-- --:--';
-                
-                // 修正從 eq 物件取值的屬性名 (根據 worker.js 的 EQ_REPORT 結構: msg, img, obsTime, depth, magnitude, location)
-                const marqueeText = `
-                    🚨 【最新地震報告】${time} 發生地震 | 規模 M${eq.magnitude} | 震央：${eq.location} | 深度：${eq.depth}公里。 [請注意自身安全]
-                `;
+                const dataA0015 = resA0015.ok ? await resA0015.json() : {};
+                const dataA0016 = resA0016.ok ? await resA0016.json() : {};
 
-                marquee.innerHTML = marqueeText;
+                const eqA0015 = (dataA0015.records?.Earthquake || dataA0015.records?.earthquake || [])
+                    .map((item) => normalizeEarthquakeReportItem(item, '顯著有感地震'));
+                const eqA0016 = (dataA0016.records?.Earthquake || dataA0016.records?.earthquake || [])
+                    .map((item) => normalizeEarthquakeReportItem(item, '小區域有感地震'));
 
-                // 點擊跑馬燈可以看圖 (選配功能)
-                const marqueeWrapper = marquee.closest('.earthquake-marquee');
-                if (marqueeWrapper) {
-                    marqueeWrapper.style.cursor = 'pointer';
-                    marqueeWrapper.onclick = () => {
-                        if(eq.img) window.open(eq.img, '_blank');
-                    };
-                }
+                latestFiveEarthquakes = [...eqA0015, ...eqA0016]
+                    .sort((a, b) => new Date(b.obsTime || 0).getTime() - new Date(a.obsTime || 0).getTime())
+                    .slice(0, 5);
 
+                renderEarthquakeMarquee(latestFiveEarthquakes);
+                renderEarthquakeGallery(latestFiveEarthquakes);
             } catch (error) {
-                console.error("Earthquake Fetch Error:", error);
-                marquee.innerHTML = '⚠️ 地震中心連線中...';
+                console.error('Earthquake Fetch Error:', error);
+                marquee.textContent = '⚠️ 地震中心連線中...';
+                renderEarthquakeGallery([]);
             }
         }
 
@@ -134,16 +393,22 @@
                 try {
                     const response = await fetch(`${WORKER_URL}/api/weather/tsunami?nocache=${noCache}`);
                     if (response.ok) {
-                         tsu = await response.json();
-                    } else {
-                        // Fallback mechanism if the specific endpoint doesn't exist
-                         const fallbackResponse = await fetch(`${WORKER_URL}/?dataset=E-A0014-001&nocache=${noCache}`);
-                         const fallbackData = fallbackResponse.json();
-                         // 這裡需要自行解析 CWA 的原始資料結構，暫時略過複雜解析，均視為無警報或由 Worker 處理
-                         // 實際建議在 Worker 端實作 /api/weather/tsunami
+                         tsu = normalizeTsunamiPayload(await response.json());
                     }
                 } catch (e) {
                     // Ignore
+                }
+
+                // /api/weather/tsunami 不可用或回傳空資料時，回退到 dataset 原始資料並做新舊格式正規化
+                if (!tsu || !tsu.msg) {
+                    try {
+                        const fallbackResponse = await fetch(`${WORKER_URL}/?dataset=E-A0014-001&nocache=${noCache}`);
+                        if (fallbackResponse.ok) {
+                            tsu = normalizeTsunamiPayload(await fallbackResponse.json());
+                        }
+                    } catch (e) {
+                        // Ignore
+                    }
                 }
 
                 // 如果回傳空物件或是沒訊息，代表無海嘯
@@ -159,13 +424,14 @@
 
                 const timeText = tsu.obsTime || '剛剛';
                 const statusColor = (tsu.msg && tsu.msg.includes('解除')) ? '#27ae60' : '#c0392b';
+                const statusText = (tsu.msg && tsu.msg.includes('解除')) ? '✅ 海嘯警報已解除' : '🚨 海嘯警報發布中';
                 
                 // 顯示海嘯警報內容
                 let htmlContent = `
                     <div class="tsunami-alert-item" style="border-left: 5px solid ${statusColor}; padding: 12px 15px; margin-bottom: 12px; background: #fff3e0; border-radius: 5px;">
-                        <div class="tsunami-alert-status" style="color: ${statusColor}; font-weight: bold; margin-bottom: 5px;">🚨 海嘯警報發布中</div>
-                        <div class="tsunami-alert-content" style="font-size: 0.95rem; color: #333;">${tsu.msg}</div>
-                        <div class="tsunami-alert-time" style="font-size: 0.85rem; color: #666; margin-top: 5px;">發布時間：${timeText}</div>
+                    <div class="tsunami-alert-status" style="color: ${statusColor}; font-weight: bold; margin-bottom: 5px;">${statusText}</div>
+                    <div class="tsunami-alert-content" style="font-size: 0.95rem; color: #333;">${escapeHtml(tsu.msg)}</div>
+                    <div class="tsunami-alert-time" style="font-size: 0.85rem; color: #666; margin-top: 5px;">發布時間：${escapeHtml(timeText)}</div>
                 `;
                 
                 if (tsu.img) {

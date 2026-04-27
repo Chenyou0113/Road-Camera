@@ -259,6 +259,84 @@
             return date.toLocaleTimeString('zh-TW', { hour12: false });
         }
 
+        function escapeHtml(text) {
+            return String(text ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function getIntensityRank(value) {
+            const text = String(value ?? '').trim();
+            const mapping = {
+                '1': 1, '2': 2, '3': 3, '4': 4,
+                '5弱': 5, '5-': 5,
+                '5強': 6, '5+': 6,
+                '6弱': 7, '6-': 7,
+                '6強': 8, '6+': 8,
+                '7': 9
+            };
+            if (mapping[text] !== undefined) return mapping[text];
+            const n = Number.parseFloat(text);
+            return Number.isFinite(n) ? n : 0;
+        }
+
+        function normalizeIntensityValue(value) {
+            if (value === undefined || value === null || value === '') return '--';
+            return String(value).trim();
+        }
+
+        function extractIntensityList(eqData) {
+            const eqInfo = eqData?.EarthquakeInfo || {};
+            const intensityObj = eqInfo.Intensity || eqData?.Intensity || {};
+            const intensityMap = new Map();
+
+            const upsertCountyIntensity = (countyName, intensityValue) => {
+                const county = String(countyName || '').trim();
+                if (!county) return;
+                const valueText = normalizeIntensityValue(intensityValue);
+                const nextRank = getIntensityRank(valueText);
+                const existing = intensityMap.get(county);
+                if (!existing || nextRank > existing.rank) {
+                    intensityMap.set(county, { county, valueText, rank: nextRank });
+                }
+            };
+
+            if (Array.isArray(intensityObj.County)) {
+                intensityObj.County.forEach((countyItem) => {
+                    upsertCountyIntensity(countyItem?.CountyName, countyItem?.IntensityValue);
+                });
+            }
+
+            const shakingAreas = Array.isArray(intensityObj.ShakingArea)
+                ? intensityObj.ShakingArea
+                : (Array.isArray(eqInfo.ShakingArea) ? eqInfo.ShakingArea : []);
+
+            shakingAreas.forEach((area) => {
+                const countyName = area?.CountyName || area?.AreaDesc || area?.Name;
+                const stationList = Array.isArray(area?.EqStation) ? area.EqStation : [];
+                let bestIntensity = normalizeIntensityValue(area?.SeismicIntensity || area?.AreaIntensity || area?.IntensityValue);
+                let bestRank = getIntensityRank(bestIntensity);
+
+                stationList.forEach((station) => {
+                    const stationIntensity = normalizeIntensityValue(station?.SeismicIntensity || station?.StationIntensity || station?.IntensityValue);
+                    const stationRank = getIntensityRank(stationIntensity);
+                    if (stationRank > bestRank) {
+                        bestRank = stationRank;
+                        bestIntensity = stationIntensity;
+                    }
+                });
+
+                upsertCountyIntensity(countyName, bestIntensity);
+            });
+
+            return Array.from(intensityMap.values())
+                .sort((a, b) => b.rank - a.rank)
+                .map((item) => ({ county: item.county, intensity: item.valueText }));
+        }
+
         // === 清除地圖上的所有標記 ===
         function clearMapMarkers() {
             if (markers.length > 0) {
@@ -320,14 +398,29 @@
                 const location = epicenter.Location || '未知地點';
                 const latitudeStr = epicenter.EpicenterLatitude;
                 const longitudeStr = epicenter.EpicenterLongitude;
-                const depth = eqInfo.FocalDepth === undefined ? 'N/A' : eqInfo.FocalDepth.toFixed(1);
-                const magnitude = magnitudeInfo.MagnitudeValue || 0;
+                const depthNum = Number.parseFloat(eqInfo.FocalDepth);
+                const depth = Number.isFinite(depthNum) ? depthNum.toFixed(1) : 'N/A';
+                const magnitudeNum = Number.parseFloat(magnitudeInfo.MagnitudeValue);
+                const magnitude = Number.isFinite(magnitudeNum) ? magnitudeNum : 0;
                 const reportContent = eqData.ReportContent || '';
                 const webLink = eqData.Web || '#';
                 const reportType = eqData.ReportType || '未知類型';
+                const intensityList = extractIntensityList(eqData);
+                const isSignificant = reportType.includes('顯著有感地震');
+                const detailId = `detail-${currentPage}-${index}-${id}`;
 
                 const magnitudeClass = getMagnitudeClass(magnitude);
                 const formattedTime = formatDateTime(originTime);
+                const intensityHtml = intensityList.length > 0
+                    ? intensityList.map(item => `<span class="inline-flex items-center px-2 py-1 rounded bg-gray-100 text-gray-700 text-xs">${escapeHtml(item.county)}：${escapeHtml(item.intensity)}級</span>`).join(' ')
+                    : '<span class="text-xs text-gray-500">無震度觀測資料</span>';
+                const detailHtml = `
+                    <div class="mt-3 p-3 rounded-lg bg-gray-50 border border-gray-200 text-sm">
+                        ${isSignificant ? `<div class="mb-2 text-gray-700"><strong>地震編號：</strong>${escapeHtml(id)}</div>` : ''}
+                        <div class="mb-1 text-gray-700"><strong>各地震度</strong></div>
+                        <div class="flex flex-wrap gap-2">${intensityHtml}</div>
+                    </div>
+                `;
 
                 // 建立卡片
                 const card = document.createElement('div');
@@ -356,7 +449,7 @@
                         <div class="text-gray-600">深度：<span class="font-semibold">${depth} km</span></div>
                         <div class="text-gray-600">規模：<span class="font-semibold">${magnitude.toFixed(1)}</span></div>
                     </div>
-                    ${reportContent ? `<p class="text-sm text-gray-700 mb-3">${reportContent}</p>` : ''}
+                    ${reportContent ? `<p class="text-sm text-gray-700 mb-3">${escapeHtml(reportContent)}</p>` : ''}
                     <div class="flex gap-2">
                         ${reportImageURI ? `<button onclick="openModal('${reportImageURI}', '${id} 報告圖')" class="flex-1 bg-purple-500 hover:bg-purple-600 text-white text-sm py-2 px-3 rounded transition">
                             <i class="fas fa-image"></i> 查看報告圖
@@ -365,9 +458,27 @@
                             <i class="fas fa-external-link-alt"></i> 官方報告
                         </a>
                     </div>
+                    <div class="mt-2">
+                        <button type="button" class="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm py-2 px-3 rounded transition" data-detail-toggle="${detailId}">
+                            <i class="fas fa-circle-info"></i> 顯示詳細資料
+                        </button>
+                        <div id="${detailId}" class="hidden">${detailHtml}</div>
+                    </div>
                 `;
 
                 earthquakeList.appendChild(card);
+
+                const detailToggle = card.querySelector(`[data-detail-toggle="${detailId}"]`);
+                const detailSection = card.querySelector(`#${detailId}`);
+                if (detailToggle && detailSection) {
+                    detailToggle.addEventListener('click', () => {
+                        const isHidden = detailSection.classList.contains('hidden');
+                        detailSection.classList.toggle('hidden', !isHidden);
+                        detailToggle.innerHTML = isHidden
+                            ? '<i class="fas fa-circle-minus"></i> 收合詳細資料'
+                            : '<i class="fas fa-circle-info"></i> 顯示詳細資料';
+                    });
+                }
 
                 // 加入地圖標記
                 if (latitudeStr && longitudeStr) {
