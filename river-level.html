@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>河川水位監測 | 台灣即時監控</title>
     <!-- Google Maps API -->
-    <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=places&language=zh-TW"></script>
+    <script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=places&language=zh-TW&loading=async&callback=onGoogleMapsReady"></script>
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
@@ -153,21 +153,38 @@
     </div>
 
     <script>
-        const API_BASE = 'https://river-monitor-api.weacamm.org'; 
+        const API_BASE = 'https://river-monitor-aqi.weacamm.org'; 
         
         let map, markers = [];
         let infoWindow;
         let allData = [], riverList = [];
-        let levelChart = null; 
+        let levelChart = null;
+        let isMapReady = false;
+        let lastRenderedData = [];
 
         document.addEventListener('DOMContentLoaded', () => {
             if(localStorage.getItem('theme') === 'dark') document.body.classList.add('dark-mode');
-            initMap();
             initFilters();
             loadData();
         });
 
+        window.onGoogleMapsReady = function () {
+            isMapReady = true;
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', () => {
+                    initMap();
+                    if (lastRenderedData.length > 0) renderUI(lastRenderedData);
+                }, { once: true });
+                return;
+            }
+
+            initMap();
+            if (lastRenderedData.length > 0) renderUI(lastRenderedData);
+        };
+
         function initMap() {
+            if (!window.google || !google.maps) return;
+
             const isDark = document.body.classList.contains('dark-mode');
             const styles = isDark ? [
                 { elementType: "geometry", stylers: [{ color: "#242f3e" }] },
@@ -226,10 +243,12 @@
         }
 
         function renderUI(data) {
+            lastRenderedData = data;
             const list = document.getElementById('list');
             list.innerHTML = '';
             markers.forEach(m => m.setMap(null));
             markers = [];
+            const canRenderMarkers = isMapReady && !!map && !!window.google && !!google.maps;
 
             if(data.length === 0) {
                 list.innerHTML = '<div style="padding:20px; text-align:center;">無符合資料</div>';
@@ -257,7 +276,7 @@
                 };
                 list.appendChild(card);
 
-                if (item.lat && item.lon) {
+                if (canRenderMarkers && item.lat && item.lon) {
                     const marker = new google.maps.Marker({
                         position: { lat: item.lat, lng: item.lon },
                         map: map,
@@ -459,6 +478,11 @@
         function formatTime(t) { return t ? t.replace('T', ' ') : '無更新'; }
         
         function focusMap(lat, lon) {
+            if (!isMapReady || !map) {
+                alert("地圖尚在載入中，請稍後再試");
+                return;
+            }
+
             if (lat && lon) {
                 map.panTo({ lat: lat, lng: lon });
                 map.setZoom(14);
