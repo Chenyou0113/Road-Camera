@@ -1441,6 +1441,11 @@
             font-size: 1.05rem;
         }
 
+        #ann-content {
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
         #ann-list {
             margin-top: 15px;
             padding-left: 20px;
@@ -1465,8 +1470,28 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 10px;
             background: #f8fafc;
         }
+
+        #ann-footer-actions {
+            display: flex;
+            gap: 10px;
+            margin-left: auto;
+        }
+
+        #ann-skip-btn {
+            background: #64748b;
+            color: white;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 700;
+            transition: all 0.2s;
+        }
+
+        #ann-skip-btn:hover { background: #475569; transform: translateY(-2px); }
 
         #ann-close-btn {
             background: #0891b2;
@@ -2799,22 +2824,47 @@
         });
 
         // === 公告彈窗 ===
+        function getAnnouncementListFallback(content) {
+            if (!content || typeof content !== 'string') return [];
+            const lines = content.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+            if (lines.length <= 1) return [];
+
+            const bulletLike = lines.filter(line => /^[-•●▪■◆▶►\d+\.)、]/.test(line) || line.length <= 26);
+            if (bulletLike.length >= 2) {
+                return bulletLike.map(line => line.replace(/^[-•●▪■◆▶►\d+\.)、\s]+/, '').trim()).filter(Boolean);
+            }
+            return [];
+        }
+
+        function getAnnouncementVersionToken(data, listItems) {
+            const payload = {
+                title: data?.title || '',
+                content: data?.content || '',
+                list: Array.isArray(listItems) ? listItems : []
+            };
+            return btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+        }
+
         (async function loadAnnouncement() {
             try {
                 const res = await fetch('https://wang-weather.weacamm.org/announcement');
                 const data = await res.json();
                 if (!data.active) return;
 
-                // 檢查「不再顯示」的期限，會記下公告標題避免旧公告貼回不顯示
-                const skipKey = 'ann_skip_' + btoa(unescape(encodeURIComponent(data.title || '')));
-                if (sessionStorage.getItem(skipKey)) return;
+                const listEl = document.getElementById('ann-list');
+                listEl.innerHTML = '';
+                const listItems = Array.isArray(data.list) && data.list.length > 0
+                    ? data.list
+                    : getAnnouncementListFallback(data.content || '');
+
+                const skipStorageKey = 'ann_skip_version_token';
+                const versionToken = getAnnouncementVersionToken(data, listItems);
+                if (localStorage.getItem(skipStorageKey) === versionToken) return;
 
                 document.getElementById('ann-title').innerText  = data.title   || '系統公告';
                 document.getElementById('ann-content').innerText = data.content || '';
 
-                const listEl = document.getElementById('ann-list');
-                listEl.innerHTML = '';
-                (data.list || []).forEach(item => {
+                listItems.forEach(item => {
                     const li = document.createElement('li');
                     li.innerText = item;
                     listEl.appendChild(li);
@@ -2823,9 +2873,11 @@
                 document.getElementById('ann-overlay').classList.add('show');
 
                 document.getElementById('ann-close-btn').onclick = function() {
-                    if (document.getElementById('ann-no-show-check').checked) {
-                        sessionStorage.setItem(skipKey, '1');
-                    }
+                    document.getElementById('ann-overlay').classList.remove('show');
+                };
+
+                document.getElementById('ann-skip-btn').onclick = function() {
+                    localStorage.setItem(skipStorageKey, versionToken);
                     document.getElementById('ann-overlay').classList.remove('show');
                 };
             } catch(e) { /* 靜默失敗，不影響頁面 */ }
@@ -2844,10 +2896,11 @@
                 <ul id="ann-list"></ul>
             </div>
             <div id="ann-footer">
-                <label id="ann-no-show">
-                    <input type="checkbox" id="ann-no-show-check"> 本次選單不再顯示
-                </label>
-                <button id="ann-close-btn">我知道了</button>
+                <div style="font-size:0.9rem;color:#64748b;">你可稍後在下次更新時再次看到公告</div>
+                <div id="ann-footer-actions">
+                    <button id="ann-skip-btn">不再顯示（直到下次更新）</button>
+                    <button id="ann-close-btn">我知道了</button>
+                </div>
             </div>
         </div>
     </div>
