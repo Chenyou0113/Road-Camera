@@ -350,6 +350,7 @@
         let stationsByLine = {};
         let currentStationID = "";
         let currentStationName = "";
+        let expandedTrainNo = "";
 
         const lineSelectMap = {
             WL: 'western',
@@ -367,6 +368,7 @@
 
         // 與 PIDS 通阻跑馬燈體感一致：以每字秒數決定速度
         const TOP_MARQUEE_SEC_PER_CHAR = 0.12;
+        const TRAIN_MARQUEE_SEC_PER_CHAR = TOP_MARQUEE_SEC_PER_CHAR;
         const LIVEBOARD_REFRESH_MS = 60000;
         const LIVE_LOG_STORAGE_KEY = 'tra_live_position_delay_log_v1';
         const LIVE_LOG_RETENTION_DAYS = 7;
@@ -412,6 +414,7 @@
                 const res = await fetch(`${API_BASE}/api/liveboard/station?station=${currentStationID}&date=${date}`);
                 if (!res.ok) throw new Error('station refresh failed');
                 renderStationBoard(await res.json());
+                restoreExpandedMarquee();
 
                 const sname = getStationNameByCode(currentStationID);
                 document.getElementById('boardTitle').innerHTML = `<i class="fas fa-list-alt"></i> ${sname} 即時看板 (${date})`;
@@ -1037,6 +1040,13 @@
 
         // ================== API 查詢與渲染邏輯 ==================
 
+        function extractStationPair(text) {
+            if (!text) return null;
+            const match = text.match(/([\u4e00-\u9fff]{1,6})\s*(?:-|－|–|—|~|～|至|到)\s*([\u4e00-\u9fff]{1,6})/);
+            if (!match) return null;
+            return `${match[1]} <--> ${match[2]}`;
+        }
+
         async function loadTraAlerts() {
             const panel = document.getElementById('traAlertPanel');
             const content = document.getElementById('traAlertContent');
@@ -1058,7 +1068,10 @@
                         </div>
                     `).join('');
                     
-                    const marqueeStr = data.map(a => `⚠️ 【${a.Title}】 ${a.Description}`).join('   ❖   ');
+                    const marqueeStr = data.map(a => {
+                        const pair = extractStationPair(`${a.Title || ''} ${a.Description || ''}`);
+                        return pair ? `⚠️ ${pair}` : `⚠️ 【${a.Title}】 ${a.Description}`;
+                    }).join('   ❖   ');
                     marquee.innerHTML = marqueeStr + "   ❖   歡迎搭乘臺鐵，祝您旅途愉快。";
                     marquee.style.color = '#d32f2f'; 
                 } else {
@@ -1231,7 +1244,7 @@
                     const noteClass = (t.Note && String(t.Note).trim().length > 0) ? '' : (delay > 0 ? 'delay-warn' : 'delay-ok');
                     
                     html += `
-                        <div class="train-card" onclick="showTrainMarquee(this, '${trainNo}', '${delay}', '${time}', '${typeName}', '${dest}')" title="點擊查看後續停靠站">
+                        <div class="train-card" data-train-no="${trainNo}" data-delay="${delay}" data-time="${time}" data-type-name="${typeName}" data-dest-name="${dest}" onclick="showTrainMarquee(this, '${trainNo}', '${delay}', '${time}', '${typeName}', '${dest}')" title="點擊查看後續停靠站">
                             <div style="font-weight:bold; font-size:1.2rem;"><strong>${trainNo}</strong></div>
                             <div>往 ${dest}</div>
                             <div><span class="train-type-badge ${cls}">${typeName}</span></div>
@@ -1316,6 +1329,17 @@
             board.innerHTML = html;
         }
 
+        function restoreExpandedMarquee() {
+            if (!expandedTrainNo) return;
+            const card = document.querySelector(`.train-card[data-train-no="${expandedTrainNo}"]`);
+            if (!card) {
+                expandedTrainNo = "";
+                return;
+            }
+            const { trainNo, delay, time, typeName, destName } = card.dataset;
+            showTrainMarquee(card, trainNo, delay || '0', time || '', typeName || '', destName || '');
+        }
+
         function renderTrainTrace(sch, live) {
             const resBox = document.getElementById('trainsBoard');
             const trainNo = String(sch.TrainNo || sch.No || '');
@@ -1335,7 +1359,21 @@
                 else dest = normalizeTaiText(lastStop.Name || lastStop.StationName);
             }
 
-            const passThroughStations = buildPassThroughStations(stopsArray, delay);
+            let passThroughStations = buildPassThroughStations(stopsArray, delay);
+            let passThroughTitle = '過站不停車站';
+            let passThroughTimeLabel = '表定過站時間';
+            let passThroughExpectedLabel = '預計過站時間';
+            if (passThroughStations.length === 0 && stopsArray && stopsArray.length > 0) {
+                passThroughStations = stopsArray.map(stop => {
+                    const name = normalizeTaiText(stop?.Name || stop?.StationName?.Zh_tw || stop?.StationName || '');
+                    const baseTime = String(stop?.ArrivalTime || stop?.Arr || stop?.DepartureTime || stop?.Dep || '').slice(0, 5);
+                    const expected = (baseTime && delay > 0) ? getExpectedTime(baseTime, delay) : baseTime;
+                    return { stationName: name, scheduledTime: baseTime, expectedTime: expected };
+                }).filter(item => item.stationName || item.scheduledTime || item.expectedTime);
+                passThroughTitle = '沿途停靠站';
+                passThroughTimeLabel = '表定到站時間';
+                passThroughExpectedLabel = '預計到站時間';
+            }
             const showPassThroughButton = !isAllStopLocalTrain(trainTypeLabel);
             const noteText = String(sch.Note || '').trim();
 
@@ -1391,9 +1429,9 @@
                         ${showPassThroughButton ? `
                             <div id="passThroughPanel" class="pass-through-panel" style="display:none;">
                                 <div class="pass-through-head">
-                                    <div>過站不停車站</div>
-                                    <div>表定過站時間</div>
-                                    <div>預計過站時間</div>
+                                    <div>${passThroughTitle}</div>
+                                    <div>${passThroughTimeLabel}</div>
+                                    <div>${passThroughExpectedLabel}</div>
                                 </div>
                                 ${passThroughRows || '<div class="pass-through-empty">目前無可顯示的通過站資料</div>'}
                             </div>
@@ -1446,11 +1484,13 @@
             if (isSameExpanded) {
                 infoRow.remove();
                 cardEl.classList.remove('expanded');
+                expandedTrainNo = "";
                 return;
             }
 
             board.querySelectorAll('.train-inline-marquee-row').forEach(el => el.remove());
             cardEl.classList.add('expanded');
+            expandedTrainNo = String(trainNo || '');
 
             infoRow = document.createElement('div');
             infoRow.className = 'train-inline-marquee-row';
@@ -1459,7 +1499,11 @@
 
             const inner = infoRow.querySelector('.train-inline-marquee-inner');
             inner.style.animation = 'none'; 
-            inner.innerHTML = `正在查詢 ${trainNo} 次列車沿途停靠站...`;
+            const placeholderText = `正在查詢 ${trainNo} 次列車沿途停靠站...`;
+            inner.innerHTML = placeholderText;
+            const placeholderDuration = Math.max(8, placeholderText.length * TRAIN_MARQUEE_SEC_PER_CHAR);
+            void inner.offsetWidth;
+            inner.style.animation = `train-inline-scroll ${placeholderDuration}s linear infinite`;
 
             try {
                 const res = await fetch(`${API_BASE}/api/schedule?trainNo=${trainNo}&date=${date}`);
@@ -1517,10 +1561,10 @@
                     ? `${p1} ${separator} ${p2} ${separator} ${p3} ${separator} ${pVia} ${separator} ${p4}`
                     : `${p1} ${separator} ${p2} ${separator} ${p3} ${separator} ${p4}`;
                 const plainTextLength = marqueeHtml.replace(/<[^>]*>/g, '').trim().length;
-                const animDuration = Math.max(8, plainTextLength * TOP_MARQUEE_SEC_PER_CHAR);
+                const animDuration = Math.max(8, plainTextLength * TRAIN_MARQUEE_SEC_PER_CHAR);
 
                 inner.innerHTML = marqueeHtml;
-                
+
                 void inner.offsetWidth; 
                 inner.style.animation = `train-inline-scroll ${animDuration}s linear infinite`;
 
