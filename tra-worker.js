@@ -42,7 +42,7 @@ const syncDailyScheduleBlob = async (env) => {
         let staMap = {}, trnMap = {};
         for (const t of trains) {
             const no = t.TrainInfo.TrainNo;
-            trnMap[no] = { Note: t.TrainInfo.Note?.Zh_tw || "", TripLine: t.TrainInfo.TripLine || 0, Stops: t.StopTimes.map(s => ({ Seq: s.StopSequence, SID: s.StationID, Name: s.StationName?.Zh_tw, Arr: s.ArrivalTime, Dep: s.DepartureTime })) };
+            trnMap[no] = { Note: t.TrainInfo.Note?.Zh_tw || "", Type: t.TrainInfo.TrainTypeName?.Zh_tw || "", TripLine: t.TrainInfo.TripLine || 0, Stops: t.StopTimes.map(s => ({ Seq: s.StopSequence, SID: s.StationID, Name: s.StationName?.Zh_tw, Arr: s.ArrivalTime, Dep: s.DepartureTime })) };
             for (const s of t.StopTimes) {
                 if (!staMap[s.StationID]) staMap[s.StationID] = [];
                 staMap[s.StationID].push({ No: no, Dir: t.TrainInfo.Direction || 0, Type: t.TrainInfo.TrainTypeName?.Zh_tw, Dest: t.TrainInfo.EndingStationName?.Zh_tw, Arr: s.ArrivalTime, Dep: s.DepartureTime, Seq: s.StopSequence, Note: t.TrainInfo.Note?.Zh_tw, TripLine: t.TrainInfo.TripLine || 0 });
@@ -109,7 +109,7 @@ export default {
                 const tno = url.searchParams.get("trainNo"), date = url.searchParams.get("date") || getTwDateString(0);
                 const row = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`SCH_TRN_${tno}_${date}`).first();
                 const trn = row ? JSON.parse(row.Value) : { Stops: [] };
-                return new Response(JSON.stringify({ TrainNo: tno, Note: trn.Note, TripLine: trn.TripLine, StopTimes: trn.Stops.map(s => ({ StationID: s.SID, StationName: { Zh_tw: s.Name }, ArrivalTime: s.Arr, DepartureTime: s.Dep })) }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+                return new Response(JSON.stringify({ TrainNo: tno, TrainTypeName: trn.Type, Note: trn.Note, TripLine: trn.TripLine, StopTimes: trn.Stops.map(s => ({ StationID: s.SID, StationName: { Zh_tw: s.Name }, ArrivalTime: s.Arr, DepartureTime: s.Dep })) }), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
             // 3. 站到站

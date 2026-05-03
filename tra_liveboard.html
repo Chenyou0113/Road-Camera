@@ -413,7 +413,7 @@
             try {
                 const res = await fetch(`${API_BASE}/api/liveboard/station?station=${currentStationID}&date=${date}`);
                 if (!res.ok) throw new Error('station refresh failed');
-                renderStationBoard(await res.json());
+                await renderStationBoard(await res.json());
                 restoreExpandedMarquee();
 
                 const sname = getStationNameByCode(currentStationID);
@@ -1130,7 +1130,7 @@
                     document.getElementById('boardTitle').innerHTML = `<i class="fas fa-list-alt"></i> ${sname} 即時看板 (${date})`;
                     
                     const res = await fetch(`${API_BASE}/api/liveboard/station?station=${sid}&date=${date}`);
-                    renderStationBoard(await res.json());
+                    await renderStationBoard(await res.json());
                     setStationPidsButtonVisible(true);
                     
                 } else if (type === 'route') {
@@ -1154,7 +1154,7 @@
                         transferRoutes = await findTransferRoutes(sid, eid, date, sname, ename);
                     }
 
-                    renderRouteBoard(Array.isArray(directRoutes) ? directRoutes : [], transferRoutes);
+                    await renderRouteBoard(Array.isArray(directRoutes) ? directRoutes : [], transferRoutes);
                     
                 } else {
                     const tno = document.getElementById('trainNoInp').value.trim();
@@ -1186,7 +1186,7 @@
             }
         }
 
-        function renderStationBoard(data) {
+        async function renderStationBoard(data) {
             const board = document.getElementById('trainsBoard');
             const dirFilter = document.getElementById('directionFilter').value;
             const queryDate = document.getElementById('queryDate').value;
@@ -1214,7 +1214,24 @@
                 });
             }
 
-            const renderGroup = (dir, title) => {
+            const scheduleCache = new Map();
+            const enrichLiveboardEntry = async (t) => {
+                const trainNo = String(t?.No || t?.TrainNo || '').trim();
+                let rawType = String(t?.TrainTypeName || t?.Type || '').trim();
+                const liveNote = String(t?.Note || '').trim();
+                let note = liveNote;
+                if ((!rawType || !note) && trainNo) {
+                    const sch = await fetchTrainScheduleCached(trainNo, queryDate, scheduleCache);
+                    if (sch) {
+                        rawType = rawType || String(sch?.TrainTypeName || sch?.Type || '').trim();
+                        const scheduleNote = String(sch?.Note || '').trim();
+                        note = scheduleNote || note;
+                    }
+                }
+                return { rawType, note };
+            };
+
+            const renderGroup = async (dir, title) => {
                 // 🔥 這裡的 dir 必須轉為數字與 t.Dir 比對
                 let filtered = list.filter(t => String(t.Dir) === dir).slice(0, 15);
                 if (filtered.length === 0) return "";
@@ -1228,20 +1245,24 @@
                         <div style="text-align:center;">時間</div>
                         <div style="text-align:right;">備注</div>
                     </div>`;
-                filtered.forEach(t => {
+                const enriched = await Promise.all(filtered.map(async t => ({
+                    t,
+                    extra: await enrichLiveboardEntry(t)
+                })));
+                enriched.forEach(({ t, extra }) => {
                     // 🔥 這裡對應您提供的 JSON 結構
                     const trainNo = t.No; 
                     const dest = normalizeTaiText(t.Dest);
-                    const rawType = t.Type || "";
-                    const typeName = normalizeTrainTypeLabel(rawType, t.Note || "");
+                    const rawType = extra.rawType || t.Type || "";
+                    const typeName = normalizeTrainTypeLabel(rawType, extra.note || t.Note || "");
                     const time = t.Dep || t.Arr || ""; // 優先顯示發車時間
 
                     const cls = getTrainTypeClass(`${rawType} ${typeName}`);
                     const delay = parseInt(t.DelayTime || t.Delay || 0);
                     const trainStatus = t.TrainStatus !== undefined ? t.TrainStatus : t.Status;
                     const status = trainStatus == 2 ? "停駛" : (delay === 0 ? "準點" : `晚 ${delay} 分`);
-                    const note = (t.Note && String(t.Note).trim().length > 0) ? String(t.Note).trim() : status;
-                    const noteClass = (t.Note && String(t.Note).trim().length > 0) ? '' : (delay > 0 ? 'delay-warn' : 'delay-ok');
+                    const finalNote = (extra.note && String(extra.note).trim().length > 0) ? String(extra.note).trim() : status;
+                    const noteClass = (extra.note && String(extra.note).trim().length > 0) ? '' : (delay > 0 ? 'delay-warn' : 'delay-ok');
                     
                     html += `
                         <div class="train-card" data-train-no="${trainNo}" data-delay="${delay}" data-time="${time}" data-type-name="${typeName}" data-dest-name="${dest}" onclick="showTrainMarquee(this, '${trainNo}', '${delay}', '${time}', '${typeName}', '${dest}')" title="點擊查看後續停靠站">
@@ -1249,7 +1270,7 @@
                             <div>往 ${dest}</div>
                             <div><span class="train-type-badge ${cls}">${typeName}</span></div>
                             <div style="text-align:center; font-size:1.25rem; font-weight:bold;">${time.slice(0,5)}</div>
-                            <div style="text-align:right; font-size:1rem;" class="${noteClass}">${note}</div>
+                            <div style="text-align:right; font-size:1rem;" class="${noteClass}">${finalNote}</div>
                         </div>`;
                 });
                 return html;
@@ -1257,16 +1278,18 @@
 
             let finalHtml = "";
             // 注意：您的 JSON 中 Dir 0 是順行，1 是逆行
-            if (dirFilter === "" || dirFilter === "1") finalHtml += renderGroup("1", "逆行 (北上)");
-            if (dirFilter === "" || dirFilter === "0") finalHtml += renderGroup("0", "順行 (南下)");
+            if (dirFilter === "" || dirFilter === "1") finalHtml += await renderGroup("1", "逆行 (北上)");
+            if (dirFilter === "" || dirFilter === "0") finalHtml += await renderGroup("0", "順行 (南下)");
             
             board.innerHTML = finalHtml || '<div style="padding:40px; text-align:center;">該方向無近期到站列車資訊</div>';
         }
 
-        function renderRouteBoard(data, transferRoutes = []) {
+        async function renderRouteBoard(data, transferRoutes = []) {
             const board = document.getElementById('trainsBoard');
             const directData = Array.isArray(data) ? data : [];
             const transfers = Array.isArray(transferRoutes) ? transferRoutes : [];
+            const queryDate = document.getElementById('queryDate').value;
+            const scheduleCache = new Map();
 
             if (directData.length === 0 && transfers.length === 0) {
                 board.innerHTML = '<div style="padding:40px; text-align:center;">無直達車次，也暫時找不到可行轉乘方案。</div>';
@@ -1279,16 +1302,26 @@
                 html += `<div style="background:#e0f7fa; padding:10px 20px; font-weight:bold; color:#006064;">共查詢到 ${directData.length} 班直達車</div>`;
             }
 
-            directData.forEach(t => {
+            const enrichedDirect = await Promise.all(directData.map(async t => {
                 const trainNo = t.TrainNo || t.No;
+                let scheduleNote = '';
+                if (trainNo) {
+                    const sch = await fetchTrainScheduleCached(trainNo, queryDate, scheduleCache);
+                    scheduleNote = String(sch?.Note || '').trim();
+                }
+                return { t, trainNo, scheduleNote };
+            }));
+
+            enrichedDirect.forEach(({ t, trainNo, scheduleNote }) => {
                 let rawType = "";
                 if (typeof t.TrainTypeName === 'string') rawType = t.TrainTypeName;
                 else if (t.Type) rawType = t.Type;
 
-                const typeName = normalizeTrainTypeLabel(rawType, t.Note || "");
+                const noteText = scheduleNote || String(t.Note || '').trim();
+                const typeName = normalizeTrainTypeLabel(rawType, noteText);
 
                 const cls = getTrainTypeClass(`${rawType} ${typeName}`);
-                const noteStr = t.Note ? `<div style="font-size:0.8rem; color:#d84315; margin-top:4px;">*${t.Note}</div>` : "";
+                const noteStr = noteText ? `<div style="font-size:0.8rem; color:#d84315; margin-top:4px;">*${noteText}</div>` : "";
                 const dep = (t.DepartureTime || t.Dep || "").slice(0,5);
                 const arr = (t.ArrivalTime || t.Arr || "").slice(0,5);
                 const dest = normalizeTaiText(t.EndingStationName || t.Dest);
@@ -1528,6 +1561,19 @@
                 const stops = Array.isArray(data)
                     ? (data[0]?.StopTimes || data[0]?.Stops || [])
                     : (data?.StopTimes || data?.Stops || []);
+                let effectiveTypeName = String(typeName || '').trim();
+                if (!effectiveTypeName) {
+                    const scheduleType = normalizeTrainTypeLabel(
+                        data?.TrainTypeName || data?.Type || data?.Note || '',
+                        data?.Note || ''
+                    );
+                    effectiveTypeName = scheduleType;
+                }
+                let effectiveDestName = String(destName || '').trim();
+                if (!effectiveDestName && Array.isArray(stops) && stops.length > 0) {
+                    const lastStop = stops[stops.length - 1];
+                    effectiveDestName = normalizeTaiText(lastStop?.StationName?.Zh_tw || lastStop?.StationName || lastStop?.Name || '');
+                }
                 const currentIndex = stops.findIndex(s => (s.StationID || s.ID) === currentStationID);
                 let stopsHtml = "";
 
@@ -1550,7 +1596,7 @@
                 }
 
                 const separator = `<span style="color:#555; margin:0 15px;">|</span>`;
-                const p1 = `<span style="color:#ffeb3b; font-weight:700;">${trainNo} 次</span> <span style="color:#fff;">往 ${destName} ${typeName}</span>`;
+                const p1 = `<span style="color:#ffeb3b; font-weight:700;">${trainNo} 次</span> <span style="color:#fff;">往 ${effectiveDestName || destName} ${effectiveTypeName}</span>`;
                 const p2 = `<span style="color:#fff;">本站預計 <span style="color:#00e676; font-weight:700;">${expectedTime}</span> 抵達</span>`;
                 const p3 = `<span style="color:#4fc3f7;">${statusText}</span>`;
                 const viaTags = getViaTags(data, stops);
