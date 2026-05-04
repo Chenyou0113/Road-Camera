@@ -1026,7 +1026,7 @@
             </div>
 
             <div class="arrival-info" id="block-dir0">
-                <div class="dir-label">第一月台 Platform 1</div>
+                <div class="dir-label" id="dir0-label">第一月台 Platform 1</div>
                 <div class="mobile-top-row">
                     <div class="mobile-dest-section">
                         <div class="line-tag-row">
@@ -1047,7 +1047,7 @@
             </div>
 
             <div class="arrival-info secondary" id="block-dir1">
-                <div class="dir-label">第二月台 Platform 2</div>
+                <div class="dir-label" id="dir1-label">第二月台 Platform 2</div>
                 <div class="mobile-top-row">
                     <div class="mobile-dest-section">
                         <div class="line-tag-row">
@@ -1112,7 +1112,7 @@
         const station = params.get('sid') || params.get('station') || 'A8';
 
         let countdownSecs = { dir0: -1, dir1: -1 };
-        const sysColors = { 'TRTC': '#0070bd', 'KRTC': '#f58220', 'TYMC': '#8246af', 'TMRT': '#b2d235', 'NTMC': '#0096cc', 'KLRT': '#008010' };
+        const sysColors = { 'TRTC': '#0070bd', 'KRTC': '#f58220', 'TYMC': '#8246af', 'TMRT': '#b2d235', 'NTMC': '#0096cc', 'KLRT': '#2e7d32' };
         let GLOBAL_STATIONS = null;
 
         function updateClock() {
@@ -1138,6 +1138,20 @@
             }
 
             document.documentElement.style.setProperty('--theme-color', sysColors[system] || '#333');
+            // 高雄輕軌（KLRT）專屬：淺綠主題並顯示「順行 / 逆行」標籤
+            if (system === 'KLRT') {
+                const krColor = sysColors['KLRT'] || '#8fd19e';
+                document.documentElement.style.setProperty('--theme-color', krColor);
+                const d0 = document.getElementById('dir0-label');
+                const d1 = document.getElementById('dir1-label');
+                if (d0 && !/順|逆/.test(d0.innerText)) d0.innerText = `順行 ${d0.innerText}`;
+                if (d1 && !/順|逆/.test(d1.innerText)) d1.innerText = `逆行 ${d1.innerText}`;
+                // 直接設定 header / badge 顏色以確保在 CSS 變數未即時生效時也能顯示淺綠
+                const header = document.getElementById('ui-header');
+                if (header) header.style.background = krColor;
+                const badge = document.getElementById('ui-st-id');
+                if (badge) badge.style.color = krColor;
+            }
             document.getElementById('ui-st-id').innerText = station;
 
             Promise.allSettled([
@@ -1397,7 +1411,13 @@
                 const currentLineObj = lines.find(l => l.stations.some(s => s.sid === station));
 
                 if (currentLineObj) {
+                    // 先嘗試精確比對
                     found = currentLineObj.stations.find(s => s.name_zh === destName);
+                    // 若為高雄系統 (KRTC) 或找不到，使用較寬鬆的模糊比對（包含子字串比對），
+                    // 可解決例如「岡山」對到站碼 `RK1` 的情況
+                    if (!found) {
+                        found = currentLineObj.stations.find(s => s.name_zh === destName || s.name_zh.includes(destName) || destName.includes(s.name_zh));
+                    }
                 }
 
                 // 2. 如果本路線找不到 (例如跨線或轉乘資訊)，則搜尋所有路線
@@ -1405,12 +1425,12 @@
                     for (const line of lines) {
                         if (currentLineObj && line.line_id === currentLineObj.line_id) continue; // 已經找過了
 
-                        // 精確比對
+                        // 優先精確比對
                         found = line.stations.find(s => s.name_zh === destName);
 
-                        // 模糊比對 (KRTC)
-                        if (!found && system === 'KRTC') {
-                            found = line.stations.find(s => destName.includes(s.name_zh) || s.name_zh.includes(destName));
+                        // 若仍找不到，使用寬鬆模糊比對（包含子字串比對），對於 KRTC 與其他系統都適用
+                        if (!found) {
+                            found = line.stations.find(s => s.name_zh === destName || s.name_zh.includes(destName) || destName.includes(s.name_zh));
                         }
 
                         if (found) {
@@ -1458,7 +1478,23 @@
             else if (lbText.length >= 3) lineBadge.style.fontSize = '1.2vw';
             else lineBadge.style.fontSize = '1.5vw';
 
-            lineBadge.style.background = item.LineColor || "#808080";
+            // 系統專屬顏色覆蓋：
+            // - KLRT（高雄輕軌）：整個系統使用淺綠
+            // - KRTC（高雄捷運）：站碼 R* -> 紅色, O* -> 橘色
+            if (system === 'KLRT') {
+                lineBadge.style.background = sysColors['KLRT'] || '#8fd19e';
+            } else if (system === 'KRTC') {
+                const prefix = ((destID || lbText) || '').toString().toUpperCase();
+                if (prefix.startsWith('R')) {
+                    lineBadge.style.background = '#e3002c';
+                } else if (prefix.startsWith('O')) {
+                    lineBadge.style.background = '#f8b61c';
+                } else {
+                    lineBadge.style.background = item.LineColor || "#808080";
+                }
+            } else {
+                lineBadge.style.background = item.LineColor || "#808080";
+            }
 
             const estimateTime = item.EstimateTime != null ? item.EstimateTime : 0;
             countdownSecs[`dir${idx}`] = estimateTime;
