@@ -98,8 +98,47 @@
 
         /* 結果清單 */
         .train-container { background: white; border-radius: var(--border-radius); overflow: hidden; margin: 20px 0; display: none; box-shadow: var(--shadow); color: var(--text-main); }
-        .board-header { background: var(--primary-color); color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; }
+        .board-header { background: var(--primary-color); color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; position: relative; }
         
+        /* 💡 順逆行滑動切換器 */
+        .direction-tabs {
+            display: flex;
+            background: rgba(0,0,0,0.1);
+            border-radius: 8px;
+            padding: 4px;
+            margin-top: 10px;
+            width: 100%;
+            box-sizing: border-box;
+            position: relative;
+        }
+        .direction-tab-item {
+            flex: 1;
+            text-align: center;
+            padding: 8px 0;
+            font-weight: bold;
+            font-size: 1rem;
+            cursor: pointer;
+            z-index: 2;
+            transition: color 0.3s;
+            color: rgba(255,255,255,0.8);
+        }
+        .direction-tab-item.active {
+            color: #fff;
+        }
+        .direction-slider {
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            width: calc(50% - 4px);
+            height: calc(100% - 8px);
+            background: rgba(255,255,255,0.25);
+            border-radius: 6px;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 1;
+        }
+        .dir-0 .direction-slider { transform: translateX(100%); }
+        .dir-all .direction-slider { display: none; }
+
         .train-card { display: grid; grid-template-columns: 1fr 1.4fr 1.1fr 0.9fr 1.6fr; padding: 15px 20px; border-bottom: 1px solid #eee; align-items: center; cursor: pointer; transition: background 0.2s; font-size: 1.05rem; gap: 10px; }
         .train-card:hover { background-color: #fff8e1; } 
         .train-card.expanded { background-color: #fff3e0; }
@@ -460,8 +499,18 @@
         <!-- 📌 結果區 -->
         <div id="trainContainer" class="train-container">
             <div class="board-header">
-                <h2 id="boardTitle" style="margin:0; font-size:1.2rem;">查詢結果</h2>
-                <small id="updateTime">--:--:--</small>
+                <div style="width: 100%;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                        <h2 id="boardTitle" style="margin:0; font-size:1.2rem;">查詢結果</h2>
+                        <small id="updateTime">--:--:--</small>
+                    </div>
+                    <!-- 💡 順逆行滑動切換器 -->
+                    <div id="dirToggleGroup" class="direction-tabs" style="display: none;">
+                        <div class="direction-slider"></div>
+                        <div class="direction-tab-item active" onclick="setDirAndQuery('1')">逆行</div>
+                        <div class="direction-tab-item" onclick="setDirAndQuery('0')">順行</div>
+                    </div>
+                </div>
             </div>
             <div id="trainsBoard"></div>
         </div>
@@ -498,7 +547,7 @@
             SH: 'shalun'
         };
 
-        const TRAIN_MARQUEE_SEC_PER_CHAR = 0.12;
+        const TRAIN_MARQUEE_SEC_PER_CHAR = 0.25;
         const LIVEBOARD_REFRESH_MS = 60000;
         const LIVE_LOG_STORAGE_KEY = 'tra_live_position_delay_log_v1';
         const LIVE_LOG_RETENTION_DAYS = 7;
@@ -1020,6 +1069,25 @@
             wrap.style.display = visible ? 'flex' : 'none';
         }
 
+        // 💡 處理滑動切換邏輯
+        function setDirAndQuery(dir) {
+            const dirSel = document.getElementById('directionFilter');
+            if (!dirSel) return;
+            dirSel.value = dir;
+            
+            // 更新 UI 狀態
+            const group = document.getElementById('dirToggleGroup');
+            if (!group) return;
+            
+            const tabs = group.querySelectorAll('.direction-tab-item');
+            group.className = `direction-tabs dir-${dir}`;
+            tabs.forEach(tab => {
+                tab.classList.toggle('active', (dir === '1' && tab.innerText === '逆行') || (dir === '0' && tab.innerText === '順行'));
+            });
+
+            doQuery('station');
+        }
+
         function openStationPids() {
             const sid = document.getElementById('stationSelect').value;
             if (!sid) return alert("請先選擇車站");
@@ -1201,6 +1269,20 @@
             const todayStr = new Date(Date.now() + 8 * 3600000).toISOString().split('T')[0];
             const isToday = queryDate === todayStr;
             
+            // 💡 若為車站看板模式，顯示上方滑動切換器 (僅在過濾單一方向時)
+            const dirToggleGroup = document.getElementById('dirToggleGroup');
+            if (dirToggleGroup) {
+                if (dirFilter !== "") {
+                    dirToggleGroup.style.display = 'flex';
+                    dirToggleGroup.className = `direction-tabs dir-${dirFilter}`;
+                    dirToggleGroup.querySelectorAll('.direction-tab-item').forEach(tab => {
+                        tab.classList.toggle('active', (dirFilter === '1' && tab.innerText === '逆行') || (dirFilter === '0' && tab.innerText === '順行'));
+                    });
+                } else {
+                    dirToggleGroup.style.display = 'none';
+                }
+            }
+
             if (!data || data.length === 0) {
                 board.innerHTML = '<div style="padding:40px; text-align:center;">目前無列車資訊</div>';
                 return;
@@ -1282,21 +1364,12 @@
                 return html;
             };
 
-            let finalHtml = "";
             if (dirFilter === "" || dirFilter === "1") finalHtml += await renderGroup("1", "逆行");
             if (dirFilter === "" || dirFilter === "0") finalHtml += await renderGroup("0", "順行");
             
             board.innerHTML = finalHtml || '<div style="padding:40px; text-align:center;">該方向無近期到站列車資訊</div>';
         }
 
-        async function renderRouteBoard(data, transferRoutes = []) {
-            const board = document.getElementById('trainsBoard');
-            const directData = Array.isArray(data) ? data : [];
-            const transfers = Array.isArray(transferRoutes) ? transferRoutes : [];
-            const queryDate = document.getElementById('queryDate').value;
-            const scheduleCache = new Map();
-
-            if (directData.length === 0 && transfers.length === 0) {
                 board.innerHTML = '<div style="padding:40px; text-align:center;">無直達車次，也暫時找不到可行轉乘方案。</div>';
                 return;
             }
