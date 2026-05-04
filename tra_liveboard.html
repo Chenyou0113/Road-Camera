@@ -698,119 +698,154 @@
             return { trainNo, rawType, typeName, note, dep, arr, dest, status, raw: t };
         }
 
+        // ==========================================
+        // 🚀 強化版：單次轉乘窮舉演算法 (榨乾前端極限)
+        // ==========================================
         async function findTransferRoutes(startCode, endCode, date, startName, endName) {
-            const MIN_TRANSFER_MINUTES = 5;
-            const MAX_TRANSFER_WAIT_MINUTES = 120;
-            const MAX_START_CANDIDATES = 12;
-            const MAX_END_CANDIDATES = 18;
+            const MIN_TRANSFER_MINUTES = 5;      // 轉乘至少需預留 5 分鐘
+            const MAX_TRANSFER_WAIT_MINUTES = 90; // 最多不願等超過 1.5 小時
+            const MAX_CANDIDATES_TO_FETCH = 40;  // 擴大搜尋範圍 (原本12，提升至40，涵蓋更廣)
 
-            const [startRes, endRes] = await Promise.all([
-                fetch(`${API_BASE}/api/liveboard/station?station=${encodeURIComponent(startCode)}&date=${encodeURIComponent(date)}`),
-                fetch(`${API_BASE}/api/liveboard/station?station=${encodeURIComponent(endCode)}&date=${encodeURIComponent(date)}`)
-            ]);
+            // 取得現在的分鐘數，用於過濾已經開走的車
+            const now = new Date(Date.now() + 8 * 3600000);
+            const nowMins = now.getUTCHours() * 60 + now.getUTCMinutes();
+            const queryDateIsToday = date === now.toISOString().split('T')[0];
 
-            if (!startRes.ok || !endRes.ok) return [];
+            try {
+                // 1. 同時拉取起點與終點的當日所有車次
+                const [startRes, endRes] = await Promise.all([
+                    fetch(`${API_BASE}/api/liveboard/station?station=${encodeURIComponent(startCode)}&date=${encodeURIComponent(date)}`),
+                    fetch(`${API_BASE}/api/liveboard/station?station=${encodeURIComponent(endCode)}&date=${encodeURIComponent(date)}`)
+                ]);
 
-            const [startData, endData] = await Promise.all([startRes.json(), endRes.json()]);
-            const startList = (Array.isArray(startData) ? startData : [])
-                .map(normalizeRouteEntry)
-                .filter(t => t.trainNo && String(t.status) !== '2')
-                .sort((a, b) => {
-                    const ma = parseTimeToMinutes(a.dep || a.arr) ?? 9999;
-                    const mb = parseTimeToMinutes(b.dep || b.arr) ?? 9999;
-                    return ma - mb;
-                })
-                .slice(0, MAX_START_CANDIDATES);
+                if (!startRes.ok || !endRes.ok) return [];
 
-            const endList = (Array.isArray(endData) ? endData : [])
-                .map(normalizeRouteEntry)
-                .filter(t => t.trainNo && String(t.status) !== '2')
-                .sort((a, b) => {
-                    const ma = parseTimeToMinutes(a.arr || a.dep) ?? 9999;
-                    const mb = parseTimeToMinutes(b.arr || b.dep) ?? 9999;
-                    return ma - mb;
-                })
-                .slice(0, MAX_END_CANDIDATES);
+                const [startData, endData] = await Promise.all([startRes.json(), endRes.json()]);
 
-            if (startList.length === 0 || endList.length === 0) return [];
+                // 2. 篩選起點車次 (過濾停駛、已開走的，並取前 40 班)
+                const startList = (Array.isArray(startData) ? startData : [])
+                    .map(normalizeRouteEntry)
+                    .filter(t => {
+                        if (!t.trainNo || String(t.status) === '2') return false;
+                        const depMin = parseTimeToMinutes(t.dep || t.arr);
+                        return !queryDateIsToday || (depMin !== null && depMin >= nowMins - 10); // 容許晚10分內的車
+                    })
+                    .sort((a, b) => (parseTimeToMinutes(a.dep || a.arr) || 9999) - (parseTimeToMinutes(b.dep || b.arr) || 9999))
+                    .slice(0, MAX_CANDIDATES_TO_FETCH);
 
-            const scheduleCache = new Map();
-            const uniqueTrainNos = [...new Set([...startList, ...endList].map(t => t.trainNo))];
-            await Promise.all(uniqueTrainNos.map(no => fetchTrainScheduleCached(no, date, scheduleCache)));
+                // 3. 篩選終點車次
+                const endList = (Array.isArray(endData) ? endData : [])
+                    .map(normalizeRouteEntry)
+                    .filter(t => {
+                        if (!t.trainNo || String(t.status) === '2') return false;
+                        const arrMin = parseTimeToMinutes(t.arr || t.dep);
+                        return !queryDateIsToday || (arrMin !== null && arrMin >= nowMins); 
+                    })
+                    .sort((a, b) => (parseTimeToMinutes(a.arr || a.dep) || 9999) - (parseTimeToMinutes(b.arr || b.dep) || 9999))
+                    .slice(0, MAX_CANDIDATES_TO_FETCH);
 
-            const candidates = [];
-            const dedupe = new Set();
+                if (startList.length === 0 || endList.length === 0) return [];
 
-            for (const leg1 of startList) {
-                const sch1 = await fetchTrainScheduleCached(leg1.trainNo, date, scheduleCache);
-                const stops1 = extractScheduleStops(sch1);
-                const timeline1 = buildStopTimeline(stops1);
-                const idxStart = findTimelineStopIndex(timeline1, startCode, startName);
-                if (idxStart === -1) continue;
+                // 4. 批次並行拉取時刻表 (利用 Worker 的快取機制)
+                const scheduleCache = new Map();
+                const uniqueTrainNos = [...new Set([...startList, ...endList].map(t => t.trainNo))];
+                
+                // 限制並發數量，避免被 TDX 暫時阻擋
+                const chunkSize = 15;
+                for (let i = 0; i < uniqueTrainNos.length; i += chunkSize) {
+                    const chunk = uniqueTrainNos.slice(i, i + chunkSize);
+                    await Promise.all(chunk.map(no => fetchTrainScheduleCached(no, date, scheduleCache)));
+                }
 
-                const depFromStart = timeline1[idxStart].depAbs ?? timeline1[idxStart].arrAbs;
-                if (depFromStart === null) continue;
+                const candidates = [];
+                const dedupe = new Set(); // 用於去重相同班次與轉乘站的組合
 
-                for (let i = idxStart + 1; i < timeline1.length; i++) {
-                    const transferStop = timeline1[i];
-                    const arrAtTransfer = transferStop.arrAbs ?? transferStop.depAbs;
-                    if (arrAtTransfer === null) continue;
+                // 5. 暴力窮舉比對交集車站
+                for (const leg1 of startList) {
+                    const sch1 = await fetchTrainScheduleCached(leg1.trainNo, date, scheduleCache);
+                    const stops1 = extractScheduleStops(sch1);
+                    const timeline1 = buildStopTimeline(stops1);
+                    const idxStart = findTimelineStopIndex(timeline1, startCode, startName);
+                    if (idxStart === -1) continue;
 
-                    for (const leg2 of endList) {
-                        if (leg2.trainNo === leg1.trainNo) continue;
+                    const depFromStart = timeline1[idxStart].depAbs ?? timeline1[idxStart].arrAbs;
+                    if (depFromStart === null) continue;
 
-                        const sch2 = await fetchTrainScheduleCached(leg2.trainNo, date, scheduleCache);
-                        const stops2 = extractScheduleStops(sch2);
-                        const timeline2 = buildStopTimeline(stops2);
-                        const idxTransfer2 = findTimelineStopIndex(timeline2, transferStop.code, transferStop.name);
-                        const idxEnd2 = findTimelineStopIndex(timeline2, endCode, endName);
-                        if (idxTransfer2 === -1 || idxEnd2 === -1 || idxTransfer2 >= idxEnd2) continue;
+                    // 尋找此車次後續的所有停靠站作為「潛在轉乘站」
+                    for (let i = idxStart + 1; i < timeline1.length; i++) {
+                        const transferStop = timeline1[i];
+                        const arrAtTransfer = transferStop.arrAbs ?? transferStop.depAbs;
+                        if (arrAtTransfer === null) continue;
 
-                        let depTransfer2 = timeline2[idxTransfer2].depAbs ?? timeline2[idxTransfer2].arrAbs;
-                        let arrAtEnd2 = timeline2[idxEnd2].arrAbs ?? timeline2[idxEnd2].depAbs;
-                        if (depTransfer2 === null || arrAtEnd2 === null) continue;
+                        // 比對是否有終點車次經過此轉乘站
+                        for (const leg2 of endList) {
+                            if (leg2.trainNo === leg1.trainNo) continue; // 排除同一班車
 
-                        while (depTransfer2 < (arrAtTransfer - 180)) {
-                            depTransfer2 += 1440;
-                            arrAtEnd2 += 1440;
-                        }
+                            const sch2 = await fetchTrainScheduleCached(leg2.trainNo, date, scheduleCache);
+                            const stops2 = extractScheduleStops(sch2);
+                            const timeline2 = buildStopTimeline(stops2);
+                            
+                            const idxTransfer2 = findTimelineStopIndex(timeline2, transferStop.code, transferStop.name);
+                            const idxEnd2 = findTimelineStopIndex(timeline2, endCode, endName);
+                            
+                            // 條件：必須有經過轉乘站、經過終點站，且轉乘站在終點站「之前」
+                            if (idxTransfer2 === -1 || idxEnd2 === -1 || idxTransfer2 >= idxEnd2) continue;
 
-                        const wait = depTransfer2 - arrAtTransfer;
-                        if (wait < MIN_TRANSFER_MINUTES || wait > MAX_TRANSFER_WAIT_MINUTES) continue;
+                            let depTransfer2 = timeline2[idxTransfer2].depAbs ?? timeline2[idxTransfer2].arrAbs;
+                            let arrAtEnd2 = timeline2[idxEnd2].arrAbs ?? timeline2[idxEnd2].depAbs;
+                            if (depTransfer2 === null || arrAtEnd2 === null) continue;
 
-                        const dedupeKey = `${leg1.trainNo}_${leg2.trainNo}_${transferStop.code || transferStop.name}_${formatMinutesToHHMM(arrAtTransfer)}_${formatMinutesToHHMM(depTransfer2)}`;
-                        if (dedupe.has(dedupeKey)) continue;
-                        dedupe.add(dedupeKey);
-
-                        candidates.push({
-                            transferStation: transferStop.name,
-                            waitMinutes: wait,
-                            totalMinutes: arrAtEnd2 - depFromStart,
-                            leg1: {
-                                trainNo: leg1.trainNo,
-                                typeName: leg1.typeName,
-                                depTime: formatMinutesToHHMM(depFromStart),
-                                arrTime: formatMinutesToHHMM(arrAtTransfer)
-                            },
-                            leg2: {
-                                trainNo: leg2.trainNo,
-                                typeName: leg2.typeName,
-                                depTime: formatMinutesToHHMM(depTransfer2),
-                                arrTime: formatMinutesToHHMM(arrAtEnd2)
+                            // 處理跨日問題
+                            while (depTransfer2 < (arrAtTransfer - 180)) {
+                                depTransfer2 += 1440;
+                                arrAtEnd2 += 1440;
                             }
-                        });
+
+                            // 核心條件：等待時間必須大於最小轉乘時間，且小於最大容忍時間
+                            const wait = depTransfer2 - arrAtTransfer;
+                            if (wait < MIN_TRANSFER_MINUTES || wait > MAX_TRANSFER_WAIT_MINUTES) continue;
+
+                            // 避免重複的轉乘組合
+                            const dedupeKey = `${leg1.trainNo}_${leg2.trainNo}_${transferStop.name}`;
+                            if (dedupe.has(dedupeKey)) continue;
+                            dedupe.add(dedupeKey);
+
+                            candidates.push({
+                                transferStation: transferStop.name,
+                                waitMinutes: wait,
+                                totalMinutes: arrAtEnd2 - depFromStart,
+                                endArrTimeAbs: arrAtEnd2, // 用於排序
+                                leg1: {
+                                    trainNo: leg1.trainNo,
+                                    typeName: leg1.typeName,
+                                    depTime: formatMinutesToHHMM(depFromStart),
+                                    arrTime: formatMinutesToHHMM(arrAtTransfer)
+                                },
+                                leg2: {
+                                    trainNo: leg2.trainNo,
+                                    typeName: leg2.typeName,
+                                    depTime: formatMinutesToHHMM(depTransfer2),
+                                    arrTime: formatMinutesToHHMM(arrAtEnd2)
+                                }
+                            });
+                        }
                     }
                 }
-            }
 
-            return candidates
-                .sort((a, b) => {
-                    const aDep = parseTimeToMinutes(a.leg1.depTime) ?? 9999;
-                    const bDep = parseTimeToMinutes(b.leg1.depTime) ?? 9999;
-                    if (aDep !== bDep) return aDep - bDep;
-                    return a.totalMinutes - b.totalMinutes;
-                })
-                .slice(0, 12);
+                // 6. 智慧排序：優先以「抵達終點時間最早」排序，若時間相同則選「總耗時最短」
+                return candidates
+                    .sort((a, b) => {
+                        if (a.endArrTimeAbs !== b.endArrTimeAbs) {
+                            return a.endArrTimeAbs - b.endArrTimeAbs; // 越早到越好
+                        }
+                        return a.totalMinutes - b.totalMinutes; // 總耗時越短越好
+                    })
+                    .slice(0, 15); // 回傳最佳的 15 筆方案
+
+            } catch (error) {
+                console.error("尋找轉乘方案時發生錯誤:", error);
+                return [];
+            }
         }
 
         // ================== UX 與工具邏輯 ==================
