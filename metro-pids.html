@@ -1693,15 +1693,21 @@
                 const sysMap = { 'TRTC': '台北捷運', 'KRTC': '高雄捷運', 'TYMC': '桃園捷運', 'TMRT': '台中捷運', 'NTMC': '新北捷運', 'KLRT': '高雄輕軌' };
                 const sysName = sysMap[system] || '捷運系統';
 
-                // --- 2. 抓取最新消息 ---
-                let newsContent = "";
+                // --- 2. 抓取最新消息 / 通阻（從 metro-api-worker 的 news 端點） ---
+                let newsItems = [];
                 try {
-                    const res = await fetch(`https://metro-api-worker.weacamm.org/api/news?sys=${system}`);
-                    const data = await res.json();
-                    if (Array.isArray(data) && data.length > 0) {
-                        newsContent = data.slice(0, 3).map(n => `【${sysName}最新消息】${n.Title || n.NewsTitle}`).join('　　') + '　　';
+                    const res = await fetch(`${METRO_API_TDX}/news?sys=${system}`);
+                    if (res && res.ok) {
+                        const data = await res.json();
+                        if (Array.isArray(data) && data.length > 0) {
+                            newsItems = data.slice(0, 3).map(n => {
+                                // 優先取中文標題或描述
+                                const txt = n?.NewsTitle?.Zh_tw || n?.Title?.Zh_tw || n?.Title || n?.NewsTitle || n?.Description || n?.Content || '';
+                                return txt.toString().replace(/\s+/g, ' ').trim();
+                            }).filter(Boolean);
+                        }
                     }
-                } catch (e) { console.log("News fetch failed"); }
+                } catch (e) { console.log('News fetch failed', e); }
 
                 // --- 3. 完整官方宣導內容 (嚴格保留) ---
                 const mandatoryMessages = [
@@ -1724,20 +1730,21 @@
                 ];
 
                 // --- 4. 組合最終字串 ---
-                const finalMarqueeText = `${newsContent}${mandatoryMessages.join('　　')}　　祝您旅途愉快！`;
+                const alertPrefix = newsItems.length ? (newsItems.join('　　') + '　　') : '';
+                const finalMarqueeText = `${alertPrefix}${mandatoryMessages.join('　　')}　　祝您旅途愉快！`;
 
                 // 手機版跑馬燈
                 const marqueeEl = document.getElementById('ui-marquee');
                 if (marqueeEl) {
                     marqueeEl.innerText = finalMarqueeText;
-                    runMarqueeLoop('ui-marquee');
+                    setTimeout(() => runMarqueeLoop('ui-marquee'), 60);
                 }
                 
                 // 桌面版跑馬燈
                 const marqueeDesktopEl = document.getElementById('ui-marquee-desktop');
                 if (marqueeDesktopEl) {
                     marqueeDesktopEl.innerText = finalMarqueeText;
-                    runMarqueeLoop('ui-marquee-desktop');
+                    setTimeout(() => runMarqueeLoop('ui-marquee-desktop'), 60);
                 }
 
             } catch (e) { console.error("Marquee error:", e); }

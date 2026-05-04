@@ -1262,7 +1262,7 @@
             const queryDate = document.getElementById('queryDate').value;
             const todayStr = new Date(Date.now() + 8 * 3600000).toISOString().split('T')[0];
             const isToday = queryDate === todayStr;
-            
+
             if (!data || data.length === 0) {
                 board.innerHTML = '<div style="padding:40px; text-align:center;">目前無列車資訊</div>';
                 return;
@@ -1301,115 +1301,73 @@
                 return { rawType, note };
             };
 
-            const renderGroup = async (dir, title) => {
-                let filtered = list.filter(t => String(t.Dir) === dir).slice(0, 10);
-                if (filtered.length === 0) return "";
-                
-                // 💡 在每個群組（逆行/順行）最上方，直接使用大面積滑動切換器
-                let groupHtml = "";
-                if (dir === "1" || dir === "0") {
-                    const isUp = dir === "1";
-                    groupHtml = `
-                        <div class="direction-tabs dir-${dir}">
-                            <div class="direction-slider"></div>
-                            <div class="direction-tab-item ${isUp ? 'active' : ''}" onclick="setDirAndQuery('1')">逆行</div>
-                            <div class="direction-tab-item ${!isUp ? 'active' : ''}" onclick="setDirAndQuery('0')">順行</div>
-                        </div>`;
-                } else {
-                    groupHtml = `<div style="background:#f5f5f5; padding:10px 20px; font-weight:bold; border-left:4px solid #D84315;">${title}</div>`;
-                }
-
-                let html = groupHtml;
-                // 先回傳群組 HTML；群組內列車項目會由呼叫端接續加入
-                html += `<div class="train-card-head"></div>`;
-                return html;
+            const buildGroupHeader = (dir) => {
+                const isUp = dir === '1';
+                return `
+                    <div class="direction-tabs dir-${dir}">
+                        <div class="direction-slider"></div>
+                        <div class="direction-tab-item ${isUp ? 'active' : ''}" onclick="setDirAndQuery('1')">逆行</div>
+                        <div class="direction-tab-item ${!isUp ? 'active' : ''}" onclick="setDirAndQuery('0')">順行</div>
+                    </div>
+                    <div class="train-card-head">
+                        <div>車次</div>
+                        <div>到站</div>
+                        <div>開車</div>
+                        <div>延誤</div>
+                        <div>終點</div>
+                    </div>`;
             };
 
-            let html = '';
+            const groups = dirFilter
+                ? [{ dir: dirFilter }]
+                : [{ dir: '1' }, { dir: '0' }];
 
-            if (directData.length > 0) {
-                html += `<div style="background:#e0f7fa; padding:10px 20px; font-weight:bold; color:#006064;">共查詢到 ${directData.length} 班直達車</div>`;
+            let html = '';
+            let hasAny = false;
+
+            for (const g of groups) {
+                const filtered = list.filter(t => String(t.Dir) === g.dir);
+                if (filtered.length === 0) continue;
+                hasAny = true;
+                html += buildGroupHeader(g.dir);
+
+                for (const t of filtered) {
+                    const trainNo = String(t.TrainNo || t.No || '').trim();
+                    const { rawType, note } = await enrichLiveboardEntry(t);
+                    const typeName = normalizeTrainTypeLabel(rawType, note);
+                    const cls = getTrainTypeClass(`${rawType} ${typeName}`);
+                    const arr = (t.ArrivalTime || t.Arr || "--:--").slice(0, 5);
+                    const dep = (t.DepartureTime || t.Dep || "--:--").slice(0, 5);
+                    const delay = Number(t.DelayTime || t.Delay || 0) || 0;
+                    const dest = normalizeTaiText(t.EndingStationName || t.Dest || '');
+                    const trainStatus = t.TrainStatus !== undefined ? t.TrainStatus : t.Status;
+                    const statusText = String(trainStatus) === '2' ? '停駛' : '';
+                    const delayText = statusText || (delay > 0 ? `+${delay} 分` : '準點');
+                    const delayClass = statusText ? 'delay-warn' : (delay > 0 ? 'delay-warn' : 'delay-ok');
+
+                    html += `
+                        <div class="train-card" data-train-no="${trainNo}" data-delay="${delay}" data-time="${arr}" data-type-name="${typeName}" data-dest-name="${dest}">
+                            <div><span class="train-type-badge ${cls}">${typeName}</span><strong>${trainNo}</strong></div>
+                            <div>${arr}</div>
+                            <div>${dep}</div>
+                            <div class="${delayClass}">${delayText}</div>
+                            <div>往 ${dest || '--'}</div>
+                        </div>`;
+                }
             }
 
-            const enrichedDirect = await Promise.all(directData.map(async t => {
-                const trainNo = t.TrainNo || t.No;
-                let scheduleNote = '';
-                if (trainNo) {
-                    const sch = await fetchTrainScheduleCached(trainNo, queryDate, scheduleCache);
-                    scheduleNote = String(sch?.Note || '').trim();
-                }
-                return { t, trainNo, scheduleNote };
-            }));
-
-            enrichedDirect.forEach(({ t, trainNo, scheduleNote }) => {
-                let rawType = "";
-                if (typeof t.TrainTypeName === 'string') rawType = t.TrainTypeName;
-                else if (t.Type) rawType = t.Type;
-
-                const noteText = scheduleNote || String(t.Note || '').trim();
-                const typeName = normalizeTrainTypeLabel(rawType, noteText);
-
-                const cls = getTrainTypeClass(`${rawType} ${typeName}`);
-                const noteStr = noteText ? `<div style="font-size:0.8rem; color:#d84315; margin-top:4px;">*${noteText}</div>` : "";
-                const dep = (t.DepartureTime || t.Dep || "").slice(0,5);
-                const arr = (t.ArrivalTime || t.Arr || "").slice(0,5);
-                const dest = normalizeTaiText(t.EndingStationName || t.Dest);
-                
-                html += `
-                    <div class="route-card" onclick="document.getElementById('trainNoInp').value='${trainNo}'; switchTab('train'); doQuery('train');" style="cursor:pointer;" title="點擊追蹤此車次">
-                        <div><span class="train-type-badge ${cls}">${typeName}</span><strong>${trainNo}</strong></div>
-                        <div style="text-align:center; font-size:1.3rem; font-weight:bold;">
-                            ${dep} <i class="fas fa-long-arrow-alt-right" style="color:#aaa; margin:0 10px;"></i> ${arr}
-                        </div>
-                        <div style="text-align:right; color:#666; font-size:0.9rem;">往 ${dest}${noteStr}</div>
-                    </div>`;
-            });
-
-            // 📌 使用全新設計的轉乘卡片排版
-            if (transfers.length > 0) {
-                html += `<div style="background:#fff8e1; padding:12px 20px; font-weight:bold; color:#8d6e63; border-top:1px solid #efebe9;">💡 系統為您配對了 ${transfers.length} 筆最佳轉乘方案</div>`;
-                
-                transfers.forEach((r, idx) => {
-                    html += `
-                        <div class="transfer-route-card">
-                            <div class="transfer-header-row">
-                                <div class="transfer-route-title">方案 ${idx + 1}：於 <span class="highlight-station">${r.transferStation}</span> 轉乘</div>
-                                <div class="transfer-route-meta">預估總耗時 <strong>${Math.max(0, Math.round(r.totalMinutes))}</strong> 分鐘</div>
-                            </div>
-                            
-                            <div class="transfer-legs-modern">
-                                <!-- 第一段 -->
-                                <div class="transfer-leg-modern">
-                                    <div class="leg-title"><span class="step-num">1</span> ${r.leg1.trainNo} 次 <span class="train-type-mini">${r.leg1.typeName}</span></div>
-                                    <div class="leg-details">
-                                        <div class="time-point"><strong>${r.leg1.depTime}</strong> <span>出發</span></div>
-                                        <div class="time-point" style="color:#78909c; font-size:0.85rem; padding-left:5px;">↓</div>
-                                        <div class="time-point"><strong>${r.leg1.arrTime}</strong> <span>抵達 ${r.transferStation}</span></div>
-                                    </div>
-                                </div>
-
-                                <!-- 中間轉乘等待節點 -->
-                                <div class="transfer-wait-node">
-                                    <div class="wait-line"></div>
-                                    <div class="wait-time-badge"><i class="fas fa-walking"></i> 等待 ${r.waitMinutes} 分</div>
-                                    <div class="wait-line"></div>
-                                </div>
-
-                                <!-- 第二段 -->
-                                <div class="transfer-leg-modern">
-                                    <div class="leg-title"><span class="step-num">2</span> ${r.leg2.trainNo} 次 <span class="train-type-mini">${r.leg2.typeName}</span></div>
-                                    <div class="leg-details">
-                                        <div class="time-point"><strong>${r.leg2.depTime}</strong> <span>轉乘出發</span></div>
-                                        <div class="time-point" style="color:#78909c; font-size:0.85rem; padding-left:5px;">↓</div>
-                                        <div class="time-point"><strong>${r.leg2.arrTime}</strong> <span>抵達終點</span></div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>`;
-                });
+            if (!hasAny) {
+                board.innerHTML = '<div style="padding:40px; text-align:center;">目前無列車資訊</div>';
+                return;
             }
 
             board.innerHTML = html;
+            board.querySelectorAll('.train-card').forEach(card => {
+                card.addEventListener('click', () => {
+                    const { trainNo, delay, time, typeName, destName } = card.dataset;
+                    showTrainMarquee(card, trainNo, delay || '0', time || '', typeName || '', destName || '');
+                });
+            });
         }
 
         function setDirAndQuery(dir) {
