@@ -545,6 +545,9 @@
         const LIVEBOARD_REFRESH_MS = 60000;
         const LIVE_LOG_STORAGE_KEY = 'tra_live_position_delay_log_v1';
         const LIVE_LOG_RETENTION_DAYS = 7;
+        const SCHEDULE_CACHE = new Map();
+        const LIVE_CACHE = new Map();
+        const LIVE_CACHE_TTL_MS = 15000;
 
         document.addEventListener('DOMContentLoaded', async () => {
             quickDate(0); 
@@ -846,7 +849,7 @@
             });
         }
 
-        async function fetchTrainScheduleCached(trainNo, date, cacheMap) {
+        async function fetchTrainScheduleCached(trainNo, date, cacheMap = SCHEDULE_CACHE) {
             const key = `${trainNo}_${date}`;
             if (cacheMap.has(key)) return cacheMap.get(key);
 
@@ -861,6 +864,24 @@
                 return data;
             } catch (_) {
                 cacheMap.set(key, null);
+                return null;
+            }
+        }
+
+        async function fetchTrainLiveCached(trainNo) {
+            if (!trainNo) return null;
+            const key = String(trainNo);
+            const cached = LIVE_CACHE.get(key);
+            if (cached && (Date.now() - cached.ts) < LIVE_CACHE_TTL_MS) {
+                return cached.data;
+            }
+            try {
+                const res = await fetch(`${API_BASE}/api/live?trainNo=${encodeURIComponent(trainNo)}`);
+                if (!res.ok) throw new Error('live fetch failed');
+                const data = await res.json();
+                LIVE_CACHE.set(key, { ts: Date.now(), data });
+                return data;
+            } catch (_) {
                 return null;
             }
         }
@@ -1284,7 +1305,7 @@
                 });
             }
 
-            const scheduleCache = new Map();
+            const scheduleCache = SCHEDULE_CACHE;
             const enrichLiveboardEntry = async (t) => {
                 const trainNo = String(t?.No || t?.TrainNo || '').trim();
                 let rawType = String(t?.TrainTypeName || t?.Type || '').trim();
@@ -1343,12 +1364,13 @@
                     const statusText = String(trainStatus) === '2' ? '停駛' : '';
                     const delayText = statusText || (delay > 0 ? `+${delay} 分` : '準點');
                     const delayClass = statusText ? 'delay-warn' : (delay > 0 ? 'delay-warn' : 'delay-ok');
+                    const timeClass = delay > 0 ? 'delay-warn' : '';
 
                     html += `
                         <div class="train-card" data-train-no="${trainNo}" data-delay="${delay}" data-time="${arr}" data-type-name="${typeName}" data-dest-name="${dest}">
                             <div><span class="train-type-badge ${cls}">${typeName}</span><strong>${trainNo}</strong></div>
                             <div>開往 ${dest || '--'}</div>
-                            <div>${arr}</div>
+                            <div class="${timeClass}">${arr}</div>
                             <div class="${delayClass}">${delayText}</div>
                         </div>`;
                 }
@@ -1529,17 +1551,14 @@
             inner.style.animation = `train-inline-scroll ${placeholderDuration}s linear infinite`;
 
             try {
-                const res = await fetch(`${API_BASE}/api/schedule?trainNo=${trainNo}&date=${date}`);
-                const data = await res.json();
+                const todayStr = new Date(Date.now() + 8 * 3600000).toISOString().split('T')[0];
+                const schedulePromise = fetchTrainScheduleCached(trainNo, date);
+                const livePromise = (date === todayStr) ? fetchTrainLiveCached(trainNo) : Promise.resolve(null);
+                const [data, liveData] = await Promise.all([schedulePromise, livePromise]);
 
-                const todayStr = new Date(Date.now() + 8*3600000).toISOString().split('T')[0];
                 let statusText = "列車尚未發車或無訊號...";
-                if (date === todayStr) {
-                    const liveRes = await fetch(`${API_BASE}/api/live?trainNo=${trainNo}`);
-                    const liveData = await liveRes.json();
-                    if (liveData.status === 2) statusText = "本車次今日停駛";
-                    else if (liveData.station) statusText = `列車目前位置：${normalizeTaiText(liveData.station)}`;
-                }
+                if (liveData && liveData.status === 2) statusText = "本車次今日停駛";
+                else if (liveData && liveData.station) statusText = `列車目前位置：${normalizeTaiText(liveData.station)}`;
 
                 let expectedTime = schedTime.slice(0,5);
                 if (delay > 0 && expectedTime) {
