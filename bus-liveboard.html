@@ -6,12 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>臺灣公車通 - 智慧即時動態</title>
     
-    <!-- Google Fonts -->
+    
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
     
-    <!-- Font Awesome -->
+    
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <style>
@@ -1137,7 +1137,7 @@
 <main>
     <div id="panel">
         
-        <!-- 首頁容器 (包含縣市選單 + 路線列表) -->
+        
         <div id="home-view" style="height:100%; overflow:hidden;">
             <div id="route-browser">
                 <div class="browser-header">
@@ -1188,30 +1188,30 @@
             </div>
         </div>
 
-        <!-- 路線詳情 -->
+        
         <div id="route-view" style="display:none; flex-direction:column; height:100%;">
             <div class="route-header">
                 <div class="route-title-row">
                     <button class="back-btn" onclick="goBack()" title="返回路線列表">
                         <i class="fas fa-arrow-left"></i>
                     </button>
-                    <!-- 左側：路線資訊 -->
+                    
                     <div class="route-info-left">
                         <div class="route-number" id="route-title">載入中...</div>
                         <div class="route-sub-text" id="route-subtitle">載入中...</div>
                     </div>
-                    <!-- 右側：功能按鈕 -->
+                    
                     <div class="route-header-btns">
                         <button class="refresh-btn" onclick="refreshLiveData()" title="重新整理">
                             <i class="fas fa-sync-alt" id="refresh-icon"></i>
                         </button>
                         
-                        <!-- 🌟 更多功能選單 (三個點點) -->
+                        
                         <div style="position: relative; display: inline-block;">
                             <button class="more-options-btn" id="more-btn" onclick="toggleOptionsMenu(event)" title="更多查詢">
                                 <i class="fas fa-ellipsis-v"></i>
                             </button>
-                            <!-- 🌟 下拉選單內容 -->
+                            
                             <div id="options-dropdown" class="options-dropdown">
                                 <div class="option-item" onclick="showTimetableModal()">
                                     <div class="label-box"><i class="fas fa-clock"></i> <span>時刻詳細資訊</span></div>
@@ -1243,11 +1243,11 @@
             </div>
             
             <div id="stops-container" class="stop-list">
-                <!-- 站牌列表將插入於此 -->
+                
             </div>
         </div>
 
-        <!-- Loading -->
+        
         <div id="loading" class="loader" style="display:none;">
             <i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i>
         </div>
@@ -1255,7 +1255,7 @@
 
     <div id="map-container" style="position:relative;">
         <div id="marquee-wrapper" style="position:absolute; top:10px; left:10px; right:60px; z-index:5; border-radius:8px; overflow:hidden; box-shadow:0 2px 6px rgba(0,0,0,0.2); background:rgba(255,255,255,0.95);">
-            <!-- 第一層：縣市公車通阻 -->
+            
             <div id="marquee-city" style="background:rgba(255,251,235,0.95); padding:8px 12px; display:flex; align-items:center; gap:8px; border-bottom:1px solid rgba(252,211,77,0.5); height:36px;">
                 <div style="font-size:0.75rem; font-weight:800; color:#d97706; background:#fef3c7; padding:2px 6px; border-radius:4px; white-space:nowrap; flex-shrink:0;" id="marquee-city-label">北市公車</div>
                 <div style="flex:1; overflow:hidden; position:relative; height:20px;">
@@ -1792,89 +1792,96 @@
         modal.style.display = 'flex';
 
         try {
-            const url = `${WORKER_URL}/?action=schedule&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
+            const url = `${WORKER_URL}/?action=timetable&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
             const res = await fetch(url);
             const data = await res.json();
-            const scheduleList = Array.isArray(data) ? data : (data.data || []);
-            const dirSchedules = scheduleList.filter(s => s.Direction == currentData.direction);
-
-            if (dirSchedules.length === 0) {
+            const scheduleData = data && data.timetables ? data.timetables : [];
+            if (!Array.isArray(scheduleData) || scheduleData.length === 0) {
                 body.innerHTML = '<div style="padding:20px; text-align:center; color:#666;">查無班次資料</div>';
                 return;
             }
 
-            const result = { weekday: { times: [], headways: [] }, weekend: { times: [], headways: [] } };
+            const currentDirLabel = currentData.direction === 1 ? '返程' : '去程';
+            const safeId = (text) => text.replace(/\s+/g, '-').replace(/[^A-Za-z0-9_-]/g, '');
 
-            dirSchedules.forEach(routeObj => {
-                if (routeObj.Timetables) {
-                    routeObj.Timetables.forEach(trip => {
-                        let depTime = trip.DepartureTime || (trip.StopTimes && trip.StopTimes[0]?.DepartureTime);
-                        if (!depTime) return;
-                        const timeStr = depTime.substring(0, 5);
-                        const days = trip.ServiceDay || routeObj.ServiceDay;
-                        if (!days) return;
-                        if (days.Saturday === 1 || days.Sunday === 1 || days.NationalHolidays === 1) result.weekend.times.push(timeStr);
-                        if (days.Monday === 1 || days.Tuesday === 1 || days.Wednesday === 1 || days.Thursday === 1 || days.Friday === 1) result.weekday.times.push(timeStr);
-                    });
-                }
-                if (routeObj.Frequencys) {
-                    routeObj.Frequencys.forEach(f => {
-                        const days = f.ServiceDay || routeObj.ServiceDay;
-                        if (!days) return;
-                        const text = `${f.StartTime}–${f.EndTime}：約 ${f.MinHeadwayMins}–${f.MaxHeadwayMins} 分鐘/班`;
-                        if (days.Saturday === 1 || days.Sunday === 1 || days.NationalHolidays === 1) result.weekend.headways.push(text);
-                        if (days.Monday === 1 || days.Tuesday === 1 || days.Wednesday === 1 || days.Thursday === 1 || days.Friday === 1) result.weekday.headways.push(text);
-                    });
-                }
-            });
-
-            result.weekday.times = [...new Set(result.weekday.times)].sort();
-            result.weekend.times = [...new Set(result.weekend.times)].sort();
-            result.weekday.headways = [...new Set(result.weekday.headways)];
-            result.weekend.headways = [...new Set(result.weekend.headways)];
-
-            let html = '<div class="timetable-tabs">';
-            html += `<button class="timetable-tab-btn active" onclick="switchTimetableTab('weekday', event)">平日</button>`;
-            html += `<button class="timetable-tab-btn" onclick="switchTimetableTab('weekend', event)">假日</button>`;
-            html += '</div>';
-
-            const renderSection = (dataObj, id, active) => {
-                const style = active ? 'display:block' : 'display:none';
-                let inner = `<div id="${id}" style="${style}">`;
-                if (dataObj.headways.length > 0) {
-                    inner += `<div style="margin-bottom:15px; background:#f0f9ff; border-left:4px solid #3b82f6; padding:10px 14px; border-radius:4px;">`;
-                    inner += `<div style="font-weight:700; font-size:0.85rem; color:#1e40af; margin-bottom:6px;"><i class="fas fa-arrows-left-right"></i> 發車班距</div>`;
-                    dataObj.headways.forEach(h => inner += `<div style="font-size:0.9rem; margin-bottom:3px; color:#1e3a5f;">${h}</div>`);
-                    inner += `</div>`;
-                }
-                if (dataObj.times.length > 0) {
-                    inner += `<div style="font-weight:700; font-size:0.85rem; color:#475569; margin-bottom:8px;"><i class="fas fa-list-ol"></i> 固定發車時刻</div>`;
-                    inner += `<div class="timetable-grid">`;
-                    dataObj.times.forEach(t => inner += `<div class="time-chip">${t}</div>`);
-                    inner += `</div>`;
-                }
-                if (dataObj.headways.length === 0 && dataObj.times.length === 0) {
-                    inner += `<div style="text-align:center; color:#94a3b8; padding:20px;">無營運資料</div>`;
-                }
-                inner += `</div>`;
-                return inner;
+            const renderScheduleBlock = (s) => {
+                const times = Array.isArray(s.departure_times) ? s.departure_times.filter(Boolean) : [];
+                if (!times.length) return '';
+                const timeChips = times.map(t => `<div class="time-chip">${t}</div>`).join('');
+                return `
+                    <div style="margin-bottom:14px;">
+                        <div style="display:flex; align-items:center; gap:8px; font-weight:700; font-size:0.9rem; color:#334155; margin-bottom:8px;">
+                            <i class="fas fa-calendar-day"></i>
+                            <span>${s.service_day || '未知服務日'}</span>
+                            ${s.is_low_floor ? '<span style="font-size:0.7rem; background:#ecfdf5; color:#059669; padding:2px 6px; border-radius:999px;">低地板</span>' : ''}
+                        </div>
+                        <div class="timetable-grid">${timeChips}</div>
+                    </div>
+                `;
             };
 
-            html += renderSection(result.weekday, 'content-weekday', true);
-            html += renderSection(result.weekend, 'content-weekend', false);
-            body.innerHTML = html;
+            const renderFrequencyBlock = (f) => {
+                const range = f.time_range || '';
+                const min = f.min_headway;
+                const max = f.max_headway;
+                const headway = (min || max) ? `約 ${min}${max ? `–${max}` : ''} 分鐘/班` : '';
+                return `
+                    <div style="margin-bottom:10px;">
+                        <div style="font-weight:700; font-size:0.9rem; color:#1e3a5f;">${f.service_day || '未知服務日'}</div>
+                        <div style="font-size:0.85rem; color:#475569;">${range}${headway ? `：${headway}` : ''}</div>
+                    </div>
+                `;
+            };
+
+            const tabs = scheduleData.map((entry, idx) => {
+                const label = entry.direction || `方向${idx + 1}`;
+                const active = label === currentDirLabel;
+                return `<button class="timetable-tab-btn ${active ? 'active' : ''}" onclick="switchTimetableTab('${safeId(label)}', event)">${label}</button>`;
+            }).join('');
+
+            const contents = scheduleData.map((entry) => {
+                const label = entry.direction || '方向';
+                const isActive = label === currentDirLabel;
+                const schedules = Array.isArray(entry.schedules) ? entry.schedules : [];
+                const frequencies = Array.isArray(entry.frequencies) ? entry.frequencies : [];
+                const scheduleHtml = schedules.map(renderScheduleBlock).join('');
+                const frequencyHtml = frequencies.map(renderFrequencyBlock).join('');
+
+                let sectionHtml = '';
+                if (frequencyHtml) {
+                    sectionHtml += `<div style="margin-bottom:15px; background:#f0f9ff; border-left:4px solid #3b82f6; padding:10px 14px; border-radius:4px;">`;
+                    sectionHtml += `<div style="font-weight:700; font-size:0.85rem; color:#1e40af; margin-bottom:6px;"><i class="fas fa-arrows-left-right"></i> 發車班距</div>`;
+                    sectionHtml += frequencyHtml;
+                    sectionHtml += `</div>`;
+                }
+                if (scheduleHtml) {
+                    sectionHtml += `<div style="font-weight:700; font-size:0.85rem; color:#475569; margin-bottom:8px;"><i class="fas fa-list-ol"></i> 固定發車時刻</div>`;
+                    sectionHtml += scheduleHtml;
+                }
+                if (!sectionHtml) {
+                    sectionHtml = `<div style="text-align:center; color:#94a3b8; padding:20px;">無營運資料</div>`;
+                }
+
+                return `<div id="tt-${safeId(label)}" style="display:${isActive ? 'block' : 'none'};">${sectionHtml}</div>`;
+            }).join('');
+
+            body.innerHTML = `
+                <div class="timetable-tabs">${tabs}</div>
+                ${contents}
+            `;
 
             window.switchTimetableTab = function(type, e) {
                 document.querySelectorAll('.timetable-tab-btn').forEach(b => b.classList.remove('active'));
                 if (e && e.target) e.target.classList.add('active');
-                document.getElementById('content-weekday').style.display = 'none';
-                document.getElementById('content-weekend').style.display = 'none';
-                document.getElementById('content-' + type).style.display = 'block';
+                scheduleData.forEach(entry => {
+                    const label = entry.direction || '方向';
+                    const el = document.getElementById(`tt-${safeId(label)}`);
+                    if (el) el.style.display = safeId(label) === type ? 'block' : 'none';
+                });
             };
-
         } catch (e) {
             console.error("Timetable Error:", e);
-            body.innerHTML = '<p style="text-align:center; color:red; padding:20px;">資料解析失敗</p>';
+            body.innerHTML = '<p style="text-align:center; color:red; padding:20px;">資料載入失敗</p>';
         }
     }
 
@@ -1884,55 +1891,95 @@
         const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
 
-        title.innerHTML = `<i class="fas fa-calculator"></i> <span>票價試算載入中</span>`;
-        body.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在獲取計費規則...</div>`;
+        title.innerHTML = `<i class="fas fa-calculator"></i> <span>${currentData.route} 票價資訊</span>`;
+        body.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在載入票價資料...</div>`;
         modal.style.display = 'flex';
 
-        if (!currentData.fare) {
-            try {
-                const url = `${WORKER_URL}/?action=fare&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
-                const res = await fetch(url);
-                const data = await res.json();
-                currentData.fare = Array.isArray(data) ? data : (data.RouteFares || [data]);
-            } catch (e) {
-                body.innerHTML = `<div style="text-align:center; color:red; padding:20px;">票價資料載入失敗</div>`;
+        try {
+            const url = `${WORKER_URL}/?action=fare&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
+            const res = await fetch(url);
+            const data = await res.json();
+            currentData.fare = data || null;
+            const fares = data && Array.isArray(data.fares) ? data.fares : [];
+
+            if (!fares.length) {
+                body.innerHTML = `<div style="text-align:center; color:#9ca3af; padding:30px;">查無票價資料</div>`;
                 return;
             }
-        }
 
-        title.innerHTML = `<i class="fas fa-calculator"></i> <span>${currentData.route} 票價試算</span>`;
-        const stops = currentData.stops[currentData.direction];
-        if (!stops || stops.length === 0) {
-            body.innerHTML = '<p style="padding:20px; text-align:center;">無站點資料，無法計算。</p>';
-            return;
-        }
+            const renderFareItems = (list) => {
+                if (!list || !list.length) return '<div style="color:#94a3b8; font-size:0.85rem;">無票價明細</div>';
+                return `
+                    <div class="fare-types-grid">
+                        ${list.map(f => `
+                            <div class="fare-type-cell ${f.class === '成人' ? 'highlight' : ''}">
+                                <div class="fare-type-label">${f.class || '票種'} · ${f.type || ''}</div>
+                                <div class="fare-type-price">$${f.price}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            };
 
-        const optionsHtml = stops.map((s, idx) => `<option value="${idx}">${idx+1}. ${s.StopName?.Zh_tw || s.StopName}</option>`).join('');
+            const renderSectionFares = (items) => {
+                if (!items || !items.length) return '';
+                return items.map(s => {
+                    const buffers = (s.buffer_zones || []).map(b => `${b.origin || ''} → ${b.destination || ''}`).filter(Boolean);
+                    const bufferHtml = buffers.length
+                        ? `<div style="font-size:0.8rem; color:#d97706; margin-bottom:8px;">緩衝區：${buffers.join('、')}</div>`
+                        : '';
+                    return `
+                        <div style="margin-top:12px; padding:12px; border:1px solid #f1f5f9; border-radius:10px;">
+                            <div style="font-weight:700; color:#1f2937; margin-bottom:6px;">${s.direction || '方向'}</div>
+                            ${bufferHtml}
+                            ${renderFareItems(s.fares)}
+                        </div>
+                    `;
+                }).join('');
+            };
 
-        body.innerHTML = `
-            <div class="fare-selector-group">
-                <div class="fare-select-row">
-                    <div class="fare-select-label">上車</div>
-                    <select id="fare-start" class="fare-select-box" onchange="calculateODFare()">${optionsHtml}</select>
+            const renderODFares = (items) => {
+                if (!items || !items.length) return '';
+                return items.map(od => {
+                    const title = `${od.direction || '方向'} · ${od.origin || ''} → ${od.destination || ''}`.trim();
+                    return `
+                        <div style="margin-top:12px; padding:12px; border:1px solid #f1f5f9; border-radius:10px;">
+                            <div style="font-weight:700; color:#1f2937; margin-bottom:6px;">${title}</div>
+                            ${renderFareItems(od.fares)}
+                        </div>
+                    `;
+                }).join('');
+            };
+
+            const content = fares.map(f => `
+                <div style="margin-bottom:18px; padding-bottom:14px; border-bottom:1px solid #e5e7eb;">
+                    <div style="font-weight:800; color:#111827; margin-bottom:6px;">${f.route_name || currentData.route}</div>
+                    <div style="font-size:0.85rem; color:#64748b; margin-bottom:10px;">
+                        計費方式：${f.pricing_type || '未提供'}${f.is_free ? ' · 免費' : ''}
+                    </div>
+                    ${renderSectionFares(f.section_fares)}
+                    ${renderODFares(f.od_fares)}
                 </div>
-                <div class="fare-arrow"><i class="fas fa-arrow-down"></i></div>
-                <div class="fare-select-row">
-                    <div class="fare-select-label">下車</div>
-                    <select id="fare-end" class="fare-select-box" onchange="calculateODFare()">${optionsHtml}</select>
-                </div>
-            </div>
-            <div id="fare-result-area" class="fare-result-box"><div class="fare-sub-text">請選擇站點計算</div></div>
-        `;
+            `).join('');
 
-        document.getElementById('fare-start').selectedIndex = 0;
-        document.getElementById('fare-end').selectedIndex = stops.length - 1;
-        calculateODFare();
+            body.innerHTML = content;
+        } catch (e) {
+            body.innerHTML = `<div style="text-align:center; color:#ef4444; padding:20px;">票價資料載入失敗</div>`;
+        }
     }
 
     function renderFareInfo(dir) {
         try {
             let bStart = null, bEnd = null;
-            if (currentData.fare && currentData.fare.length > 0) {
+            if (currentData.fare && Array.isArray(currentData.fare.fares)) {
+                const dirLabel = dir === 1 ? '返程' : '去程';
+                const firstFare = currentData.fare.fares[0];
+                const section = (firstFare.section_fares || []).find(s => s.direction === dirLabel) || (firstFare.section_fares || [])[0];
+                if (section && section.buffer_zones && section.buffer_zones.length > 0) {
+                    bStart = section.buffer_zones[0].origin || null;
+                    bEnd = section.buffer_zones[0].destination || null;
+                }
+            } else if (currentData.fare && currentData.fare.length > 0) {
                 for (const f of currentData.fare) {
                     if (f.SectionFares && f.SectionFares.length > 0) {
                         const buffers = f.SectionFares[0].BufferZones?.filter(z => z.Direction == dir) || [];
@@ -2550,10 +2597,10 @@
     }
 </script>
 
-<!-- Google Maps API: 放在主 script 之後，確保 window.initMap 已定義 -->
+
 <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=geometry,marker&language=zh-TW&callback=initMap" async defer></script>
 
-<!-- Modal 彈窗結構 -->
+
 <div id="modal-overlay" class="modal-overlay" onclick="closeModal()">
     <div class="modal" onclick="event.stopPropagation()">
         <div class="modal-header">
@@ -2564,6 +2611,6 @@
     </div>
 </div>
 
-<!-- Cloudflare Pages Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "28d048b5ece84479b253cc75ae7083c6"}'></script><!-- Cloudflare Pages Analytics --><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"cec408ccbe2e42f3ab89f61750e1d729","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+<script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "28d048b5ece84479b253cc75ae7083c6"}'></script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"cec408ccbe2e42f3ab89f61750e1d729","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
