@@ -998,6 +998,42 @@
     let refreshInterval, countdownInterval;
     let refreshDuration = 10000;
     let trafficLayer = null;
+    let fetchQueue = [];
+    let activeFetches = 0;
+    let lastFetchTime = 0;
+    const MAX_CONCURRENT_FETCHES = 2;
+    const MIN_FETCH_INTERVAL = 220;
+
+    function throttledFetch(input, init) {
+        return new Promise((resolve, reject) => {
+            fetchQueue.push({ input, init, resolve, reject });
+            runFetchQueue();
+        });
+    }
+
+    function runFetchQueue() {
+        if (activeFetches >= MAX_CONCURRENT_FETCHES) return;
+        if (fetchQueue.length === 0) return;
+
+        const now = Date.now();
+        const waitMs = Math.max(0, MIN_FETCH_INTERVAL - (now - lastFetchTime));
+        if (waitMs > 0) {
+            setTimeout(runFetchQueue, waitMs);
+            return;
+        }
+
+        const task = fetchQueue.shift();
+        activeFetches += 1;
+        lastFetchTime = Date.now();
+
+        fetch(task.input, task.init)
+            .then(task.resolve)
+            .catch(task.reject)
+            .finally(() => {
+                activeFetches -= 1;
+                runFetchQueue();
+            });
+    }
 
     function startCountdown(duration) {
         refreshDuration = duration;
@@ -1115,7 +1151,7 @@
         container.innerHTML = `<div class="route-cards-grid">${Array(16).fill('<div class="browser-skeleton"></div>').join('')}</div>`;
 
         try {
-            const res = await fetch(`${WORKER_URL}/?action=list_all&city=${cityKey}`);
+            const res = await throttledFetch(`${WORKER_URL}/?action=list_all&city=${cityKey}`);
             const data = await res.json();
             const routes = Array.isArray(data) ? data : [];
             
@@ -1159,7 +1195,7 @@
                         return;
                     }
                 }
-                const res = await fetch(`${WORKER_URL}/?action=list_all&search=${encodeURIComponent(val)}`);
+                const res = await throttledFetch(`${WORKER_URL}/?action=list_all&search=${encodeURIComponent(val)}`);
                 const routeArray = await res.json();
                 renderSuggestions(routeArray.slice(0, 10)); 
             } catch (err) {}
@@ -1190,7 +1226,7 @@
         if (vehicleMap[city]) return;
         vehicleMap[city] = {}; 
         try {
-            const res = await fetch(`${WORKER_URL}/?action=vehicle&city=${city}`);
+            const res = await throttledFetch(`${WORKER_URL}/?action=vehicle&city=${city}`);
             const data = await res.json();
             
             if (Array.isArray(data)) {
@@ -1230,9 +1266,9 @@
 
         try {
             const [infoRes, shapeRes, fareRes] = await Promise.all([
-                fetch(`${WORKER_URL}/?action=info&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`).then(r => r.json()),
-                fetch(`${WORKER_URL}/?action=shape&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`).then(r => r.json()),
-                fetch(`${WORKER_URL}/?action=fare&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`).then(r => r.json()).catch(() => null)
+                throttledFetch(`${WORKER_URL}/?action=info&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`).then(r => r.json()),
+                throttledFetch(`${WORKER_URL}/?action=shape&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`).then(r => r.json()),
+                throttledFetch(`${WORKER_URL}/?action=fare&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`).then(r => r.json()).catch(() => null)
             ]);
 
             const infoList = Array.isArray(infoRes) ? infoRes : [];
@@ -1352,7 +1388,7 @@
 
         try {
             const url = `${WORKER_URL}/?category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
-            const res = await fetch(url);
+            const res = await throttledFetch(url);
             const data = await res.json();
             
             if (updateTimeEl) updateTimeEl.innerText = new Date().toTimeString().substring(0, 5);
@@ -1508,7 +1544,7 @@
 
         try {
             const url = `${WORKER_URL}/?action=timetable&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
-            const res = await fetch(url);
+            const res = await throttledFetch(url);
             const data = await res.json();
             const scheduleData = data && data.timetables ? data.timetables : [];
             if (!Array.isArray(scheduleData) || scheduleData.length === 0) {
@@ -1615,7 +1651,7 @@
             body.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在載入票價資料...</div>`;
             try {
                 const url = `${WORKER_URL}/?action=fare&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
-                const res = await fetch(url);
+                const res = await throttledFetch(url);
                 const data = await res.json();
                 currentData.fare = data?.fares || [];
             } catch (e) {
@@ -1798,7 +1834,7 @@
     async function fetchRealStopRoutes(stopName, infoWindow) {
         try {
             const url = `${WORKER_URL}/?action=stop_info&city=${currentData.city}&name=${encodeURIComponent(stopName)}`;
-            const res = await fetch(url);
+            const res = await throttledFetch(url);
             const data = await res.json();
             const routes = data.routes || [];
             
@@ -2057,8 +2093,8 @@
 
         try {
             const [newsRes, alertRes] = await Promise.all([
-                fetch(`${WORKER_URL}/?action=news&category=${type}&city=${city}`).then(r => r.json()),
-                fetch(`${WORKER_URL}/?action=alert&category=${type}&city=${city}`).then(r => r.json())
+                throttledFetch(`${WORKER_URL}/?action=news&category=${type}&city=${city}`).then(r => r.json()),
+                throttledFetch(`${WORKER_URL}/?action=alert&category=${type}&city=${city}`).then(r => r.json())
             ]);
 
             const allItems = [...(Array.isArray(alertRes) ? alertRes : []).map(a => ({ title: a.Title, desc: a.Description, date: a.StartTime, tag: '通阻', cls: 'tag-alert' })),
@@ -2096,7 +2132,7 @@
         const textEl = document.getElementById(elementId);
         if (!textEl) return;
         try {
-            const res = await fetch(`${WORKER_URL}/?action=alert&category=${type || 'CityBus'}&city=${city}`);
+            const res = await throttledFetch(`${WORKER_URL}/?action=alert&category=${type || 'CityBus'}&city=${city}`);
             const data = await res.json();
             const alerts = Array.isArray(data) ? data.filter(a => a.Status !== 1) : [];
             
