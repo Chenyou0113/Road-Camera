@@ -42,10 +42,36 @@ const syncDailyScheduleBlob = async (env) => {
         let staMap = {}, trnMap = {};
         for (const t of trains) {
             const no = t.TrainInfo.TrainNo;
-            trnMap[no] = { Note: t.TrainInfo.Note?.Zh_tw || "", Type: t.TrainInfo.TrainTypeName?.Zh_tw || "", TripLine: t.TrainInfo.TripLine || 0, Stops: t.StopTimes.map(s => ({ Seq: s.StopSequence, SID: s.StationID, Name: s.StationName?.Zh_tw, Arr: s.ArrivalTime, Dep: s.DepartureTime })) };
+            const trainSuspended = t.TrainInfo.SuspendedFlag || 0;
+            trnMap[no] = {
+                Note: t.TrainInfo.Note?.Zh_tw || "",
+                Type: t.TrainInfo.TrainTypeName?.Zh_tw || "",
+                TripLine: t.TrainInfo.TripLine || 0,
+                TrainSuspendedFlag: trainSuspended,
+                Stops: t.StopTimes.map(s => ({
+                    Seq: s.StopSequence,
+                    SID: s.StationID,
+                    Name: s.StationName?.Zh_tw,
+                    Arr: s.ArrivalTime,
+                    Dep: s.DepartureTime,
+                    SuspendedFlag: s.SuspendedFlag || 0
+                }))
+            };
             for (const s of t.StopTimes) {
                 if (!staMap[s.StationID]) staMap[s.StationID] = [];
-                staMap[s.StationID].push({ No: no, Dir: t.TrainInfo.Direction || 0, Type: t.TrainInfo.TrainTypeName?.Zh_tw, Dest: t.TrainInfo.EndingStationName?.Zh_tw, Arr: s.ArrivalTime, Dep: s.DepartureTime, Seq: s.StopSequence, Note: t.TrainInfo.Note?.Zh_tw, TripLine: t.TrainInfo.TripLine || 0 });
+                staMap[s.StationID].push({
+                    No: no,
+                    Dir: t.TrainInfo.Direction || 0,
+                    Type: t.TrainInfo.TrainTypeName?.Zh_tw,
+                    Dest: t.TrainInfo.EndingStationName?.Zh_tw,
+                    Arr: s.ArrivalTime,
+                    Dep: s.DepartureTime,
+                    Seq: s.StopSequence,
+                    Note: t.TrainInfo.Note?.Zh_tw,
+                    TripLine: t.TrainInfo.TripLine || 0,
+                    TrainSuspendedFlag: trainSuspended,
+                    SuspendedFlag: s.SuspendedFlag || 0
+                });
             }
         }
         let batch = [];
@@ -99,8 +125,15 @@ export default {
                 const res = trains.map(t => {
                     const l = liveM[t.No] || { delay: 0, status: 0, station: "" };
                     const [h, m] = (t.Dep || t.Arr).split(':').map(Number);
-                    return { ...t, DelayTime: isToday ? l.delay : 0, TrainStatus: isToday ? l.status : 0, _actual: (h * 60 + m) + (isToday ? l.delay : 0) };
-                }).filter(t => !isToday || t._actual >= nowM - 30 || t.TrainStatus === 2).sort((a,b) => a._actual - b._actual);
+                    return {
+                        ...t,
+                        DelayTime: isToday ? l.delay : 0,
+                        TrainStatus: isToday ? l.status : 0,
+                        IsSuspended: t.SuspendedFlag === 1,
+                        IsPartiallySuspended: t.TrainSuspendedFlag === 2,
+                        _actual: (h * 60 + m) + (isToday ? l.delay : 0)
+                    };
+                }).filter(t => !isToday || t._actual >= nowM - 30 || t.TrainStatus === 2 || t.IsSuspended).sort((a,b) => a._actual - b._actual);
                 return new Response(JSON.stringify(res), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
@@ -109,7 +142,20 @@ export default {
                 const tno = url.searchParams.get("trainNo"), date = url.searchParams.get("date") || getTwDateString(0);
                 const row = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`SCH_TRN_${tno}_${date}`).first();
                 const trn = row ? JSON.parse(row.Value) : { Stops: [] };
-                return new Response(JSON.stringify({ TrainNo: tno, TrainTypeName: trn.Type, Note: trn.Note, TripLine: trn.TripLine, StopTimes: trn.Stops.map(s => ({ StationID: s.SID, StationName: { Zh_tw: s.Name }, ArrivalTime: s.Arr, DepartureTime: s.Dep })) }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+                return new Response(JSON.stringify({
+                    TrainNo: tno,
+                    TrainTypeName: trn.Type,
+                    Note: trn.Note,
+                    TripLine: trn.TripLine,
+                    TrainSuspendedFlag: trn.TrainSuspendedFlag || 0,
+                    StopTimes: trn.Stops.map(s => ({
+                        StationID: s.SID,
+                        StationName: { Zh_tw: s.Name },
+                        ArrivalTime: s.Arr,
+                        DepartureTime: s.Dep,
+                        SuspendedFlag: s.SuspendedFlag || 0
+                    }))
+                }), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
             // 3. 站到站
@@ -118,7 +164,18 @@ export default {
                 const [sR, eR] = await env.DB.batch([env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`SCH_STA_${s}_${d}`), env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`SCH_STA_${e}_${d}`)]);
                 const sT = sR.results[0] ? JSON.parse(sR.results[0].Value) : [], eT = eR.results[0] ? JSON.parse(eR.results[0].Value) : [];
                 const eM = Object.fromEntries(eT.map(t => [t.No, t]));
-                const res = sT.filter(st => eM[st.No] && st.Seq < eM[st.No].Seq).map(st => ({ TrainNo: st.No, TrainTypeName: st.Type, DepartureTime: st.Dep, ArrivalTime: eM[st.No].Arr, EndingStationName: st.Dest, Note: st.Note })).sort((a,b) => a.DepartureTime.localeCompare(b.DepartureTime));
+                const res = sT
+                    .filter(st => eM[st.No] && st.Seq < eM[st.No].Seq && st.SuspendedFlag !== 1 && eM[st.No].SuspendedFlag !== 1)
+                    .map(st => ({
+                        TrainNo: st.No,
+                        TrainTypeName: st.Type,
+                        DepartureTime: st.Dep,
+                        ArrivalTime: eM[st.No].Arr,
+                        EndingStationName: st.Dest,
+                        Note: st.Note,
+                        TrainSuspendedFlag: st.TrainSuspendedFlag || 0
+                    }))
+                    .sort((a,b) => a.DepartureTime.localeCompare(b.DepartureTime));
                 return new Response(JSON.stringify(res), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
