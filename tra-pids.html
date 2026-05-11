@@ -460,6 +460,7 @@
         .status-ontime { color: #FFFFFF !important; }
         .status-delay { color: #ff1744 !important; animation: blink 1s infinite alternate; }
         .status-cancelled { color: #FF5252; font-weight: 900; }
+        .status-suspended { color: #ff1744 !important; font-weight: 900; }
 
         .time-delay-container {
             display: flex;
@@ -968,7 +969,10 @@
                             ScheduledArrivalTime: t.ScheduledArrivalTime ?? t.Arr ?? t.Dep,
                             DelayTime: t.DelayTime ?? t.Delay ?? 0,
                             TrainStatus: t.TrainStatus ?? t.Status,
-                            TripLine: t.TripLine ?? t.Line
+                            TripLine: t.TripLine ?? t.Line,
+                            TrainSuspendedFlag: t.TrainSuspendedFlag ?? 0,
+                            IsSuspended: t.IsSuspended ?? (t.SuspendedFlag === 1),
+                            IsPartiallySuspended: t.IsPartiallySuspended ?? (t.TrainSuspendedFlag === 2)
                         };
 
                         const timeStr = normalized.ScheduledDepartureTime || "00:00";
@@ -983,9 +987,10 @@
                             ...normalized,
                             _sort: (adjustedActualMins - nowTotalMinutes + 1440) % 1440,
                             _actualMins: adjustedActualMins,
-                            _isCancelled: String(normalized.TrainStatus) === '2'
+                            _isCancelled: String(normalized.TrainStatus) === '2' || normalized.IsSuspended || Number(normalized.TrainSuspendedFlag) === 1,
+                            _isPartiallySuspended: normalized.IsPartiallySuspended || Number(normalized.TrainSuspendedFlag) === 2
                         };
-                    }).filter(t => t._actualMins >= nowTotalMinutes || t._isCancelled);
+                    }).filter(t => t._actualMins >= nowTotalMinutes || t._isCancelled || t._isPartiallySuspended);
 
                     filtered.sort((a, b) => a._sort - b._sort);
 
@@ -1088,13 +1093,13 @@
         const i18n = {
             zh: {
                 inbound: "逆行", outbound: "順行", trainNo: "車次", type: "車種", dest: "開往", time: "開車時間", status: "狀態", note: "備注",
-                onTime: "準點", delay: "晚 {min} 分", cancelled: "停駛", toward: "往", curPos: "列車目前位置：", nextPos: " ➡ ", expected: "本站預計：", arrive: " 抵達",
+                onTime: "準點", delay: "晚 {min} 分", cancelled: "停駛", partiallySuspended: "部分停駛", toward: "往", curPos: "列車目前位置：", nextPos: " ➡ ", expected: "本站預計：", arrive: " 抵達",
                 adv: "宣導資訊", video: "影音專區", noTrain: "目前無列車資訊", notDeparted: "列車尚未發車", detecting: "列車訊號偵測中",
                 types: { "新自強": "新自強", "自強": "自強", "普悠瑪": "普悠瑪", "太魯閣": "太魯閣", "莒光": "莒光", "區間快": "區間快", "區間": "區間", "專車": "專車", "其他": "列車" }
             },
             en: {
                 inbound: "Reverse", outbound: "Forward", trainNo: "Train No.", type: "Type", dest: "Destination", time: "Departure", status: "Status", note: "Note",
-                onTime: "On Time", delay: "{min} min", cancelled: "Cancelled", toward: "To ", curPos: "Current Location: ", nextPos: " ➡ ", expected: "ETA at Station: ", arrive: "",
+                onTime: "On Time", delay: "{min} min", cancelled: "Cancelled", partiallySuspended: "Partially Suspended", toward: "To ", curPos: "Current Location: ", nextPos: " ➡ ", expected: "ETA at Station: ", arrive: "",
                 adv: "Information", video: "Media Center", noTrain: "No Train Information", notDeparted: "Not Yet Departed", detecting: "Signal Detecting",
                 types: { "新自強": "New T.C.", "自強": "T.C.", "普悠瑪": "Puyuma", "太魯閣": "Taroko", "莒光": "C.K.", "區間快": "Fast Local", "區間": "Local", "專車": "Special Train", "其他": "Train" },
                 notes: { "每日行駛": "Daily", "逢週五至日行駛": "Fri-Sun Only", "逢週六、日行駛": "Sat & Sun Only", "逢週六日行駛": "Weekends Only", "在彰化跨線": "Via Changhua", "跨線列車": "Cross-line", "本車次不發售無座票": "Reserved Only", "僅停靠大站": "Major Stops Only", "不停靠部分小站": "Express Service" }
@@ -1621,10 +1626,14 @@
 
                 let info = getInfo(t, rowLangCode);
                 let delay = parseInt(t.DelayTime || 0);
-                let isCancel = String(t.TrainStatus) === '2';
+                const trainSuspendedFlag = Number(t.TrainSuspendedFlag || 0);
+                const isSuspended = Boolean(t.IsSuspended) || Number(t.SuspendedFlag) === 1;
+                const isPartiallySuspended = Boolean(t.IsPartiallySuspended) || trainSuspendedFlag === 2;
+                let isCancel = String(t.TrainStatus) === '2' || trainSuspendedFlag === 1 || isSuspended;
 
                 let status = "", cls = "";
                 if (isCancel) { status = lang.cancelled; cls = 'status-cancelled'; } 
+                else if (isPartiallySuspended) { status = lang.partiallySuspended; cls = 'status-suspended'; }
                 else if (delay >= 120) { status = rowLangCode === 'zh' ? "時間未定" : "Delayed"; cls = 'status-delay'; } 
                 else if (delay > 0) { status = lang.delay.replace('{min}', delay); cls = 'status-delay'; } 
                 else { status = lang.onTime; cls = 'status-ontime'; }
@@ -1647,7 +1656,10 @@
                 let dest = translateStation(t.EndingStationName, rowLangCode);
                 const clone = template.content.cloneNode(true);
                 const tr = clone.querySelector('tr');
-                const noteText = (t.Note && String(t.Note).trim().length > 0) ? translateNote(String(t.Note).trim()) : status;
+                const forceStatusNote = isCancel || isPartiallySuspended;
+                const noteText = forceStatusNote
+                    ? status
+                    : ((t.Note && String(t.Note).trim().length > 0) ? translateNote(String(t.Note).trim()) : status);
                 tr.setAttribute('aria-label', `車次 ${t.TrainNo}, 開往 ${dest}, 車種 ${info.name}, 時間 ${timeDisplay}, 備注 ${noteText}`);
 
                 const cells = tr.querySelectorAll('td');
@@ -1661,7 +1673,7 @@
                 cells[3].appendChild(timeSpan);
 
                 cells[4].textContent = noteText;
-                cells[4].className = (t.Note && String(t.Note).trim().length > 0) ? '' : cls;
+                cells[4].className = forceStatusNote ? cls : ((t.Note && String(t.Note).trim().length > 0) ? '' : cls);
                 cells[4].setAttribute('role', 'gridcell');
 
                 fragment.appendChild(clone);
@@ -1686,11 +1698,20 @@
             let t = list[0];
             let info = getInfo(t);
             let delay = parseInt(t.DelayTime || 0);
-            let isCancel = String(t.TrainStatus) === '2';
+            const trainSuspendedFlag = Number(t.TrainSuspendedFlag || 0);
+            const isSuspended = Boolean(t.IsSuspended) || Number(t.SuspendedFlag) === 1;
+            const isPartiallySuspended = Boolean(t.IsPartiallySuspended) || trainSuspendedFlag === 2;
+            let isCancel = String(t.TrainStatus) === '2' || trainSuspendedFlag === 1 || isSuspended;
             let destName = translateStation(t.EndingStationName);
 
             if (isCancel) {
                 el.textContent = PIDS_APP.STATE.currentLang === 'zh' ? `🚫 ${t.TrainNo}次 ${info.name} ${destName} 本日停駛` : `🚫 Train ${t.TrainNo} ${info.name} to ${destName} CANCELLED`;
+                startMarquee(elId);
+                return;
+            }
+
+            if (isPartiallySuspended) {
+                el.textContent = PIDS_APP.STATE.currentLang === 'zh' ? `⚠️ ${t.TrainNo}次 ${info.name} ${destName} 部分停駛` : `⚠️ Train ${t.TrainNo} ${info.name} to ${destName} PARTIALLY SUSPENDED`;
                 startMarquee(elId);
                 return;
             }

@@ -1306,7 +1306,10 @@
                 const nowMins = now.getUTCHours() * 60 + now.getUTCMinutes();
                 list = data.filter(t => {
                     const trainStatus = t.TrainStatus !== undefined ? t.TrainStatus : t.Status;
-                    if (String(trainStatus) === '2') return true;
+                    const trainSuspendedFlag = Number(t.TrainSuspendedFlag || 0);
+                    const isSuspended = Boolean(t.IsSuspended) || Number(t.SuspendedFlag) === 1;
+                    const isPartiallySuspended = Boolean(t.IsPartiallySuspended) || trainSuspendedFlag === 2;
+                    if (String(trainStatus) === '2' || isSuspended || isPartiallySuspended || trainSuspendedFlag === 1) return true;
 
                     const baseTime = (t.Dep || t.Arr || "00:00").slice(0, 5);
                     const [h, m] = baseTime.split(':').map(Number);
@@ -1371,7 +1374,11 @@
                     const delay = Number(t.DelayTime || t.Delay || 0) || 0;
                     const dest = normalizeTaiText(t.EndingStationName || t.Dest || '');
                     const trainStatus = t.TrainStatus !== undefined ? t.TrainStatus : t.Status;
-                    const statusText = String(trainStatus) === '2' ? '停駛' : '';
+                    const trainSuspendedFlag = Number(t.TrainSuspendedFlag || 0);
+                    const isSuspended = Boolean(t.IsSuspended) || Number(t.SuspendedFlag) === 1;
+                    const isPartiallySuspended = Boolean(t.IsPartiallySuspended) || trainSuspendedFlag === 2;
+                    const isCancelled = String(trainStatus) === '2' || trainSuspendedFlag === 1;
+                    const statusText = isSuspended ? '停駛' : (isPartiallySuspended ? '部分停駛' : (isCancelled ? '停駛' : ''));
                     const delayText = statusText || (delay > 0 ? `晚 ${delay} 分` : '準點');
                     const delayClass = statusText ? 'delay-warn' : (delay > 0 ? 'delay-warn' : 'delay-ok');
                     const timeClass = delay > 0 ? 'delay-warn' : '';
@@ -1569,7 +1576,19 @@
                 const [data, liveData] = await Promise.all([schedulePromise, livePromise]);
 
                 let statusText = "列車訊號偵測中";
-                if (liveData && liveData.status === 2) {
+                const scheduleSuspendedFlag = Number(data?.TrainSuspendedFlag || data?.TrainInfo?.SuspendedFlag || 0);
+                const stops = Array.isArray(data)
+                    ? (data[0]?.StopTimes || data[0]?.Stops || [])
+                    : (data?.StopTimes || data?.Stops || []);
+                const stopSuspended = Array.isArray(stops)
+                    ? stops.some(s => String(s?.StationID || s?.ID || '') === String(currentStationID || '') && Number(s?.SuspendedFlag || 0) === 1)
+                    : false;
+
+                if (stopSuspended) {
+                    statusText = "本站停駛";
+                } else if (scheduleSuspendedFlag === 2) {
+                    statusText = "本車次部分停駛";
+                } else if ((liveData && liveData.status === 2) || scheduleSuspendedFlag === 1) {
                     statusText = "本車次今日停駛";
                 } else if (liveData && liveData.station) {
                     statusText = `列車目前位置：${normalizeTaiText(liveData.station)}`;
@@ -1592,9 +1611,6 @@
                     expectedTime = `${String(Math.floor(totalMins/60)%24).padStart(2,'0')}:${String(totalMins%60).padStart(2,'0')}`;
                 }
 
-                const stops = Array.isArray(data)
-                    ? (data[0]?.StopTimes || data[0]?.Stops || [])
-                    : (data?.StopTimes || data?.Stops || []);
                 let effectiveTypeName = String(typeName || '').trim();
                 if (!effectiveTypeName) {
                     const scheduleType = normalizeTrainTypeLabel(
