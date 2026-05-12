@@ -1762,22 +1762,25 @@
                 if (res.ok) {
                     const data = await res.json();
                     if (data.video && data.video.length > 0) {
-                        const ytUrl = data.video[0]; // 目前先取第一支影片
                         
-                        // 神奇的正則表達式：支援各種 YouTube 網址格式 (watch?v=, youtu.be, embed)
-                        let videoId = '';
-                        const match = ytUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
-                        if (match && match[1]) {
-                            videoId = match[1];
-                        }
-                        
-                        if (videoId) {
-                            const iframe = document.getElementById('video-iframe');
-                            // 組合為自動播放、靜音、無限循環的嵌入網址
-                            const newSrc = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0&modestbranding=1&rel=0`;
+                        // 1. 解析出所有您在後台輸入的 YouTube 影片 ID
+                        const videoIds = data.video.map(url => {
+                            const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+                            return match ? match[1] : null;
+                        }).filter(Boolean); // 過濾掉解析失敗的空行
+
+                        // 2. 只要有成功解析出影片，就更新播放器
+                        if (videoIds.length > 0) {
+                            const firstVideoId = videoIds[0]; // 主播放器的 ID 必須是第一部
+                            const playlistStr = videoIds.join(','); // 把所有影片 ID 用逗號串起來
                             
-                            // 只有當影片 ID 改變時才重新載入 (避免畫面閃爍)
-                            if (iframe && iframe.src !== newSrc) {
+                            const iframe = document.getElementById('video-iframe');
+                            
+                            // 組合 YouTube 播放清單網址 (playlist 包含所有影片)
+                            const newSrc = `https://www.youtube.com/embed/${firstVideoId}?autoplay=1&mute=1&loop=1&playlist=${playlistStr}&controls=0&modestbranding=1&rel=0`;
+                            
+                            // 檢查網址有沒有變更，有變更才重新載入畫面 (避免每5分鐘閃爍一次)
+                            if (iframe.src !== newSrc) {
                                 iframe.src = newSrc;
                             }
                         }
