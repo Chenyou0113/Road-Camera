@@ -788,52 +788,49 @@
                 let newsItems = [];
 
                 try {
-                    // 👉 關鍵差異：Alert 請求 "ALL" (全台)，News 請求當前選擇的系統
                     const [resAlert, resNews] = await Promise.all([
                         fetch(`${WORKER_URL_TDX}/alert?sys=ALL`),
                         fetch(`${WORKER_URL_TDX}/news?sys=${AppState.sys}`)
                     ]);
 
-                    // 1. 處理全台緊急通阻 (Status 0:停駛, 2:異常)
                     if (resAlert && resAlert.ok) {
                         const alertData = await resAlert.json();
                         if (Array.isArray(alertData)) {
                             alertData.forEach(a => {
                                 if (a.Status === 0 || a.Status === 2) {
-                                    // 依據 Worker 幫我們加上的 SysCode 判斷是哪家捷運
                                     const sName = sysMap[a.SysCode] || '捷運系統';
-                                    const title = a.Title || '營運異常';
-                                    const desc = a.Description ? `：${a.Description}` : '';
+                                    // 🔥 強制移除換行符號
+                                    const title = (a.Title || '營運異常').replace(/[\r\n]+/g, '　');
+                                    const desc = a.Description ? `：${a.Description.replace(/[\r\n]+/g, '　')}` : '';
                                     newsItems.push(`🚨【${sName} 營運通報】${title}${desc}`);
                                 }
                             });
                         }
                     }
 
-                    // 2. 處理當前捷運系統的一般新聞 (取前 2 筆)
                     if (resNews && resNews.ok) {
                         const newsData = await resNews.json();
                         if (Array.isArray(newsData)) {
                             newsData.slice(0, 2).forEach(n => {
                                 const txt = n?.NewsTitle?.Zh_tw || n?.Title?.Zh_tw || n?.Title || n?.Description || '';
-                                const clean = txt.toString().replace(/\s+/g, ' ').trim();
+                                // 🔥 強制移除換行符號
+                                const clean = txt.toString().replace(/[\r\n]+/g, '　').trim();
                                 if (clean) newsItems.push(`【${currentSysName}】${clean}`);
                             });
                         }
                     }
                 } catch (e) { console.log('TDX Fetch failed', e); }
 
-                // 3. 抓取您的 admin.html 後台自訂跑馬燈
                 let customMsg = "祝您旅途愉快！";
                 try {
                     const resMsg = await fetch('https://wang-weather.weacamm.org/api/metro/marquee');
                     if (resMsg.ok) {
                         const dataMsg = await resMsg.json();
-                        if (dataMsg.text) customMsg = dataMsg.text;
+                        // 🔥 強制將後台可能輸入的換行轉為空白
+                        if (dataMsg.text) customMsg = dataMsg.text.replace(/[\r\n]+/g, '　　');
                     }
                 } catch (e) { console.log('Custom marquee failed', e); }
 
-                // 4. 組合並輸出
                 const marqueeEl = document.getElementById('ui-marquee');
                 marqueeEl.innerText = `${newsItems.join('　　')}${newsItems.length ? '　　' : ''}${customMsg}`;
                 this.runMarqueeLoop('ui-marquee');

@@ -1695,7 +1695,6 @@
                 const sysName = sysMap[system] || '捷運系統';
                 let newsItems = [];
 
-                // 1. 同步抓取 Alerts(通阻) 與 News(新聞)
                 try {
                     const [resAlert, resNews] = await Promise.all([
                         fetch(`${METRO_API_TDX}/alert?sys=${system}`),
@@ -1707,8 +1706,9 @@
                         if (Array.isArray(alertData)) {
                             alertData.forEach(a => {
                                 if (a.Status === 0 || a.Status === 2) {
-                                    const title = a.Title || '營運異常';
-                                    const desc = a.Description ? `：${a.Description}` : '';
+                                    // 🔥 強制移除換行符號
+                                    const title = (a.Title || '營運異常').replace(/[\r\n]+/g, '　');
+                                    const desc = a.Description ? `：${a.Description.replace(/[\r\n]+/g, '　')}` : '';
                                     newsItems.push(`🚨【${sysName} 營運通報】${title}${desc}`);
                                 }
                             });
@@ -1720,28 +1720,27 @@
                         if (Array.isArray(newsData)) {
                             newsData.slice(0, 2).forEach(n => {
                                 const txt = n?.NewsTitle?.Zh_tw || n?.Title?.Zh_tw || n?.Title || n?.Description || '';
-                                const clean = txt.toString().replace(/\s+/g, ' ').trim();
+                                // 🔥 強制移除換行符號
+                                const clean = txt.toString().replace(/[\r\n]+/g, '　').trim();
                                 if (clean) newsItems.push(`【${sysName}】${clean}`);
                             });
                         }
                     }
                 } catch (e) { console.log('TDX Fetch failed', e); }
 
-                // 2. 從後台抓取自訂跑馬燈宣導文字
                 let customMsg = "祝您旅途愉快！";
                 try {
                     const resMsg = await fetch('https://wang-weather.weacamm.org/api/metro/marquee');
                     if (resMsg.ok) {
                         const dataMsg = await resMsg.json();
-                        if (dataMsg.text) customMsg = dataMsg.text;
+                        // 🔥 強制將後台可能輸入的換行轉為空白
+                        if (dataMsg.text) customMsg = dataMsg.text.replace(/[\r\n]+/g, '　　');
                     }
                 } catch (e) { console.log('Custom marquee fetch failed', e); }
 
-                // 3. 組合最終字串
                 const alertPrefix = newsItems.length ? (newsItems.join('　　') + '　　') : '';
                 const finalMarqueeText = `${alertPrefix}${customMsg}`;
 
-                // 更新手機版與桌面版跑馬燈
                 const marqueeEl = document.getElementById('ui-marquee');
                 if (marqueeEl) {
                     marqueeEl.innerText = finalMarqueeText;
