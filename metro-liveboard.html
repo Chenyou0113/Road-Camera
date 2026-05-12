@@ -784,42 +784,58 @@
 
             async updateMarquee() {
                 const sysMap = { TRTC: '台北捷運', KRTC: '高雄捷運', TYMC: '桃園捷運', TMRT: '台中捷運', NTMC: '新北捷運', KLRT: '高雄輕軌' };
-                const sysName = sysMap[AppState.sys] || '捷運系統';
+                const currentSysName = sysMap[AppState.sys] || '捷運系統';
                 let newsItems = [];
 
                 try {
-                    const res = await fetch(`${WORKER_URL_TDX}/news?sys=${AppState.sys}`);
-                    if (res && res.ok) {
-                        const data = await res.json();
-                        if (Array.isArray(data) && data.length > 0) {
-                            newsItems = data.slice(0, 3).map(n => {
-                                const txt = n?.NewsTitle?.Zh_tw || n?.Title?.Zh_tw || n?.Title || n?.NewsTitle || n?.Description || n?.Content || '';
-                                const clean = txt.toString().replace(/\s+/g, ' ').trim();
-                                return clean ? `【${sysName}】${clean}` : '';
-                            }).filter(Boolean);
+                    // 👉 關鍵差異：Alert 請求 "ALL" (全台)，News 請求當前選擇的系統
+                    const [resAlert, resNews] = await Promise.all([
+                        fetch(`${WORKER_URL_TDX}/alert?sys=ALL`),
+                        fetch(`${WORKER_URL_TDX}/news?sys=${AppState.sys}`)
+                    ]);
+
+                    // 1. 處理全台緊急通阻 (Status 0:停駛, 2:異常)
+                    if (resAlert && resAlert.ok) {
+                        const alertData = await resAlert.json();
+                        if (Array.isArray(alertData)) {
+                            alertData.forEach(a => {
+                                if (a.Status === 0 || a.Status === 2) {
+                                    // 依據 Worker 幫我們加上的 SysCode 判斷是哪家捷運
+                                    const sName = sysMap[a.SysCode] || '捷運系統';
+                                    const title = a.Title || '營運異常';
+                                    const desc = a.Description ? `：${a.Description}` : '';
+                                    newsItems.push(`🚨【${sName} 營運通報】${title}${desc}`);
+                                }
+                            });
                         }
                     }
-                } catch (e) { console.log('News fetch failed', e); }
 
-                const msgs = [
-                    "【TPASS 2.0】每月搭乘 11 次以上享回饋，國道客運最高 30% 回饋。",
-                    "捷運系統全面禁菸，違者最高處新台幣 1 萬元罰鍰。",
-                    "「跑、躲、報」遭遇威脅保命三步驟。",
-                    "搭車時請依序排隊、先下後上、上車後請網車廂內部移動",
-                    "請一人一票乘車，滿6歲（且滿115公分）兒童、輪椅旅客及陪伴者皆需購票搭車。",
-                    "海外打工須謹慎，小心落入圈套有去無回。",
-                    "投資理財非盲目投機，勿輕信股市明牌。",
-                    "提款機不能解除扣款設定，不能辨識身分，不能退款。",
-                    "檢警要錢必詐騙，監管帳戶都是騙，檢警機關不會要求民眾境外匯款。",
-                    "慎防詐騙集團常冒用政府機關名義行騙，謊稱被害人身分遭冒用，請提高警覺，如有疑問歡迎撥打165反詐騙專線。",
-                    "刑事警察局網站建置「通緝令追追追－檢舉詐欺車手專區」，全民一起抓車手領獎金。",
-                    "求職、貸款切勿交出身分證件、存摺、印章、提款卡及密碼， 避免淪為詐欺共犯。",
-                    "防詐小撇步：保持冷靜多查證，不吃虧才安心！",
-                    "祝您旅途愉快！"
-                ];
+                    // 2. 處理當前捷運系統的一般新聞 (取前 2 筆)
+                    if (resNews && resNews.ok) {
+                        const newsData = await resNews.json();
+                        if (Array.isArray(newsData)) {
+                            newsData.slice(0, 2).forEach(n => {
+                                const txt = n?.NewsTitle?.Zh_tw || n?.Title?.Zh_tw || n?.Title || n?.Description || '';
+                                const clean = txt.toString().replace(/\s+/g, ' ').trim();
+                                if (clean) newsItems.push(`【${currentSysName}】${clean}`);
+                            });
+                        }
+                    }
+                } catch (e) { console.log('TDX Fetch failed', e); }
 
+                // 3. 抓取您的 admin.html 後台自訂跑馬燈
+                let customMsg = "祝您旅途愉快！";
+                try {
+                    const resMsg = await fetch('https://wang-weather.weacamm.org/api/metro/marquee');
+                    if (resMsg.ok) {
+                        const dataMsg = await resMsg.json();
+                        if (dataMsg.text) customMsg = dataMsg.text;
+                    }
+                } catch (e) { console.log('Custom marquee failed', e); }
+
+                // 4. 組合並輸出
                 const marqueeEl = document.getElementById('ui-marquee');
-                marqueeEl.innerText = `${newsItems.join('　　')}${newsItems.length ? '　　' : ''}${msgs.join('　　')}`;
+                marqueeEl.innerText = `${newsItems.join('　　')}${newsItems.length ? '　　' : ''}${customMsg}`;
                 this.runMarqueeLoop('ui-marquee');
             },
 

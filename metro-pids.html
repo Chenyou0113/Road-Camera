@@ -1191,7 +1191,8 @@
                 }),
                 updateData(),
                 updateWeather(),
-                updateMarquee()
+                updateMarquee(),
+                updateVideo()
             ]);
 
             // 台北捷運（TRTC）每 15 秒更新一次，其他系統每 60 秒更新一次
@@ -1199,6 +1200,7 @@
             setInterval(updateData, updateInterval);
             setInterval(updateWeather, 600000);
             setInterval(updateMarquee, 300000);
+            setInterval(updateVideo, 300000); // 每5分鐘檢查一次影片有無更換
             updateClock();
             setInterval(updateClock, 1000);
 
@@ -1686,61 +1688,66 @@
             } catch (e) { }
         }
 
-        // 📢 專業官方宣導 + 循環播放邏輯
+        // 📢 專業通阻 + 新聞 + 後台自訂宣導邏輯
         async function updateMarquee() {
             try {
-                // --- 1. 取得目前系統名稱 ---
                 const sysMap = { 'TRTC': '台北捷運', 'KRTC': '高雄捷運', 'TYMC': '桃園捷運', 'TMRT': '台中捷運', 'NTMC': '新北捷運', 'KLRT': '高雄輕軌' };
                 const sysName = sysMap[system] || '捷運系統';
-
-                // --- 2. 抓取最新消息 / 通阻（從 metro-api-worker 的 news 端點） ---
                 let newsItems = [];
+
+                // 1. 同步抓取 Alerts(通阻) 與 News(新聞)
                 try {
-                    const res = await fetch(`${METRO_API_TDX}/news?sys=${system}`);
-                    if (res && res.ok) {
-                        const data = await res.json();
-                        if (Array.isArray(data) && data.length > 0) {
-                            newsItems = data.slice(0, 3).map(n => {
-                                // 優先取中文標題或描述
-                                const txt = n?.NewsTitle?.Zh_tw || n?.Title?.Zh_tw || n?.Title || n?.NewsTitle || n?.Description || n?.Content || '';
-                                return txt.toString().replace(/\s+/g, ' ').trim();
-                            }).filter(Boolean);
+                    const [resAlert, resNews] = await Promise.all([
+                        fetch(`${METRO_API_TDX}/alert?sys=${system}`),
+                        fetch(`${METRO_API_TDX}/news?sys=${system}`)
+                    ]);
+
+                    if (resAlert && resAlert.ok) {
+                        const alertData = await resAlert.json();
+                        if (Array.isArray(alertData)) {
+                            alertData.forEach(a => {
+                                if (a.Status === 0 || a.Status === 2) {
+                                    const title = a.Title || '營運異常';
+                                    const desc = a.Description ? `：${a.Description}` : '';
+                                    newsItems.push(`🚨【${sysName} 營運通報】${title}${desc}`);
+                                }
+                            });
                         }
                     }
-                } catch (e) { console.log('News fetch failed', e); }
 
-                // --- 3. 完整官方宣導內容 (嚴格保留) ---
-                const mandatoryMessages = [
-                    "【TPASS 2.0（公共運輸常客優惠）】民眾只要持記名電子票證且至公路局公共運輸常客優惠回饋專區完成登錄，每月搭乘公共運輸達11次以上，可享不同比例乘車金額回饋，臺鐵和捷運也有加碼。針對91條中長途國道客運路線設計較易達成之回饋條件，民眾每月搭乘2至3次即可享有15%乘車金額回饋，4次以上則享30%回饋。",
-                    "遇緊急狀況保持冷靜勿驚慌，請使用對講機通知服務人員處理。",
-                    "搭車時請依序排隊、先下後上、上車後請網車廂內部移動",
-                    "請一人一票乘車，滿6歲（且滿115公分）兒童、輪椅旅客及陪伴者皆需購票搭車。",
-                    "捷運系統全面禁止吸菸(含電子煙等類菸品)，違者依法最高可處新台幣1萬元罰鍰。",
-                    "搭乘電扶梯兩側皆可站立、避免使用手機；電扶梯出入口請勿逗留。",
-                    "「跑、躲、報！遭遇突發威脅，保命關鍵三步驟」：「跑」：立即跑離現場，不圍觀拍照。「躲」：尋找安全處躲藏，保持安靜。「報」：確認安全後立即報案(110或119)。",
-                    "海外打工須謹慎，小心落入圈套有去無回。",
-                    "投資理財非盲目投機，勿輕信股市明牌。",
-                    "提款機不能解除扣款設定，不能辨識身分，不能退款。",
-                    "檢警要錢必詐騙，監管帳戶都是騙，檢警機關不會要求民眾境外匯款。",
-                    "慎防詐騙集團常冒用政府機關名義行騙，謊稱被害人身分遭冒用，請提高警覺，如有疑問歡迎撥打165反詐騙專線。",
-                    "刑事警察局網站建置「通緝令追追追－檢舉詐欺車手專區」，全民一起抓車手領獎金。",
-                    "求職、貸款切勿交出身分證件、存摺、印章、提款卡及密碼， 避免淪為詐欺共犯。",
-                    "防詐小撇步：保持冷靜多查證，不吃虧才安心！",
-                    "時時小心防意外，處處留意保平安，發現異常速通報，乘車安全得確保。"
-                ];
+                    if (resNews && resNews.ok) {
+                        const newsData = await resNews.json();
+                        if (Array.isArray(newsData)) {
+                            newsData.slice(0, 2).forEach(n => {
+                                const txt = n?.NewsTitle?.Zh_tw || n?.Title?.Zh_tw || n?.Title || n?.Description || '';
+                                const clean = txt.toString().replace(/\s+/g, ' ').trim();
+                                if (clean) newsItems.push(`【${sysName}】${clean}`);
+                            });
+                        }
+                    }
+                } catch (e) { console.log('TDX Fetch failed', e); }
 
-                // --- 4. 組合最終字串 ---
+                // 2. 從後台抓取自訂跑馬燈宣導文字
+                let customMsg = "祝您旅途愉快！";
+                try {
+                    const resMsg = await fetch('https://wang-weather.weacamm.org/api/metro/marquee');
+                    if (resMsg.ok) {
+                        const dataMsg = await resMsg.json();
+                        if (dataMsg.text) customMsg = dataMsg.text;
+                    }
+                } catch (e) { console.log('Custom marquee fetch failed', e); }
+
+                // 3. 組合最終字串
                 const alertPrefix = newsItems.length ? (newsItems.join('　　') + '　　') : '';
-                const finalMarqueeText = `${alertPrefix}${mandatoryMessages.join('　　')}　　祝您旅途愉快！`;
+                const finalMarqueeText = `${alertPrefix}${customMsg}`;
 
-                // 手機版跑馬燈
+                // 更新手機版與桌面版跑馬燈
                 const marqueeEl = document.getElementById('ui-marquee');
                 if (marqueeEl) {
                     marqueeEl.innerText = finalMarqueeText;
                     setTimeout(() => runMarqueeLoop('ui-marquee'), 60);
                 }
                 
-                // 桌面版跑馬燈
                 const marqueeDesktopEl = document.getElementById('ui-marquee-desktop');
                 if (marqueeDesktopEl) {
                     marqueeDesktopEl.innerText = finalMarqueeText;
@@ -1748,6 +1755,38 @@
                 }
 
             } catch (e) { console.error("Marquee error:", e); }
+        }
+
+        async function updateVideo() {
+            try {
+                const res = await fetch('https://wang-weather.weacamm.org/api/metro/assets');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.video && data.video.length > 0) {
+                        const ytUrl = data.video[0]; // 目前先取第一支影片
+                        
+                        // 神奇的正則表達式：支援各種 YouTube 網址格式 (watch?v=, youtu.be, embed)
+                        let videoId = '';
+                        const match = ytUrl.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+                        if (match && match[1]) {
+                            videoId = match[1];
+                        }
+                        
+                        if (videoId) {
+                            const iframe = document.getElementById('video-iframe');
+                            // 組合為自動播放、靜音、無限循環的嵌入網址
+                            const newSrc = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&loop=1&playlist=${videoId}&controls=0&modestbranding=1&rel=0`;
+                            
+                            // 只有當影片 ID 改變時才重新載入 (避免畫面閃爍)
+                            if (iframe && iframe.src !== newSrc) {
+                                iframe.src = newSrc;
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("Video update failed:", e);
+            }
         }
 
         // 🔥 無限循環跑馬燈控制核心

@@ -115,6 +115,25 @@
                     <button onclick="savePidsAssets()" style="background: #2196f3;">儲存媒體設定</button>
                     <div class="status" id="pidsAssetsStatus"></div>
                 </div>
+
+                <!-- 捷運跑馬燈與影片 -->
+                <div class="card" style="border-top: 4px solid #8246af;">
+                    <h3 style="color: #8246af;"><i class="fas fa-subway"></i> 捷運 PIDS 看板設定</h3>
+                    
+                    <div style="background:#252525; padding:12px; border-radius:6px; margin-bottom:15px; max-height: 100px; overflow-y: auto;">
+                        <span style="color:#aaa; font-size:0.8rem;">📍 目前跑馬燈：</span>
+                        <span id="metroMarqueeCurrentText" style="color: #e1bee7; font-family: monospace; white-space: pre-wrap; word-wrap: break-word;">載入中...</span>
+                    </div>
+                    
+                    <label style="font-size:0.8rem; color:#888;">📝 捷運宣導跑馬燈</label>
+                    <textarea id="metroMarqueeInput" style="height: 100px;" placeholder="輸入捷運看板宣導文字..."></textarea>
+                    
+                    <label style="font-size:0.8rem; color:#888;">🎥 捷運播放影片 (一行一個 YouTube 連結)</label>
+                    <textarea id="metroVideoInput" style="height: 60px;" placeholder="https://www.youtube.com/watch?v=..."></textarea>
+                    
+                    <button style="background: linear-gradient(135deg, #8246af, #5e35b1);" onclick="saveMetroSettings()">儲存捷運看板設定</button>
+                    <div class="status" id="metroStatus"></div>
+                </div>
             </div>
 
             
@@ -153,7 +172,7 @@
 
     <script>
         // ★ 配置：請確保網址正確
-        const WEATHER_API = 'https://wang-weather.xiaoyouwu5-fd3.workers.dev';
+        const WEATHER_API = 'https://wang-weather.weacamm.org';
         const PIDS_API = 'https://tra-schedule-worker.weacamm.org';
         const ADMIN_BUILD = '2026-04-16-reroute-v1';
 
@@ -219,11 +238,24 @@
                 document.getElementById('ann_content').value = dataAnn?.content || '';
                 document.getElementById('ann_list').value = Array.isArray(dataAnn?.list) ? dataAnn.list.join('\n') : '';
 
-                // 載入 PIDS 文字
+                // 載入 PIDS 字
                 const resP = await apiRequest(`${WEATHER_API}/api/pids/marquee`, 'GET', null, false);
                 const dataP = await resP.json();
                 document.getElementById('pidsCurrentText').innerText = dataP.text;
                 document.getElementById('pidsMarqueeInput').value = dataP.text;
+
+                // 載入捷運跑馬燈
+                const resMetro = await apiRequest(`${WEATHER_API}/api/metro/marquee`, 'GET', null, false);
+                const dataMetro = await resMetro.json();
+                document.getElementById('metroMarqueeCurrentText').innerText = dataMetro.text;
+                document.getElementById('metroMarqueeInput').value = dataMetro.text;
+
+                // 載入捷運影片
+                const resMetroVid = await apiRequest(`${WEATHER_API}/api/metro/assets`, 'GET', null, false);
+                const dataMetroVid = await resMetroVid.json();
+                if(dataMetroVid.video) {
+                    document.getElementById('metroVideoInput').value = dataMetroVid.video.join('\n');
+                }
 
                 // 載入 PIDS 素材
                 const resA = await apiRequest(`${WEATHER_API}/api/pids/assets`, 'GET', null, false);
@@ -252,6 +284,31 @@
                     document.getElementById('pidsCurrentText').innerText = newText;
                 } else {
                     statusEl.innerText = `❌ 儲存失敗：${raw || `HTTP ${res.status}`}`;
+                }
+            } catch (e) {
+                statusEl.innerText = "❌ 儲存失敗：連線異常";
+            }
+        }
+
+        async function saveMetroSettings() {
+            const statusEl = document.getElementById('metroStatus');
+            statusEl.innerText = "⏳ 儲存中...";
+            
+            const newText = document.getElementById('metroMarqueeInput').value;
+            const newVideo = document.getElementById('metroVideoInput').value.split('\n').filter(s => s.trim());
+            
+            try {
+                // 平行發送更新跑馬燈與更新影片的請求
+                const [resText, resVid] = await Promise.all([
+                    apiRequest(`${WEATHER_API}/api/admin/update-metro-marquee`, 'POST', { text: newText }, true),
+                    apiRequest(`${WEATHER_API}/api/admin/update-metro-assets`, 'POST', { video: newVideo }, true)
+                ]);
+                
+                if (resText.ok && resVid.ok) {
+                    statusEl.innerText = "✅ 捷運文字與影片已成功更新";
+                    document.getElementById('metroMarqueeCurrentText').innerText = newText;
+                } else {
+                    statusEl.innerText = "❌ 儲存失敗，請檢查登入狀態";
                 }
             } catch (e) {
                 statusEl.innerText = "❌ 儲存失敗：連線異常";

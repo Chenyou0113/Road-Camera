@@ -165,6 +165,78 @@ export default {
         }
     }
 
+    // ============================
+    // API: 捷運 PIDS 跑馬燈管理
+    // ============================
+    if (url.pathname === '/api/metro/marquee' && request.method === 'GET') {
+        try {
+            const record = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'METRO_MARQUEE'").first();
+            // 如果資料庫沒資料，給予預設值
+            const defaultMsg = "【TPASS 2.0】每月搭乘 11 次以上享回饋，國道客運最高 30% 回饋。　　捷運系統全面禁菸，違者最高處新台幣 1 萬元罰鍰。";
+            return new Response(JSON.stringify({ text: record?.Value || defaultMsg }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        } catch (e) {
+            return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    if (url.pathname === '/api/admin/update-metro-marquee' && request.method === 'POST') {
+        const auth = await authenticate();
+        if (!auth.success) return new Response(JSON.stringify(auth), { status: 401, headers: corsHeaders });
+
+        try {
+            const body = await request.json();
+            const newText = String(body?.text || '').trim();
+            if (!newText) throw new Error('捷運跑馬燈文字不得為空');
+
+            await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value, ExpiresAt) VALUES (?, ?, ?)")
+                .bind('METRO_MARQUEE', newText, 9999999999)
+                .run();
+
+            return new Response(JSON.stringify({ success: true, text: newText }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        } catch (e) {
+            return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    // ============================
+    // API: 捷運 PIDS 影片管理
+    // ============================
+    if (url.pathname === '/api/metro/assets' && request.method === 'GET') {
+        try {
+            const vidRes = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'METRO_VIDEO'").first();
+            let video = [];
+            try { video = JSON.parse(vidRes?.Value || '[]'); } catch (_) { video = vidRes?.Value ? [vidRes.Value] : []; }
+            
+            // 預設給一支宣導影片，避免畫面空轉
+            if (video.length === 0) video = ["https://www.youtube.com/watch?v=Y_siE2Wsp38"];
+            
+            return new Response(JSON.stringify({ video }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        } catch (e) {
+            return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    if (url.pathname === '/api/admin/update-metro-assets' && request.method === 'POST') {
+        const auth = await authenticate();
+        if (!auth.success) return new Response(JSON.stringify(auth), { status: 401, headers: corsHeaders });
+
+        try {
+            const body = await request.json();
+            const video = Array.isArray(body?.video) ? body.video : [];
+            await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('METRO_VIDEO', ?)")
+                .bind(JSON.stringify(video))
+                .run();
+
+            return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        } catch (e) {
+            return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
     if (url.pathname === '/api/admin/update-pids' && request.method === 'POST') {
         const auth = await authenticate();
         if (!auth.success) return new Response(JSON.stringify(auth), { status: 401, headers: corsHeaders });
