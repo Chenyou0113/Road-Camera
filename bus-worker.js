@@ -39,6 +39,32 @@ const norm = (n) => {
             .trim();
 };
 
+// 🌟 智能名稱淨化器：過濾 TDX 冗餘的重複路線號碼與超長文字
+const formatDisplayName = (rName, sName) => {
+    let main = getZh(rName).trim();
+    let sub = getZh(sName).trim();
+    
+    // 如果附屬名稱不存在，或跟主名稱一模一樣，直接回傳主名稱
+    if (!sub || main === sub) return main;
+
+    // 剔除附屬名稱中「重複出現的主路線號碼」 (解決 "307" 跟 "307西藏" 變成 "307307西藏" 的問題)
+    if (sub.startsWith(main)) {
+        sub = sub.substring(main.length).trim();
+    } else if (sub.includes(main)) {
+        sub = sub.replace(main, '').trim();
+    }
+
+    // 清除開頭奇怪的標點符號
+    sub = sub.replace(/^[-\/_(（]/, '').replace(/[)）]$/, '').trim();
+
+    if (!sub) return main;
+
+    // 若業者把整段站牌寫進去，限制字數以免版面爆炸
+    if (sub.length > 10) sub = sub.substring(0, 10) + "...";
+
+    return `${main} ${sub}`; // 完美排版：主號碼 + 空白 + 乾淨的附屬名
+};
+
 const formatServiceDay = (sd) => {
     if (!sd) return "未知";
     const days = [];
@@ -152,14 +178,15 @@ async function autoSyncCity(city, cat, token, env) {
     let batch = [], seen = new Set(), results = [];
     const routeStopsMap = new Map();
     const stopRoutesMap = new Map();
-    const stmt = env.DB.prepare("INSERT OR REPLACE INTO routes (uid, city, name, departure, destination, type, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    const stmt = env.DB.prepare("INSERT OR REPLACE INTO routes_v2 (uid, city, name, departure, destination, type, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
     
     if (Array.isArray(data)) {
         data.forEach(r => {
             if (!r.Stops || r.Stops.length < 2) return;
-            const rName = getZh(r.RouteName);
-            let finalName = norm(getZh(r.SubRouteName) || rName);
-            if (rName && !finalName.includes(norm(rName))) finalName = `${norm(rName)} ${finalName}`;
+            const rName = r.RouteName;
+            const sName = r.SubRouteName;
+            // 🌟 使用淨化器產生給民眾看的完美名稱
+            let finalName = formatDisplayName(rName, sName);
 
             const uniqKey = `${city}_${finalName}`;
             if (!seen.has(uniqKey)) {
@@ -226,7 +253,8 @@ export default {
             const cat = params.get("category") || "CityBus";
 
             if (action === "db_init") {
-                await env.DB.prepare(`CREATE TABLE IF NOT EXISTS routes (uid TEXT PRIMARY KEY, city TEXT, name TEXT, departure TEXT, destination TEXT, type TEXT, updated_at INTEGER)`).run();
+                // 將 routes 改為 routes_v2 強制重建乾淨的資料庫
+                await env.DB.prepare(`CREATE TABLE IF NOT EXISTS routes_v2 (uid TEXT PRIMARY KEY, city TEXT, name TEXT, departure TEXT, destination TEXT, type TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS bus_snapshot (id INTEGER PRIMARY KEY AUTOINCREMENT, plate TEXT, route_name TEXT, lat REAL, lon REAL, time TEXT)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_stops (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, type TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS stop_routes (city TEXT, stop_name TEXT, routes TEXT, updated_at INTEGER, PRIMARY KEY (city, stop_name))`).run();
@@ -234,6 +262,7 @@ export default {
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_fares (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables_v3 (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
+                await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables_v8 (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS bus_news (cache_key TEXT PRIMARY KEY, city TEXT, type TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS bus_alerts (cache_key TEXT PRIMARY KEY, city TEXT, type TEXT, data TEXT, updated_at INTEGER)`).run();
                 return send({ status: "D1 Tables Initialized" });
@@ -246,10 +275,10 @@ export default {
                 
                 let added = 0;
                 for (const c of list) {
-                    const results = await autoSyncCity(c, token, env);
+                    const results = await autoSyncCity(c, "CityBus", token, env);
                     added += results.length;
                 }
-                if (!targetCity) await env.DB.prepare("DELETE FROM routes WHERE updated_at < ?").bind(startTime).run();
+                if (!targetCity) await env.DB.prepare("DELETE FROM routes_v2 WHERE updated_at < ?").bind(startTime).run();
                 return send({ status: "success", added_or_updated: added });
             }
 
@@ -257,7 +286,7 @@ export default {
                 const search = params.get("search");
                 const targetCity = params.get("city");
                 
-                let sql = "SELECT name, departure, destination, city, type FROM routes WHERE 1=1";
+                let sql = "SELECT name, departure, destination, city, type FROM routes_v2 WHERE 1=1";
                 let binds = [];
                 if (search) { sql += " AND (name LIKE ? OR departure LIKE ? OR destination LIKE ?)"; binds.push(`%${search}%`, `%${search}%`, `%${search}%`); }
                 if (targetCity) { sql += " AND city = ?"; binds.push(targetCity); }
@@ -289,7 +318,7 @@ export default {
 
                 let routes = await getStopRoutes();
                 if (!routes) {
-                    await autoSyncCity(city, token, env);
+                    await autoSyncCity(city, cat, token, env);
                     routes = await getStopRoutes();
                 }
                 return send({ routes: Array.isArray(routes) ? routes : [] });
@@ -388,10 +417,10 @@ export default {
 
                 // 🔸 4B. 取得時刻表 (Schedule) & 班距發車 (Frequency)
                 if (action === "timetable") {
-                    // 升級為 v7，啟動最強的 4合1 聚合抓取機制
-                    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables_v7 (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
+                    // 升級為 v8，啟動最強的 4合1 聚合抓取機制 (修復 TDX 拼字錯誤)
+                    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables_v8 (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
 
-                    const cached = await getCachedJson(env, "route_timetables_v7", "route_key = ?", [routeKey], null);
+                    const cached = await getCachedJson(env, "route_timetables_v8", "route_key = ?", [routeKey], null);
                     if (cached) return send({ route, timetables: cached });
 
                     try {
@@ -420,7 +449,9 @@ export default {
                         // 處理班距的輔助函數
                         const processFrequencies = (r, target) => {
                             const fm = {};
-                            (r.Frequencies || []).forEach(f => {
+                            // 🌟 防禦 TDX 的拼字錯誤：同時支援 Frequencies 與 Frequencys
+                            const rawFreqs = r.Frequencies || r.Frequencys || [];
+                            rawFreqs.forEach(f => {
                                 const day = formatServiceDay(f.ServiceDay);
                                 if (!fm[day]) fm[day] = { service_day: day, ranges: [] };
                                 fm[day].ranges.push({
@@ -432,10 +463,12 @@ export default {
                             target.frequencies.push(...Object.values(fm));
                         };
 
-                        // 處理常態與每日時刻表的輔助函數
+                        // 處理常態與每日時刻表的輔助函數 (順便防禦 TimeTables 的大小寫問題)
                         const processTimeTables = (r, target, isDaily) => {
                             const sm = {};
-                            (r.TimeTables || []).forEach(t => {
+                            // 🌟 同時支援 TimeTables 與 Timetables (大小寫問題)
+                            const rawTimes = r.TimeTables || r.Timetables || [];
+                            rawTimes.forEach(t => {
                                 const day = isDaily ? "今日時刻表" : formatServiceDay(t.ServiceDay);
                                 const isLow = t.IsLowFloor === 1;
                                 const key = `${day}_${isLow}`;
@@ -464,7 +497,9 @@ export default {
                                     
                                 firstStops.forEach(st => {
                                     const day = isDaily ? "今日時刻表" : formatServiceDay(st.ServiceDay);
-                                    (st.TimeTables || []).forEach(t => {
+                                    // 🌟 同時支援 TimeTables 與 Timetables
+                                    const stTimeTables = st.TimeTables || st.Timetables || [];
+                                    stTimeTables.forEach(t => {
                                         const isLow = t.IsLowFloor === 1;
                                         const key = `${day}_${isLow}`;
                                         if (!sm[key]) sm[key] = { service_day: day, is_low_floor: isLow, departure_times: [] };
@@ -513,7 +548,7 @@ export default {
                         });
 
                         const timetables = Object.values(dirMap);
-                        await upsertJson(env, "route_timetables_v7", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(timetables), Date.now()]);
+                        await upsertJson(env, "route_timetables_v8", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(timetables), Date.now()]);
                         return send({ route, timetables });
                     } catch (err) {
                         return send({ error: "Failed to fetch timetable", details: err.message }, 500);
@@ -616,7 +651,7 @@ export default {
                 });
             }
 
-            const { results } = await env.DB.prepare("SELECT COUNT(*) as total FROM routes").all();
+            const { results } = await env.DB.prepare("SELECT COUNT(*) as total FROM routes_v2").all();
             return send({ status: "running", version: CONFIG.VERSION, db_count: results[0].total });
 
         } catch (e) {

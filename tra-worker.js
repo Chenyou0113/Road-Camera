@@ -124,8 +124,16 @@ export default {
     },
 
     async fetch(request, env) {
-        const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" };
-        if (request.method === "OPTIONS") return new Response(null, { headers: cors });
+        // 🚀 升級 CORS 標頭，並對 preflight 明確回應 204
+        const cors = { 
+            "Access-Control-Allow-Origin": "*", 
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS", 
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Max-Age": "86400"
+        };
+        if (request.method === "OPTIONS") {
+            return new Response(null, { status: 204, headers: cors });
+        }
         const url = new URL(request.url);
 
         try {

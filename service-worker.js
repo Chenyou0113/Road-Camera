@@ -26,6 +26,11 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
 
+    // 🚀 API 豁免條款：跨網域後端 API 與站內 API 一律放行，不交給 Service Worker 攔截
+    if (url.hostname === 'tra-schedule-worker.weacamm.org' || url.pathname.startsWith('/api/')) {
+        return;
+    }
+
     // 🔥 修正 1: 忽略所有非 http/https 請求 (解決 chrome-extension 報錯)
     if (!url.protocol.startsWith('http')) {
         return; 
