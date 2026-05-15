@@ -333,25 +333,6 @@ export default {
 
                         if (items.length > 0) {
                             await upsertJson(env, "route_stops", ["route_key", "city", "route_name", "type", "data", "updated_at"], [routeKey, city, route, cat, JSON.stringify(items), Date.now()]);
-
-                            const stopRoutesMap = new Map();
-                            items.forEach(item => {
-                                (item.Stops || []).forEach(s => {
-                                    const stopName = getZh(s.StopName);
-                                    if (!stopName) return;
-                                    if (!stopRoutesMap.has(stopName)) stopRoutesMap.set(stopName, new Set());
-                                    stopRoutesMap.get(stopName).add(route);
-                                });
-                            });
-                            const stopRouteStmt = env.DB.prepare("INSERT OR REPLACE INTO stop_routes (city, stop_name, routes, updated_at) VALUES (?, ?, ?, ?)");
-                            const stopRouteBatch = [];
-                            for (const [stopName, routeSet] of stopRoutesMap.entries()) {
-                                const routeList = Array.from(routeSet).sort((a, b) => a.localeCompare(b, 'zh-Hant'));
-                                stopRouteBatch.push(stopRouteStmt.bind(city, stopName, JSON.stringify(routeList), Date.now()));
-                            }
-                            for (let i = 0; i < stopRouteBatch.length; i += 100) {
-                                await env.DB.batch(stopRouteBatch.slice(i, i + 100));
-                            }
                         }
 
                         return send(items);
@@ -378,9 +359,10 @@ export default {
                     }
                 }
 
-                // 🔸 4B. 取得時刻表 (Schedule)
+                // 🔸 4B. 取得時刻表 (Schedule) & 班距發車 (Frequency)
                 if (action === "timetable") {
-                    const cached = await getCachedJson(env, "route_timetables", "route_key = ?", [routeKey], null);
+                    // 使用 _v3 強制忽略舊快取
+                    const cached = await getCachedJson(env, "route_timetables_v3", "route_key = ?", [routeKey], null);
                     if (cached) return send({ route, timetables: cached });
 
                     try {
@@ -388,21 +370,44 @@ export default {
                         const timetables = data.filter(match).map(r => ({
                             direction: r.Direction === 0 ? "去程" : (r.Direction === 1 ? "返程" : "迴圈"),
                             route_name: getZh(r.SubRouteName) || getZh(r.RouteName),
-                            schedules: (r.TimeTables || []).map(t => ({
-                                service_day: formatServiceDay(t.ServiceDay),
-                                is_low_floor: t.IsLowFloor === 1,
-                                departure_times: (t.StopTimes || [])
-                                    .filter(st => st.StopSequence === 1)
-                                    .map(st => st.DepartureTime)
-                            })),
-                            frequencies: (r.Frequencies || []).map(f => ({
-                                service_day: formatServiceDay(f.ServiceDay),
-                                time_range: `${f.StartTime} - ${f.EndTime}`,
-                                min_headway: f.MinHeadwayMins,
-                                max_headway: f.MaxHeadwayMins
-                            }))
+                            
+                            // 固定發車時刻 (群組化)
+                            schedules: (() => {
+                                const sm = {};
+                                (r.TimeTables || []).forEach(t => {
+                                    const day = formatServiceDay(t.ServiceDay);
+                                    const isLow = t.IsLowFloor === 1;
+                                    const key = `${day}_${isLow}`;
+                                    if (!sm[key]) sm[key] = { service_day: day, is_low_floor: isLow, departure_times: [] };
+                                    
+                                    if (t.StopTimes && t.StopTimes.length > 0) {
+                                        const fst = t.StopTimes.find(st => st.StopSequence === 1 || st.StopSequence === 0) || t.StopTimes[0];
+                                        if (fst && fst.DepartureTime) sm[key].departure_times.push(fst.DepartureTime);
+                                    }
+                                });
+                                const arr = Object.values(sm);
+                                arr.forEach(s => s.departure_times.sort((a, b) => a.localeCompare(b)));
+                                return arr;
+                            })(),
+                            
+                            // 間距發車 (依照服務日群組化)
+                            frequencies: (() => {
+                                const fm = {};
+                                (r.Frequencies || []).forEach(f => {
+                                    const day = formatServiceDay(f.ServiceDay);
+                                    if (!fm[day]) fm[day] = { service_day: day, ranges: [] };
+                                    fm[day].ranges.push({
+                                        time_range: `${(f.StartTime||"").substring(0,5)} - ${(f.EndTime||"").substring(0,5)}`,
+                                        min: f.MinHeadwayMins,
+                                        max: f.MaxHeadwayMins
+                                    });
+                                });
+                                return Object.values(fm);
+                            })()
                         }));
-                        await upsertJson(env, "route_timetables", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(timetables), Date.now()]);
+
+                        await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables_v3 (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
+                        await upsertJson(env, "route_timetables_v3", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(timetables), Date.now()]);
                         return send({ route, timetables });
                     } catch (err) {
                         return send({ error: "Failed to fetch timetable", details: err.message }, 500);

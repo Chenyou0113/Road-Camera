@@ -1555,14 +1555,15 @@
             const currentDirLabel = currentData.direction === 1 ? '返程' : (currentData.direction === 0 ? '去程' : '迴圈');
             const safeId = (text) => text.replace(/\s+/g, '-').replace(/[^A-Za-z0-9_-]/g, '');
 
+            // --- 固定時刻表區塊渲染 ---
             const renderScheduleBlock = (s) => {
                 const times = Array.isArray(s.departure_times) ? s.departure_times.filter(Boolean) : [];
                 if (!times.length) return '';
-                const timeChips = times.map(t => `<div class="time-chip">${t}</div>`).join('');
+                const timeChips = times.map(t => `<div class="time-chip">${t.substring(0,5)}</div>`).join('');
                 return `
-                    <div style="margin-bottom:14px;">
-                        <div style="display:flex; align-items:center; gap:8px; font-weight:700; font-size:0.9rem; color:#334155; margin-bottom:8px;">
-                            <i class="fas fa-calendar-day"></i>
+                    <div style="margin-bottom:16px;">
+                        <div style="display:flex; align-items:center; gap:8px; font-weight:700; font-size:0.9rem; color:#334155; margin-bottom:10px;">
+                            <i class="fas fa-calendar-check" style="color:#0f766e;"></i>
                             <span>${s.service_day || '未知服務日'}</span>
                             ${s.is_low_floor ? '<span style="font-size:0.7rem; background:#ecfdf5; color:#059669; padding:2px 6px; border-radius:999px;">低地板</span>' : ''}
                         </div>
@@ -1571,15 +1572,26 @@
                 `;
             };
 
+            // --- 班距發車區塊渲染 ---
             const renderFrequencyBlock = (f) => {
-                const range = f.time_range || '';
-                const min = f.min_headway;
-                const max = f.max_headway;
-                const headway = (min || max) ? `約 ${min}${max ? `–${max}` : ''} 分鐘/班` : '';
+                const rangesHtml = (f.ranges || []).map(r => {
+                    const headway = (r.min || r.max) ? `${r.min}${r.max && r.max !== r.min ? `–${r.max}` : ''} 分鐘` : '固定班距';
+                    return `
+                        <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed #cbd5e1;">
+                            <span style="color:#475569; font-family:monospace; font-size:0.95rem; font-weight:bold;">${r.time_range}</span>
+                            <span style="color:#2563eb; font-weight:800;">${headway}</span>
+                        </div>
+                    `;
+                }).join('');
+
                 return `
-                    <div style="margin-bottom:10px;">
-                        <div style="font-weight:700; font-size:0.9rem; color:#1e3a5f;">${f.service_day || '未知服務日'}</div>
-                        <div style="font-size:0.85rem; color:#475569;">${range}${headway ? `： ${headway}` : ''}</div>
+                    <div style="margin-bottom:16px; background:white; border:1px solid #e2e8f0; border-radius:10px; overflow:hidden;">
+                        <div style="background:#f8fafc; padding:10px 14px; font-weight:800; color:#1e3a5f; font-size:0.95rem; border-bottom:1px solid #e2e8f0; display:flex; align-items:center; gap:8px;">
+                            <i class="fas fa-calendar-day" style="color:#64748b;"></i> ${f.service_day || '未知服務日'}
+                        </div>
+                        <div style="padding:2px 14px 6px;">
+                            ${rangesHtml}
+                        </div>
                     </div>
                 `;
             };
@@ -1595,22 +1607,28 @@
                 const isActive = label === currentDirLabel;
                 const schedules = Array.isArray(entry.schedules) ? entry.schedules : [];
                 const frequencies = Array.isArray(entry.frequencies) ? entry.frequencies : [];
+                
                 const scheduleHtml = schedules.map(renderScheduleBlock).join('');
                 const frequencyHtml = frequencies.map(renderFrequencyBlock).join('');
 
                 let sectionHtml = '';
+                
+                // 如果有「班距發車」資料
                 if (frequencyHtml) {
-                    sectionHtml += `<div style="margin-bottom:15px; background:#f0f9ff; border-left:4px solid #3b82f6; padding:10px 14px; border-radius:4px;">`;
-                    sectionHtml += `<div style="font-weight:700; font-size:0.85rem; color:#1e40af; margin-bottom:6px;"><i class="fas fa-arrows-left-right"></i> 發車班距</div>`;
+                    sectionHtml += `<div style="font-weight:900; font-size:1.05rem; color:#1e40af; margin-bottom:12px; margin-top:10px; display:flex; align-items:center; gap:8px;"><i class="fas fa-history"></i> 發車班距</div>`;
                     sectionHtml += frequencyHtml;
-                    sectionHtml += `</div>`;
                 }
+                
+                // 如果有「固定時刻」資料
                 if (scheduleHtml) {
-                    sectionHtml += `<div style="font-weight:700; font-size:0.85rem; color:#475569; margin-bottom:8px;"><i class="fas fa-list-ol"></i> 固定發車時刻</div>`;
+                    if (frequencyHtml) sectionHtml += `<div style="height:1px; background:#e2e8f0; margin:20px 0;"></div>`;
+                    sectionHtml += `<div style="font-weight:900; font-size:1.05rem; color:#0f766e; margin-bottom:12px; margin-top:10px; display:flex; align-items:center; gap:8px;"><i class="fas fa-list-ol"></i> 固定發車時刻</div>`;
                     sectionHtml += scheduleHtml;
                 }
+                
+                // 兩者都沒有
                 if (!sectionHtml) {
-                    sectionHtml = `<div style="text-align:center; color:#94a3b8; padding:20px;">無營運資料</div>`;
+                    sectionHtml = `<div style="text-align:center; color:#94a3b8; padding:30px;"><i class="fas fa-bus-slash fa-2x" style="margin-bottom:10px; color:#cbd5e1;"></i><br>目前無排定營運資料</div>`;
                 }
 
                 return `<div id="tt-${safeId(label)}" style="display:${isActive ? 'block' : 'none'};">${sectionHtml}</div>`;
@@ -1621,13 +1639,15 @@
                 ${contents}
             `;
 
-            window.switchTimetableTab = function(type, e) {
+            window.switchTimetableTab = function(textId, e) {
                 document.querySelectorAll('.timetable-tab-btn').forEach(b => b.classList.remove('active'));
                 if (e && e.target) e.target.classList.add('active');
-                scheduleData.forEach(entry => {
-                    const label = entry.direction || '方向';
-                    const el = document.getElementById(`tt-${safeId(label)}`);
-                    if (el) el.style.display = safeId(label) === type ? 'block' : 'none';
+                
+                // 找到所有的 tt-* 元素並隱藏，只顯示選中的
+                const container = document.getElementById('modal-body');
+                const contents = container.querySelectorAll('[id^="tt-"]');
+                contents.forEach(el => {
+                    el.style.display = el.id === `tt-${textId}` ? 'block' : 'none';
                 });
             };
         } catch (e) {
@@ -1636,17 +1656,16 @@
         }
     }
 
-    // 🌟 票價資訊彈窗 (接軌 Worker 新 API 結構)
+    // 🌟 票價資訊彈窗 (加入起訖站互動試算功能)
     async function showFareModal() {
         document.getElementById('options-dropdown').style.display = 'none';
         const modal = document.getElementById('modal-overlay');
         const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
 
-        title.innerHTML = `<i class="fas fa-calculator"></i> <span>${currentData.route} 票價資訊</span>`;
+        title.innerHTML = `<i class="fas fa-calculator"></i> <span>${currentData.route} 票價試算</span>`;
         modal.style.display = 'flex';
 
-        // 若之前在 loadRoute 尚未成功載入 fare，這裡會進行重試
         if (!currentData.fare) {
             body.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在載入票價資料...</div>`;
             try {
@@ -1662,17 +1681,124 @@
 
         const fares = currentData.fare || [];
         if (!fares.length) {
-            body.innerHTML = `<div style="text-align:center; color:#9ca3af; padding:30px;">查無票價資料</div>`;
+            body.innerHTML = `<div style="text-align:center; color:#9ca3af; padding:30px;">目前 TDX 未提供此路線票價</div>`;
             return;
         }
 
-        const renderFareItems = (list) => {
-            if (!list || !list.length) return '<div style="color:#94a3b8; font-size:0.85rem;">無票價明細</div>';
-            return `
+        const fareProfile = fares[0]; // 取主要票價設定
+        const isOD = fareProfile.pricing_type.includes("起迄") || fareProfile.pricing_type.includes("站區間");
+        const stops = currentData.stops[currentData.direction] || [];
+
+        if (stops.length === 0) {
+            body.innerHTML = `<div style="text-align:center; color:#9ca3af; padding:30px;">無法取得站牌資料進行試算</div>`;
+            return;
+        }
+
+        // 產生站牌下拉選單
+        const stopOptions = stops.map((s, i) => `<option value="${i}">${s.StopName?.Zh_tw || s.StopName}</option>`).join('');
+
+        body.innerHTML = `
+            <div style="background:#f8fafc; padding:16px; border-radius:12px; margin-bottom:16px; border:1px solid #e2e8f0;">
+                <div style="font-size:0.85rem; color:#64748b; margin-bottom:12px; font-weight:bold;">選擇搭乘區間 (${fareProfile.pricing_type})</div>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <div style="width:32px; height:32px; border-radius:50%; background:#dbeafe; color:#2563eb; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:0.9rem; flex-shrink:0;">起</div>
+                        <select id="fare-from" onchange="calcFare()" style="flex:1; padding:10px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.95rem; outline:none; background:white;">
+                            ${stopOptions}
+                        </select>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <div style="width:32px; height:32px; border-radius:50%; background:#fee2e2; color:#ef4444; display:flex; align-items:center; justify-content:center; font-weight:bold; font-size:0.9rem; flex-shrink:0;">迄</div>
+                        <select id="fare-to" onchange="calcFare()" style="flex:1; padding:10px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.95rem; outline:none; background:white;">
+                            ${stopOptions}
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div id="fare-result-container"></div>
+        `;
+
+        // 預設將迄站設為最後一站
+        document.getElementById('fare-to').value = stops.length - 1;
+
+        // 計算票價的核心邏輯
+        window.calcFare = function() {
+            const fromIdx = parseInt(document.getElementById('fare-from').value);
+            const toIdx = parseInt(document.getElementById('fare-to').value);
+            const resEl = document.getElementById('fare-result-container');
+
+            if (fromIdx >= toIdx) {
+                resEl.innerHTML = `<div style="text-align:center; padding:15px; color:#ef4444; font-weight:bold; background:#fef2f2; border-radius:8px;">上車點必須在下車點之前</div>`;
+                return;
+            }
+
+            if (fareProfile.is_free) {
+                 resEl.innerHTML = `<div style="text-align:center; padding:20px; color:#059669; font-size:1.2rem; font-weight:900;">此路線免費搭乘 🆓</div>`;
+                 return;
+            }
+
+            let resultFares = [];
+            let segmentHtml = '';
+
+            if (isOD) {
+                // 【客運 / 里程計費】
+                const fromName = stops[fromIdx].StopName?.Zh_tw || stops[fromIdx].StopName;
+                const toName = stops[toIdx].StopName?.Zh_tw || stops[toIdx].StopName;
+                const odFares = fareProfile.od_fares || [];
+                
+                // 尋找包含關鍵字的區間 (因為TDX客運站名有時候會有中英文夾雜或備註不同)
+                const match = odFares.find(od => 
+                    (od.origin.includes(fromName) || fromName.includes(od.origin)) && 
+                    (od.destination.includes(toName) || toName.includes(od.destination))
+                );
+                
+                if (match) {
+                    resultFares = match.fares;
+                } else {
+                     resEl.innerHTML = `<div style="text-align:center; padding:20px; color:#64748b; background:#f1f5f9; border-radius:8px;">無法精確匹配此區間的里程票價<br><span style="font-size:0.8rem;">(TDX 起訖站名可能不完全對應)</span></div>`;
+                     return;
+                }
+            } else {
+                // 【市區公車 / 段次計費】
+                const secFares = fareProfile.section_fares && fareProfile.section_fares.length > 0 ? fareProfile.section_fares[0] : null;
+                if (!secFares) {
+                    resEl.innerHTML = `<div style="text-align:center; padding:20px; color:#64748b;">該路線無段次票價明細設定</div>`;
+                    return;
+                }
+
+                let segments = 1;
+                const buffers = secFares.buffer_zones || [];
+                
+                // 自動偵測是否跨越緩衝區增加段次
+                buffers.forEach(bz => {
+                    const bStartIdx = stops.findIndex(s => (s.StopName?.Zh_tw || s.StopName) === bz.origin);
+                    const bEndIdx = stops.findIndex(s => (s.StopName?.Zh_tw || s.StopName) === bz.destination);
+                    
+                    if (bStartIdx !== -1 && bEndIdx !== -1) {
+                        const trueStart = Math.min(bStartIdx, bEndIdx);
+                        const trueEnd = Math.max(bStartIdx, bEndIdx);
+                        // 規則: 若上車於緩衝區前，且下車於緩衝區後，則加收一段票
+                        if (fromIdx < trueStart && toIdx > trueEnd) segments++;
+                    }
+                });
+
+                const baseFares = secFares.fares || [];
+                resultFares = baseFares.map(f => ({ ...f, price: f.price * segments }));
+                segmentHtml = `<div style="text-align:center; font-weight:800; color:#d97706; margin-bottom:12px; background:#fffbeb; padding:8px; border-radius:8px; border:1px solid #fef3c7;">本區間需收取 ${segments} 段票</div>`;
+            }
+
+            if (!resultFares || resultFares.length === 0) {
+                 resEl.innerHTML = `<div style="text-align:center; padding:20px; color:#64748b;">無票價資料</div>`;
+                 return;
+            }
+
+            // 渲染最終金額
+            resEl.innerHTML = `
+                ${segmentHtml}
                 <div class="fare-types-grid">
-                    ${list.map(f => `
-                        <div class="fare-type-cell ${f.class === '成人' ? 'highlight' : ''}">
-                            <div class="fare-type-label">${f.class || '票種'} · ${f.type || ''}</div>
+                    ${resultFares.map(f => `
+                        <div class="fare-type-cell ${f.class === '成人' || f.class === '全票' || f.class === '一般票' ? 'highlight' : ''}">
+                            <div class="fare-type-label">${f.class || '票種'}</div>
                             <div class="fare-type-price">$${f.price}</div>
                         </div>
                     `).join('')}
@@ -1680,48 +1806,8 @@
             `;
         };
 
-        const renderSectionFares = (items) => {
-            if (!items || !items.length) return '';
-            return items.map(s => {
-                const buffers = (s.buffer_zones || []).map(b => `${b.origin || ''} ➔ ${b.destination || ''}`).filter(Boolean);
-                const bufferHtml = buffers.length
-                    ? `<div style="font-size:0.8rem; color:#d97706; margin-bottom:8px;">緩衝區：${buffers.join('、')}</div>`
-                    : '';
-                return `
-                    <div style="margin-top:12px; padding:12px; border:1px solid #f1f5f9; border-radius:10px;">
-                        <div style="font-weight:700; color:#1f2937; margin-bottom:6px;">${s.direction || '方向'}</div>
-                        ${bufferHtml}
-                        ${renderFareItems(s.fares)}
-                    </div>
-                `;
-            }).join('');
-        };
-
-        const renderODFares = (items) => {
-            if (!items || !items.length) return '';
-            return items.map(od => {
-                const title = `${od.direction || '方向'} · ${od.origin || ''} ➔ ${od.destination || ''}`.trim();
-                return `
-                    <div style="margin-top:12px; padding:12px; border:1px solid #f1f5f9; border-radius:10px;">
-                        <div style="font-weight:700; color:#1f2937; margin-bottom:6px;">${title}</div>
-                        ${renderFareItems(od.fares)}
-                    </div>
-                `;
-            }).join('');
-        };
-
-        const content = fares.map(f => `
-            <div style="margin-bottom:18px; padding-bottom:14px; border-bottom:1px solid #e5e7eb;">
-                <div style="font-weight:800; color:#111827; margin-bottom:6px;">${f.route_name || currentData.route}</div>
-                <div style="font-size:0.85rem; color:#64748b; margin-bottom:10px;">
-                    計費方式：${f.pricing_type || '未提供'}${f.is_free ? ' <span style="color:#059669; font-weight:bold;">· 免費</span>' : ''}
-                </div>
-                ${renderSectionFares(f.section_fares)}
-                ${renderODFares(f.od_fares)}
-            </div>
-        `).join('');
-
-        body.innerHTML = content;
+        // 第一次開啟自動執行一次計算
+        window.calcFare();
     }
 
     function parseWKT(wkt) {
