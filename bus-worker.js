@@ -64,10 +64,15 @@ const safeJsonParse = (text, fallback) => {
 };
 
 async function getCachedJson(env, table, whereSql, binds, maxAgeMs) {
-    const row = await env.DB.prepare(`SELECT data, updated_at FROM ${table} WHERE ${whereSql}`).bind(...binds).first();
-    if (!row || !row.data) return null;
-    if (maxAgeMs && row.updated_at && (Date.now() - row.updated_at > maxAgeMs)) return null;
-    return safeJsonParse(row.data, null);
+    try {
+        const row = await env.DB.prepare(`SELECT data, updated_at FROM ${table} WHERE ${whereSql}`).bind(...binds).first();
+        if (!row || !row.data) return null;
+        if (maxAgeMs && row.updated_at && (Date.now() - row.updated_at > maxAgeMs)) return null;
+        return safeJsonParse(row.data, null);
+    } catch (e) {
+        // 若資料表不存在或其他錯誤，直接回傳 null 視同無快取，不中斷程式
+        return null; 
+    }
 }
 
 async function upsertJson(env, table, columns, values) {
@@ -225,6 +230,7 @@ export default {
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_shapes (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_fares (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
+                await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables_v3 (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS bus_news (cache_key TEXT PRIMARY KEY, city TEXT, type TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS bus_alerts (cache_key TEXT PRIMARY KEY, city TEXT, type TEXT, data TEXT, updated_at INTEGER)`).run();
                 return send({ status: "D1 Tables Initialized" });
@@ -361,6 +367,9 @@ export default {
 
                 // 🔸 4B. 取得時刻表 (Schedule) & 班距發車 (Frequency)
                 if (action === "timetable") {
+                    // 先確保資料表存在，避免直接 getCachedJson 發生 no such table 錯誤
+                    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables_v3 (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
+
                     // 使用 _v3 強制忽略舊快取
                     const cached = await getCachedJson(env, "route_timetables_v3", "route_key = ?", [routeKey], null);
                     if (cached) return send({ route, timetables: cached });
