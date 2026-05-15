@@ -271,10 +271,17 @@ export default {
             if (action === "stop_info") {
                 const stopName = params.get("name") || "";
                 if (!stopName) return send({ routes: [] });
-                let routes = await getCachedJson(env, "stop_routes", "city = ? AND stop_name = ?", [city, stopName], null);
+                
+                // 自訂查詢函數，因為 stop_routes 儲存陣列的欄位叫做 'routes' 而不是 'data'
+                const getStopRoutes = async () => {
+                    const row = await env.DB.prepare("SELECT routes FROM stop_routes WHERE city = ? AND stop_name = ?").bind(city, stopName).first();
+                    return row ? safeJsonParse(row.routes, null) : null;
+                };
+
+                let routes = await getStopRoutes();
                 if (!routes) {
                     await autoSyncCity(city, token, env);
-                    routes = await getCachedJson(env, "stop_routes", "city = ? AND stop_name = ?", [city, stopName], null);
+                    routes = await getStopRoutes();
                 }
                 return send({ routes: Array.isArray(routes) ? routes : [] });
             }
