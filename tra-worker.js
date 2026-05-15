@@ -30,9 +30,9 @@ const getTdxToken = async (env) => {
 };
 
 // --- 同步時刻表 (Blob 模式) ---
-const syncDailyScheduleBlob = async (env) => {
+const syncDailyScheduleBlob = async (env, offsetDaysArray = [0]) => {
     const token = await getTdxToken(env);
-    const dates = [0, 1, 2, 3, 4].map(getTwDateString); 
+    const dates = offsetDaysArray.map(getTwDateString); // 根據傳入的陣列取得日期
     const expireTime = Math.floor(Date.now() / 1000) + (7 * 86400); 
     for (const date of dates) {
         const res = await fetch(`https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/DailyTrainTimetable/TrainDate/${date}?%24format=JSON`, { headers: { "Authorization": `Bearer ${token}` } });
@@ -103,8 +103,24 @@ const syncTraAlerts = async (env) => {
 
 export default {
     async scheduled(event, env, ctx) {
-        ctx.waitUntil(Promise.allSettled([syncTrainLiveBoard(env), syncTraAlerts(env)]));
-        if (new Date().getUTCHours() === 20) ctx.waitUntil(syncDailyScheduleBlob(env));
+        const date = new Date();
+        const m = date.getMinutes();
+        const h = (date.getUTCHours() + 8) % 24; // 轉為台灣時間的小時
+
+        // 任務包：所有排程都會執行的基礎任務 (即時誤點 + 跑馬燈警報)
+        const tasks = [syncTrainLiveBoard(env), syncTraAlerts(env)];
+
+        // 每 15 分鐘 (0, 15, 30, 45)：只更新「今天」的時刻表，用來抓突發停駛狀態！
+        if (m % 15 === 0) {
+            tasks.push(syncDailyScheduleBlob(env, [0]));
+        }
+
+        // 每天凌晨 2 點 0 分：更新「未來四天」的常態時刻表，確保預售票資料正確
+        if (h === 2 && m === 0) {
+            tasks.push(syncDailyScheduleBlob(env, [1, 2, 3, 4]));
+        }
+
+        ctx.waitUntil(Promise.allSettled(tasks));
     },
 
     async fetch(request, env) {
@@ -223,7 +239,7 @@ export default {
                 const type = url.searchParams.get("type");
                 if (type === 'live') await syncTrainLiveBoard(env); 
                 else if (type === 'alerts') await syncTraAlerts(env);
-                else if (type === 'schedule') await syncDailyScheduleBlob(env);
+                else if (type === 'schedule') await syncDailyScheduleBlob(env, [0, 1, 2, 3, 4]);
                 return new Response(`✅ ${type} 同步成功！`, { headers: cors });
             }
             if (request.method === "POST") {
