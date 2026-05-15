@@ -870,31 +870,39 @@
                             
                             <select id="city-select" onchange="selectCity(this.value)">
                                 <optgroup label="全台路網">
-                                    <option value="InterCity">公路客運 (全台)</option>
+                                    <option value="InterCity:InterCity">公路客運 (全台)</option>
                                 </optgroup>
-                                <optgroup label="市區公車 (依縣市)">
-                                    <option value="Taipei">臺北市</option>
-                                    <option value="NewTaipei">新北市</option>
-                                    <option value="Keelung">基隆市</option>
-                                    <option value="Taoyuan">桃園市</option>
-                                    <option value="Hsinchu">新竹市</option>
-                                    <option value="HsinchuCounty">新竹縣</option>
-                                    <option value="YilanCounty">宜蘭縣</option>
-                                    <option value="MiaoliCounty">苗栗縣</option>
-                                    <option value="Taichung">臺中市</option>
-                                    <option value="ChanghuaCounty">彰化縣</option>
-                                    <option value="NantouCounty">南投縣</option>
-                                    <option value="YunlinCounty">雲林縣</option>
-                                    <option value="Chiayi">嘉義市</option>
-                                    <option value="ChiayiCounty">嘉義縣</option>
-                                    <option value="Tainan">臺南市</option>
-                                    <option value="Kaohsiung">高雄市</option>
-                                    <option value="PingtungCounty">屏東縣</option>
-                                    <option value="HualienCounty">花蓮縣</option>
-                                    <option value="TaitungCounty">臺東縣</option>
-                                    <option value="PenghuCounty">澎湖縣</option>
-                                    <option value="KinmenCounty">金門縣</option>
-                                    <option value="LienchiangCounty">連江縣</option>
+                                <optgroup label="市區公車">
+                                    <option value="CityBus:Taipei">臺北市</option>
+                                    <option value="CityBus:NewTaipei">新北市</option>
+                                    <option value="CityBus:Taoyuan">桃園市</option>
+                                    <option value="CityBus:Taichung">臺中市</option>
+                                    <option value="CityBus:Tainan">臺南市</option>
+                                    <option value="CityBus:Kaohsiung">高雄市</option>
+                                    <option value="CityBus:Keelung">基隆市</option>
+                                    <option value="CityBus:Hsinchu">新竹市</option>
+                                    <option value="CityBus:HsinchuCounty">新竹縣</option>
+                                    <option value="CityBus:YilanCounty">宜蘭縣</option>
+                                    <option value="CityBus:MiaoliCounty">苗栗縣</option>
+                                    <option value="CityBus:ChanghuaCounty">彰化縣</option>
+                                    <option value="CityBus:NantouCounty">南投縣</option>
+                                    <option value="CityBus:YunlinCounty">雲林縣</option>
+                                    <option value="CityBus:Chiayi">嘉義市</option>
+                                    <option value="CityBus:ChiayiCounty">嘉義縣</option>
+                                    <option value="CityBus:PingtungCounty">屏東縣</option>
+                                    <option value="CityBus:HualienCounty">花蓮縣</option>
+                                    <option value="CityBus:TaitungCounty">臺東縣</option>
+                                    <option value="CityBus:PenghuCounty">澎湖縣</option>
+                                    <option value="CityBus:KinmenCounty">金門縣</option>
+                                    <option value="CityBus:LienchiangCounty">連江縣</option>
+                                </optgroup>
+                                <optgroup label="需求反應式公車 (DRTS)">
+                                    <option value="DRTS:Taipei">臺北市 (預約公車)</option>
+                                    <option value="DRTS:Taichung">臺中市 (預約公車)</option>
+                                </optgroup>
+                                <optgroup label="科學園區接駁車">
+                                    <option value="SciencePark:HSP">新竹科學園區</option>
+                                    <option value="SciencePark:CTSP">中部科學園區</option>
                                 </optgroup>
                             </select>
                         </div>
@@ -1135,13 +1143,28 @@
 
     let browser = { type: 'CityBus', city: 'Taipei', cache: {} };
 
-    async function selectCity(cityKey) {
-        if (!cityKey) return;
+    async function selectCity(selectedValue) {
+        if (!selectedValue) return;
+        
+        let cat = 'CityBus';
+        let cityKey = selectedValue;
+
+        // 解析 "分類:縣市" 格式
+        if (selectedValue.includes(':')) {
+            const parts = selectedValue.split(':');
+            cat = parts[0];
+            cityKey = parts[1];
+        } else {
+            // 相容舊版網頁快取
+            cat = cityKey === 'InterCity' ? 'InterCity' : 'CityBus';
+        }
+
         browser.city = cityKey;
-        browser.type = cityKey === 'InterCity' ? 'InterCity' : 'CityBus';
+        browser.type = cat;
         
         const sel = document.getElementById('city-select');
-        if (sel && sel.value !== cityKey) sel.value = cityKey;
+        // 對齊 select value
+        if (sel && sel.value !== `${cat}:${cityKey}`) sel.value = `${cat}:${cityKey}`;
 
         if (document.getElementById('marquee-city-text')) {
             updateMarqueeSection('marquee-city-text', browser.city, browser.type);
@@ -1151,12 +1174,13 @@
         container.innerHTML = `<div class="route-cards-grid">${Array(16).fill('<div class="browser-skeleton"></div>').join('')}</div>`;
 
         try {
-            const res = await throttledFetch(`${WORKER_URL}/?action=list_all&city=${cityKey}`);
+            // 🌟 這裡把 category 也傳給 Worker
+            const res = await throttledFetch(`${WORKER_URL}/?action=list_all&city=${cityKey}&category=${cat}`);
             const data = await res.json();
             const routes = Array.isArray(data) ? data : [];
             
             if (!routes.length) {
-                container.innerHTML = `<div class="browser-empty">此縣市暫無路線</div>`;
+                container.innerHTML = `<div class="browser-empty">此區域暫無路線</div>`;
                 return;
             }
             

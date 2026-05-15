@@ -122,16 +122,32 @@ async function fetchRouteData(baseUrl, routePrefix, token) {
     throw new Error(lastError);
 }
 
-// 🌟 智慧按需同步功能 (當 D1 沒有該縣市資料時，立刻去 TDX 抓下來存檔)
-async function autoSyncCity(city, token, env) {
-    const syncVer = (city === "Tainan") ? "v3" : "v2";
-    const path = (city === "InterCity") ? "v2/Bus/StopOfRoute/InterCity" : `${syncVer}/Bus/StopOfRoute/City/${city}`;
+// 🌟 升級：精準對接 TDX 官方 v3 / v2 API 路徑規範
+async function autoSyncCity(city, cat, token, env) {
+    let apiVer = "v2";
+    let apiPath = `City/${city}`;
+
+    // 依據類別動態切換 API 版本與路徑
+    if (cat === "InterCity") {
+        apiVer = "v2";
+        apiPath = "InterCity";
+    } else if (cat === "DRTS") {
+        apiVer = "v3"; // 官方明訂 DRTS 使用 v3
+        apiPath = `DRTS/City/${city}`;
+    } else if (cat === "SciencePark") {
+        apiVer = "v2";
+        apiPath = `SciencePark/${city}`;
+    } else {
+        // 一般 CityBus
+        apiVer = city === "Tainan" ? "v3" : "v2";
+        apiPath = `City/${city}`;
+    }
     
-    const res = await fetch(`${CONFIG.BASE_API}/${path}?$format=JSON`, { headers: { Authorization: `Bearer ${token}` } });
+    const res = await fetch(`${CONFIG.BASE_API}/${apiVer}/Bus/StopOfRoute/${apiPath}?$format=JSON`, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) return [];
     
     const data = await res.json();
-    const type = city === "InterCity" ? "InterCity" : "CityBus";
+    const type = cat; // 沿用傳入的類別
     const startTime = Date.now();
     let batch = [], seen = new Set(), results = [];
     const routeStopsMap = new Map();
@@ -156,13 +172,7 @@ async function autoSyncCity(city, token, env) {
             }
 
             const routeKey = getRouteKey(city, type, getZh(r.SubRouteName) || getZh(r.RouteName));
-            const slimItem = {
-                RouteName: r.RouteName,
-                SubRouteName: r.SubRouteName,
-                Direction: r.Direction,
-                Stops: r.Stops,
-                Operators: r.Operators || []
-            };
+            const slimItem = { RouteName: r.RouteName, SubRouteName: r.SubRouteName, Direction: r.Direction, Stops: r.Stops, Operators: r.Operators || [] };
             if (!routeStopsMap.has(routeKey)) routeStopsMap.set(routeKey, []);
             routeStopsMap.get(routeKey).push(slimItem);
 
@@ -174,10 +184,7 @@ async function autoSyncCity(city, token, env) {
             });
         });
         
-        // 批次寫入 D1 (每 100 筆為一單位，防止超過 Cloudflare 限制)
-        for (let i = 0; i < batch.length; i += 100) {
-            await env.DB.batch(batch.slice(i, i + 100));
-        }
+        for (let i = 0; i < batch.length; i += 100) await env.DB.batch(batch.slice(i, i + 100));
 
         const stopBatch = [];
         const routeStopStmt = env.DB.prepare("INSERT OR REPLACE INTO route_stops (route_key, city, route_name, type, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)");
@@ -185,9 +192,7 @@ async function autoSyncCity(city, token, env) {
             const routeName = items[0]?.SubRouteName || items[0]?.RouteName || "";
             stopBatch.push(routeStopStmt.bind(key, city, getZh(routeName), type, JSON.stringify(items), startTime));
         }
-        for (let i = 0; i < stopBatch.length; i += 100) {
-            await env.DB.batch(stopBatch.slice(i, i + 100));
-        }
+        for (let i = 0; i < stopBatch.length; i += 100) await env.DB.batch(stopBatch.slice(i, i + 100));
 
         const stopRouteBatch = [];
         const stopRouteStmt = env.DB.prepare("INSERT OR REPLACE INTO stop_routes (city, stop_name, routes, updated_at) VALUES (?, ?, ?, ?)");
@@ -195,9 +200,7 @@ async function autoSyncCity(city, token, env) {
             const routeList = Array.from(routeSet).sort((a, b) => a.localeCompare(b, 'zh-Hant'));
             stopRouteBatch.push(stopRouteStmt.bind(city, stopName, JSON.stringify(routeList), startTime));
         }
-        for (let i = 0; i < stopRouteBatch.length; i += 100) {
-            await env.DB.batch(stopRouteBatch.slice(i, i + 100));
-        }
+        for (let i = 0; i < stopRouteBatch.length; i += 100) await env.DB.batch(stopRouteBatch.slice(i, i + 100));
     }
     
     results.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
@@ -264,7 +267,7 @@ export default {
                 // 🌟 核心魔法：如果 D1 裡沒資料，且用戶是選擇了特定縣市，自動觸發即時同步修復！
                 if (results.length === 0 && targetCity && !search) {
                     try {
-                        const syncedData = await autoSyncCity(targetCity, token, env);
+                        const syncedData = await autoSyncCity(targetCity, cat, token, env);
                         return send(syncedData);
                     } catch (e) {
                         console.error("Auto Sync Error:", e);
@@ -311,12 +314,30 @@ export default {
             }
 
             if (route) {
-                const isInter = cat === "InterCity";
-                const dynVer = isInter ? "v2" : (city === "Tainan" ? "v3" : "v2");
-                const staticVer = "v2"; 
-                const stopVer = (city === "Tainan") ? "v3" : "v2";
-                
-                const path = isInter ? "InterCity" : `City/${city}`;
+                // 🌟 新增對 DRTS 與 SciencePark 的 API 路徑判斷 (依據 TDX 官方 v3 文件)
+                let apiVer = "v2";
+                let apiPath = `City/${city}`;
+
+                if (cat === "InterCity") {
+                    apiVer = "v2";
+                    apiPath = "InterCity";
+                } else if (cat === "DRTS") {
+                    apiVer = "v3"; // 官方明訂 DRTS 使用 v3
+                    apiPath = `DRTS/City/${city}`;
+                } else if (cat === "SciencePark") {
+                    apiVer = "v2";
+                    apiPath = `SciencePark/${city}`;
+                } else {
+                    apiVer = city === "Tainan" ? "v3" : "v2";
+                    apiPath = `City/${city}`;
+                }
+
+                // 為了不改動下方大量的抓取邏輯，直接將所有版本變數對齊 apiVer，路徑對齊 apiPath
+                const dynVer = apiVer;
+                const staticVer = apiVer; 
+                const stopVer = apiVer;
+                const path = apiPath;
+
                 const routePrefix = route.split(' ')[0]; 
                 const targetNorm = norm(route);
                 const routeKey = getRouteKey(city, cat, route);
@@ -328,7 +349,7 @@ export default {
                     if (cached) return send(cached);
 
                     try {
-                        const data = await fetchRouteData(`${CONFIG.BASE_API}/${stopVer}/Bus/StopOfRoute/${path}`, routePrefix, token);
+                        const data = await fetchRouteData(`${CONFIG.BASE_API}/${stopVer}/Bus/StopOfRoute/${apiPath}`, routePrefix, token);
                         const items = data.filter(match).map(r => ({
                             RouteName: r.RouteName,
                             SubRouteName: r.SubRouteName,
@@ -353,7 +374,7 @@ export default {
                     if (cached) return send(cached);
 
                     try {
-                        const data = await fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/Shape/${path}`, routePrefix, token);
+                        const data = await fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/Shape/${apiPath}`, routePrefix, token);
                         const shapes = data.filter(i => {
                             const n = norm(getZh(i.SubRouteName) || getZh(i.RouteName));
                             return n === targetNorm;
@@ -367,56 +388,132 @@ export default {
 
                 // 🔸 4B. 取得時刻表 (Schedule) & 班距發車 (Frequency)
                 if (action === "timetable") {
-                    // 先確保資料表存在，避免直接 getCachedJson 發生 no such table 錯誤
-                    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables_v3 (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
+                    // 升級為 v7，啟動最強的 4合1 聚合抓取機制
+                    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables_v7 (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
 
-                    // 使用 _v3 強制忽略舊快取
-                    const cached = await getCachedJson(env, "route_timetables_v3", "route_key = ?", [routeKey], null);
+                    const cached = await getCachedJson(env, "route_timetables_v7", "route_key = ?", [routeKey], null);
                     if (cached) return send({ route, timetables: cached });
 
                     try {
-                        const data = await fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/Schedule/${path}`, routePrefix, token);
-                        const timetables = data.filter(match).map(r => ({
-                            direction: r.Direction === 0 ? "去程" : (r.Direction === 1 ? "返程" : "迴圈"),
-                            route_name: getZh(r.SubRouteName) || getZh(r.RouteName),
-                            
-                            // 固定發車時刻 (群組化)
-                            schedules: (() => {
-                                const sm = {};
-                                (r.TimeTables || []).forEach(t => {
-                                    const day = formatServiceDay(t.ServiceDay);
-                                    const isLow = t.IsLowFloor === 1;
-                                    const key = `${day}_${isLow}`;
-                                    if (!sm[key]) sm[key] = { service_day: day, is_low_floor: isLow, departure_times: [] };
-                                    
-                                    if (t.StopTimes && t.StopTimes.length > 0) {
-                                        const fst = t.StopTimes.find(st => st.StopSequence === 1 || st.StopSequence === 0) || t.StopTimes[0];
-                                        if (fst && fst.DepartureTime) sm[key].departure_times.push(fst.DepartureTime);
-                                    }
+                        // 🌟 吸星大法：4 種可能存放時刻表的 API 全部一次抓回來
+                        const [schedData, dailyData, genStopData, dailyStopData] = await Promise.all([
+                            fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/Schedule/${path}`, routePrefix, token).catch(() => []),
+                            fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/DailyTimeTable/${path}`, routePrefix, token).catch(() => []),
+                            fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/GeneralStopTimeTable/${path}`, routePrefix, token).catch(() => []),
+                            fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/DailyStopTimeTable/${path}`, routePrefix, token).catch(() => [])
+                        ]);
+
+                        const dirMap = {};
+                        const initDir = (r) => {
+                            const dirLabel = r.Direction === 0 ? "去程" : (r.Direction === 1 ? "返程" : "迴圈");
+                            if (!dirMap[dirLabel]) {
+                                dirMap[dirLabel] = {
+                                    direction: dirLabel,
+                                    route_name: getZh(r.SubRouteName) || getZh(r.RouteName),
+                                    schedules: [],
+                                    frequencies: []
+                                };
+                            }
+                            return dirMap[dirLabel];
+                        };
+
+                        // 處理班距的輔助函數
+                        const processFrequencies = (r, target) => {
+                            const fm = {};
+                            (r.Frequencies || []).forEach(f => {
+                                const day = formatServiceDay(f.ServiceDay);
+                                if (!fm[day]) fm[day] = { service_day: day, ranges: [] };
+                                fm[day].ranges.push({
+                                    time_range: `${(f.StartTime||"").substring(0,5)} - ${(f.EndTime||"").substring(0,5)}`,
+                                    min: f.MinHeadwayMins,
+                                    max: f.MaxHeadwayMins
                                 });
-                                const arr = Object.values(sm);
-                                arr.forEach(s => s.departure_times.sort((a, b) => a.localeCompare(b)));
-                                return arr;
-                            })(),
-                            
-                            // 間距發車 (依照服務日群組化)
-                            frequencies: (() => {
-                                const fm = {};
-                                (r.Frequencies || []).forEach(f => {
-                                    const day = formatServiceDay(f.ServiceDay);
-                                    if (!fm[day]) fm[day] = { service_day: day, ranges: [] };
-                                    fm[day].ranges.push({
-                                        time_range: `${(f.StartTime||"").substring(0,5)} - ${(f.EndTime||"").substring(0,5)}`,
-                                        min: f.MinHeadwayMins,
-                                        max: f.MaxHeadwayMins
+                            });
+                            target.frequencies.push(...Object.values(fm));
+                        };
+
+                        // 處理常態與每日時刻表的輔助函數
+                        const processTimeTables = (r, target, isDaily) => {
+                            const sm = {};
+                            (r.TimeTables || []).forEach(t => {
+                                const day = isDaily ? "今日時刻表" : formatServiceDay(t.ServiceDay);
+                                const isLow = t.IsLowFloor === 1;
+                                const key = `${day}_${isLow}`;
+                                if (!sm[key]) sm[key] = { service_day: day, is_low_floor: isLow, departure_times: [] };
+                                
+                                let depTime = t.DepartureTime;
+                                if (!depTime && t.StopTimes && t.StopTimes.length > 0) {
+                                    // 確保抓出順序最前面那一站的時間
+                                    const fst = t.StopTimes.reduce((min, curr) => ((curr.StopSequence||0) < (min.StopSequence||0) ? curr : min), t.StopTimes[0]);
+                                    depTime = fst.DepartureTime || fst.ArrivalTime;
+                                }
+                                if (depTime) sm[key].departure_times.push(depTime);
+                            });
+                            const arr = Object.values(sm).filter(s => s.departure_times.length > 0);
+                            target.schedules.push(...arr);
+                        };
+
+                        // 處理站別時刻表的輔助函數
+                        const processStops = (r, target, isDaily) => {
+                            const sm = {};
+                            if (r.Stops && r.Stops.length > 0) {
+                                const hasSeq = r.Stops[0].StopSequence !== undefined;
+                                let firstStops = hasSeq 
+                                    ? r.Stops.filter(s => (s.StopSequence || 0) === Math.min(...r.Stops.map(x => x.StopSequence || 0)))
+                                    : r.Stops.filter(s => s.StopID === r.Stops[0].StopID);
+                                    
+                                firstStops.forEach(st => {
+                                    const day = isDaily ? "今日時刻表" : formatServiceDay(st.ServiceDay);
+                                    (st.TimeTables || []).forEach(t => {
+                                        const isLow = t.IsLowFloor === 1;
+                                        const key = `${day}_${isLow}`;
+                                        if (!sm[key]) sm[key] = { service_day: day, is_low_floor: isLow, departure_times: [] };
+                                        if (t.DepartureTime || t.ArrivalTime) sm[key].departure_times.push(t.DepartureTime || t.ArrivalTime);
                                     });
                                 });
-                                return Object.values(fm);
-                            })()
-                        }));
+                            }
+                            const arr = Object.values(sm).filter(s => s.departure_times.length > 0);
+                            target.schedules.push(...arr);
+                        };
 
-                        await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables_v3 (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
-                        await upsertJson(env, "route_timetables_v3", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(timetables), Date.now()]);
+                        // 開始聚合所有資料來源
+                        const allDatasets = [
+                            { data: schedData, type: 'basic', isDaily: false },
+                            { data: dailyData, type: 'basic', isDaily: true },
+                            { data: genStopData, type: 'stop', isDaily: false },
+                            { data: dailyStopData, type: 'stop', isDaily: true }
+                        ];
+
+                        allDatasets.forEach(dataset => {
+                            (Array.isArray(dataset.data) ? dataset.data : []).filter(match).forEach(r => {
+                                const target = initDir(r);
+                                processFrequencies(r, target);
+                                if (dataset.type === 'basic') processTimeTables(r, target, dataset.isDaily);
+                                else processStops(r, target, dataset.isDaily);
+                            });
+                        });
+
+                        // 🌟 合併、去重並排序
+                        Object.values(dirMap).forEach(target => {
+                            // 1. 合併相同的 service_day，把時間加進 Set 裡去重
+                            const mergedSm = {};
+                            target.schedules.forEach(s => {
+                                const key = `${s.service_day}_${s.is_low_floor}`;
+                                if (!mergedSm[key]) mergedSm[key] = { ...s, departure_times: new Set(s.departure_times) };
+                                else s.departure_times.forEach(t => mergedSm[key].departure_times.add(t));
+                            });
+                            // 排序時間
+                            target.schedules = Object.values(mergedSm).map(s => ({
+                                ...s, 
+                                departure_times: [...s.departure_times].sort((a, b) => a.localeCompare(b))
+                            }));
+                            
+                            // 2. 去除重複的班距區間
+                            target.frequencies = target.frequencies.filter((v, i, a) => a.findIndex(t => (t.service_day === v.service_day)) === i);
+                        });
+
+                        const timetables = Object.values(dirMap);
+                        await upsertJson(env, "route_timetables_v7", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(timetables), Date.now()]);
                         return send({ route, timetables });
                     } catch (err) {
                         return send({ error: "Failed to fetch timetable", details: err.message }, 500);
@@ -429,7 +526,7 @@ export default {
                     if (cached) return send({ route, fares: cached });
 
                     try {
-                        const data = await fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/RouteFare/${path}`, routePrefix, token);
+                        const data = await fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/RouteFare/${apiPath}`, routePrefix, token);
                         const fares = data.filter(match).map(r => {
                             const pricingType = DICT.PRICING_TYPE[r.FarePricingType] || r.FarePricingType;
                             const mapFares = (fareArray) => (fareArray || []).map(f => ({
@@ -472,7 +569,7 @@ export default {
                 // 🔸 4D. 取得公車車籍資料 (供首頁與地圖解析使用)
                 if (action === "vehicle") {
                     try {
-                        const res = await fetch(`${CONFIG.BASE_API}/${staticVer}/Bus/Vehicle/${path}?$format=JSON`, { headers: { Authorization: `Bearer ${token}` } });
+                        const res = await fetch(`${CONFIG.BASE_API}/${staticVer}/Bus/Vehicle/${apiPath}?$format=JSON`, { headers: { Authorization: `Bearer ${token}` } });
                         if (!res.ok) return send({});
                         const data = await res.json();
                         const dict = {};
@@ -493,8 +590,8 @@ export default {
 
                 // 🔸 4E. 預設：取得即時動態 (RealTime & EstimatedTime)
                 const [resPos, resEst] = await Promise.all([
-                    fetchRouteData(`${CONFIG.BASE_API}/${dynVer}/Bus/RealTimeByFrequency/${path}`, routePrefix, token),
-                    fetchRouteData(`${CONFIG.BASE_API}/${dynVer}/Bus/EstimatedTimeOfArrival/${path}`, routePrefix, token)
+                    fetchRouteData(`${CONFIG.BASE_API}/${dynVer}/Bus/RealTimeByFrequency/${apiPath}`, routePrefix, token),
+                    fetchRouteData(`${CONFIG.BASE_API}/${dynVer}/Bus/EstimatedTimeOfArrival/${apiPath}`, routePrefix, token)
                 ]);
 
                 const buses = (Array.isArray(resPos) ? resPos : []).filter(b => b.BusStatus === 0 && match(b));
