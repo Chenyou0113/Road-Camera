@@ -89,7 +89,7 @@ const syncTrainLiveBoard = async (env) => {
     const json = await res.json(), liveMap = {};
     (json.TrainLiveBoards || []).forEach(t => { 
         liveMap[t.TrainNo] = { delay: Number(t.DelayTime) || 0, status: Number(t.TrainStatus) || 0, station: t.StationName?.Zh_tw || t.StationID || "" }; 
-    });
+    });.
     await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('LIVE_DATA', ?)").bind(JSON.stringify(liveMap)).run();
 };
 
