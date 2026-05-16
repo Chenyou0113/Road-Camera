@@ -392,14 +392,16 @@
         let currentStationName = "";
         let expandedTrainNo = "";
         let currentDirection = '1'; 
+        let currentBoardDataCache = null; // 🚀 用來暫存背景抓到的資料
+        let marqueeOpenTimestamp = 0; // 🚀 紀錄跑馬燈打開的時間
 
         const lineSelectMap = {
             WL: 'western', 'WL-C': 'westernCoastal', EL: 'eastern', SL: 'southLink',
             CZ: 'chengzhui', PX: 'pingxi', SUAO: 'eastern', LJ: 'liujia', NW: 'neiwan', JJ: 'jiji', SH: 'shalun'
         };
 
-        // 🚀 調整動畫速度：數字越小跑得越快 (原本 0.18 改成 0.12)
-        const TRAIN_MARQUEE_SEC_PER_CHAR = 0.12; 
+        // 🚀 跑馬燈速度修改 (每字 0.1 秒)
+        const TRAIN_MARQUEE_SEC_PER_CHAR = 1; 
         const LIVEBOARD_REFRESH_MS = 60000;
         const LIVE_LOG_STORAGE_KEY = 'tra_live_position_delay_log_v1';
         const LIVE_LOG_RETENTION_DAYS = 7;
@@ -456,11 +458,22 @@
             if (!currentStationID) return;
             const date = document.getElementById('queryDate').value;
             if (!date) return;
+            
             try {
                 const res = await fetch(`${API_BASE}/api/liveboard/station?station=${currentStationID}&date=${date}`);
                 if (!res.ok) throw new Error('station refresh failed');
-                await renderStationBoard(await res.json());
-                restoreExpandedMarquee();
+                
+                const newData = await res.json();
+                
+                // 🚀 防止斷更機制：如果跑馬燈正在開啟狀態，且開啟時間不超過 3 分鐘，則「不重繪畫面」，只把資料暫存
+                if (expandedTrainNo && (Date.now() - marqueeOpenTimestamp < 180000)) {
+                    currentBoardDataCache = newData; 
+                    return; // 暫停渲染，保護跑馬燈
+                }
+                
+                // 若跑馬燈沒開，或是超過強制保護時間，則直接渲染
+                await renderStationBoard(newData);
+                
                 const sname = getStationNameByCode(currentStationID);
                 document.getElementById('boardTitle').innerHTML = `<i class="fas fa-list-alt"></i> ${sname} 即時看板 (${date})`;
                 setStationPidsButtonVisible(true);
@@ -475,13 +488,10 @@
         }
 
         async function loadStationsData() {
-            // 先從 stationDataMap（若存在）初始化車站列表
             if (typeof stationDataMap !== 'undefined' && Object.keys(stationDataMap).length > 0) {
                 allStationsFlat = Object.entries(stationDataMap).map(([id, d]) => ({ code: id, name: normalizeStationName(d.name) }));
                 stationNameMap = Object.fromEntries(allStationsFlat.map(s => [s.code, s.name]));
             }
-            // 無論如何都載入 train-station-codes.json 以取得路線資料（路線篩選用）
-            // 即使 stationDataMap 已存在，stationsByLine 仍需要從 JSON 中的 line 結構來初始化
             try {
                 const res = await fetch('assets/train-station-codes.json', { cache: 'force-cache' });
                 if (!res.ok) throw new Error('station json load failed');
@@ -495,7 +505,6 @@
                     list.forEach(st => { if (!dedupeMap.has(st.code)) dedupeMap.set(st.code, st); });
                 });
                 stationsByLine = byLine;
-                // 若 stationDataMap 不存在，則從 JSON 構建車站列表
                 if (typeof stationDataMap === 'undefined' || Object.keys(stationDataMap).length === 0) {
                     allStationsFlat = Array.from(dedupeMap.values());
                     stationNameMap = Object.fromEntries(allStationsFlat.map(s => [s.code, s.name]));
@@ -782,9 +791,8 @@
             window.open(`tra-pids.html?station=${encodeURIComponent(sid)}&name=${encodeURIComponent(getStationNameByCode(sid))}`, '_blank', 'noopener');
         }
 
-        // 🚀 無敵版：保證所有路線都能準確過濾
         function filterStations(selectId, inputId, lineSelectId) {
-            const line = document.getElementById(lineSelectId).value; // ex: 'WL-C', 'EL', 'NW'
+            const line = document.getElementById(lineSelectId).value; 
             const kw = document.getElementById(inputId).value.trim().replace(/台/g, '臺');
             let source = allStationsFlat;
             
@@ -792,7 +800,6 @@
                 const mappedKey = lineSelectMap[line];
                 let lineStations = null;
                 
-                // 1. 嘗試外部 JSON 的分類
                 if (stationsByLine && stationsByLine[line]) lineStations = stationsByLine[line];
                 else if (stationsByLine && mappedKey && stationsByLine[mappedKey]) lineStations = stationsByLine[mappedKey];
                 else if (typeof trainLineClassification !== 'undefined') {
@@ -800,7 +807,6 @@
                     else if (mappedKey && trainLineClassification[mappedKey]) lineStations = trainLineClassification[mappedKey].stations || trainLineClassification[mappedKey];
                 }
                 
-                // 2. 如果外部資源沒有分類，啟動「內建台鐵車站萬用分類備援」
                 if (!lineStations || lineStations.length === 0) {
                     const fallbackLines = {
                         'WL-C': ['竹南', '談文', '大山', '後龍', '龍港', '白沙屯', '新埔', '通霄', '苑裡', '日南', '大甲', '臺中港', '清水', '沙鹿', '龍井', '大肚', '追分', '彰化'],
@@ -819,14 +825,14 @@
                             const nameTai = s.name.replace(/台/g, '臺');
                             return fallbackLines[line].includes(name) || fallbackLines[line].includes(nameTai);
                         });
-                    } else if (line === 'SL') { // 南迴線: 枋寮(5120) ~ 臺東(6000)
+                    } else if (line === 'SL') { 
                         lineStations = allStationsFlat.filter(s => parseInt(s.code) >= 5120 && parseInt(s.code) <= 6000);
-                    } else if (line === 'EL') { // 東部幹線: 八堵(0920), 暖暖(0930), 還有 6000~7360
+                    } else if (line === 'EL') { 
                         lineStations = allStationsFlat.filter(s => {
                             const c = parseInt(s.code);
                             return (c >= 6000 && c <= 7360) || c === 920 || c === 930;
                         });
-                    } else if (line === 'WL') { // 西部幹線: 0900~5120 (排除八堵暖暖)
+                    } else if (line === 'WL') { 
                         lineStations = allStationsFlat.filter(s => {
                             const c = parseInt(s.code);
                             return c >= 900 && c <= 5120 && c !== 920 && c !== 930;
@@ -834,7 +840,6 @@
                     }
                 }
                 
-                // 3. 如果成功取得名單，則覆蓋 source
                 if (lineStations && lineStations.length > 0) {
                     source = lineStations.map(s => {
                         const codeStr = String(s.code || s.StationID || s);
@@ -857,7 +862,6 @@
             const select = document.getElementById(selectId);
             select.innerHTML = "<option value=''>選擇...</option>";
             let filtered = kw ? allStationsFlat.filter(s => s.name.includes(kw) || s.code.includes(kw)) : allStationsFlat;
-            // 🚀 車站代碼由小到大排序
             filtered = filtered.sort((a, b) => parseInt(a.code) - parseInt(b.code));
             filtered.forEach(s => select.add(new Option(`${s.code} - ${s.name}`, s.code)));
         }
@@ -1073,11 +1077,21 @@
             }
         }
 
+        // 🚀 跑馬燈關閉時，檢查如果有被暫存的新資料，就立刻補上更新畫面
         function restoreExpandedMarquee() {
             if (!expandedTrainNo) return;
             const card = document.querySelector(`.train-card[data-train-no="${expandedTrainNo}"]`);
-            if (card) { const d = card.dataset; showTrainMarquee(card, d.trainNo, d.delay || '0', d.time || '', d.typeName || '', d.destName || ''); } 
-            else expandedTrainNo = "";
+            if (card) { 
+                const d = card.dataset; 
+                showTrainMarquee(card, d.trainNo, d.delay || '0', d.time || '', d.typeName || '', d.destName || ''); 
+            } else {
+                expandedTrainNo = "";
+                // 跑馬燈關掉後，若發現有積欠未更新的資料，就幫他重繪
+                if (currentBoardDataCache) {
+                    renderStationBoard(currentBoardDataCache);
+                    currentBoardDataCache = null;
+                }
+            }
         }
 
         function renderTrainTrace(sch, live) {
@@ -1113,20 +1127,38 @@
         async function showTrainMarquee(cardEl, trainNo, delayStr, schedTime, typeName, destName) {
             const board = document.getElementById('trainsBoard'), date = document.getElementById('queryDate').value, delay = parseInt(delayStr || 0);
             const oldExpandedCard = board.querySelector('.train-card.expanded');
-            if (oldExpandedCard && oldExpandedCard !== cardEl) oldExpandedCard.classList.remove('expanded');
-            let infoRow = cardEl.nextElementSibling;
-            if (infoRow && infoRow.classList.contains('train-inline-marquee-row')) { infoRow.remove(); cardEl.classList.remove('expanded'); expandedTrainNo = ""; return; }
+            
+            // 🚀 點擊關閉跑馬燈的處理邏輯：
+            if (oldExpandedCard && oldExpandedCard === cardEl) {
+                // 如果點擊自己，就關閉跑馬燈
+                let infoRow = cardEl.nextElementSibling;
+                if (infoRow && infoRow.classList.contains('train-inline-marquee-row')) infoRow.remove();
+                cardEl.classList.remove('expanded');
+                expandedTrainNo = "";
+                
+                // 關閉後，如果剛好有積欠的最新資料，立刻補上更新畫面
+                if (currentBoardDataCache) {
+                    renderStationBoard(currentBoardDataCache);
+                    currentBoardDataCache = null;
+                }
+                return;
+            }
+            
+            if (oldExpandedCard) oldExpandedCard.classList.remove('expanded');
             board.querySelectorAll('.train-inline-marquee-row').forEach(el => el.remove());
-            cardEl.classList.add('expanded'); expandedTrainNo = String(trainNo || '');
-            infoRow = document.createElement('div');
+            
+            // 🚀 紀錄最新打開的跑馬燈與時間，開啟「斷更保護機制」
+            cardEl.classList.add('expanded'); 
+            expandedTrainNo = String(trainNo || '');
+            marqueeOpenTimestamp = Date.now(); 
+            
+            let infoRow = document.createElement('div');
             infoRow.className = 'train-inline-marquee-row';
             infoRow.innerHTML = '<div class="train-inline-marquee-track"><div class="train-inline-marquee-inner">載入中...</div></div>';
             cardEl.insertAdjacentElement('afterend', infoRow);
             const inner = infoRow.querySelector('.train-inline-marquee-inner');
             inner.style.animation = 'none'; 
             inner.innerHTML = `正在查詢 ${trainNo} 次列車沿途停靠站...`;
-            
-            // 🚀 套用新的跑馬燈速度常數，並將最低秒數從 8 秒改為 5 秒
             inner.style.animation = `train-inline-scroll ${Math.max(5, inner.innerHTML.length * TRAIN_MARQUEE_SEC_PER_CHAR)}s linear infinite`;
             
             try {
@@ -1153,7 +1185,6 @@
                 inner.innerHTML = marqueeHtml;
                 void inner.offsetWidth; 
                 
-                // 🚀 同樣套用新的速度參數
                 inner.style.animation = `train-inline-scroll ${Math.max(5, marqueeHtml.replace(/<[^>]*>/g, '').trim().length * TRAIN_MARQUEE_SEC_PER_CHAR)}s linear infinite`;
                 
             } catch (e) { inner.innerHTML = "❌ 讀取失敗，請稍後再試。"; }
