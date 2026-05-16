@@ -89,15 +89,32 @@ const syncTrainLiveBoard = async (env) => {
     const json = await res.json(), liveMap = {};
     (json.TrainLiveBoards || []).forEach(t => { 
         liveMap[t.TrainNo] = { delay: Number(t.DelayTime) || 0, status: Number(t.TrainStatus) || 0, station: t.StationName?.Zh_tw || t.StationID || "" }; 
-    });.
+    });
     await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('LIVE_DATA', ?)").bind(JSON.stringify(liveMap)).run();
 };
 
 // --- 同步通阻 ---
 const syncTraAlerts = async (env) => {
-    const token = await getTdxToken(env), res = await fetch("https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/Alert?%24format=JSON", { headers: { "Authorization": `Bearer ${token}` } });
+    const token = await getTdxToken(env);
+    const res = await fetch("https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/Alert?%24format=JSON", { headers: { "Authorization": `Bearer ${token}` } });
     if (!res.ok) return;
-    const alerts = (await res.json()).Alerts.map(a => ({ AlertID: a.AlertID, Title: a.Title, Description: a.Description.replace(/([一-龥]+)\s*[=＝\s]\s*([一-龥]+)/g, '$1＜－－＞$2').trim(), Status: a.Status }));
+    
+    const alerts = (await res.json()).Alerts.map(a => {
+        // 🚀 增強版：連續替換各種台鐵可能手打的醜醜符號
+        let cleanDesc = a.Description
+            .replace(/<-->|<->/g, '＜－－＞') // 攔截半形拼裝箭頭
+            .replace(/([一-龥]+)\s*[=＝]\s*([一-龥]+)/g, '$1＜－－＞$2') // 攔截等號
+            .replace(/([一-龥]+)\s*~\s*([一-龥]+)/g, '$1 至 $2') // 把波浪號換成"至"
+            .trim();
+            
+        return { 
+            AlertID: a.AlertID, 
+            Title: a.Title, 
+            Description: cleanDesc, 
+            Status: a.Status 
+        };
+    });
+    
     await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('ALERTS_DATA', ?)").bind(JSON.stringify(alerts)).run();
 };
 
