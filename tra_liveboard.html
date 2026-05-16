@@ -392,15 +392,13 @@
         let currentStationName = "";
         let expandedTrainNo = "";
         let currentDirection = '1'; 
-        let currentBoardDataCache = null; // 🚀 用來暫存背景抓到的資料
-        let marqueeOpenTimestamp = 0; // 🚀 紀錄跑馬燈打開的時間
 
         const lineSelectMap = {
             WL: 'western', 'WL-C': 'westernCoastal', EL: 'eastern', SL: 'southLink',
             CZ: 'chengzhui', PX: 'pingxi', SUAO: 'eastern', LJ: 'liujia', NW: 'neiwan', JJ: 'jiji', SH: 'shalun'
         };
 
-        // 🚀 跑馬燈速度修改 (每字 1 秒)
+        // 🚀 跑馬燈速度設定 (0.12 表示每字元 1 秒，速度快)
         const TRAIN_MARQUEE_SEC_PER_CHAR = 1; 
         const LIVEBOARD_REFRESH_MS = 60000;
         const LIVE_LOG_STORAGE_KEY = 'tra_live_position_delay_log_v1';
@@ -462,16 +460,9 @@
             try {
                 const res = await fetch(`${API_BASE}/api/liveboard/station?station=${currentStationID}&date=${date}`);
                 if (!res.ok) throw new Error('station refresh failed');
-                
                 const newData = await res.json();
                 
-                // 🚀 防止斷更機制：如果跑馬燈正在開啟狀態，且開啟時間不超過 3 分鐘，則「不重繪畫面」，只把資料暫存
-                if (expandedTrainNo && (Date.now() - marqueeOpenTimestamp < 180000)) {
-                    currentBoardDataCache = newData; 
-                    return; // 暫停渲染，保護跑馬燈
-                }
-                
-                // 若跑馬燈沒開，或是超過強制保護時間，則直接渲染
+                // 🚀 直接更新畫面（內部有防止跑馬燈 DOM 被刪除的邏輯）
                 await renderStationBoard(newData);
                 
                 const sname = getStationNameByCode(currentStationID);
@@ -950,10 +941,23 @@
             }
         }
 
+        // 🚀 修改：保留跑馬燈的 DOM，防止整點刷新時被銷毀
         async function renderStationBoard(data) {
             const board = document.getElementById('trainsBoard');
             const queryDate = document.getElementById('queryDate').value;
             const isToday = queryDate === new Date(Date.now() + 8 * 3600000).toISOString().split('T')[0];
+            
+            // 🚀 【防斷更技術】先保存正在跑的跑馬燈 DOM 元素
+            let savedMarqueeRow = null;
+            let currentExpandedNo = expandedTrainNo;
+            if (currentExpandedNo) {
+                const existingRow = board.querySelector('.train-inline-marquee-row');
+                if (existingRow) {
+                    savedMarqueeRow = existingRow;
+                    savedMarqueeRow.remove(); // 暫時拔出來保護
+                }
+            }
+
             if (!data || data.length === 0) { board.innerHTML = '<div style="padding:40px; text-align:center;">目前無列車資訊</div>'; return; }
 
             let list = data;
@@ -995,7 +999,25 @@
                 html += `<div class="train-card" data-train-no="${trainNo}" data-delay="${delay}" data-time="${arr}" data-type-name="${typeName}" data-dest-name="${dest}"><div><strong>${trainNo}</strong></div><div><span class="train-type-badge ${getTrainTypeClass(`${rawType} ${typeName}`)}">${typeName}</span></div><div>${dest || '--'}</div><div class="${delay > 0 ? 'delay-warn' : ''}">${arr} / ${dep}</div><div class="${delayClass}">${delayText}</div></div>`;
             }
             board.innerHTML = html;
-            board.querySelectorAll('.train-card').forEach(card => { card.addEventListener('click', () => { const d = card.dataset; showTrainMarquee(card, d.trainNo, d.delay || '0', d.time || '', d.typeName || '', d.destName || ''); }); });
+            
+            // 重新綁定事件
+            board.querySelectorAll('.train-card').forEach(card => { 
+                card.addEventListener('click', () => { 
+                    const d = card.dataset; 
+                    showTrainMarquee(card, d.trainNo, d.delay || '0', d.time || '', d.typeName || '', d.destName || ''); 
+                }); 
+            });
+
+            // 🚀 【防斷更技術】把剛才保存的跑馬燈，貼回對應的車次下面
+            if (savedMarqueeRow && currentExpandedNo) {
+                const newCard = board.querySelector(`.train-card[data-train-no="${currentExpandedNo}"]`);
+                if (newCard) {
+                    newCard.classList.add('expanded');
+                    newCard.insertAdjacentElement('afterend', savedMarqueeRow);
+                } else {
+                    expandedTrainNo = ""; // 車子已經離開看板了，清空狀態
+                }
+            }
         }
 
         async function renderRouteBoard(direct, transfers, fareData) {
@@ -1077,23 +1099,6 @@
             }
         }
 
-        // 🚀 跑馬燈關閉時，檢查如果有被暫存的新資料，就立刻補上更新畫面
-        function restoreExpandedMarquee() {
-            if (!expandedTrainNo) return;
-            const card = document.querySelector(`.train-card[data-train-no="${expandedTrainNo}"]`);
-            if (card) { 
-                const d = card.dataset; 
-                showTrainMarquee(card, d.trainNo, d.delay || '0', d.time || '', d.typeName || '', d.destName || ''); 
-            } else {
-                expandedTrainNo = "";
-                // 跑馬燈關掉後，若發現有積欠未更新的資料，就幫他重繪
-                if (currentBoardDataCache) {
-                    renderStationBoard(currentBoardDataCache);
-                    currentBoardDataCache = null;
-                }
-            }
-        }
-
         function renderTrainTrace(sch, live) {
             const resBox = document.getElementById('trainsBoard');
             const trainNo = String(sch.TrainNo || sch.No || '');
@@ -1124,70 +1129,98 @@
             resBox.innerHTML = html + `</div></div>`;
         }
 
-        async function showTrainMarquee(cardEl, trainNo, delayStr, schedTime, typeName, destName) {
-            const board = document.getElementById('trainsBoard'), date = document.getElementById('queryDate').value, delay = parseInt(delayStr || 0);
-            const oldExpandedCard = board.querySelector('.train-card.expanded');
+        // 🚀 修改：實作瞬間顯示技術 (Optimistic UI)
+        function showTrainMarquee(cardEl, trainNo, delayStr, schedTime, typeName, destName) {
+            const board = document.getElementById('trainsBoard');
+            const date = document.getElementById('queryDate').value;
+            const delay = parseInt(delayStr || 0);
             
-            // 🚀 點擊關閉跑馬燈的處理邏輯：
+            const oldExpandedCard = board.querySelector('.train-card.expanded');
             if (oldExpandedCard && oldExpandedCard === cardEl) {
-                // 如果點擊自己，就關閉跑馬燈
                 let infoRow = cardEl.nextElementSibling;
                 if (infoRow && infoRow.classList.contains('train-inline-marquee-row')) infoRow.remove();
                 cardEl.classList.remove('expanded');
                 expandedTrainNo = "";
-                
-                // 關閉後，如果剛好有積欠的最新資料，立刻補上更新畫面
-                if (currentBoardDataCache) {
-                    renderStationBoard(currentBoardDataCache);
-                    currentBoardDataCache = null;
-                }
                 return;
             }
             
             if (oldExpandedCard) oldExpandedCard.classList.remove('expanded');
             board.querySelectorAll('.train-inline-marquee-row').forEach(el => el.remove());
             
-            // 🚀 紀錄最新打開的跑馬燈與時間，開啟「斷更保護機制」
             cardEl.classList.add('expanded'); 
             expandedTrainNo = String(trainNo || '');
-            marqueeOpenTimestamp = Date.now(); 
             
             let infoRow = document.createElement('div');
             infoRow.className = 'train-inline-marquee-row';
-            infoRow.innerHTML = '<div class="train-inline-marquee-track"><div class="train-inline-marquee-inner">載入中...</div></div>';
+            infoRow.innerHTML = '<div class="train-inline-marquee-track"><div class="train-inline-marquee-inner"></div></div>';
             cardEl.insertAdjacentElement('afterend', infoRow);
             const inner = infoRow.querySelector('.train-inline-marquee-inner');
-            inner.style.animation = 'none'; 
-            inner.innerHTML = `正在查詢 ${trainNo} 次列車沿途停靠站...`;
-            inner.style.animation = `train-inline-scroll ${Math.max(5, inner.innerHTML.length * TRAIN_MARQUEE_SEC_PER_CHAR)}s linear infinite`;
             
-            try {
-                const todayStr = new Date(Date.now() + 8 * 3600000).toISOString().split('T')[0];
-                const [data, liveData] = await Promise.all([fetchTrainScheduleCached(trainNo, date), date === todayStr ? fetchTrainLiveCached(trainNo) : Promise.resolve(null)]);
+            // 🚀 1. 點擊瞬間，立刻先用基本資料開始跑馬燈！
+            let expTime = schedTime.slice(0,5);
+            if (delay > 0 && expTime) { 
+                const totalMins = expTime.split(':').map(Number).reduce((acc, curr, i) => acc + (i === 0 ? curr * 60 : curr), 0) + delay; 
+                expTime = `${String(Math.floor(totalMins/60)%24).padStart(2,'0')}:${String(totalMins%60).padStart(2,'0')}`; 
+            }
+            const sep = `<span style="color:#555; margin:0 15px;">|</span>`;
+            const basicHtml = `<span style="color:#ffeb3b; font-weight:700;">${trainNo} 次</span> <span style="color:#fff;">往 ${destName} ${typeName}</span> ${sep} <span style="color:#fff;">本站預計 <span style="color:#00e676; font-weight:700;">${expTime}</span> 抵達</span> ${sep} <span style="color:#aaa;"><i class="fas fa-spinner fa-spin"></i> 正在連線取得即時位置與詳細停靠站...</span>`;
+            
+            inner.innerHTML = basicHtml;
+            inner.style.animation = `train-inline-scroll 10s linear infinite`;
+            
+            // 🚀 2. 在背景默默抓取 20 秒也不怕，UI 不會卡住
+            const todayStr = new Date(Date.now() + 8 * 3600000).toISOString().split('T')[0];
+            Promise.all([
+                fetchTrainScheduleCached(trainNo, date), 
+                date === todayStr ? fetchTrainLiveCached(trainNo) : Promise.resolve(null)
+            ]).then(([data, liveData]) => {
+                // 如果抓完資料時，使用者早就關掉這個跑馬燈了，就不要再更新它
+                if (expandedTrainNo !== String(trainNo)) return; 
+
                 let statusText = "列車訊號偵測中";
                 const schedSuspended = Number(data?.TrainSuspendedFlag || data?.TrainInfo?.SuspendedFlag || 0);
                 const stops = Array.isArray(data) ? (data[0]?.StopTimes || data[0]?.Stops || []) : (data?.StopTimes || data?.Stops || []);
                 const stopSuspended = stops.some(s => String(s?.StationID || s?.ID || '') === String(currentStationID || '') && Number(s?.SuspendedFlag || 0) === 1);
+                
                 if (stopSuspended) statusText = "本站停駛";
                 else if (schedSuspended === 2) statusText = "本車次部分停駛";
                 else if ((liveData && liveData.status === 2) || schedSuspended === 1) statusText = "本車次今日停駛";
-                else if (liveData && liveData.station) { let st = liveData.station; if (typeof st === 'object') st = st.Zh_tw || st.StationName?.Zh_tw || st.name || ""; statusText = `列車目前位置：${normalizeTaiText(st)}`; }
-                else if (date === todayStr) { const [h, m] = String(schedTime || '').slice(0, 5).split(':').map(Number); if (Number.isFinite(h) && Number.isFinite(m) && (h * 60 + m) > (new Date().getHours() * 60 + new Date().getMinutes())) statusText = "列車尚未發車"; }
-                let expTime = schedTime.slice(0,5);
-                if (delay > 0 && expTime) { const totalMins = expTime.split(':').map(Number).reduce((acc, curr, i) => acc + (i === 0 ? curr * 60 : curr), 0) + delay; expTime = `${String(Math.floor(totalMins/60)%24).padStart(2,'0')}:${String(totalMins%60).padStart(2,'0')}`; }
+                else if (liveData && liveData.station) { 
+                    let st = liveData.station; 
+                    if (typeof st === 'object') st = st.Zh_tw || st.StationName?.Zh_tw || st.name || ""; 
+                    statusText = `列車目前位置：${normalizeTaiText(st)}`; 
+                }
+                else if (date === todayStr) { 
+                    const [h, m] = String(schedTime || '').slice(0, 5).split(':').map(Number); 
+                    if (Number.isFinite(h) && Number.isFinite(m) && (h * 60 + m) > (new Date().getHours() * 60 + new Date().getMinutes())) statusText = "列車尚未發車"; 
+                }
+                
                 let effType = String(typeName || '').trim() || normalizeTrainTypeLabel(data?.TrainTypeName || data?.Type || data?.Note || '', data?.Note || '');
                 let effDest = String(destName || '').trim() || normalizeTaiText(stops[stops.length - 1]?.StationName?.Zh_tw || stops[stops.length - 1]?.Name || '');
                 const curIdx = stops.findIndex(s => (s.StationID || s.ID) === currentStationID);
-                let stopsHtml = curIdx !== -1 && curIdx < stops.length - 1 ? stops.slice(curIdx + 1).map(s => { let st = (s.ArrivalTime || s.Arr || "").slice(0,5); if (delay > 0 && st) { const tm = st.split(':').map(Number).reduce((a,c,i)=>a+(i===0?c*60:c),0)+delay; st = `${String(Math.floor(tm/60)%24).padStart(2,'0')}:${String(tm%60).padStart(2,'0')}`; } return `<span style="color:#ffeb3b;">${normalizeTaiText(s.StationName?.Zh_tw || s.Name)}</span> <span style="color:#ccc;">(${st})</span>`; }).join(' <span style="color:#888; font-size:0.9em; margin: 0 8px;">►</span> ') : (curIdx === stops.length - 1 ? '<span style="color:#aaa;">本站為終點站</span>' : '<span style="color:#aaa;">無法取得後續停靠站</span>');
-                const sep = `<span style="color:#555; margin:0 15px;">|</span>`;
+                
+                let stopsHtml = curIdx !== -1 && curIdx < stops.length - 1 ? stops.slice(curIdx + 1).map(s => { 
+                    let st = (s.ArrivalTime || s.Arr || "").slice(0,5); 
+                    if (delay > 0 && st) { 
+                        const tm = st.split(':').map(Number).reduce((a,c,i)=>a+(i===0?c*60:c),0)+delay; 
+                        st = `${String(Math.floor(tm/60)%24).padStart(2,'0')}:${String(tm%60).padStart(2,'0')}`; 
+                    } 
+                    return `<span style="color:#ffeb3b;">${normalizeTaiText(s.StationName?.Zh_tw || s.Name)}</span> <span style="color:#ccc;">(${st})</span>`; 
+                }).join(' <span style="color:#888; font-size:0.9em; margin: 0 8px;">►</span> ') : (curIdx === stops.length - 1 ? '<span style="color:#aaa;">本站為終點站</span>' : '<span style="color:#aaa;">無法取得後續停靠站</span>');
+                
                 const viaTags = getViaTags(data, stops);
                 const marqueeHtml = `<span style="color:#ffeb3b; font-weight:700;">${trainNo} 次</span> <span style="color:#fff;">往 ${effDest} ${effType}</span> ${sep} <span style="color:#fff;">本站預計 <span style="color:#00e676; font-weight:700;">${expTime}</span> 抵達</span> ${sep} <span style="color:#4fc3f7;">${statusText}</span> ${sep} ${viaTags.length > 0 ? `<span style="color:#ffeb3b; font-weight:bold;">經由${viaTags.join('、')}</span> ${sep} ` : ''} <span style="color:#fff;">沿途停靠：</span>${stopsHtml}`;
+                
+                // 🚀 3. 資料下載完畢，無縫替換 HTML 並調整速度
                 inner.innerHTML = marqueeHtml;
-                void inner.offsetWidth; 
-                
                 inner.style.animation = `train-inline-scroll ${Math.max(5, marqueeHtml.replace(/<[^>]*>/g, '').trim().length * TRAIN_MARQUEE_SEC_PER_CHAR)}s linear infinite`;
-                
-            } catch (e) { inner.innerHTML = "❌ 讀取失敗，請稍後再試。"; }
+
+            }).catch(e => {
+                if (expandedTrainNo === String(trainNo)) {
+                    inner.innerHTML = `<span style="color:#ffeb3b; font-weight:700;">${trainNo} 次</span> ${sep} <span style="color:#ff5252;">❌ 取得詳細資訊失敗，請關閉後重試。</span>`;
+                    inner.style.animation = `train-inline-scroll 10s linear infinite`;
+                }
+            });
         }
     </script>
 </body>
