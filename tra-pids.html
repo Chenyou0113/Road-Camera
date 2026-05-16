@@ -212,7 +212,6 @@
             padding: 0 8px;
         }
 
-        /* 🚀 確保永遠從容器的「最右邊的外面」開始待命 */
         .unified-marquee-container .marquee-text {
             position: absolute;
             white-space: nowrap;
@@ -222,7 +221,7 @@
             font-weight: 900;
             top: 50%;
             margin-top: -1.2rem;
-            left: 100%; /* 起始永遠在右側外圍 */
+            left: 100%;
             transform: translateX(0);
             will-change: transform;
             letter-spacing: 1px;
@@ -304,7 +303,6 @@
             flex-shrink: 0;
         }
 
-        /* 🚀 下方跑馬燈：確保永遠從容器的「最右邊的外面」開始待命 */
         .marquee-footer .marquee-text {
             position: absolute;
             white-space: nowrap;
@@ -313,7 +311,7 @@
             font-size: 1.5rem; 
             font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif;
             font-weight: 600; 
-            left: 100%; /* 起始永遠在右側外圍 */
+            left: 100%;
             top: 0;
             transform: translateX(0);
             letter-spacing: 1px;
@@ -347,7 +345,6 @@
         .expected-time, .normal-time { font-size: 1.8rem; font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif; text-align: right; padding-right: 5px; }
         .expected-time { color: #ff5252; }
 
-        /* 🚀 統一的動畫位移：起始在 translateX(0) 因 CSS left:100% 已在最右外側 */
         @keyframes smooth-marquee {
             0% { transform: translateX(0); }
             100% { transform: translateX(var(--end-pos)); }
@@ -541,7 +538,8 @@
     <div class="media-section">
         <div class="media-box" id="carouselBox">
             <div class="media-label">宣導資訊</div>
-            <img src="https://www.railway.gov.tw/tra-tip-web/static/images/hero-bg-01.jpg" class="carousel-img active">
+            <!-- 使用本地資源，防止外部圖片 404 報錯 -->
+            <img src="assets/TRA_logo.jpg" class="carousel-img active">
         </div>
         <div class="media-box" id="videoBox">
             <div class="media-label">影音專區</div>
@@ -686,6 +684,7 @@
                 }
             },
 
+            // 🚀 加入安全防護：統一欄位名稱、避免 split() 遇到 undefined 報錯
             async updatePids() {
                 if (this._currentFetchController) this._currentFetchController.abort();
                 this._currentFetchController = new AbortController();
@@ -696,10 +695,35 @@
                     const nowMins = new Date().getHours() * 60 + new Date().getMinutes();
 
                     let filtered = (Array.isArray(data) ? data : []).map(t => {
-                        const schedMins = t.ScheduledDepartureTime.split(':').reduce((h, m) => h * 60 + Number(m), 0);
-                        let actualMins = schedMins + parseInt(t.DelayTime || 0);
+                        // 建立安全的統一欄位物件，處理 API 回傳各種欄位名稱異動
+                        const normalized = {
+                            ...t,
+                            TrainNo: t.TrainNo ?? t.No,
+                            Direction: t.Direction ?? t.Dir,
+                            TrainTypeName: t.TrainTypeName ?? t.Type,
+                            EndingStationName: t.EndingStationName ?? t.Dest,
+                            ScheduledDepartureTime: t.ScheduledDepartureTime ?? t.Dep ?? t.Arr,
+                            ScheduledArrivalTime: t.ScheduledArrivalTime ?? t.Arr ?? t.Dep,
+                            DelayTime: t.DelayTime ?? t.Delay ?? 0,
+                            TrainStatus: t.TrainStatus ?? t.Status,
+                            TripLine: t.TripLine ?? t.Line,
+                            TrainSuspendedFlag: t.TrainSuspendedFlag ?? 0,
+                            IsSuspended: t.IsSuspended ?? (t.SuspendedFlag === 1),
+                            IsPartiallySuspended: t.IsPartiallySuspended ?? (t.TrainSuspendedFlag === 2)
+                        };
+
+                        const timeStr = normalized.ScheduledDepartureTime || "00:00";
+                        const schedMins = timeStr.split(':').reduce((h, m) => h * 60 + Number(m), 0);
+                        let actualMins = schedMins + parseInt(normalized.DelayTime || 0);
                         if (actualMins < nowMins - 720) actualMins += 1440;
-                        return { ...t, _sort: (actualMins - nowMins + 1440) % 1440, _actualMins: actualMins, _isCancelled: String(t.TrainStatus) === '2' || t.IsSuspended || Number(t.TrainSuspendedFlag) === 1, _isPartiallySuspended: t.IsPartiallySuspended || Number(t.TrainSuspendedFlag) === 2 };
+                        
+                        return { 
+                            ...normalized, 
+                            _sort: (actualMins - nowMins + 1440) % 1440, 
+                            _actualMins: actualMins, 
+                            _isCancelled: String(normalized.TrainStatus) === '2' || normalized.IsSuspended || Number(normalized.TrainSuspendedFlag) === 1, 
+                            _isPartiallySuspended: normalized.IsPartiallySuspended || Number(normalized.TrainSuspendedFlag) === 2 
+                        };
                     }).filter(t => t._actualMins >= nowMins || t._isCancelled || t._isPartiallySuspended);
                     
                     filtered.sort((a, b) => a._sort - b._sort);
@@ -848,7 +872,6 @@
             }
         }
 
-        /* 🚀 強制跑馬燈一律「從右側外面」滑入 */
         function startMarquee(id) {
             const el = document.getElementById(id);
             if (!el) return;
@@ -869,8 +892,6 @@
                     const totalDistance = textWidth + containerWidth;
                     const duration = Math.max(5, totalDistance / pixelsPerSecond);
 
-                    // CSS 定義了 left: 100% (元素本身就在最右側外)
-                    // end-pos = 負的總位移長度 (過整個畫面 + 自身長度)
                     el.style.setProperty('--end-pos', `-${totalDistance}px`);
                     el.style.animation = `smooth-marquee ${duration}s linear infinite`;
                 });
@@ -1088,7 +1109,6 @@
             const p = new URLSearchParams(location.search);
             GLOBAL_STATION_ID = p.get('station') || PIDS_APP.STATE.stationID;
 
-            // 🚀 動態無縫接軌事件 (也是從最右側進來)
             document.querySelectorAll('.marquee-text').forEach(el => {
                 el.addEventListener('animationiteration', () => {
                     if (el.dataset.nextMsg) {
