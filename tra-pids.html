@@ -130,15 +130,15 @@
         }
 
         .station-sub {
-            /* 將英文站名字級放大到與中文站名相同，使用相同的 clamp 設定以維持響應式行為 */
-            font-size: clamp(2rem, 4vw, 3.2rem);
+            /* 🚀 與右側時間文字相同字級與垂直位置 */
+            font-size: 3rem;
             color: #4fc3f7;
             font-family: "Source Sans 3", "Noto Sans TC", sans-serif;
             letter-spacing: 0px;
             font-weight: 700;
-            line-height: 1.08;
+            line-height: 1;
             margin: 0;
-            /* 🚀 移除之前手動加的 padding，全部交給 baseline 自動計算底線 */
+            padding-top: 0;
             text-overflow: ellipsis;
             overflow: hidden;
         }
@@ -1105,7 +1105,7 @@
                 types: { "新自強": "新自強", "自強": "自強", "普悠瑪": "普悠瑪", "太魯閣": "太魯閣", "莒光": "莒光", "區間快": "區間快", "區間": "區間", "專車": "專車", "其他": "列車" }
             },
             en: {
-                inbound: "Reverse", outbound: "Forward", trainNo: "Train No.", type: "Type", dest: "Destination", time: "Departure", status: "Status", note: "Note",
+                inbound: "Reverse", outbound: "Forward", trainNo: "Train No.", type: "Type", dest: "Destination", time: "Dept. Time", status: "Status", note: "Remarks",
                 onTime: "On Time", delay: "{min} min", cancelled: "Cancelled", partiallySuspended: "Partially Suspended", toward: "To ", curPos: "Current Location: ", nextPos: " ➡ ", expected: "ETA at Station: ", arrive: "",
                 adv: "Information", video: "Media Center", noTrain: "No Train Information", notDeparted: "Not Yet Departed", detecting: "Signal Detecting",
                 types: { "新自強": "New T.C.", "自強": "T.C.", "普悠瑪": "Puyuma", "太魯閣": "Taroko", "莒光": "C.K.", "區間快": "Fast Local", "區間": "Local", "專車": "Special Train", "其他": "Train" },
@@ -1740,22 +1740,41 @@
 
             let locationText = "";
             let locationDelayText = "";
-            if (liveData && liveData.StationName) {
-                const lastStationName = liveData.StationName.Zh_tw || liveData.StationName;
+            
+            // 🚀 防呆解包：防止 station 變成物件導致 [object Object]
+            let rawStation = liveData?.StationName?.Zh_tw || liveData?.StationName || liveData?.station || "";
+            if (typeof rawStation === 'object') {
+                rawStation = rawStation.Zh_tw || rawStation.name || "";
+            }
+            const lastStationName = String(rawStation).trim();
+
+            if (lastStationName) {
                 const lastStationNameTranslated = translateStation(lastStationName);
-                const liveDelay = liveData.DelayTime ? parseInt(liveData.DelayTime) : 0;
+                const liveDelay = liveData?.DelayTime ?? liveData?.delay ?? 0;
 
                 let stops = await fetchTrainStops(t.TrainNo);
                 let nextStopName = "";
+                
                 if (stops && stops.length > 0) {
-                    const passedIndex = stops.findIndex(s => s.StationName.Zh_tw === lastStationName);
+                    // 安全比對沿途停靠站，找出下一站
+                    const passedIndex = stops.findIndex(s => {
+                        let sName = s.StationName?.Zh_tw || s.StationName || s.Name || "";
+                        if (typeof sName === 'object') sName = sName.Zh_tw || "";
+                        return String(sName).trim() === lastStationName;
+                    });
+                    
                     if (passedIndex !== -1 && passedIndex < stops.length - 1) {
-                        nextStopName = [...new Set(stops.slice(passedIndex + 1).map(s => translateStation(s.StationName.Zh_tw)))][0] || '';
+                        let nStop = stops[passedIndex + 1];
+                        let nName = nStop.StationName?.Zh_tw || nStop.StationName || nStop.Name || "";
+                        if (typeof nName === 'object') nName = nName.Zh_tw || "";
+                        nextStopName = translateStation(String(nName).trim());
                     }
                 }
+                
                 locationText = nextStopName ? `${lang.curPos}${lastStationNameTranslated}${lang.nextPos}${nextStopName}` : `${lang.curPos}${lastStationNameTranslated}`;
                 if (liveDelay > 0) locationDelayText = PIDS_APP.STATE.currentLang === 'zh' ? ` (晚 ${liveDelay} 分)` : ` (${liveDelay} min)`;
             } else {
+                // 如果抓不到即時位置，計算是否尚未發車
                 const schedTime = String(t.ScheduledDepartureTime || '').slice(0, 5);
                 const schedParts = schedTime.split(':').map(Number);
                 const schedMins = Number.isFinite(schedParts[0]) && Number.isFinite(schedParts[1])
