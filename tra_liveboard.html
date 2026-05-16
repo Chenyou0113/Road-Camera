@@ -474,26 +474,31 @@
         }
 
         async function loadStationsData() {
+            // 先從 stationDataMap（若存在）初始化車站列表
             if (typeof stationDataMap !== 'undefined' && Object.keys(stationDataMap).length > 0) {
                 allStationsFlat = Object.entries(stationDataMap).map(([id, d]) => ({ code: id, name: normalizeStationName(d.name) }));
                 stationNameMap = Object.fromEntries(allStationsFlat.map(s => [s.code, s.name]));
-                return;
             }
+            // 無論如何都載入 train-station-codes.json 以取得路線資料（路線篩選用）
+            // 即使 stationDataMap 已存在，stationsByLine 仍需要從 JSON 中的 line 結構來初始化
             try {
                 const res = await fetch('assets/train-station-codes.json', { cache: 'force-cache' });
                 if (!res.ok) throw new Error('station json load failed');
                 const data = await res.json();
                 const lines = data?.lines || {};
-                const dedupeMap = new Map();
                 const byLine = {};
+                const dedupeMap = new Map();
                 Object.entries(lines).forEach(([lineKey, lineObj]) => {
                     const list = (lineObj?.stations || []).map(s => ({ code: String(s.code), name: normalizeStationName(s.name) }));
                     byLine[lineKey] = list;
                     list.forEach(st => { if (!dedupeMap.has(st.code)) dedupeMap.set(st.code, st); });
                 });
                 stationsByLine = byLine;
-                allStationsFlat = Array.from(dedupeMap.values());
-                stationNameMap = Object.fromEntries(allStationsFlat.map(s => [s.code, s.name]));
+                // 若 stationDataMap 不存在，則從 JSON 構建車站列表
+                if (typeof stationDataMap === 'undefined' || Object.keys(stationDataMap).length === 0) {
+                    allStationsFlat = Array.from(dedupeMap.values());
+                    stationNameMap = Object.fromEntries(allStationsFlat.map(s => [s.code, s.name]));
+                }
             } catch (e) { console.warn('載入車站資料失敗', e); }
         }
 
