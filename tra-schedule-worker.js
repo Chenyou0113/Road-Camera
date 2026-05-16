@@ -216,17 +216,38 @@ export default {
                 return new Response(row?.Value || "[]", { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
-            // 6. 即時位置
+            // 6. 即時位置 (支援單一車次查詢 & 全線列車查詢)
             if (url.pathname === "/api/live") {
-                const tno = url.searchParams.get("trainNo"), row = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'LIVE_DATA'").first();
-                const live = (row ? JSON.parse(row.Value) : {})[tno] || { delay: 0, status: 0, station: "" };
-                const liveCompat = {
-                    ...live,
-                    DelayTime: Number(live.delay) || 0,
-                    TrainStatus: Number(live.status) || 0,
-                    StationName: live.station ? { Zh_tw: live.station } : null
-                };
-                return new Response(JSON.stringify(liveCompat), { headers: { ...cors, 'Content-Type': 'application/json' } });
+                const tno = url.searchParams.get("trainNo");
+                const row = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'LIVE_DATA'").first();
+                const liveMap = row ? JSON.parse(row.Value) : {};
+
+                // 狀況 A：有指定車次，回傳單一車次資料
+                if (tno) {
+                    const live = liveMap[tno] || { delay: 0, status: 0, station: "" };
+                    const liveCompat = {
+                        TrainNo: tno,
+                        ...live,
+                        DelayTime: Number(live.delay) || 0,
+                        TrainStatus: Number(live.status) || 0,
+                        StationName: live.station ? { Zh_tw: live.station } : null
+                    };
+                    return new Response(JSON.stringify(liveCompat), { headers: { ...cors, 'Content-Type': 'application/json' } });
+                } 
+                // 狀況 B：沒有指定車次，回傳全台所有有動態的列車陣列
+                else {
+                    const allLiveTrains = Object.keys(liveMap).map(key => {
+                        const live = liveMap[key];
+                        return {
+                            TrainNo: key,
+                            ...live,
+                            DelayTime: Number(live.delay) || 0,
+                            TrainStatus: Number(live.status) || 0,
+                            StationName: live.station ? { Zh_tw: live.station } : null
+                        };
+                    });
+                    return new Response(JSON.stringify(allLiveTrains), { headers: { ...cors, 'Content-Type': 'application/json' } });
+                }
             }
 
             // 7. PIDS 管理
