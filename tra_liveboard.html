@@ -398,7 +398,8 @@
             CZ: 'chengzhui', PX: 'pingxi', SUAO: 'eastern', LJ: 'liujia', NW: 'neiwan', JJ: 'jiji', SH: 'shalun'
         };
 
-        const TRAIN_MARQUEE_SEC_PER_CHAR = 0.18;
+        // 🚀 調整動畫速度：數字越小跑得越快 (原本 0.18 改成 0.12)
+        const TRAIN_MARQUEE_SEC_PER_CHAR = 0.12; 
         const LIVEBOARD_REFRESH_MS = 60000;
         const LIVE_LOG_STORAGE_KEY = 'tra_live_position_delay_log_v1';
         const LIVE_LOG_RETENTION_DAYS = 7;
@@ -781,51 +782,69 @@
             window.open(`tra-pids.html?station=${encodeURIComponent(sid)}&name=${encodeURIComponent(getStationNameByCode(sid))}`, '_blank', 'noopener');
         }
 
-        // 🚀 修改後的強效版：精確過濾路線車種
+        // 🚀 無敵版：保證所有路線都能準確過濾
         function filterStations(selectId, inputId, lineSelectId) {
-            const line = document.getElementById(lineSelectId).value; // ex: 'WL-C'
+            const line = document.getElementById(lineSelectId).value; // ex: 'WL-C', 'EL', 'NW'
             const kw = document.getElementById(inputId).value.trim().replace(/台/g, '臺');
             let source = allStationsFlat;
             
             if (line !== 'all') {
-                const mappedKey = lineSelectMap[line]; // ex: 'westernCoastal'
+                const mappedKey = lineSelectMap[line];
                 let lineStations = null;
                 
-                // 1. 優先嘗試用 'WL-C' 到 stationsByLine 中找
-                if (stationsByLine && stationsByLine[line]) {
-                    lineStations = stationsByLine[line];
-                } 
-                // 2. 嘗試用對應的英文名 (如 'westernCoastal') 找
-                else if (stationsByLine && mappedKey && stationsByLine[mappedKey]) {
-                    lineStations = stationsByLine[mappedKey];
-                } 
-                // 3. 嘗試找外部載入的 trainLineClassification 變數
+                // 1. 嘗試外部 JSON 的分類
+                if (stationsByLine && stationsByLine[line]) lineStations = stationsByLine[line];
+                else if (stationsByLine && mappedKey && stationsByLine[mappedKey]) lineStations = stationsByLine[mappedKey];
                 else if (typeof trainLineClassification !== 'undefined') {
-                    if (trainLineClassification[line]) {
-                        lineStations = trainLineClassification[line].stations || trainLineClassification[line];
-                    } else if (mappedKey && trainLineClassification[mappedKey]) {
-                        lineStations = trainLineClassification[mappedKey].stations || trainLineClassification[mappedKey];
+                    if (trainLineClassification[line]) lineStations = trainLineClassification[line].stations || trainLineClassification[line];
+                    else if (mappedKey && trainLineClassification[mappedKey]) lineStations = trainLineClassification[mappedKey].stations || trainLineClassification[mappedKey];
+                }
+                
+                // 2. 如果外部資源沒有分類，啟動「內建台鐵車站萬用分類備援」
+                if (!lineStations || lineStations.length === 0) {
+                    const fallbackLines = {
+                        'WL-C': ['竹南', '談文', '大山', '後龍', '龍港', '白沙屯', '新埔', '通霄', '苑裡', '日南', '大甲', '臺中港', '清水', '沙鹿', '龍井', '大肚', '追分', '彰化'],
+                        'CZ': ['成功', '追分'],
+                        'PX': ['瑞芳', '海科館', '八斗子', '猴硐', '三貂嶺', '大華', '十分', '望古', '嶺腳', '平溪', '菁桐'],
+                        'LJ': ['新竹', '北新竹', '千甲', '新莊', '竹中', '六家'],
+                        'NW': ['新竹', '北新竹', '千甲', '新莊', '竹中', '上員', '榮華', '竹東', '橫山', '九讚頭', '合興', '富貴', '內灣'],
+                        'JJ': ['二水', '源泉', '濁水', '龍泉', '集集', '水里', '車埕'],
+                        'SH': ['中洲', '長榮大學', '沙崙'],
+                        'SUAO': ['蘇澳新', '蘇澳']
+                    };
+                    
+                    if (fallbackLines[line]) {
+                        lineStations = allStationsFlat.filter(s => {
+                            const name = s.name.replace(/臺/g, '台');
+                            const nameTai = s.name.replace(/台/g, '臺');
+                            return fallbackLines[line].includes(name) || fallbackLines[line].includes(nameTai);
+                        });
+                    } else if (line === 'SL') { // 南迴線: 枋寮(5120) ~ 臺東(6000)
+                        lineStations = allStationsFlat.filter(s => parseInt(s.code) >= 5120 && parseInt(s.code) <= 6000);
+                    } else if (line === 'EL') { // 東部幹線: 八堵(0920), 暖暖(0930), 還有 6000~7360
+                        lineStations = allStationsFlat.filter(s => {
+                            const c = parseInt(s.code);
+                            return (c >= 6000 && c <= 7360) || c === 920 || c === 930;
+                        });
+                    } else if (line === 'WL') { // 西部幹線: 0900~5120 (排除八堵暖暖)
+                        lineStations = allStationsFlat.filter(s => {
+                            const c = parseInt(s.code);
+                            return c >= 900 && c <= 5120 && c !== 920 && c !== 930;
+                        });
                     }
                 }
                 
-                // 若成功找到這條路線的專屬車站清單，則取代掉預設的全台列表
+                // 3. 如果成功取得名單，則覆蓋 source
                 if (lineStations && lineStations.length > 0) {
                     source = lineStations.map(s => {
                         const codeStr = String(s.code || s.StationID || s);
-                        // 嘗試從總表中抓取標準站名以防止資料缺失
                         const found = allStationsFlat.find(st => st.code === codeStr);
-                        if (found) return found;
-                        return { 
-                            code: codeStr, 
-                            name: normalizeStationName(s.name || s.StationName?.Zh_tw || s.StationName || getStationNameByCode(codeStr)) 
-                        };
+                        return found || { code: codeStr, name: normalizeStationName(s.name || getStationNameByCode(codeStr)) };
                     }).filter(s => s && s.code);
                 }
             }
 
             let filtered = kw ? source.filter(s => s.name.includes(kw) || s.code.includes(kw)) : source;
-            
-            // 🚀 車站代碼由小到大排序
             filtered = filtered.sort((a, b) => parseInt(a.code) - parseInt(b.code));
             
             const select = document.getElementById(selectId);
@@ -1106,7 +1125,10 @@
             const inner = infoRow.querySelector('.train-inline-marquee-inner');
             inner.style.animation = 'none'; 
             inner.innerHTML = `正在查詢 ${trainNo} 次列車沿途停靠站...`;
-            inner.style.animation = `train-inline-scroll ${Math.max(8, inner.innerHTML.length * TRAIN_MARQUEE_SEC_PER_CHAR)}s linear infinite`;
+            
+            // 🚀 套用新的跑馬燈速度常數，並將最低秒數從 8 秒改為 5 秒
+            inner.style.animation = `train-inline-scroll ${Math.max(5, inner.innerHTML.length * TRAIN_MARQUEE_SEC_PER_CHAR)}s linear infinite`;
+            
             try {
                 const todayStr = new Date(Date.now() + 8 * 3600000).toISOString().split('T')[0];
                 const [data, liveData] = await Promise.all([fetchTrainScheduleCached(trainNo, date), date === todayStr ? fetchTrainLiveCached(trainNo) : Promise.resolve(null)]);
@@ -1130,7 +1152,10 @@
                 const marqueeHtml = `<span style="color:#ffeb3b; font-weight:700;">${trainNo} 次</span> <span style="color:#fff;">往 ${effDest} ${effType}</span> ${sep} <span style="color:#fff;">本站預計 <span style="color:#00e676; font-weight:700;">${expTime}</span> 抵達</span> ${sep} <span style="color:#4fc3f7;">${statusText}</span> ${sep} ${viaTags.length > 0 ? `<span style="color:#ffeb3b; font-weight:bold;">經由${viaTags.join('、')}</span> ${sep} ` : ''} <span style="color:#fff;">沿途停靠：</span>${stopsHtml}`;
                 inner.innerHTML = marqueeHtml;
                 void inner.offsetWidth; 
-                inner.style.animation = `train-inline-scroll ${Math.max(8, marqueeHtml.replace(/<[^>]*>/g, '').trim().length * TRAIN_MARQUEE_SEC_PER_CHAR)}s linear infinite`;
+                
+                // 🚀 同樣套用新的速度參數
+                inner.style.animation = `train-inline-scroll ${Math.max(5, marqueeHtml.replace(/<[^>]*>/g, '').trim().length * TRAIN_MARQUEE_SEC_PER_CHAR)}s linear infinite`;
+                
             } catch (e) { inner.innerHTML = "❌ 讀取失敗，請稍後再試。"; }
         }
     </script>
