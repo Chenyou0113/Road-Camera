@@ -3,7 +3,7 @@
 
 const trainLineClassification = {
     // ========== 1. 西部幹線 (基隆-屏東，經山線) ==========
-    "west_main": {
+    "WL": {
         "name": "西部幹線 (基隆-屏東)",
         "category": "主要幹線",
         "stations": [
@@ -54,7 +54,7 @@ const trainLineClassification = {
     },
 
     // ========== 2. 西部幹線 (海線) ==========
-    "west_coast": {
+    "WL-C": {
         "name": "西部幹線 - 海線 (竹南-彰化)",
         "category": "主要幹線",
         "stations": [
@@ -70,7 +70,7 @@ const trainLineClassification = {
     },
 
     // ========== 3. 東部幹線 ==========
-    "east_line": {
+    "EL": {
         "name": "東部幹線 (八堵-臺東)",
         "category": "主要幹線",
         "stations": [
@@ -106,7 +106,7 @@ const trainLineClassification = {
     },
 
     // ========== 4. 南迴線 ==========
-    "south_link": {
+    "SL": {
         "name": "南迴線 (屏東-臺東)",
         "category": "主要幹線",
         "stations": [
@@ -122,7 +122,7 @@ const trainLineClassification = {
     },
 
     // ========== 5. 成追線 ==========
-    "chengzhui": {
+    "CZ": {
         "name": "成追線 (成功-追分)",
         "category": "支線",
         "stations": [
@@ -132,7 +132,7 @@ const trainLineClassification = {
     },
 
     // ========== 6. 平溪/深澳線 ==========
-    "pingxi": {
+    "PX": {
         "name": "平溪/深澳線",
         "category": "支線",
         "stations": [
@@ -144,7 +144,7 @@ const trainLineClassification = {
     },
 
     // ========== 7. 蘇澳支線 ==========
-    "suao_branch": {
+    "SUAO": {
         "name": "蘇澳新-蘇澳",
         "category": "支線",
         "stations": [
@@ -154,7 +154,7 @@ const trainLineClassification = {
     },
 
     // ========== 8. 六家線 ==========
-    "liujia": {
+    "LJ": {
         "name": "六家線 (竹中-六家)",
         "category": "支線",
         "stations": [
@@ -164,7 +164,7 @@ const trainLineClassification = {
     },
 
     // ========== 9. 內灣線 ==========
-    "neiwan": {
+    "NW": {
         "name": "內灣線 (新竹-內灣)",
         "category": "支線",
         "stations": [
@@ -177,7 +177,7 @@ const trainLineClassification = {
     },
 
     // ========== 10. 集集線 ==========
-    "jiji": {
+    "JJ": {
         "name": "集集線 (二水-車埕)",
         "category": "支線",
         "stations": [
@@ -188,7 +188,7 @@ const trainLineClassification = {
     },
 
     // ========== 11. 沙崙線 ==========
-    "shalun": {
+    "SH": {
         "name": "沙崙線 (中洲-沙崙)",
         "category": "支線",
         "stations": [
