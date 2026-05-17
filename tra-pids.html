@@ -313,94 +313,30 @@
         
         function extractYoutubeId(input){const raw=String(input||'').replace(/[\r\n\t\f\v]/g,'').trim();if(!raw)return null;if(/^[a-zA-Z0-9_-]{11}$/.test(raw))return raw;try{const u=new URL(raw);const host=(u.hostname||'').toLowerCase();if(host.includes('youtu.be')){const id=u.pathname.replace(/^\//,'').split('/')[0];return/^[a-zA-Z0-9_-]{11}$/.test(id)?id:null}if(host.includes('youtube.com')){const v=u.searchParams.get('v');if(v&&/^[a-zA-Z0-9_-]{11}$/.test(v))return v;const parts=u.pathname.split('/').filter(Boolean);if(['embed','shorts','v','vi','e'].includes(parts[0])&&/^[a-zA-Z0-9_-]{11}$/.test(parts[1]||''))return parts[1]}}catch(_){}const match=raw.match(/(?:v=|v\/|vi=|vi\/|youtu\.be\/|embed\/|e\/|shorts\/)([a-zA-Z0-9_-]{11})/i);return(match&&match[1])?match[1]:null}
         
-        let _videoIds=[],_playableVideoIds=[],_blockedVideoIds=new Set();let _isYTReady=false,_videoWatchdogTimer=null;let _videoErrorBurstCount=0,_lastVideoErrorTs=0,_currentVideoIndex=0;
-        
-        function destroyYtPlayer(){if(window.ytPlayer&&typeof window.ytPlayer.destroy==='function'){try{window.ytPlayer.destroy()}catch(_){}}window.ytPlayer=null}
-        function refreshPlayableVideoList(){_playableVideoIds=_videoIds.filter(id=>!_blockedVideoIds.has(id));if(!_playableVideoIds.length||_currentVideoIndex>=_playableVideoIds.length)_currentVideoIndex=0}
-        function showVideoFallback(msg){const con=document.getElementById('videoContainer');if(con)con.innerHTML=`<div style="padding:20px;color:#b0bec5;text-align:center;line-height:1.8;">${msg}</div>`}
-        function stopVideoWatchdog(){if(_videoWatchdogTimer){clearTimeout(_videoWatchdogTimer);_videoWatchdogTimer=null}}
-        function armVideoWatchdog(){stopVideoWatchdog();_videoWatchdogTimer=setTimeout(()=>{destroyYtPlayer();showVideoFallback('📹 影音來源暫時無法播放，請稍後再試')},12000)}
-        
-        function playCurrentVideo(){
-            if(!window.ytPlayer||!_playableVideoIds.length)return;
-            const id=_playableVideoIds[_currentVideoIndex];
-            if(!id)return;
-            armVideoWatchdog();
-            try{ window.ytPlayer.loadVideoById(id) }catch(_){ advanceToNextVideo('load-failed') }
-        }
-        
-        function advanceToNextVideo(reason='next'){
-            if(!_playableVideoIds.length){ destroyYtPlayer(); showVideoFallback('📹 影音來源暫時無法播放，請稍後再試'); return }
-            _currentVideoIndex = (_currentVideoIndex+1) % _playableVideoIds.length;
-            playCurrentVideo();
-        }
-        
-        window.onYouTubeIframeAPIReady=function(){
-            _isYTReady=true;
-            if(_videoIds.length>0)_createDynamicPlayer();
-        };
-        
-        function _createDynamicPlayer(){
-            if(!_isYTReady || window.ytPlayer || !_playableVideoIds.length) return;
-            const origin=window.location.protocol+'//'+window.location.hostname+(window.location.port?':'+window.location.port:'');
-            window.ytPlayer = new YT.Player('ytPlayerDiv', {
-                host: 'https://www.youtube.com',
-                videoId: _playableVideoIds[_currentVideoIndex],
-                playerVars: { autoplay: 1, mute: 1, controls: 1, rel: 0, enablejsapi: 1, origin: origin, widget_referrer: origin, playsinline: 1 },
-                events: {
-                    onReady: (event) => { event.target.mute(); },
-                    onStateChange: (event) => {
-                        if(event.data === YT.PlayerState.PLAYING){
-                            stopVideoWatchdog();
-                            _videoErrorBurstCount=0;
-                            _lastVideoErrorTs=0;
-                            const id=event?.target?.getVideoData?.()?.video_id;
-                            const idx=_playableVideoIds.indexOf(id);
-                            if(idx>=0) _currentVideoIndex=idx;
-                        }
-                        if(event.data === YT.PlayerState.ENDED){
-                            advanceToNextVideo('ended');
-                        }
-                    },
-                    onError: (event) => {
-                        stopVideoWatchdog();
-                        const now=Date.now();
-                        _videoErrorBurstCount=(now-_lastVideoErrorTs<8000) ? (_videoErrorBurstCount+1) : 1;
-                        _lastVideoErrorTs=now;
-                        if(_videoErrorBurstCount>=3){ destroyYtPlayer(); showVideoFallback('📹 影音來源受限制，暫時無法播放'); return; }
-                        const badId=event?.target?.getVideoData?.()?.video_id;
-                        if(badId) _blockedVideoIds.add(badId);
-                        else if(_playableVideoIds.length>0) _blockedVideoIds.add(_playableVideoIds[0]);
-                        refreshPlayableVideoList();
-                        if(!_playableVideoIds.length){ destroyYtPlayer(); showVideoFallback('📹 影音來源暫時無法播放，請稍後再試'); return; }
-                        advanceToNextVideo('error');
-                    }
+        // 🚀 採用 metro-pids 的完美 playlist 原廠控制列邏輯
+        function setupVideo(urls) {
+            const con = document.getElementById('videoContainer');
+            if (!con) return;
+            
+            const ids = urls.map(url => extractYoutubeId(url)).filter(Boolean);
+            const uniqueIds = [...new Set(ids)];
+            
+            if (uniqueIds.length > 0) {
+                const firstId = uniqueIds[0];
+                const playlistStr = uniqueIds.join(',');
+                
+                // controls=0 搭配 playlist，會自動隱藏底條，但點擊時會出現中央的上/下/暫停按鈕 (完美符合需求)
+                const newSrc = `https://www.youtube.com/embed/${firstId}?autoplay=1&mute=1&loop=1&playlist=${playlistStr}&controls=0&modestbranding=1&rel=0&playsinline=1`;
+
+                let iframe = con.querySelector('.video-iframe');
+                if (!iframe) {
+                    con.innerHTML = `<iframe class="video-iframe" src="${newSrc}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
+                } else if (iframe.src !== newSrc) {
+                    // 如果後台有更新影片，才重新載入 iframe，避免每 5 分鐘閃爍一次
+                    iframe.src = newSrc;
                 }
-            });
-        }
-        
-        function setupVideo(urls){
-            const con=document.getElementById('videoContainer');if(!con)return;
-            destroyYtPlayer(); stopVideoWatchdog();
-            _videoIds=[]; _playableVideoIds=[]; _blockedVideoIds=new Set(); _videoErrorBurstCount=0; _lastVideoErrorTs=0; _currentVideoIndex=0;
-            urls.forEach(url => { const id=extractYoutubeId(url); if(id) _videoIds.push(id) });
-            _videoIds=[...new Set(_videoIds)];
-            refreshPlayableVideoList();
-            if(_playableVideoIds.length>0){
-                con.innerHTML='<div id="ytPlayerDiv" style="width:100%;height:100%;"></div>';
-                if(typeof YT==='undefined' || typeof YT.Player==='undefined'){
-                    if(!document.getElementById('yt-api-script')){
-                        const tag=document.createElement('script');
-                        tag.id='yt-api-script';
-                        tag.src="https://www.youtube.com/iframe_api";
-                        document.body.appendChild(tag);
-                    }
-                }else{
-                    _isYTReady=true;
-                    _createDynamicPlayer();
-                }
-            }else{
-                showVideoFallback('📹 暫無影音內容');
+            } else {
+                con.innerHTML = `<div style="padding:20px;color:#b0bec5;text-align:center;line-height:1.8;">📹 暫無影音內容</div>`;
             }
         }
         
