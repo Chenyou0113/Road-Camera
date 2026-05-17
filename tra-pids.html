@@ -314,20 +314,69 @@
         async function fetchTrainStops(no){if(stopsCache[no])return stopsCache[no];try{let d=await fetch(`${TRA_WORKER_URL}/api/schedule?trainNo=${no}`).then(r=>r.json());let st=(Array.isArray(d)&&d.length&&d[0].StopTimes)?d[0].StopTimes:(d.StopTimes||null);if(st){stopsCache[no]=st;return st}}catch(e){}return[]}
         function getExpectedTime(ts,delay){if(!ts||delay===0)return ts;const[h,m]=ts.split(':').map(Number);const t=h*60+m+delay;return`${String(Math.floor(t/60)%24).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`}
         
-        let isVideoLoaded=false;
-        async function updateMediaAssets(){try{const r=await fetch(`${TRA_WORKER_URL}/api/pids/assets`);if(r.ok){const d=await r.json();if(d.images?.length>0)setupCarousel(d.images);if(!isVideoLoaded){const v=Array.isArray(d.video)?d.video:(d.video?[d.video]:[]);setupVideo(v);isVideoLoaded=true}}}catch(e){}}
-        
+        // ==========================================
+        // 📺 多媒體區塊 (圖片輪播 + YouTube 播放器模組)
+        // ==========================================
+        let isVideoLoaded = false;
         let carTimer;
-        function setupCarousel(imgs){const box=document.getElementById('carouselBox');box.querySelectorAll('img').forEach(i=>i.remove());imgs.forEach((src,i)=>{const img=document.createElement('img');img.src=src;img.className=i===0?'carousel-img active':'carousel-img';box.appendChild(img)});let idx=0;clearInterval(carTimer);carTimer=setInterval(()=>{const list=box.querySelectorAll('img');if(list.length>1){list[idx].classList.remove('active');idx=(idx+1)%list.length;list[idx].classList.add('active')}},10000)}
-        
-        function extractYoutubeId(input){const raw=String(input||'').replace(/[\r\n\t\f\v]/g,'').trim();if(!raw)return null;if(/^[a-zA-Z0-9_-]{11}$/.test(raw))return raw;try{const u=new URL(raw);const host=(u.hostname||'').toLowerCase();if(host.includes('youtu.be')){const id=u.pathname.replace(/^\//,'').split('/')[0];return/^[a-zA-Z0-9_-]{11}$/.test(id)?id:null}if(host.includes('youtube.com')){const v=u.searchParams.get('v');if(v&&/^[a-zA-Z0-9_-]{11}$/.test(v))return v;const parts=u.pathname.split('/').filter(Boolean);if(['embed','shorts','v','vi','e'].includes(parts[0])&&/^[a-zA-Z0-9_-]{11}$/.test(parts[1]||''))return parts[1]}}catch(_){}const match=raw.match(/(?:v=|v\/|vi=|vi\/|youtu\.be\/|embed\/|e\/|shorts\/)([a-zA-Z0-9_-]{11})/i);return(match&&match[1])?match[1]:null}
-        
-        // 🚀 使用 YouTube IFrame Player API 以支援「無法播放時自動跳過」功能
+
+        // 1. 從 API 更新多媒體資源
+        async function updateMediaAssets() {
+            try {
+                const r = await fetch(`${TRA_WORKER_URL}/api/pids/assets`);
+                if (r.ok) {
+                    const d = await r.json();
+                    if (d.images?.length > 0) setupCarousel(d.images);
+                    if (!isVideoLoaded) {
+                        const v = Array.isArray(d.video) ? d.video : (d.video ? [d.video] : []);
+                        setupVideo(v);
+                        isVideoLoaded = true;
+                    }
+                }
+            } catch (e) {
+                console.error("無法取得多媒體資源:", e);
+            }
+        }
+
+        // 2. 圖片輪播器
+        function setupCarousel(imgs) {
+            const box = document.getElementById('carouselBox');
+            box.querySelectorAll('img').forEach(i => i.remove());
+            imgs.forEach((src, i) => {
+                const img = document.createElement('img');
+                img.src = src;
+                img.className = i === 0 ? 'carousel-img active' : 'carousel-img';
+                box.appendChild(img);
+            });
+            let idx = 0;
+            clearInterval(carTimer);
+            carTimer = setInterval(() => {
+                const list = box.querySelectorAll('img');
+                if (list.length > 1) {
+                    list[idx].classList.remove('active');
+                    idx = (idx + 1) % list.length;
+                    list[idx].classList.add('active');
+                }
+            }, 10000);
+        }
+
+        // ------------------------------------------
+        // 🎬 YouTube IFrame API 核心模組
+        // ------------------------------------------
         let ytPlayer = null;
         let ytPlaylist = [];
         let isYtApiReady = false;
 
-        // 1. 動態載入 YouTube IFrame API
+        // 3. 提取 YouTube 影片 ID
+        function extractYoutubeId(input) {
+            const raw = String(input || '').replace(/[\r\n\t\f\v]/g, '').trim();
+            if (!raw) return null;
+            if (/^[a-zA-Z0-9_-]{11}$/.test(raw)) return raw;
+            const match = raw.match(/(?:v=|v\/|vi=|vi\/|youtu\.be\/|embed\/|e\/|shorts\/)([a-zA-Z0-9_-]{11})/i);
+            return match ? match[1] : null;
+        }
+
+        // 4. 動態載入 YouTube 官方 API 腳本
         function loadYouTubeAPI() {
             if (document.getElementById('yt-api-script')) return;
             const tag = document.createElement('script');
@@ -337,30 +386,25 @@
             firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
         }
 
-        // 2. 當 YouTube API 載入完成時，會自動觸發此全域函數
+        // 5. YT API 下載完成後自動觸發的全域函數
         window.onYouTubeIframeAPIReady = function() {
             isYtApiReady = true;
-            if (ytPlaylist.length > 0) {
-                initOrUpdatePlayer();
-            }
+            if (ytPlaylist.length > 0) initOrUpdatePlayer();
         };
 
-        // 3. 設定影片清單主程式
+        // 6. 設定影片清單 (供外部呼叫)
         function setupVideo(urls) {
             const con = document.getElementById('videoContainer');
             if (!con) return;
-            
+
+            // 過濾無效網址並去重複
             const ids = urls.map(url => extractYoutubeId(url)).filter(Boolean);
             const uniqueIds = [...new Set(ids)];
-            
+
             if (uniqueIds.length > 0) {
                 ytPlaylist = uniqueIds;
-                
-                loadYouTubeAPI(); // 確保 API 正在載入
-                
-                if (isYtApiReady) {
-                    initOrUpdatePlayer();
-                }
+                loadYouTubeAPI();
+                if (isYtApiReady) initOrUpdatePlayer();
             } else {
                 con.innerHTML = `<div style="padding:20px;color:#b0bec5;text-align:center;line-height:1.8;">📹 暫無影音內容</div>`;
                 if (ytPlayer) {
@@ -370,48 +414,45 @@
             }
         }
 
-        // 4. 建立或更新 YouTube 播放器
+        // 7. 初始化或更新播放器 (完全符合需求)
         function initOrUpdatePlayer() {
             const con = document.getElementById('videoContainer');
-            
             const firstId = ytPlaylist[0];
             const restPlaylist = ytPlaylist.join(','); 
 
             if (ytPlayer && typeof ytPlayer.cuePlaylist === 'function') {
-                // 若已經存在，重新載入清單但先不自動播放
+                // 如果已經有播放器，直接排入新清單，但不強迫自動播放
                 ytPlayer.cuePlaylist(ytPlaylist);
             } else {
-                // 清空原內容，建立讓 YT API 綁定的 div
+                // 建立新的播放器載體
                 con.innerHTML = '<div id="yt-player-placeholder"></div>';
-                
+
                 ytPlayer = new YT.Player('yt-player-placeholder', {
                     width: '100%',
                     height: '100%',
-                    videoId: firstId, // 第一部影片
+                    videoId: firstId,
                     playerVars: {
-                        playlist: restPlaylist, // 載入後續清單
-                        autoplay: 0,      // 一開始不自動播放，等使用者手動按
-                        controls: 1,      // 顯示完整控制列
-                        mute: 1,          // 一律靜音
-                        loop: 1,          // 播完最後一部回到第一部
+                        playlist: restPlaylist,
+                        autoplay: 0,      // 【維持暫停】等待手動點擊
+                        controls: 1,      // 【顯示控制列】像一般的 YT 影片
+                        mute: 1,          // 【一律靜音】
+                        loop: 1,          // 播完無限循環
                         modestbranding: 1,
                         rel: 0,
                         playsinline: 1,
-                        origin: window.location.origin // 🔥 解決 postMessage 跨網域報錯
+                        origin: window.location.origin // 🔥 解決 postMessage 跨網域紅字報錯
                     },
                     events: {
                         'onReady': function(event) {
-                            // 確保載入時處於靜音狀態
-                            event.target.mute();
+                            event.target.mute(); // 雙重確認靜音
                         },
                         'onError': function(event) {
-                            // 發生錯誤 (版權限制 150/101 或被刪除)，自動跳下一部
+                            // 🔥 【完美除錯】遇到 150(版權) 或 101(禁嵌) 錯誤時
                             console.warn("YT影片無法播放 (錯誤碼: " + event.data + ")，自動跳下一部");
                             if (ytPlayer && ytPlaylist.length > 1) {
-                                ytPlayer.nextVideo();
-                                
-                                // 🔥 關鍵修復：跳到下一部後，嘗試呼叫播放來刷新畫面
-                                // 如果使用者還沒點擊過，瀏覽器會維持暫停，但畫面會成功刷新成下一部的預覽圖！
+                                ytPlayer.nextVideo(); // 1. 先跳下一部
+
+                                // 2. 延遲 0.3 秒呼叫 playVideo() 來刷新畫面，避免卡在錯誤黑屏
                                 setTimeout(() => {
                                     if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
                                         ytPlayer.playVideo();
