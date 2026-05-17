@@ -377,7 +377,7 @@
             const firstId = ytPlaylist[0];
             const restPlaylist = ytPlaylist.join(','); 
 
-            if (ytPlayer && typeof ytPlayer.loadPlaylist === 'function') {
+            if (ytPlayer && typeof ytPlayer.cuePlaylist === 'function') {
                 // 若已經存在，重新載入清單但先不自動播放
                 ytPlayer.cuePlaylist(ytPlaylist);
             } else {
@@ -390,13 +390,14 @@
                     videoId: firstId, // 第一部影片
                     playerVars: {
                         playlist: restPlaylist, // 載入後續清單
-                        autoplay: 0,      // 【規則1】一開始不自動播放，等使用者手動按
-                        controls: 1,      // 【規則2】顯示完整控制列 (如截圖)
-                        mute: 1,          // 【規則3】一律靜音
+                        autoplay: 0,      // 一開始不自動播放，等使用者手動按
+                        controls: 1,      // 顯示完整控制列
+                        mute: 1,          // 一律靜音
                         loop: 1,          // 播完最後一部回到第一部
                         modestbranding: 1,
                         rel: 0,
-                        playsinline: 1
+                        playsinline: 1,
+                        origin: window.location.origin // 🔥 解決 postMessage 跨網域報錯
                     },
                     events: {
                         'onReady': function(event) {
@@ -404,10 +405,18 @@
                             event.target.mute();
                         },
                         'onError': function(event) {
-                            // 【規則4】發生錯誤 (被刪除、版權限制等)，自動跳下一部並嘗試播放
+                            // 發生錯誤 (版權限制 150/101 或被刪除)，自動跳下一部
                             console.warn("YT影片無法播放 (錯誤碼: " + event.data + ")，自動跳下一部");
                             if (ytPlayer && ytPlaylist.length > 1) {
                                 ytPlayer.nextVideo();
+                                
+                                // 🔥 關鍵修復：跳到下一部後，嘗試呼叫播放來刷新畫面
+                                // 如果使用者還沒點擊過，瀏覽器會維持暫停，但畫面會成功刷新成下一部的預覽圖！
+                                setTimeout(() => {
+                                    if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
+                                        ytPlayer.playVideo();
+                                    }
+                                }, 300);
                             }
                         }
                     }
