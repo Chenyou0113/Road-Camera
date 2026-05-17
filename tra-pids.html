@@ -438,9 +438,10 @@
             const firstId = ytPlaylist[0];
             const restPlaylist = ytPlaylist.join(','); 
 
-            if (ytPlayer && typeof ytPlayer.cuePlaylist === 'function') {
-                // 如果已經有播放器，直接排入新清單，等待手動點擊
-                ytPlayer.cuePlaylist(ytPlaylist);
+            if (ytPlayer && typeof ytPlayer.loadPlaylist === 'function') {
+                // 如果播放器已經存在，直接載入新的完整清單（替換播放清單）
+                try{ ytPlayer.loadPlaylist(ytPlaylist); }catch(e){ console.warn('loadPlaylist 失敗，嘗試 cuePlaylist', e); try{ ytPlayer.cuePlaylist && ytPlayer.cuePlaylist(ytPlaylist); }catch(e){} }
+                return;
             } else {
                 // 建立新的播放器載體
                 con.innerHTML = '<div id="yt-player-placeholder"></div>';
@@ -448,11 +449,9 @@
                 ytPlayer = new YT.Player('yt-player-placeholder', {
                     width: '100%',
                     height: '100%',
-                    videoId: firstId,
                     playerVars: {
-                        playlist: restPlaylist, 
                         autoplay: 1,      // 自動播放（會在 onReady 確認靜音後開始）
-                        controls: 0,      // 關閉原生控制列
+                        controls: 0,      // 隱藏原生控制列（UI 由 overlay 處理）
                         mute: 1,          // 一律靜音以允許自動播放
                         loop: 1,          // 播完無限循環
                         modestbranding: 1,
@@ -464,6 +463,9 @@
                         'onReady': function(event) {
                             event.target.mute(); // 雙重確認靜音
                             try{ event.target.setVolume && event.target.setVolume(0); }catch(e){}
+                            // 使用 loadPlaylist 將整個陣列交給播放器（避免第一支重複問題）
+                            try{ event.target.loadPlaylist && event.target.loadPlaylist(ytPlaylist); }catch(e){ console.warn('loadPlaylist 呼叫失敗', e); }
+                            // 嘗試啟動播放（若瀏覽器策略允許）
                             try{ event.target.playVideo(); }catch(e){}
                             // 啟動強制靜音器：每 3 秒再次強制靜音以防止意外解除
                             try{ if(muteEnforcer) clearInterval(muteEnforcer); muteEnforcer = setInterval(()=>{ try{ if(ytPlayer){ ytPlayer.mute(); ytPlayer.setVolume && ytPlayer.setVolume(0); } }catch(e){} },3000); }catch(e){}
@@ -480,17 +482,11 @@
                         'onError': function(event) {
                             // 更詳細的錯誤輸出，幫助判斷是否為不可嵌入或其他錯誤
                             console.error("YT Player error:", event && event.data);
-                            // 常見不可嵌入錯誤代碼 101 / 150
-                            const code = event && event.data;
-                            if(code===101||code===150){
-                                console.warn("偵測到不可嵌入影片 (101/150)，跳過此影片");
-                            } else {
-                                console.warn("遇到播放器錯誤，將嘗試跳到下一部");
-                            }
-                            if (ytPlayer && ytPlaylist.length > 1) {
-                                ytPlaylist.shift(); // 移除目前影片
-                                try{ ytPlayer.cuePlaylist(ytPlaylist); }catch(e){ console.warn('cuePlaylist 失敗',e); }
-                            }
+                            // 對於不可嵌入（101/150）或其他錯誤，嘗試下一支影片
+                            setTimeout(()=>{
+                                try{ if(ytPlayer && typeof ytPlayer.nextVideo === 'function'){ ytPlayer.nextVideo(); } }
+                                catch(e){ console.warn('nextVideo 失敗', e); }
+                            }, 1000);
                         }
                     }
                 });
