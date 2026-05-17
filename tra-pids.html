@@ -83,7 +83,8 @@
         .media-label { position: absolute; top: 0; left: 0; background: rgba(0,0,0,0.7); color: #fff; padding: 4px 10px; font-size: 1rem; z-index: 10; border-bottom-right-radius: 8px; }
         .carousel-img { width: 100%; height: 100%; object-fit: contain; position: absolute; opacity: 0; transition: opacity 1s; pointer-events: none; z-index: 1; }
         .carousel-img.active { opacity: 1; pointer-events: auto; z-index: 2; }
-        /* 讓影片填滿，保留控制列，允許使用者點擊 */
+        
+        /* 讓影片填滿容器，保留 YouTube 原生控制列，允許點擊 */
         #videoContainer { 
             width: 100%; 
             height: 100%; 
@@ -93,7 +94,6 @@
             height: 100%; 
             border: none; 
         }
-        .video-iframe { width: 100%; height: 100%; border: none; }
         
         /* 車種顏色 - 使用文字顏色，支援深淺模式 */
         .type-太魯閣 { color: #e6a822 !important; }
@@ -268,7 +268,7 @@
         </div>
         <div class="media-box" id="videoBox">
             <div class="media-label">影音專區</div>
-            <div id="videoContainer" style="width:100%;height:100%;"></div>
+            <div id="videoContainer"></div>
         </div>
     </div>
     <template id="train-row-template">
@@ -319,7 +319,7 @@
         // ==========================================
         let isVideoLoaded = false;
         let carTimer;
-
+        
         // 1. 從 API 更新多媒體資源
         async function updateMediaAssets() {
             try {
@@ -337,7 +337,7 @@
                 console.error("無法取得多媒體資源:", e);
             }
         }
-
+        
         // 2. 圖片輪播器
         function setupCarousel(imgs) {
             const box = document.getElementById('carouselBox');
@@ -396,11 +396,11 @@
         function setupVideo(urls) {
             const con = document.getElementById('videoContainer');
             if (!con) return;
-
+            
             // 過濾無效網址並去重複
             const ids = urls.map(url => extractYoutubeId(url)).filter(Boolean);
             const uniqueIds = [...new Set(ids)];
-
+            
             if (uniqueIds.length > 0) {
                 ytPlaylist = uniqueIds;
                 loadYouTubeAPI();
@@ -414,50 +414,47 @@
             }
         }
 
-        // 7. 初始化或更新播放器 (完全符合需求)
+        // 7. 初始化或更新播放器 (完整控制列 + 手動播放 + 自動連播下一部)
         function initOrUpdatePlayer() {
             const con = document.getElementById('videoContainer');
+            if (ytPlaylist.length === 0) return;
+
             const firstId = ytPlaylist[0];
             const restPlaylist = ytPlaylist.join(','); 
 
             if (ytPlayer && typeof ytPlayer.cuePlaylist === 'function') {
-                // 如果已經有播放器，直接排入新清單，但不強迫自動播放
+                // 如果已經有播放器，直接排入新清單，等待手動點擊
                 ytPlayer.cuePlaylist(ytPlaylist);
             } else {
                 // 建立新的播放器載體
                 con.innerHTML = '<div id="yt-player-placeholder"></div>';
-
+                
                 ytPlayer = new YT.Player('yt-player-placeholder', {
+                    host: 'https://www.youtube.com', // 解決 postMessage 跨網域紅字報錯
                     width: '100%',
                     height: '100%',
                     videoId: firstId,
                     playerVars: {
-                        playlist: restPlaylist,
-                        autoplay: 0,      // 【維持暫停】等待手動點擊
-                        controls: 1,      // 【顯示控制列】像一般的 YT 影片
+                        playlist: restPlaylist, 
+                        autoplay: 0,      // 【維持暫停】等待使用者點擊播放鍵
+                        controls: 1,      // 【顯示控制列】(符合截圖需求)
                         mute: 1,          // 【一律靜音】
                         loop: 1,          // 播完無限循環
                         modestbranding: 1,
                         rel: 0,
                         playsinline: 1,
-                        origin: window.location.origin // 🔥 解決 postMessage 跨網域紅字報錯
+                        origin: window.location.origin
                     },
                     events: {
                         'onReady': function(event) {
                             event.target.mute(); // 雙重確認靜音
                         },
                         'onError': function(event) {
-                            // 🔥 【完美除錯】遇到 150(版權) 或 101(禁嵌) 錯誤時
-                            console.warn("YT影片無法播放 (錯誤碼: " + event.data + ")，自動跳下一部");
+                            // 遇到無法嵌入的影片時，自動將其剔除並載入下一部
+                            console.warn("偵測到無法嵌入的影片，已自動跳轉下一部");
                             if (ytPlayer && ytPlaylist.length > 1) {
-                                ytPlayer.nextVideo(); // 1. 先跳下一部
-
-                                // 2. 延遲 0.3 秒呼叫 playVideo() 來刷新畫面，避免卡在錯誤黑屏
-                                setTimeout(() => {
-                                    if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
-                                        ytPlayer.playVideo();
-                                    }
-                                }, 300);
+                                ytPlaylist.shift(); // 踢除壞掉的影片
+                                ytPlayer.cuePlaylist(ytPlaylist); // 載入下一部，維持暫停等待點擊
                             }
                         }
                     }
