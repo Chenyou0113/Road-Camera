@@ -83,6 +83,16 @@
         .media-label { position: absolute; top: 0; left: 0; background: rgba(0,0,0,0.7); color: #fff; padding: 4px 10px; font-size: 1rem; z-index: 10; border-bottom-right-radius: 8px; }
         .carousel-img { width: 100%; height: 100%; object-fit: contain; position: absolute; opacity: 0; transition: opacity 1s; pointer-events: none; z-index: 1; }
         .carousel-img.active { opacity: 1; pointer-events: auto; z-index: 2; }
+        /* 讓影片填滿，保留控制列，允許使用者點擊 */
+        #videoContainer { 
+            width: 100%; 
+            height: 100%; 
+        }
+        #videoContainer iframe { 
+            width: 100%; 
+            height: 100%; 
+            border: none; 
+        }
         .video-iframe { width: 100%; height: 100%; border: none; }
         
         /* 車種顏色 - 使用文字顏色，支援深淺模式 */
@@ -364,36 +374,40 @@
         function initOrUpdatePlayer() {
             const con = document.getElementById('videoContainer');
             
-            if (ytPlayer && ytPlayer.cuePlaylist) {
-                // 若播放器已存在，僅更新播放清單 (使用 cuePlaylist 保持 autoplay=0 邏輯)
-                ytPlayer.cuePlaylist({ playlist: ytPlaylist });
+            const firstId = ytPlaylist[0];
+            const restPlaylist = ytPlaylist.join(','); 
+
+            if (ytPlayer && typeof ytPlayer.loadPlaylist === 'function') {
+                // 若已經存在，重新載入清單但先不自動播放
+                ytPlayer.cuePlaylist(ytPlaylist);
             } else {
                 // 清空原內容，建立讓 YT API 綁定的 div
-                con.innerHTML = '<div id="yt-player-placeholder" class="video-iframe"></div>';
+                con.innerHTML = '<div id="yt-player-placeholder"></div>';
                 
                 ytPlayer = new YT.Player('yt-player-placeholder', {
                     width: '100%',
                     height: '100%',
+                    videoId: firstId, // 第一部影片
                     playerVars: {
-                        autoplay: 0,      // 一開始不自動播放，等待使用者點擊
-                        controls: 1,      // 顯示完整控制列
-                        mute: 1,          // 強制靜音播放
-                        loop: 1,
+                        playlist: restPlaylist, // 載入後續清單
+                        autoplay: 0,      // 【規則1】一開始不自動播放，等使用者手動按
+                        controls: 1,      // 【規則2】顯示完整控制列 (如截圖)
+                        mute: 1,          // 【規則3】一律靜音
+                        loop: 1,          // 播完最後一部回到第一部
                         modestbranding: 1,
                         rel: 0,
                         playsinline: 1
                     },
                     events: {
                         'onReady': function(event) {
-                            // 準備好後載入清單
-                            event.target.cuePlaylist({ playlist: ytPlaylist });
+                            // 確保載入時處於靜音狀態
+                            event.target.mute();
                         },
                         'onError': function(event) {
-                            // 🔥 核心修復：當影片發生錯誤 (禁止嵌入、已刪除、私人影片) 時觸發
+                            // 【規則4】發生錯誤 (被刪除、版權限制等)，自動跳下一部並嘗試播放
                             console.warn("YT影片無法播放 (錯誤碼: " + event.data + ")，自動跳下一部");
-                            
                             if (ytPlayer && ytPlaylist.length > 1) {
-                                ytPlayer.nextVideo(); // 自動跳轉下一部影片
+                                ytPlayer.nextVideo();
                             }
                         }
                     }
