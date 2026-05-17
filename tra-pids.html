@@ -84,6 +84,10 @@
         .carousel-img { width: 100%; height: 100%; object-fit: contain; position: absolute; opacity: 0; transition: opacity 1s; pointer-events: none; z-index: 1; }
         .carousel-img.active { opacity: 1; pointer-events: auto; z-index: 2; }
         .video-iframe { width: 100%; height: 100%; border: none; }
+        .vid-prev, .vid-next { position: absolute; top: 50%; transform: translateY(-50%); z-index: 20; background: rgba(0,0,0,0.6); color: #fff; border: 2px solid rgba(255,255,255,0.4); font-size: 1.8rem; width: 48px; height: 48px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.3s ease; }
+        .vid-prev:hover, .vid-next:hover { background: rgba(0,0,0,0.9); border-color: #fff; }
+        .vid-prev { left: 10px; }
+        .vid-next { right: 10px; }
         
         /* 車種顏色 - 使用文字顏色，支援深淺模式 */
         .train-type-cell { font-weight: 700 !important; }
@@ -259,7 +263,7 @@
         </div>
         <div class="media-box" id="videoBox">
             <div class="media-label">影音專區</div>
-            <div id="videoContainer" style="width:100%;height:100%"></div>
+            <div id="videoContainer" style="width:100%;height:100%;position:relative;"></div>
         </div>
     </div>
     <template id="train-row-template">
@@ -315,17 +319,17 @@
         function stopVideoWatchdog(){if(_videoWatchdogTimer){clearTimeout(_videoWatchdogTimer);_videoWatchdogTimer=null}}
         function armVideoWatchdog(){stopVideoWatchdog();_videoWatchdogTimer=setTimeout(()=>{destroyYtPlayer();showVideoFallback('📹 影音來源暫時無法播放，請稍後再試')},12000)}
         function playCurrentVideo(){if(!window.ytPlayer||!_playableVideoIds.length)return;const id=_playableVideoIds[_currentVideoIndex];if(!id)return;armVideoWatchdog();try{window.ytPlayer.loadVideoById(id)}catch(_){advanceToNextVideo('load-failed')}}
-        function advanceToNextVideo(reason='next'){if(!_playableVideoIds.length){destroyYtPlayer();showVideoFallback('📹 影音來源暫時無法播放，請稍後再試');return}_currentVideoIndex=(_currentVideoIndex+1)%_playableVideoIds.length;playCurrentVideo()}
+        function advanceToNextVideo(reason='next'){if(!_playableVideoIds.length){destroyYtPlayer();showVideoFallback('📹 影音來源暫時無法播放，請稍後再試');return}if(reason==='prev'){_currentVideoIndex=(_currentVideoIndex-1+_playableVideoIds.length)%_playableVideoIds.length}else{_currentVideoIndex=(_currentVideoIndex+1)%_playableVideoIds.length}playCurrentVideo()}
         function extractYoutubeId(input){const raw=String(input||'').replace(/[\r\n\t\f\v]/g,'').trim();if(!raw)return null;if(/^[a-zA-Z0-9_-]{11}$/.test(raw))return raw;try{const u=new URL(raw);const host=(u.hostname||'').toLowerCase();if(host.includes('youtu.be')){const id=u.pathname.replace(/^\//,'').split('/')[0];return/^[a-zA-Z0-9_-]{11}$/.test(id)?id:null}if(host.includes('youtube.com')){const v=u.searchParams.get('v');if(v&&/^[a-zA-Z0-9_-]{11}$/.test(v))return v;const parts=u.pathname.split('/').filter(Boolean);if(['embed','shorts','v','vi','e'].includes(parts[0])&&/^[a-zA-Z0-9_-]{11}$/.test(parts[1]||''))return parts[1]}}catch(_){}const match=raw.match(/(?:v=|v\/|vi=|vi\/|youtu\.be\/|embed\/|e\/|shorts\/)([a-zA-Z0-9_-]{11})/i);return(match&&match[1])?match[1]:null}
         window.onYouTubeIframeAPIReady=function(){_isYTReady=true;if(_videoIds.length>0)_createDynamicPlayer()};
-        function _createDynamicPlayer(){if(!_isYTReady||window.ytPlayer||!_playableVideoIds.length)return;const origin=window.location.protocol+'//'+window.location.hostname+(window.location.port?':'+window.location.port:'');window.ytPlayer=new YT.Player('ytPlayerDiv',{host:'https://www.youtube.com',videoId:_playableVideoIds[_currentVideoIndex],playerVars:{autoplay:0,mute:1,controls:1,modestbranding:1,rel:0,enablejsapi:1,origin:origin,widget_referrer:origin,playsinline:1,fs:0},events:{onReady:(event)=>{event.target.mute()},onStateChange:(event)=>{if(event.data===YT.PlayerState.PLAYING){stopVideoWatchdog();_videoErrorBurstCount=0;_lastVideoErrorTs=0;const id=event?.target?.getVideoData?.()?.video_id;const idx=_playableVideoIds.indexOf(id);if(idx>=0)_currentVideoIndex=idx}if(event.data===YT.PlayerState.ENDED){advanceToNextVideo('ended')}},onError:(event)=>{stopVideoWatchdog();const now=Date.now();_videoErrorBurstCount=(now-_lastVideoErrorTs<8000)?(_videoErrorBurstCount+1):1;_lastVideoErrorTs=now;if(_videoErrorBurstCount>=3){destroyYtPlayer();showVideoFallback('📹 影音來源受限制，暫時無法播放');return}const badId=event?.target?.getVideoData?.()?.video_id;if(badId)_blockedVideoIds.add(badId);else if(_playableVideoIds.length>0)_blockedVideoIds.add(_playableVideoIds[0]);refreshPlayableVideoList();if(!_playableVideoIds.length){destroyYtPlayer();showVideoFallback('📹 影音來源暫時無法播放，請稍後再試');return}advanceToNextVideo('error')}}})}
+        function _createDynamicPlayer(){if(!_isYTReady||window.ytPlayer||!_playableVideoIds.length)return;const origin=window.location.protocol+'//'+window.location.hostname+(window.location.port?':'+window.location.port:'');window.ytPlayer=new YT.Player('ytPlayerDiv',{host:'https://www.youtube.com',videoId:_playableVideoIds[_currentVideoIndex],playerVars:{autoplay:0,mute:1,controls:0,rel:0,enablejsapi:1,origin:origin,widget_referrer:origin,playsinline:1},events:{onReady:(event)=>{event.target.mute()},onStateChange:(event)=>{if(event.data===YT.PlayerState.PLAYING){stopVideoWatchdog();_videoErrorBurstCount=0;_lastVideoErrorTs=0;const id=event?.target?.getVideoData?.()?.video_id;const idx=_playableVideoIds.indexOf(id);if(idx>=0)_currentVideoIndex=idx}if(event.data===YT.PlayerState.ENDED){advanceToNextVideo('ended')}},onError:(event)=>{stopVideoWatchdog();const now=Date.now();_videoErrorBurstCount=(now-_lastVideoErrorTs<8000)?(_videoErrorBurstCount+1):1;_lastVideoErrorTs=now;if(_videoErrorBurstCount>=3){destroyYtPlayer();showVideoFallback('📹 影音來源受限制，暫時無法播放');return}const badId=event?.target?.getVideoData?.()?.video_id;if(badId)_blockedVideoIds.add(badId);else if(_playableVideoIds.length>0)_blockedVideoIds.add(_playableVideoIds[0]);refreshPlayableVideoList();if(!_playableVideoIds.length){destroyYtPlayer();showVideoFallback('📹 影音來源暫時無法播放，請稍後再試');return}advanceToNextVideo('error')}}})}
         function setupVideo(urls){
             const con=document.getElementById('videoContainer');if(!con)return;
             destroyYtPlayer();stopVideoWatchdog();
             _videoIds=[];_playableVideoIds=[];_blockedVideoIds=new Set();_videoErrorBurstCount=0;_lastVideoErrorTs=0;_currentVideoIndex=0;
             urls.forEach(url=>{const id=extractYoutubeId(url);if(id)_videoIds.push(id)});_videoIds=[...new Set(_videoIds)];refreshPlayableVideoList();
             if(_playableVideoIds.length>0){
-                con.innerHTML='<div id="ytPlayerDiv" style="width:100%;height:100%;"></div>';
+                con.innerHTML='<div id="ytPlayerDiv" style="width:100%;height:100%;"></div><button class="vid-prev" onclick="advanceToNextVideo(\'prev\')" aria-label="上一部">◀</button><button class="vid-next" onclick="advanceToNextVideo(\'next\')" aria-label="下一部">▶</button>';
                 if(typeof YT==='undefined'||typeof YT.Player==='undefined'){if(!document.getElementById('yt-api-script')){const tag=document.createElement('script');tag.id='yt-api-script';tag.src="https://www.youtube.com/iframe_api";document.body.appendChild(tag)}}else{_isYTReady=true;_createDynamicPlayer()}
             }else{showVideoFallback('📹 暫無影音內容')}
         }
