@@ -94,6 +94,21 @@
             height: 100%; 
             border: none; 
         }
+        /* 覆蓋大按鈕：在隱藏原生控制列時提供播放/暫停操作 */
+        #videoContainer { position: relative; }
+        #videoContainer .yt-overlay {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            background: rgba(0,0,0,0.25);
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+        #videoContainer .yt-overlay:hover { background: rgba(0,0,0,0.35); }
+        #videoContainer .yt-overlay i { font-size: 4rem; color: #ffffff; text-shadow: 0 2px 8px rgba(0,0,0,0.7); }
         
         /* 車種顏色 - 使用文字顏色，支援深淺模式 */
         .type-太魯閣 { color: #e6a822 !important; }
@@ -366,6 +381,7 @@
         let ytPlayer = null;
         let ytPlaylist = [];
         let isYtApiReady = false;
+        let muteEnforcer = null;
 
         // 3. 提取 YouTube 影片 ID
         function extractYoutubeId(input) {
@@ -430,15 +446,14 @@
                 con.innerHTML = '<div id="yt-player-placeholder"></div>';
                 
                 ytPlayer = new YT.Player('yt-player-placeholder', {
-                    host: 'https://www.youtube.com', // 解決 postMessage 跨網域紅字報錯
                     width: '100%',
                     height: '100%',
                     videoId: firstId,
                     playerVars: {
                         playlist: restPlaylist, 
-                        autoplay: 0,      // 【維持暫停】等待使用者點擊播放鍵
-                        controls: 1,      // 【顯示控制列】(符合截圖需求)
-                        mute: 1,          // 【一律靜音】
+                        autoplay: 1,      // 自動播放（會在 onReady 確認靜音後開始）
+                        controls: 0,      // 關閉原生控制列
+                        mute: 1,          // 一律靜音以允許自動播放
                         loop: 1,          // 播完無限循環
                         modestbranding: 1,
                         rel: 0,
@@ -448,17 +463,62 @@
                     events: {
                         'onReady': function(event) {
                             event.target.mute(); // 雙重確認靜音
+                            try{ event.target.setVolume && event.target.setVolume(0); }catch(e){}
+                            try{ event.target.playVideo(); }catch(e){}
+                            // 啟動強制靜音器：每 3 秒再次強制靜音以防止意外解除
+                            try{ if(muteEnforcer) clearInterval(muteEnforcer); muteEnforcer = setInterval(()=>{ try{ if(ytPlayer){ ytPlayer.mute(); ytPlayer.setVolume && ytPlayer.setVolume(0); } }catch(e){} },3000); }catch(e){}
+                        },
+                        'onStateChange': function(e){
+                            // 更新覆蓋按鈕顯示（播放時隱藏）
+                            const st = e.data;
+                            const ov = document.querySelector('#videoContainer .yt-overlay');
+                            if(ov){
+                                if(st===YT.PlayerState.PLAYING){ ov.style.display='none'; }
+                                else { ov.style.display='flex'; ov.innerHTML = '<i class="fas fa-play"></i>'; }
+                            }
                         },
                         'onError': function(event) {
-                            // 遇到無法嵌入的影片時，自動將其剔除並載入下一部
-                            console.warn("偵測到無法嵌入的影片，已自動跳轉下一部");
+                            // 更詳細的錯誤輸出，幫助判斷是否為不可嵌入或其他錯誤
+                            console.error("YT Player error:", event && event.data);
+                            // 常見不可嵌入錯誤代碼 101 / 150
+                            const code = event && event.data;
+                            if(code===101||code===150){
+                                console.warn("偵測到不可嵌入影片 (101/150)，跳過此影片");
+                            } else {
+                                console.warn("遇到播放器錯誤，將嘗試跳到下一部");
+                            }
                             if (ytPlayer && ytPlaylist.length > 1) {
-                                ytPlaylist.shift(); // 踢除壞掉的影片
-                                ytPlayer.cuePlaylist(ytPlaylist); // 載入下一部，維持暫停等待點擊
+                                ytPlaylist.shift(); // 移除目前影片
+                                try{ ytPlayer.cuePlaylist(ytPlaylist); }catch(e){ console.warn('cuePlaylist 失敗',e); }
                             }
                         }
                     }
                 });
+
+                // 若播放器被銷毀或替換，確保上一次的強制器被清理
+                try{ if(window._yt_mute_cleanup){ window._yt_mute_cleanup(); } window._yt_mute_cleanup = ()=>{ if(muteEnforcer){ clearInterval(muteEnforcer); muteEnforcer = null; } }; }catch(e){}
+
+                // 建立覆蓋式大按鈕，當原生控制列被關閉時提供播放/暫停互動
+                (function ensureOverlay(){
+                    const conWrap = document.getElementById('videoContainer');
+                    if(!conWrap) return;
+                    let ov = conWrap.querySelector('.yt-overlay');
+                    if(!ov){
+                        ov = document.createElement('div');
+                        ov.className = 'yt-overlay';
+                        ov.innerHTML = '<i class="fas fa-play"></i>';
+                        conWrap.appendChild(ov);
+                        ov.addEventListener('click', ()=>{
+                            try{
+                                const st = ytPlayer && typeof ytPlayer.getPlayerState==='function' ? ytPlayer.getPlayerState() : null;
+                                if(st===YT.PlayerState.PLAYING){ ytPlayer.pauseVideo(); }
+                                else { ytPlayer.playVideo(); }
+                            }catch(e){}
+                        });
+                    }
+                    // 初始顯示：若已在播放則隱藏 overlay
+                    try{ if(ytPlayer && typeof ytPlayer.getPlayerState==='function' && ytPlayer.getPlayerState()===YT.PlayerState.PLAYING) ov.style.display='none'; }catch(e){}
+                })();
             }
         }
         
