@@ -476,276 +476,144 @@
             }, 10000);
         }
 
-        // ------------------------------------------
-        // 🎬 YouTube IFrame API 核心模組
-        // ------------------------------------------
+        // ==========================================
+        // 🎬 YouTube IFrame API 官方核心模組 (防機器人攔截版)
+        // ==========================================
         let ytPlayer = null;
         let ytPlaylist = [];
-        let currentPlaylistIndex = 0;  // 新增：當前播放索引
+        let currentPlaylistIndex = 0;
         let isYtApiReady = false;
-        let muteEnforcer = null;
-        let hasUserStartedVideo = false;
+        let videoPlayTimer = null;
 
-        // 3. 提取 YouTube 影片 ID
+        // 1. 提取 YouTube 影片 ID
         function extractYoutubeId(input) {
-            const raw = String(input || '').replace(/[\r\n\t\f\v]/g, '').trim();
+            const raw = String(input || '').trim();
             if (!raw) return null;
             if (/^[a-zA-Z0-9_-]{11}$/.test(raw)) return raw;
             const match = raw.match(/(?:v=|v\/|vi=|vi\/|youtu\.be\/|embed\/|e\/|shorts\/)([a-zA-Z0-9_-]{11})/i);
             return match ? match[1] : null;
         }
 
-        // 4. 簡化版初始化 - 不再需要加載 YouTube API
+        // 2. 載入官方 YouTube IFrame API 腳本
         function loadYouTubeAPI() {
-            // 已棄用：改用 youtube-nocookie.com iframe 方式
-            console.log('YouTube API 已停用，改用 iframe 嵌入方式');
+            if (document.getElementById('yt-api-script')) return;
+            const tag = document.createElement('script');
+            tag.id = 'yt-api-script';
+            tag.src = "https://www.youtube.com/iframe_api";
+            const firstScriptTag = document.getElementsByTagName('script')[0];
+            firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
         }
 
-        // 5. （已棄用）YT API 回調函數
+        // 3. YouTube 官方 API 準備就緒的回呼函數 (必須是全域變數)
+        window.onYouTubeIframeAPIReady = function() {
+            isYtApiReady = true;
+            console.log("✅ YouTube API 載入完成");
+            if (ytPlaylist.length > 0) {
+                initOrUpdatePlayer();
+            }
+        };
 
-        // 6. 設定影片清單 - 已改用 iframe 方案
+        // 4. 設定影片清單
         function setupVideo(urls) {
             const con = document.getElementById('videoContainer');
             if (!con) return;
             
-            // 過濾無效網址並提取 ID
             const ids = urls.map(url => extractYoutubeId(url)).filter(Boolean);
             
             if (ids.length > 0) {
                 ytPlaylist = ids;
-                currentPlaylistIndex = 0;
-                hasUserStartedVideo = false;
-                initOrUpdatePlayer();
+                // 如果 API 還沒載入，先載入 API；如果已經載入了，直接初始化播放器
+                if (!isYtApiReady) {
+                    loadYouTubeAPI();
+                } else {
+                    initOrUpdatePlayer();
+                }
             } else {
                 con.innerHTML = `<div style="padding:20px;color:#b0bec5;text-align:center;line-height:1.8;">📹 暫無影音內容</div>`;
             }
         }
 
-        // 7. 初始化或更新播放器 - 使用 youtube-nocookie.com iframe 並加入播放結束偵測
-        let videoPlayTimer = null;
-        let playlistId = null;  // 用於儲存播放列表 ID
-        let currentIframePlayer = null;
-        
-        function initOrUpdatePlayer(autoPlay = hasUserStartedVideo) {
+        // 5. 初始化或切換播放器
+        function initOrUpdatePlayer() {
             const con = document.getElementById('videoContainer');
-            if (ytPlaylist.length === 0) return;
+            if (ytPlaylist.length === 0 || !isYtApiReady) return;
 
             const videoId = ytPlaylist[currentPlaylistIndex];
-            const autoplayValue = autoPlay ? 1 : 0;
-            
-            // 清除之前的定時器
-            if (videoPlayTimer) {
-                clearTimeout(videoPlayTimer);
-                videoPlayTimer = null;
-            }
-            
-            // 使用 youtube-nocookie.com 避免跨域限制和不可嵌入問題
-            // mute=1 強制靜音，controls=0 隱藏控制列，fs=0 禁用全螢幕
-            // 首次載入時先不自動播放，使用者按下播放鍵後再切換成 autoplay=1
-            con.innerHTML = `
-                <iframe 
-                    id="yt-iframe-player"
-                    width="100%" 
-                    height="100%" 
-                    src="https://www.youtube-nocookie.com/embed/${videoId}?autoplay=${autoplayValue}&mute=1&controls=0&modestbranding=1&rel=0&fs=0&playsinline=1&enablejsapi=1"
-                    frameborder="0"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    style="border: none; display: block;">
-                </iframe>
+            console.log(`▶️ 準備播放: ${videoId}`);
 
-                ${autoPlay ? '' : `
-                <div id="startVideoBtn" title="開始播放影片"
-                    style="position:absolute;inset:0;z-index:25;cursor:pointer;background:transparent;display:flex;align-items:center;justify-content:center;">
-                    <svg height="100%" version="1.1" viewBox="0 0 68 48" width="100%" style="width:68px;height:48px;filter:drop-shadow(0 0 10px rgba(0,0,0,0.5));">
-                        <path class="ytp-large-play-button-bg" d="M66.52,7.74c-0.78-2.93-2.49-5.41-5.42-6.19C55.79,0.13,34,0.13,34,0.13s-21.79,0-27.1,1.42C3.97,2.33,2.27,4.81,1.48,7.74C0.06,13.05,0,24,0,24s0.06,10.95,1.48,16.26c0.78,2.93,2.49,5.41,5.42,6.19C12.21,47.87,34,47.87,34,47.87s21.79,0,27.1-1.42c2.93-0.78,4.64-3.26,5.42-6.19C67.94,34.95,68,24,68,24S67.94,13.05,66.52,7.74z" fill="#f00"></path>
-                        <path d="M 45,24 27,14 27,34" fill="#fff"></path>
-                    </svg>
-                </div>`}
-                
-                <!-- 控制按鈕 -->
+            // 清除舊定時器
+            if (videoPlayTimer) clearTimeout(videoPlayTimer);
+
+            // 如果播放器已經存在，直接載入新影片
+            if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
+                ytPlayer.loadVideoById(videoId);
+                return;
+            }
+
+            // 重置容器內容，準備建立官方播放器
+            con.innerHTML = `
+                <div id="yt-player-div"></div>
                 <div class="video-controls">
-                    <button class="video-btn" id="prevVideoBtn" title="上一部影片 (按 3)">
-                        <i class="fas fa-chevron-left"></i>
-                    </button>
-                    <button class="video-btn" id="nextVideoBtn" title="下一部影片 (按 5)">
-                        <i class="fas fa-chevron-right"></i>
-                    </button>
+                    <button class="video-btn" id="prevVideoBtn" title="上一部影片 (按 3)"><i class="fas fa-chevron-left"></i></button>
+                    <button class="video-btn" id="nextVideoBtn" title="下一部影片 (按 5)"><i class="fas fa-chevron-right"></i></button>
                 </div>
             `;
-            
-            console.log(`▶️ 正在播放第 ${currentPlaylistIndex + 1} 部影片 (ID: ${videoId})`);
-            
-            // 綁定按鈕事件
-            setTimeout(() => {
-                const prevBtn = document.getElementById('prevVideoBtn');
-                const nextBtn = document.getElementById('nextVideoBtn');
-                const startBtn = document.getElementById('startVideoBtn');
-                
-                if (prevBtn) prevBtn.addEventListener('click', () => playPrevVideo());
-                if (nextBtn) nextBtn.addEventListener('click', () => playNextVideo());
-                if (startBtn) startBtn.addEventListener('click', () => startVideoPlayback());
-                
-                // 設置播放結束檢測
-                setupPlaybackEndDetection(videoId, autoPlay);
-            }, 100);
-        }
 
-        function startVideoPlayback() {
-            hasUserStartedVideo = true;
-            currentPlaylistIndex = Math.max(0, currentPlaylistIndex);
-            initOrUpdatePlayer(true);
-        }
-        
-        // 8. 設置播放結束自動檢測
-        let ytMessageListener = null;
-        function setupPlaybackEndDetection(videoId, autoPlay) {
-            if (videoPlayTimer) {
-                clearTimeout(videoPlayTimer);
-                videoPlayTimer = null;
-            }
+            // 建立按鈕事件
+            document.getElementById('prevVideoBtn').addEventListener('click', playPrevVideo);
+            document.getElementById('nextVideoBtn').addEventListener('click', playNextVideo);
 
-            const iframe = document.getElementById('yt-iframe-player');
-            if (!iframe) {
-                console.log('⚠️ 找不到 iframe，無法設置播放結束檢測');
-                return;
-            }
-
-            if (ytMessageListener) {
-                window.removeEventListener('message', ytMessageListener);
-            }
-
-            console.log('✓ 播放結束檢測已啟用 - 透過 YouTube Iframe API 偵測');
-
-            iframe.onload = () => {
-                try {
-                    iframe.contentWindow.postMessage(JSON.stringify({
-                        event: 'listening',
-                        id: 'pids-yt-player'
-                    }), '*');
-                } catch (e) {}
-            };
-
-            ytMessageListener = function(e) {
-                if (e.origin !== 'https://www.youtube-nocookie.com' && e.origin !== 'https://www.youtube.com') return;
-
-                try {
-                    const data = JSON.parse(e.data);
-                    let isEnded = false;
-
-                    if (data.event === 'onStateChange' && data.info === 0) {
-                        isEnded = true;
-                    } else if (data.event === 'infoDelivery' && data.info && data.info.playerState === 0) {
-                        isEnded = true;
-                    }
-
-                    if (isEnded) {
-                        console.log(`✅ 影片播放完成！準備自動播放下一部...`);
-                        window.removeEventListener('message', ytMessageListener);
-                        ytMessageListener = null;
+            // 初始化官方播放器
+            ytPlayer = new YT.Player('yt-player-div', {
+                width: '100%',
+                height: '100%',
+                videoId: videoId,
+                playerVars: {
+                    'autoplay': 1,       // 自動播放
+                    'mute': 1,           // 必須靜音才能自動播放
+                    'controls': 0,       // 隱藏控制列
+                    'rel': 0,            // 不顯示相關影片
+                    'modestbranding': 1, // 隱藏 YouTube Logo
+                    'playsinline': 1,
+                    'origin': window.location.origin // 加上防阻擋來源驗證
+                },
+                events: {
+                    'onReady': function(event) {
+                        event.target.playVideo(); // 確保開始播放
+                    },
+                    'onStateChange': function(event) {
+                        // YT.PlayerState.ENDED = 0
+                        if (event.data === 0) {
+                            console.log('✅ 影片播放完畢，切換下一部');
+                            playNextVideo();
+                        }
+                    },
+                    'onError': function(event) {
+                        console.log('⚠️ 影片發生錯誤，跳過此影片', event.data);
                         playNextVideo();
                     }
-                } catch (err) {
                 }
-            };
+            });
 
-            window.addEventListener('message', ytMessageListener);
-
-            if (autoPlay) {
-                videoPlayTimer = setTimeout(() => {
-                    console.log('⚠️ 影片播放超時防護觸發，強制切換下一部');
-                    playNextVideo();
-                }, 7200000);
-            }
-        }
-        
-        // 9. 設置備用自動播放超時（當無法直接檢測時使用）
-        function setupAutoPlayWithTimeout(videoId) {
-            const videoDurations = {
-                // 在此添加你知道的視頻時長（秒）
-                // 'VIDEO_ID': 180,
-            };
-            
-            let duration = videoDurations[videoId];
-            
-            if (!duration) {
-                // 無法取得精確時長，使用保守的估計
-                // 嘗試多種方式檢測
-                duration = estimateVideoDuration(videoId);
-            }
-            
-            console.log(`⏱️ 使用時長: ${duration} 秒 (${Math.floor(duration/60)} 分 ${duration % 60} 秒)`);
-            console.log(`⏳ 將在視頻播放完後自動播放下一部...`);
-            
-            // 設置定時器
+            // 加上超時備用防護 (2小時)
             videoPlayTimer = setTimeout(() => {
-                console.log('✓ 視頻播放完成！自動播放下一部...');
-                // 再檢查一次是否已經自動切換
-                const currentIndex = ytPlaylist.findIndex((_, i) => i === currentPlaylistIndex);
-                if (currentIndex !== -1) {
-                    playNextVideo();
-                }
-            }, duration * 1000 + 500);
+                playNextVideo();
+            }, 7200000);
         }
-        
-        // 10. 估計視頻時長的輔助函數
-        function estimateVideoDuration(videoId) {
-            // 嘗試從多個來源估計時長
-            const videoDurations = {
-                // 手動映射 - 根據你的實際視頻添加
-                // 'dQw4w9WgXcQ': 212,
-            };
-            
-            if (videoDurations[videoId]) {
-                return videoDurations[videoId];
-            }
-            
-            // 預設值：使用較長的時間避免過早切換
-            // 大多數視頻在 5-10 分鐘，設置為 10 分鐘較安全
-            const defaultDuration = 600;  // 10 分鐘
-            
-            console.log(`📝 未找到 ${videoId} 的時長映射，使用預設: ${defaultDuration} 秒`);
-            
-            return defaultDuration;
-        }
-        
-        // 11. 播放下一部影片
+
+        // 6. 播放控制邏輯
         function playNextVideo() {
-            if (ytPlaylist.length <= 1) {
-                console.log('播放列表只有一部影片，無法播放下一部');
-                return;
-            }
-            
-            // 清除當前的自動播放定時器
-            if (videoPlayTimer) {
-                clearTimeout(videoPlayTimer);
-                videoPlayTimer = null;
-            }
-            
+            if (ytPlaylist.length === 0) return;
             currentPlaylistIndex = (currentPlaylistIndex + 1) % ytPlaylist.length;
-            console.log(`➡️ 播放第 ${currentPlaylistIndex + 1} 部影片: ${ytPlaylist[currentPlaylistIndex]}`);
-            hasUserStartedVideo = true;
             initOrUpdatePlayer();
         }
-        
-        // 11. 播放上一部影片
+
         function playPrevVideo() {
-            if (ytPlaylist.length <= 1) {
-                console.log('播放列表只有一部影片，無法播放上一部');
-                return;
-            }
-            
-            // 清除當前的自動播放定時器
-            if (videoPlayTimer) {
-                clearTimeout(videoPlayTimer);
-                videoPlayTimer = null;
-            }
-            
+            if (ytPlaylist.length === 0) return;
             currentPlaylistIndex = (currentPlaylistIndex - 1 + ytPlaylist.length) % ytPlaylist.length;
-            console.log(`⬅️ 播放第 ${currentPlaylistIndex + 1} 部影片: ${ytPlaylist[currentPlaylistIndex]}`);
-            hasUserStartedVideo = true;
             initOrUpdatePlayer();
         }
-        
+
         function startMarquee(id){const el=document.getElementById(id);if(!el)return;const c=el.parentElement;el.style.animation='none';el.style.transition='none';requestAnimationFrame(()=>{requestAnimationFrame(()=>{const tw=el.scrollWidth;const cw=c.clientWidth;const sm=id==='unifiedTopMarquee'?1.0:0.9;const bps=window.innerWidth<=900?120:180;const pps=bps*sm;const td=tw+cw;const d=Math.max(5,td/pps);el.style.setProperty('--end-pos',`-${td}px`);el.style.animation=`smooth-marquee ${d}s linear infinite`})})}
         function refreshDisplay(){const d=PIDS_APP.STATE.lastTrainData;let t1=d.filter(t=>t.Direction==1);let t0=d.filter(t=>t.Direction==0);renderTable('1',t1);renderTable('0',t0);updateMarquee('marquee1',t1);updateMarquee('marquee0',t0);populateDestinationMarquee('destList1',t1,1);populateDestinationMarquee('destList0',t0,0)}
         function populateDestinationMarquee(id,list,direction){const el=document.getElementById(id);const l=i18n[PIDS_APP.STATE.currentLang];if(!list||!list.length){el.innerText=l.noTrain;return}let d=list.slice(0,3).map(t=>translateStation(t.EndingStationName));let u=[...new Set(d)].join(PIDS_APP.STATE.currentLang==='zh'?'、':', ');el.innerText=u.length>0?(PIDS_APP.STATE.currentLang==='zh'?'開往: ':'To: ')+u:l.noTrain}
