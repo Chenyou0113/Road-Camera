@@ -593,15 +593,22 @@
                     const res = await fetch(`${WORKER_URL_TDX}/${endpoint}?sys=${AppState.sys}&sid=${AppState.sid}`);
                     const data = await res.json();
 
-                    // --- 修正重點：判斷資料來源 ---
+                    // 🚨 記錄抓取時間，供倒數計時使用
+                    AppState.lastFetchTime = Date.now();
+
                     let finalArray = [];
                     if (AppState.mode === 'schedule') {
-                        finalArray = data.Timetables || []; // 取得物件內的 Timetables 陣列
+                        finalArray = data.Timetables || [];
                     } else {
-                        finalArray = Array.isArray(data) ? data : []; // 即時模式通常直接就是陣列
+                        // Worker 已經幫我們把分鐘轉成秒數了，直接使用即可！
+                        finalArray = Array.isArray(data) ? data : []; 
                     }
 
                     this.renderLive(finalArray, []);
+
+                    if (AppState.mode === 'live') {
+                        this.startLocalTicker();
+                    }
                 } catch (e) { 
                     console.error("Fetch error:", e);
                     document.getElementById('board').innerHTML = `<div class="card" style="padding:20px;">資料載入失敗</div>`;
@@ -672,8 +679,17 @@
                     const elapsed = Math.floor((Date.now() - AppState.lastFetchTime) / 1000);
                     document.querySelectorAll('.arrival-time').forEach(el => {
                         const original = parseInt(el.dataset.sec);
+                        const rawData = el.dataset.raw || '';
+
+                        // 🚨 關鍵防呆：如果是 -1，代表 TDX 沒有回傳預估時間，顯示橫線
+                        if (isNaN(original) || original < 0) {
+                            el.innerHTML = `<span class="time-number" style="font-size:2rem; color: var(--text-sub);">--:--</span>`;
+                            return;
+                        }
+
                         const current = Math.max(0, original - elapsed);
-                        if (current <= 10 || el.dataset.raw.includes('進站')) {
+                        
+                        if (current <= 40 || rawData.includes('進站')) {
                             el.innerHTML = `<span class="arriving-badge">進站中</span>`;
                         } else {
                             const m = String(Math.floor(current / 60)).padStart(2, '0');
