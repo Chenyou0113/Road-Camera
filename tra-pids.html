@@ -477,13 +477,13 @@
         }
 
         // ==========================================
-        // 🎬 YouTube IFrame API 官方核心模組 (防機器人攔截版)
+        // 🎬 YouTube IFrame API 官方核心模組 (手動開始 + 播完自動連播)
         // ==========================================
         let ytPlayer = null;
         let ytPlaylist = [];
         let currentPlaylistIndex = 0;
         let isYtApiReady = false;
-        let videoPlayTimer = null;
+        let isPlaylistPlaying = false; // 🌟 新增：記錄使用者是否已經按下「播放」
 
         // 1. 提取 YouTube 影片 ID
         function extractYoutubeId(input) {
@@ -522,7 +522,6 @@
             
             if (ids.length > 0) {
                 ytPlaylist = ids;
-                // 如果 API 還沒載入，先載入 API；如果已經載入了，直接初始化播放器
                 if (!isYtApiReady) {
                     loadYouTubeAPI();
                 } else {
@@ -539,29 +538,35 @@
             if (ytPlaylist.length === 0 || !isYtApiReady) return;
 
             const videoId = ytPlaylist[currentPlaylistIndex];
-            console.log(`▶️ 準備播放: ${videoId}`);
 
-            // 清除舊定時器
-            if (videoPlayTimer) clearTimeout(videoPlayTimer);
-
-            // 如果播放器已經存在，直接載入新影片
+            // 🌟 如果播放器已經存在，根據目前的播放狀態決定是「直接播放」還是「只載入縮圖」
             if (ytPlayer && typeof ytPlayer.loadVideoById === 'function') {
-                ytPlayer.loadVideoById(videoId);
+                if (isPlaylistPlaying) {
+                    console.log(`▶️ 連播模式：自動播放第 ${currentPlaylistIndex + 1} 部影片: ${videoId}`);
+                    ytPlayer.loadVideoById(videoId); // loadVideoById 會直接開始播放
+                } else {
+                    console.log(`⏳ 暫停模式：僅載入第 ${currentPlaylistIndex + 1} 部影片縮圖: ${videoId}`);
+                    ytPlayer.cueVideoById(videoId);  // cueVideoById 只載入不播放
+                }
                 return;
             }
 
-            // 重置容器內容，準備建立官方播放器
+            console.log(`⏳ 首次載入影片: ${videoId} (等待手動播放)`);
+
+            // 重置容器內容，加入播放/暫停按鈕
             con.innerHTML = `
                 <div id="yt-player-div"></div>
                 <div class="video-controls">
-                    <button class="video-btn" id="prevVideoBtn" title="上一部影片 (按 3)"><i class="fas fa-chevron-left"></i></button>
-                    <button class="video-btn" id="nextVideoBtn" title="下一部影片 (按 5)"><i class="fas fa-chevron-right"></i></button>
+                    <button class="video-btn" id="prevVideoBtn" title="上一部 (按 3)"><i class="fas fa-chevron-left"></i></button>
+                    <button class="video-btn" id="playPauseBtn" title="播放 / 暫停 (按 4)"><i class="fas fa-play" id="playPauseIcon"></i></button>
+                    <button class="video-btn" id="nextVideoBtn" title="下一部 (按 5)"><i class="fas fa-chevron-right"></i></button>
                 </div>
             `;
 
-            // 建立按鈕事件
+            // 綁定按鈕事件
             document.getElementById('prevVideoBtn').addEventListener('click', playPrevVideo);
             document.getElementById('nextVideoBtn').addEventListener('click', playNextVideo);
+            document.getElementById('playPauseBtn').addEventListener('click', togglePlayPause);
 
             // 初始化官方播放器
             ytPlayer = new YT.Player('yt-player-div', {
@@ -569,39 +574,51 @@
                 height: '100%',
                 videoId: videoId,
                 playerVars: {
-                    'autoplay': 1,       // 自動播放
-                    'mute': 1,           // 必須靜音才能自動播放
-                    'controls': 0,       // 隱藏控制列
+                    'autoplay': 0,       // 🚫 首次載入一律不自動播放
+                    'mute': 1,           // 靜音
+                    'controls': 0,       // 隱藏原生控制列
                     'rel': 0,            // 不顯示相關影片
                     'modestbranding': 1, // 隱藏 YouTube Logo
                     'playsinline': 1,
-                    'origin': window.location.origin // 加上防阻擋來源驗證
+                    'origin': window.location.origin
                 },
                 events: {
-                    'onReady': function(event) {
-                        event.target.playVideo(); // 確保開始播放
-                    },
                     'onStateChange': function(event) {
-                        // YT.PlayerState.ENDED = 0
-                        if (event.data === 0) {
-                            console.log('✅ 影片播放完畢，切換下一部');
-                            playNextVideo();
+                        // 更新播放/暫停按鈕的圖示 (1=播放中, 3=緩衝中)
+                        const icon = document.getElementById('playPauseIcon');
+                        if (icon) {
+                            icon.className = (event.data === 1 || event.data === 3) ? 'fas fa-pause' : 'fas fa-play';
                         }
-                    },
-                    'onError': function(event) {
-                        console.log('⚠️ 影片發生錯誤，跳過此影片', event.data);
-                        playNextVideo();
+                        
+                        // 確保狀態同步
+                        if (event.data === 1) isPlaylistPlaying = true;
+                        if (event.data === 2) isPlaylistPlaying = false; // 2=暫停
+                        
+                        // 🌟 0 = ENDED (播完時)
+                        if (event.data === 0) {
+                            console.log('✅ 影片播放完畢，自動連播下一部');
+                            isPlaylistPlaying = true; // 確保連播旗標開啟
+                            playNextVideo();          // 載入下一部，因為旗標開啟，所以會自動播
+                        }
                     }
                 }
             });
-
-            // 加上超時備用防護 (2小時)
-            videoPlayTimer = setTimeout(() => {
-                playNextVideo();
-            }, 7200000);
         }
 
         // 6. 播放控制邏輯
+        function togglePlayPause() {
+            if (!ytPlayer || typeof ytPlayer.getPlayerState !== 'function') return;
+            const state = ytPlayer.getPlayerState();
+            
+            if (state === 1 || state === 3) { // 正在播放或緩衝中
+                isPlaylistPlaying = false;    // 標記為暫停
+                ytPlayer.pauseVideo();
+            } else {                          // 暫停或尚未開始
+                isPlaylistPlaying = true;     // 標記為播放中
+                ytPlayer.playVideo();
+            }
+        }
+
         function playNextVideo() {
             if (ytPlaylist.length === 0) return;
             currentPlaylistIndex = (currentPlaylistIndex + 1) % ytPlaylist.length;
