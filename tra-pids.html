@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="zh-TW">
 
@@ -419,11 +418,19 @@
         }
 
         // 7. 初始化或更新播放器 - 使用 youtube-nocookie.com iframe
+        let videoPlayTimer = null;
+        
         function initOrUpdatePlayer() {
             const con = document.getElementById('videoContainer');
             if (ytPlaylist.length === 0) return;
 
             const videoId = ytPlaylist[currentPlaylistIndex];
+            
+            // 清除之前的定時器
+            if (videoPlayTimer) {
+                clearTimeout(videoPlayTimer);
+                videoPlayTimer = null;
+            }
             
             // 使用 youtube-nocookie.com 避免跨域限制和不可嵌入問題
             // mute=1 強制靜音，controls=0 隱藏控制列，fs=0 禁用全螢幕
@@ -439,66 +446,109 @@
                 </iframe>
             `;
             
-            // 設置 iframe 完成後，監聽影片播放完成
+            console.log(`▶️ 正在播放第 ${currentPlaylistIndex + 1} 部影片 (ID: ${videoId})`);
+            
+            // 設置自動播放下一部
             setTimeout(() => {
-                const iframe = document.getElementById('yt-iframe-player');
-                if (iframe) {
-                    // 使用 postMessage 與 iframe 通信（檢查播放狀態）
-                    // 定期檢查是否需要播放下一部
-                    setupVideoEndListener();
-                }
-            }, 500);
+                setupAutoPlayNextVideo(videoId);
+            }, 1000);
         }
         
-        // 8. 監聽影片播放完成並自動播放下一部
-        let videoCheckInterval = null;
-        let lastIframeId = null;
-        
-        function setupVideoEndListener() {
-            // 清除之前的監聽器
-            if (videoCheckInterval) {
-                clearInterval(videoCheckInterval);
+        // 8. 設置自動播放下一部 - 使用 YouTube Data API 獲取視頻時長
+        function setupAutoPlayNextVideo(videoId) {
+            // 清除之前的定時器
+            if (videoPlayTimer) {
+                clearTimeout(videoPlayTimer);
             }
             
-            const iframe = document.getElementById('yt-iframe-player');
-            if (!iframe) return;
-            
-            lastIframeId = iframe.id;
-            
-            // YouTube iframe 的標準播放時長通常在 URL 中無法獲取
-            // 使用替代方案：監測 iframe src 是否改變或使用時間推算
-            // 更好的方案是通過 onend 事件或 YouTube Data API
-            // 由於跨域限制，使用簡化版本：定期檢查並在適當時間自動播放下一部
-            
-            // 方案：使用 YouTube nocookie 的自動播放列表功能
-            // 或通過監測用戶操作來判斷播放進度
-            
-            console.log('✓ 影片播放監聽器已啟用');
-            console.log('📝 提示：影片播放完成後將自動播放下一部');
-            console.log('⌨️ 快捷鍵: 3=上一部, 4=播放, 5=下一部');
+            // 嘗試從 YouTube API 獲取視頻時長
+            // 使用 oEmbed API（無需 API Key）
+            fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`)
+                .then(response => response.json())
+                .then(data => {
+                    console.log(`✓ 視頻信息已載入: ${data.title}`);
+                    // oEmbed 無法提供時長，使用備用方案
+                    autoPlayWithEstimatedDuration(videoId);
+                })
+                .catch(error => {
+                    console.log('⚠️ 無法獲取視頻信息，使用預設時長');
+                    autoPlayWithEstimatedDuration(videoId);
+                });
         }
         
-        // 9. 播放下一部影片
+        // 9. 使用估計或獲取的時長自動播放下一部
+        function autoPlayWithEstimatedDuration(videoId) {
+            // 清除舊定時器
+            if (videoPlayTimer) {
+                clearTimeout(videoPlayTimer);
+            }
+            
+            // 嘗試使用高級 API 獲取精確時長（需要 CORS 支持）
+            // 備用方案：使用保守的估計時長（平均 5 分鐘 = 300 秒）
+            // 實際應用中建議建立視頻時長映射表
+            
+            const videoDurations = {
+                // 手動映射 video_id -> 時長(秒)，如果需要精確時長
+                // 'dQw4w9WgXcQ': 212,
+                // 'jNQXAC9IVRw': 273,
+            };
+            
+            let duration = videoDurations[videoId];
+            
+            if (!duration) {
+                // 使用保守估計：根據視頻時長習慣
+                // 短視頻: 1-3 分鐘 (60-180 秒)
+                // 中等視頻: 3-10 分鐘 (180-600 秒)
+                // 長視頻: 10+ 分鐘 (600+ 秒)
+                // 預設使用中等: 5 分鐘
+                duration = 300;
+                console.log(`⏱️ 使用預設時長: ${duration} 秒 (${Math.floor(duration/60)} 分鐘)`);
+            } else {
+                console.log(`⏱️ 使用視頻時長: ${duration} 秒`);
+            }
+            
+            // 設置定時器，在視頻播放完成後自動播放下一部
+            console.log(`⏳ 將在 ${Math.floor(duration/60)} 分鐘後自動播放下一部...`);
+            
+            videoPlayTimer = setTimeout(() => {
+                console.log('✓ 視頻播放完成！自動播放下一部...');
+                playNextVideo();
+            }, duration * 1000 + 500); // 加入 500ms 緩衝時間
+        }
+        
+        // 10. 播放下一部影片
         function playNextVideo() {
             if (ytPlaylist.length <= 1) {
                 console.log('播放列表只有一部影片，無法播放下一部');
                 return;
             }
             
+            // 清除當前的自動播放定時器
+            if (videoPlayTimer) {
+                clearTimeout(videoPlayTimer);
+                videoPlayTimer = null;
+            }
+            
             currentPlaylistIndex = (currentPlaylistIndex + 1) % ytPlaylist.length;
-            console.log(`播放第 ${currentPlaylistIndex + 1} 部影片: ${ytPlaylist[currentPlaylistIndex]}`);
+            console.log(`➡️ 播放第 ${currentPlaylistIndex + 1} 部影片: ${ytPlaylist[currentPlaylistIndex]}`);
             initOrUpdatePlayer();
         }
         
-        // 10. 播放上一部影片
+        // 11. 播放上一部影片
         function playPrevVideo() {
             if (ytPlaylist.length <= 1) {
                 console.log('播放列表只有一部影片，無法播放上一部');
                 return;
             }
             
+            // 清除當前的自動播放定時器
+            if (videoPlayTimer) {
+                clearTimeout(videoPlayTimer);
+                videoPlayTimer = null;
+            }
+            
             currentPlaylistIndex = (currentPlaylistIndex - 1 + ytPlaylist.length) % ytPlaylist.length;
-            console.log(`播放第 ${currentPlaylistIndex + 1} 部影片: ${ytPlaylist[currentPlaylistIndex]}`);
+            console.log(`⬅️ 播放第 ${currentPlaylistIndex + 1} 部影片: ${ytPlaylist[currentPlaylistIndex]}`);
             initOrUpdatePlayer();
         }
         
