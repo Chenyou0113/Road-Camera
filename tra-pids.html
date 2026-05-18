@@ -537,13 +537,13 @@
             
             // 使用 youtube-nocookie.com 避免跨域限制和不可嵌入問題
             // mute=1 強制靜音，controls=0 隱藏控制列，fs=0 禁用全螢幕
-            // autoplay=0 改為手動播放，enablejsapi=1 啟用 JavaScript API
+            // autoplay=1 讓影片在靜音狀態下自動播放，enablejsapi=1 啟用 JavaScript API
             con.innerHTML = `
                 <iframe 
                     id="yt-iframe-player"
                     width="100%" 
                     height="100%" 
-                    src="https://www.youtube-nocookie.com/embed/${videoId}?autoplay=0&mute=1&controls=0&modestbranding=1&rel=0&fs=0&playsinline=1&enablejsapi=1"
+                    src="https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=1&controls=0&modestbranding=1&rel=0&fs=0&playsinline=1&enablejsapi=1"
                     frameborder="0"
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                     style="border: none; display: block;">
@@ -576,77 +576,63 @@
         }
         
         // 8. 設置播放結束自動檢測
-        let playbackCheckInterval = null;
+        let ytMessageListener = null;
         function setupPlaybackEndDetection(videoId) {
-            // 清除舊的檢測
-            if (playbackCheckInterval) {
-                clearInterval(playbackCheckInterval);
-                playbackCheckInterval = null;
-            }
-            
             if (videoPlayTimer) {
                 clearTimeout(videoPlayTimer);
                 videoPlayTimer = null;
             }
-            
+
             const iframe = document.getElementById('yt-iframe-player');
             if (!iframe) {
                 console.log('⚠️ 找不到 iframe，無法設置播放結束檢測');
                 return;
             }
-            
-            console.log('✓ 播放結束檢測已啟用 - 將自動偵測視頻播放完成');
-            
-            // 方法 1：使用 postMessage 與 iframe 通信
-            try {
-                iframe.contentWindow.postMessage({
-                    event: 'listening',
-                    id: window.location.hostname
-                }, '*');
-            } catch (e) {
-                console.log('⚠️ postMessage 通信失敗，使用備用方案');
+
+            if (ytMessageListener) {
+                window.removeEventListener('message', ytMessageListener);
             }
-            
-            // 方法 2：監聽 postMessage 事件（YouTube 會發送事件）
-            window.addEventListener('message', function onYouTubeMessage(e) {
-                if (e.origin !== 'https://www.youtube-nocookie.com') return;
-                
+
+            console.log('✓ 播放結束檢測已啟用 - 透過 YouTube Iframe API 偵測');
+
+            iframe.onload = () => {
+                try {
+                    iframe.contentWindow.postMessage(JSON.stringify({
+                        event: 'listening',
+                        id: 'pids-yt-player'
+                    }), '*');
+                } catch (e) {}
+            };
+
+            ytMessageListener = function(e) {
+                if (e.origin !== 'https://www.youtube-nocookie.com' && e.origin !== 'https://www.youtube.com') return;
+
                 try {
                     const data = JSON.parse(e.data);
-                    
-                    // YouTube Player 事件代碼
-                    // 0 = UNSTARTED
-                    // 1 = PLAYING
-                    // 2 = PAUSED
-                    // 3 = BUFFERING
-                    // 5 = CUED
-                    // -1 = UNSTARTED
-                    
-                    // 簡單方法：當狀態變為 UNSTARTED（-1 或 0）且之前在播放（1），表示播放完成
-                    
-                } catch (e) {
-                    // JSON 解析失敗，跳過
+                    let isEnded = false;
+
+                    if (data.event === 'onStateChange' && data.info === 0) {
+                        isEnded = true;
+                    } else if (data.event === 'infoDelivery' && data.info && data.info.playerState === 0) {
+                        isEnded = true;
+                    }
+
+                    if (isEnded) {
+                        console.log(`✅ 影片播放完成！準備自動播放下一部...`);
+                        window.removeEventListener('message', ytMessageListener);
+                        ytMessageListener = null;
+                        playNextVideo();
+                    }
+                } catch (err) {
                 }
-            });
-            
-            // 方法 3：使用時間監測 - 定期檢查視頻進度
-            // 嘗試通過 iframe 的 title 屬性或其他方式檢測
-            
-            // 方法 4：使用備用定時器方案 + 自動播放列表
-            // 在沒有播放時長的情況下，設置一個較長的默認時間
-            
-            // 嘗試獲取視頻時長
-            fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`)
-                .then(response => response.json())
-                .then(data => {
-                    console.log(`✓ 視頻信息已載入: ${data.title}`);
-                    // 使用估計時長作為備用
-                    setupAutoPlayWithTimeout(videoId);
-                })
-                .catch(error => {
-                    console.log('⚠️ 無法獲取視頻信息，使用預設時長');
-                    setupAutoPlayWithTimeout(videoId);
-                });
+            };
+
+            window.addEventListener('message', ytMessageListener);
+
+            videoPlayTimer = setTimeout(() => {
+                console.log('⚠️ 影片播放超時防護觸發，強制切換下一部');
+                playNextVideo();
+            }, 7200000);
         }
         
         // 9. 設置備用自動播放超時（當無法直接檢測時使用）
