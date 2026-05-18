@@ -113,6 +113,14 @@
         .fare-std { background: #ffc107; color: #333; }
         .fare-biz { background: #673ab7; color: #fff; }
 
+        /* === 找回來的 PIDS 按鈕樣式 === */
+        .pids-btn {
+            background: #ff9800; color: #fff; padding: 10px 18px; border-radius: 25px;
+            text-decoration: none; font-weight: bold; font-size: 0.95rem; transition: 0.2s;
+            display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 3px 8px rgba(0,0,0,0.2);
+        }
+        .pids-btn:hover { background: #f57c00; transform: translateY(-2px); box-shadow: 0 5px 12px rgba(0,0,0,0.3); }
+
         .board-tabs { display: flex; background: #f5f5f5; border-bottom: 1px solid #ddd; transition: 0.3s;}
         .tab-btn {
             flex: 1; border: none; background: transparent; color: #666; font-weight: 700;
@@ -145,39 +153,23 @@
         .status-ok { background-color: #e8f5e9; color: #2e7d32; }
         .status-free { background-color: #fff3e0; color: #ef6c00; font-size: 0.85rem; margin-top: 5px; }
 
-        /* =========================================
-           停靠站展開 (全新節點式排版，支援站名+時間)
-           ========================================= */
+        /* 停靠站展開 (時間+站名) */
         .stops-container {
-            display: none; padding: 20px 25px; background: #fafafa; 
-            border-top: 1px solid #e0e0e0;
+            display: none; padding: 20px 25px; background: #fafafa; border-top: 1px solid #e0e0e0;
         }
-        .stops-title {
-            font-weight: bold; color: #ff9800; font-size: 1rem; margin-bottom: 12px;
-        }
-        .stop-timeline { 
-            display: flex; align-items: center; flex-wrap: wrap; gap: 15px 0; 
-        }
-        .stop-node { 
-            display: flex; align-items: center; 
-        }
-        .stop-info { 
-            display: flex; flex-direction: column; align-items: center; gap: 5px;
-        }
+        .stops-title { font-weight: bold; color: #ff9800; font-size: 1rem; margin-bottom: 12px; }
+        .stop-timeline { display: flex; align-items: center; flex-wrap: wrap; gap: 15px 0; }
+        .stop-node { display: flex; align-items: center; }
+        .stop-info { display: flex; flex-direction: column; align-items: center; gap: 5px; }
         
-        /* 站名樣式 */
         .stop-name { font-weight: 500; font-size: 1.05rem; color: #444; }
         .stop-name.current { font-weight: 900; color: #e65100; font-size: 1.2rem; }
         .stop-name.dest { font-weight: 900; color: #1565c0; font-size: 1.2rem; }
         
-        /* 抵達時間徽章 */
         .stop-time {
             font-size: 0.85rem; color: #666; font-family: 'Roboto', monospace;
-            background: #e0e0e0; padding: 3px 6px; border-radius: 4px; line-height: 1;
-            font-weight: bold;
+            background: #e0e0e0; padding: 3px 6px; border-radius: 4px; line-height: 1; font-weight: bold;
         }
-        
-        /* 箭頭 */
         .stop-arrow { margin: 0 12px; color: #bbb; font-size: 0.9rem; }
         .stop-node:last-child .stop-arrow { display: none; }
 
@@ -218,6 +210,7 @@
             .board-header { flex-direction: column; align-items: flex-start; gap: 15px; }
             .fare-group { margin-top: 10px; }
             .stop-arrow { margin: 0 8px; }
+            .pids-btn { width: 100%; justify-content: center; } /* 手機版 PIDS 滿寬 */
         }
     </style>
 </head>
@@ -322,6 +315,10 @@
                     <h2 id="boardTitle">--</h2>
                     <div class="board-info" id="updateTime"><i class="fas fa-clock"></i> 更新時間：--:--:--</div>
                 </div>
+                <!-- 找回來的 PIDS 模擬按鈕 -->
+                <a href="#" id="pidsLink" target="_blank" class="pids-btn" style="display: none;">
+                    <i class="fas fa-desktop"></i> 開啟 PIDS 大螢幕
+                </a>
             </div>
             
             <div id="trainsBoard"></div>
@@ -410,6 +407,7 @@
             const container = document.getElementById('trainContainer');
             const board = document.getElementById('trainsBoard');
             const titleEl = document.getElementById('boardTitle');
+            const pidsLink = document.getElementById('pidsLink');
             
             let targetStation = "1000";
             
@@ -441,8 +439,12 @@
                 if(currentMode === 'station') {
                     titleEl.innerHTML = `${stationMap[targetStation]}站 即時看板`;
                     renderStationBoard(trains, targetStation);
+                    // 只有站點模式才顯示 PIDS 按鈕
+                    pidsLink.style.display = 'inline-flex';
+                    pidsLink.href = `thsr_pids.html?station=${targetStation}`;
                 } 
                 else if(currentMode === 'route') {
+                    pidsLink.style.display = 'none'; // 隱藏 PIDS 按鈕
                     const destID = document.getElementById('destSelect').value;
                     const fares = getFares(targetStation, destID);
                     
@@ -457,6 +459,7 @@
                     renderListOnly(validTrains, targetStation, destID);
                 }
                 else if(currentMode === 'train') {
+                    pidsLink.style.display = 'none'; // 隱藏 PIDS 按鈕
                     const tNo = document.getElementById('trainNoInput').value.trim();
                     titleEl.innerHTML = `車次 ${tNo} 查詢結果`;
                     let validTrains = trains.filter(t => String(t.train_no) === tNo);
@@ -505,7 +508,6 @@
                 const c = getTrainColorClass(t.train_no);
                 let stopsHtml = '無停靠站資訊';
                 
-                // 1. 嘗試抓取停靠站與時間 (相容 Proxy 的多種回傳格式)
                 let stopDetails = [];
                 if (t.stop_times && Array.isArray(t.stop_times) && t.stop_times.length > 0 && typeof t.stop_times[0] === 'object') {
                     stopDetails = t.stop_times.map(s => ({ id: s.station_id || s.StationID, time: (s.arrival_time || s.departure_time || s.ArrivalTime || "").substring(0,5) }));
@@ -518,14 +520,12 @@
                     });
                 }
 
-                // 2. 組合 Flexbox 節點 HTML
                 if(stopDetails.length > 0) {
                     stopsHtml = `<div class="stop-timeline">` + stopDetails.map(st => {
                         let cls = '';
                         if(st.id === curID) cls = 'current';
                         if(st.id === destID) cls = 'dest';
                         
-                        // 若有時間才渲染時間標籤
                         let timeHtml = st.time ? `<span class="stop-time">${st.time}</span>` : '';
                         
                         return `
