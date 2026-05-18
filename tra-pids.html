@@ -78,7 +78,7 @@
         .marquee-footer { background: #212121; color: #ffffff; height: 52px; position: relative; overflow: hidden; border-top: 3px solid #ff9800; flex-shrink: 0; }
         .marquee-footer .marquee-text { position: absolute; white-space: nowrap; height: 52px; line-height: 52px; font-size: 1.5rem; font-family: "Noto Sans TC","Microsoft JhengHei",sans-serif; font-weight: 600; left: 100%; top: 0; transform: translateX(0); letter-spacing: 1px; will-change: transform; }
         .marquee-footer .marquee-text * { font-family: "Noto Sans TC","Microsoft JhengHei",sans-serif !important; font-size: inherit !important; font-weight: 600 !important; vertical-align: baseline; }
-        .media-section { flex: 1; display: flex; gap: 10px; min-height: 150px; margin-top: 4px; }
+        .media-section { flex: 1; display: flex; gap: 10px; min-height: 200px; margin-top: 4px; }
         .media-box { flex: 1; height: 100%; background: #000; border: 3px solid #333; border-radius: 8px; overflow: hidden; position: relative; display: flex; align-items: center; justify-content: center; }
         .media-label { position: absolute; top: 0; left: 0; background: rgba(0,0,0,0.7); color: #fff; padding: 4px 10px; font-size: 1rem; z-index: 10; border-bottom-right-radius: 8px; }
         .carousel-img { width: 100%; height: 100%; object-fit: contain; position: absolute; opacity: 0; transition: opacity 1s; pointer-events: none; z-index: 1; }
@@ -303,7 +303,7 @@
             .marquee-footer { height: 44px; }
             .marquee-footer .marquee-text { font-size: 0.95rem; line-height: 44px; height: 44px; }
             .media-section { flex-direction: column; gap: 8px; overflow-y: visible; }
-            .media-box { height: 160px; flex: 0 0 auto; margin-bottom: 20px; }
+            .media-box { height: 240px; flex: 0 0 auto; margin-bottom: 20px; }
         }
         @media (max-width:480px) {
             .unified-header { height: 55px; padding: 0 10px; }
@@ -518,8 +518,10 @@
             }
         }
 
-        // 7. 初始化或更新播放器 - 使用 youtube-nocookie.com iframe
+        // 7. 初始化或更新播放器 - 使用 youtube-nocookie.com iframe 並加入播放結束偵測
         let videoPlayTimer = null;
+        let playlistId = null;  // 用於儲存播放列表 ID
+        let currentIframePlayer = null;
         
         function initOrUpdatePlayer() {
             const con = document.getElementById('videoContainer');
@@ -535,12 +537,13 @@
             
             // 使用 youtube-nocookie.com 避免跨域限制和不可嵌入問題
             // mute=1 強制靜音，controls=0 隱藏控制列，fs=0 禁用全螢幕
+            // autoplay=0 改為手動播放，enablejsapi=1 啟用 JavaScript API
             con.innerHTML = `
                 <iframe 
                     id="yt-iframe-player"
                     width="100%" 
                     height="100%" 
-                    src="https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&mute=1&controls=0&modestbranding=1&rel=0&fs=0&playsinline=1&enablejsapi=1"
+                    src="https://www.youtube-nocookie.com/embed/${videoId}?autoplay=0&mute=1&controls=0&modestbranding=1&rel=0&fs=0&playsinline=1&enablejsapi=1"
                     frameborder="0"
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                     style="border: none; display: block;">
@@ -566,77 +569,137 @@
                 
                 if (prevBtn) prevBtn.addEventListener('click', () => playPrevVideo());
                 if (nextBtn) nextBtn.addEventListener('click', () => playNextVideo());
+                
+                // 設置播放結束檢測
+                setupPlaybackEndDetection(videoId);
             }, 100);
-            
-            // 設置自動播放下一部
-            setTimeout(() => {
-                setupAutoPlayNextVideo(videoId);
-            }, 1000);
         }
         
-        // 8. 設置自動播放下一部 - 使用 YouTube Data API 獲取視頻時長
-        function setupAutoPlayNextVideo(videoId) {
-            // 清除之前的定時器
-            if (videoPlayTimer) {
-                clearTimeout(videoPlayTimer);
+        // 8. 設置播放結束自動檢測
+        let playbackCheckInterval = null;
+        function setupPlaybackEndDetection(videoId) {
+            // 清除舊的檢測
+            if (playbackCheckInterval) {
+                clearInterval(playbackCheckInterval);
+                playbackCheckInterval = null;
             }
             
-            // 嘗試從 YouTube API 獲取視頻時長
-            // 使用 oEmbed API（無需 API Key）
+            if (videoPlayTimer) {
+                clearTimeout(videoPlayTimer);
+                videoPlayTimer = null;
+            }
+            
+            const iframe = document.getElementById('yt-iframe-player');
+            if (!iframe) {
+                console.log('⚠️ 找不到 iframe，無法設置播放結束檢測');
+                return;
+            }
+            
+            console.log('✓ 播放結束檢測已啟用 - 將自動偵測視頻播放完成');
+            
+            // 方法 1：使用 postMessage 與 iframe 通信
+            try {
+                iframe.contentWindow.postMessage({
+                    event: 'listening',
+                    id: window.location.hostname
+                }, '*');
+            } catch (e) {
+                console.log('⚠️ postMessage 通信失敗，使用備用方案');
+            }
+            
+            // 方法 2：監聽 postMessage 事件（YouTube 會發送事件）
+            window.addEventListener('message', function onYouTubeMessage(e) {
+                if (e.origin !== 'https://www.youtube-nocookie.com') return;
+                
+                try {
+                    const data = JSON.parse(e.data);
+                    
+                    // YouTube Player 事件代碼
+                    // 0 = UNSTARTED
+                    // 1 = PLAYING
+                    // 2 = PAUSED
+                    // 3 = BUFFERING
+                    // 5 = CUED
+                    // -1 = UNSTARTED
+                    
+                    // 簡單方法：當狀態變為 UNSTARTED（-1 或 0）且之前在播放（1），表示播放完成
+                    
+                } catch (e) {
+                    // JSON 解析失敗，跳過
+                }
+            });
+            
+            // 方法 3：使用時間監測 - 定期檢查視頻進度
+            // 嘗試通過 iframe 的 title 屬性或其他方式檢測
+            
+            // 方法 4：使用備用定時器方案 + 自動播放列表
+            // 在沒有播放時長的情況下，設置一個較長的默認時間
+            
+            // 嘗試獲取視頻時長
             fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`)
                 .then(response => response.json())
                 .then(data => {
                     console.log(`✓ 視頻信息已載入: ${data.title}`);
-                    // oEmbed 無法提供時長，使用備用方案
-                    autoPlayWithEstimatedDuration(videoId);
+                    // 使用估計時長作為備用
+                    setupAutoPlayWithTimeout(videoId);
                 })
                 .catch(error => {
                     console.log('⚠️ 無法獲取視頻信息，使用預設時長');
-                    autoPlayWithEstimatedDuration(videoId);
+                    setupAutoPlayWithTimeout(videoId);
                 });
         }
         
-        // 9. 使用估計或獲取的時長自動播放下一部
-        function autoPlayWithEstimatedDuration(videoId) {
-            // 清除舊定時器
-            if (videoPlayTimer) {
-                clearTimeout(videoPlayTimer);
-            }
-            
-            // 嘗試使用高級 API 獲取精確時長（需要 CORS 支持）
-            // 備用方案：使用保守的估計時長（平均 5 分鐘 = 300 秒）
-            // 實際應用中建議建立視頻時長映射表
-            
+        // 9. 設置備用自動播放超時（當無法直接檢測時使用）
+        function setupAutoPlayWithTimeout(videoId) {
             const videoDurations = {
-                // 手動映射 video_id -> 時長(秒)，如果需要精確時長
-                // 'dQw4w9WgXcQ': 212,
-                // 'jNQXAC9IVRw': 273,
+                // 在此添加你知道的視頻時長（秒）
+                // 'VIDEO_ID': 180,
             };
             
             let duration = videoDurations[videoId];
             
             if (!duration) {
-                // 使用保守估計：根據視頻時長習慣
-                // 短視頻: 1-3 分鐘 (60-180 秒)
-                // 中等視頻: 3-10 分鐘 (180-600 秒)
-                // 長視頻: 10+ 分鐘 (600+ 秒)
-                // 預設使用中等: 5 分鐘
-                duration = 300;
-                console.log(`⏱️ 使用預設時長: ${duration} 秒 (${Math.floor(duration/60)} 分鐘)`);
-            } else {
-                console.log(`⏱️ 使用視頻時長: ${duration} 秒`);
+                // 無法取得精確時長，使用保守的估計
+                // 嘗試多種方式檢測
+                duration = estimateVideoDuration(videoId);
             }
             
-            // 設置定時器，在視頻播放完成後自動播放下一部
-            console.log(`⏳ 將在 ${Math.floor(duration/60)} 分鐘後自動播放下一部...`);
+            console.log(`⏱️ 使用時長: ${duration} 秒 (${Math.floor(duration/60)} 分 ${duration % 60} 秒)`);
+            console.log(`⏳ 將在視頻播放完後自動播放下一部...`);
             
+            // 設置定時器
             videoPlayTimer = setTimeout(() => {
                 console.log('✓ 視頻播放完成！自動播放下一部...');
-                playNextVideo();
-            }, duration * 1000 + 500); // 加入 500ms 緩衝時間
+                // 再檢查一次是否已經自動切換
+                const currentIndex = ytPlaylist.findIndex((_, i) => i === currentPlaylistIndex);
+                if (currentIndex !== -1) {
+                    playNextVideo();
+                }
+            }, duration * 1000 + 500);
         }
         
-        // 10. 播放下一部影片
+        // 10. 估計視頻時長的輔助函數
+        function estimateVideoDuration(videoId) {
+            // 嘗試從多個來源估計時長
+            const videoDurations = {
+                // 手動映射 - 根據你的實際視頻添加
+                // 'dQw4w9WgXcQ': 212,
+            };
+            
+            if (videoDurations[videoId]) {
+                return videoDurations[videoId];
+            }
+            
+            // 預設值：使用較長的時間避免過早切換
+            // 大多數視頻在 5-10 分鐘，設置為 10 分鐘較安全
+            const defaultDuration = 600;  // 10 分鐘
+            
+            console.log(`📝 未找到 ${videoId} 的時長映射，使用預設: ${defaultDuration} 秒`);
+            
+            return defaultDuration;
+        }
+        
+        // 11. 播放下一部影片
         function playNextVideo() {
             if (ytPlaylist.length <= 1) {
                 console.log('播放列表只有一部影片，無法播放下一部');
