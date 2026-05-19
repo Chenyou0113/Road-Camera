@@ -162,7 +162,6 @@
         .dir-1 .direction-slider { transform: translateX(0); }
         .dir-0 .direction-slider { transform: translateX(100%); }
 
-        /* 🚀 修改重點：調整比例 + 置中對齊 */
         .train-card { display: grid; grid-template-columns: 0.8fr 1fr 1fr 1.6fr 1fr; padding: 15px 20px; border-bottom: 1px solid var(--border-color); align-items: center; cursor: pointer; transition: background 0.2s; font-size: 1.1rem; gap: 8px; text-align: center; }
         .train-card:hover { background-color: var(--card-hover); } 
         .train-card-head { display: grid; grid-template-columns: 0.8fr 1fr 1fr 1.6fr 1fr; padding: 10px 20px; gap: 8px; background: var(--card-head-bg); font-size: 1rem; font-weight: bold; color: var(--text-main); border-bottom: 1px solid var(--border-color); text-align: center; }
@@ -601,8 +600,7 @@
             let mins = ((Math.round(Number(totalMinutes)) % 1440) + 1440) % 1440;
             return `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
         }
-        // ... (remaining JS unchanged, same as before)
-        // [rest of the JavaScript remains identical to the current file]
+
         function getStopStationCode(stop) { return String(stop?.StationID || stop?.ID || stop?.StationCode || '').trim(); }
         function getStopStationName(stop) { return normalizeTaiText(stop?.Name || stop?.StationName?.Zh_tw || stop?.StationName || ''); }
         function extractScheduleStops(scheduleData) {
@@ -820,11 +818,12 @@
                         'SUAO': ['蘇澳新', '蘇澳']
                     };
                     if (fallbackLines[line]) {
-                        lineStations = allStationsFlat.filter(s => {
+                        // 保證依照 fallback 陣列的順序構建，確保支線起訖方向無誤
+                        lineStations = fallbackLines[line].map(n => allStationsFlat.find(s => {
                             const name = s.name.replace(/臺/g, '台');
                             const nameTai = s.name.replace(/台/g, '臺');
-                            return fallbackLines[line].includes(name) || fallbackLines[line].includes(nameTai);
-                        });
+                            return name === n || nameTai === n;
+                        })).filter(Boolean);
                     } else if (line === 'EL') { 
                         // 東部幹線：由北向南排序 (八堵 0920 -> 瑞芳 7390 -> ... -> 臺東 6000)
                         lineStations = allStationsFlat.filter(s => { 
@@ -839,7 +838,9 @@
                             return getRank(ca) - getRank(cb);
                         });
                     } else if (line === 'WL') { 
-                        lineStations = allStationsFlat.filter(s => { const c = parseInt(s.code); return c >= 900 && c <= 5120 && c !== 920 && c !== 930; });
+                        lineStations = allStationsFlat.filter(s => { const c = parseInt(s.code); return c >= 900 && c <= 5120 && c !== 920 && c !== 930; }).sort((a, b) => parseInt(a.code) - parseInt(b.code));
+                    } else if (line === 'SL') { 
+                        lineStations = allStationsFlat.filter(s => { const c = parseInt(s.code); return c >= 5000 && c <= 6000; }).sort((a, b) => parseInt(a.code) - parseInt(b.code));
                     }
                 }
                 if (lineStations && lineStations.length > 0) {
@@ -849,9 +850,17 @@
                         return found || { code: codeStr, name: normalizeStationName(s.name || getStationNameByCode(codeStr)) };
                     }).filter(s => s && s.code);
                 }
+            } else {
+                source = [...allStationsFlat].sort((a, b) => parseInt(a.code) - parseInt(b.code));
             }
+            
             let filtered = kw ? source.filter(s => s.name.includes(kw) || s.code.includes(kw)) : source;
-            filtered = filtered.sort((a, b) => parseInt(a.code) - parseInt(b.code));
+            
+            // 🚀 關鍵修復：僅在「全部路線」時才強制按代碼升序排序，避免破壞東部/西部幹線精心排好的南下北上順序
+            if (line === 'all') {
+                filtered = filtered.sort((a, b) => parseInt(a.code) - parseInt(b.code));
+            }
+
             const select = document.getElementById(selectId);
             select.innerHTML = '<option value="">請選擇車站...</option>';
             filtered.forEach(s => select.add(new Option(`${s.code} - ${s.name}`, s.code)));
@@ -1107,6 +1116,5 @@
             });
         }
     </script>
-<!-- Cloudflare Pages Analytics --><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "28d048b5ece84479b253cc75ae7083c6"}'></script><script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"cec408ccbe2e42f3ab89f61750e1d729","r":1,"server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
