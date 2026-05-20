@@ -282,8 +282,8 @@
             /* 車種標籤字體加大 */
             .train-type-badge { font-size: 1.05rem; padding: 4px 6px; }
             
-            /* 允許內容與標頭換行，避免在手機上擠壓變形 */
-            .train-card > div, .train-card-head > div { white-space: normal !important; line-height: 1.2; }
+            /* 開往站名防斷行 */
+            .train-card > div:nth-child(3), .train-card-head > div:nth-child(3) { white-space: nowrap; }
             
             /* 加大逆行/順行分頁按鈕 */
             .direction-tab-item { font-size: 1.2rem; padding: 14px 0; }
@@ -1003,19 +1003,9 @@
             }
             const dir = currentDirection;
             const isUp = dir === '1';
-            let html = `<div class="direction-tabs dir-${dir}"><div class="direction-slider"></div><div class="direction-tab-item ${isUp ? 'active' : ''}" onclick="setDirAndQuery('1')">逆行</div><div class="direction-tab-item ${!isUp ? 'active' : ''}" onclick="setDirAndQuery('0')">順行</div></div><div class="train-card-head"><div>車次</div><div>車種</div><div>開往</div><div>到站 / 開車</div><div>備注</div></div>`;
-            
-            // 🌟 依照加上延誤後的預估時間進行排序
-            const filtered = list.filter(t => String(t.Dir) === dir).map(t => {
-                const baseTime = (t.DepartureTime || t.Dep || t.ArrivalTime || t.Arr || "00:00").slice(0, 5);
-                const delay = Number(t.DelayTime || t.Delay || 0) || 0;
-                const baseMins = parseTimeToMinutes(baseTime);
-                t._estSortMins = baseMins !== null ? baseMins + delay : 9999;
-                return t;
-            }).sort((a, b) => a._estSortMins - b._estSortMins);
-
+            let html = `<div class="direction-tabs dir-${dir}"><div class="direction-slider"></div><div class="direction-tab-item ${isUp ? 'active' : ''}" onclick="setDirAndQuery('1')">逆行</div><div class="direction-tab-item ${!isUp ? 'active' : ''}" onclick="setDirAndQuery('0')">順行</div></div><div class="train-card-head"><div>車次</div><div>車種</div><div>開往</div><div>到站時間 / 開車時間</div><div>備注</div></div>`;
+            const filtered = list.filter(t => String(t.Dir) === dir);
             if (filtered.length === 0) { board.innerHTML = html + '<div style="padding:40px; text-align:center;">目前無列車資訊</div>'; return; }
-            
             for (const t of filtered) {
                 const trainNo = String(t.TrainNo || t.No || '').trim();
                 const rawType = String(t?.TrainTypeName || t?.Type || '').trim();
@@ -1031,20 +1021,7 @@
                 const statusText = isSuspended ? '停駛' : (isPartiallySuspended ? '部分停駛' : (isCancelled ? '停駛' : ''));
                 const delayText = statusText || (delay > 0 ? `晚 ${delay} 分` : '準點');
                 const delayClass = statusText ? 'delay-warn' : (delay > 0 ? 'delay-warn' : 'delay-ok');
-
-                // 🌟 新增：自動計算加上延誤後的預估時間
-                let timeDisplay = `${arr} / ${dep}`;
-                if (delay > 0 && !statusText) {
-                    const arrMins = parseTimeToMinutes(arr);
-                    const depMins = parseTimeToMinutes(dep);
-                    const expArr = arrMins !== null ? formatMinutesToHHMM(arrMins + delay) : arr;
-                    const expDep = depMins !== null ? formatMinutesToHHMM(depMins + delay) : dep;
-                    
-                    // 用較小的字體加上刪除線顯示原定時間，下方顯示紅色預估時間
-                    timeDisplay = `<span style="font-size:0.85em; text-decoration:line-through; opacity:0.6;">${arr} / ${dep}</span><br/><span style="font-weight:900;">${expArr} / ${expDep}</span>`;
-                }
-
-                html += `<div class="train-card" data-train-no="${trainNo}" data-delay="${delay}" data-time="${arr}" data-type-name="${typeName}" data-dest-name="${dest}"><div><strong>${trainNo}</strong></div><div><span class="train-type-badge ${getTrainTypeClass(`${rawType} ${typeName}`)}">${typeName}</span></div><div>${dest || '--'}</div><div class="${delay > 0 ? 'delay-warn' : ''}" style="line-height:1.2;">${timeDisplay}</div><div class="${delayClass}">${delayText}</div></div>`;
+                html += `<div class="train-card" data-train-no="${trainNo}" data-delay="${delay}" data-time="${arr}" data-type-name="${typeName}" data-dest-name="${dest}"><div><strong>${trainNo}</strong></div><div><span class="train-type-badge ${getTrainTypeClass(`${rawType} ${typeName}`)}">${typeName}</span></div><div>${dest || '--'}</div><div class="${delay > 0 ? 'delay-warn' : ''}">${arr} / ${dep}</div><div class="${delayClass}">${delayText}</div></div>`;
             }
             board.innerHTML = html;
             board.querySelectorAll('.train-card').forEach(card => { 
@@ -1073,31 +1050,11 @@
             }
             if (direct.length > 0) {
                 let html = fareHtml + `<div class="train-card-head"><div>車次</div><div>車種</div><div>開往</div><div>開車 / 抵達</div><div>狀態</div></div>`;
-                
-                // 🌟 路線查詢：依照預計出發時間（原定 + 延誤）進行排序
-                const sortedDirect = direct.map(t => {
-                    const delay = Number(t.DelayTime || 0) || 0;
-                    const depMins = parseTimeToMinutes(t.dep);
-                    t._estDepSortMins = depMins !== null ? depMins + delay : 9999;
-                    return t;
-                }).sort((a, b) => a._estDepSortMins - b._estDepSortMins);
-
-                for (const t of sortedDirect) {
+                for (const t of direct) {
                     const delay = Number(t.DelayTime || 0) || 0;
                     const isCancel = String(t.status) === '2' || Number(t.TrainSuspendedFlag) === 1;
                     const statusText = isCancel ? '停駛' : (delay > 0 ? `晚 ${delay} 分` : '準點');
-                    
-                    // 🌟 路線查詢也支援自動計算延誤後的預估時間
-                    let timeDisplay = `${t.dep} / ${t.arr}`;
-                    if (delay > 0 && !isCancel) {
-                        const depMins = parseTimeToMinutes(t.dep);
-                        const arrMins = parseTimeToMinutes(t.arr);
-                        const expDep = depMins !== null ? formatMinutesToHHMM(depMins + delay) : t.dep;
-                        const expArr = arrMins !== null ? formatMinutesToHHMM(arrMins + delay) : t.arr;
-                        timeDisplay = `<span style="font-size:0.85em; text-decoration:line-through; opacity:0.6;">${t.dep} / ${t.arr}</span><br/><span style="font-weight:900;">${expDep} / ${expArr}</span>`;
-                    }
-
-                    html += `<div class="train-card" data-train-no="${t.trainNo}" data-delay="${delay}" data-time="${t.dep}" data-type-name="${t.typeName}" data-dest-name="${t.dest}"><div><strong>${t.trainNo}</strong></div><div><span class="train-type-badge ${getTrainTypeClass(t.rawType + ' ' + t.typeName)}">${t.typeName}</span></div><div>${t.dest || '--'}</div><div class="${delay > 0 ? 'delay-warn' : ''}" style="line-height:1.2;">${timeDisplay}</div><div class="${isCancel || delay > 0 ? 'delay-warn' : 'delay-ok'}">${statusText}</div></div>`;
+                    html += `<div class="train-card" data-train-no="${t.trainNo}" data-delay="${delay}" data-time="${t.dep}" data-type-name="${t.typeName}" data-dest-name="${t.dest}"><div><strong>${t.trainNo}</strong></div><div><span class="train-type-badge ${getTrainTypeClass(t.rawType + ' ' + t.typeName)}">${t.typeName}</span></div><div>${t.dest || '--'}</div><div class="${delay > 0 ? 'delay-warn' : ''}">${t.dep} / ${t.arr}</div><div class="${isCancel || delay > 0 ? 'delay-warn' : 'delay-ok'}">${statusText}</div></div>`;
                 }
                 board.innerHTML = html;
                 board.querySelectorAll('.train-card').forEach(card => card.addEventListener('click', () => { const d = card.dataset; showTrainMarquee(card, d.trainNo, d.delay || '0', d.time || '', d.typeName || '', d.destName || ''); }));
