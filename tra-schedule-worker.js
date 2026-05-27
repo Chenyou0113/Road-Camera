@@ -93,6 +93,25 @@ const syncTrainLiveBoard = async (env) => {
     await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('LIVE_DATA', ?)").bind(JSON.stringify(liveMap)).run();
 };
 
+// --- 🆕 新增：同步捷運即時動態 (依據 PDF 第 16 章規格) ---
+const syncMrtLiveBoard = async (env) => {
+    const token = await getTdxToken(env);
+    // 以台北捷運為例
+    const res = await fetch("https://tdx.transportdata.tw/api/basic/v2/Rail/Metro/LiveBoard/TRTC?%24format=JSON", { 
+        headers: { "Authorization": `Bearer ${token}` } 
+    });
+    if (!res.ok) return;
+    const json = await res.json();
+    const liveMap = {};
+    // 依據 PDF 規範，捷運使用的是 StationID 與 EstimateTime
+    (json.StationLiveBoards || []).forEach(t => { 
+        // 使用 StationID + DestinationStationID 作為 Key
+        const key = `${t.StationID}_${t.DestinationStationID}`;
+        liveMap[key] = { estimate: t.EstimateTime, status: t.ServiceStatus }; 
+    });
+    await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('MRT_LIVE_TRTC', ?)").bind(JSON.stringify(liveMap)).run();
+};
+
 // --- 同步通阻 ---
 const syncTraAlerts = async (env) => {
     const token = await getTdxToken(env);
@@ -125,7 +144,7 @@ export default {
         const h = (date.getUTCHours() + 8) % 24; // 轉為台灣時間的小時
 
         // 任務包：所有排程都會執行的基礎任務 (即時誤點 + 跑馬燈警報)
-        const tasks = [syncTrainLiveBoard(env), syncTraAlerts(env)];
+        const tasks = [syncTrainLiveBoard(env), syncTraAlerts(env), syncMrtLiveBoard(env)];
 
         // 每 15 分鐘 (0, 15, 30, 45)：只更新「今天」的時刻表，用來抓突發停駛狀態！
         if (m % 15 === 0) {
@@ -199,32 +218,211 @@ export default {
                 }), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
-            // 3. 站到站
+            // 3. 站到站 (進化版：包含 D1 批次高效能轉乘演算法)
             if (url.pathname === "/api/route") {
-                const s = url.searchParams.get("start"), e = url.searchParams.get("end"), d = url.searchParams.get("date") || getTwDateString(0);
-                const [sR, eR] = await env.DB.batch([env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`SCH_STA_${s}_${d}`), env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`SCH_STA_${e}_${d}`)]);
-                const sT = sR.results[0] ? JSON.parse(sR.results[0].Value) : [], eT = eR.results[0] ? JSON.parse(eR.results[0].Value) : [];
+                const s = url.searchParams.get("start");
+                const e = url.searchParams.get("end");
+                const d = url.searchParams.get("date") || getTwDateString(0);
+                
+                // 接收前端傳來的時間與過濾參數 (若無則給預設值)
+                const targetTime = parseInt(url.searchParams.get("time") || 0);
+                const minWait = parseInt(url.searchParams.get("minWait") || 5);
+                const maxWait = parseInt(url.searchParams.get("maxWait") || 120);
+
+                // Helper：時間轉分鐘
+                const parseTimeMins = (t) => {
+                    if (!t) return null;
+                    const [h, m] = t.slice(0, 5).split(':').map(Number);
+                    return h * 60 + m;
+                };
+
+                // [Step 1] 抓取起站、迄站的當日清單，以及全線即時誤點資料 (只需 1 次 Batch 查詢)
+                const [sR, eR, liveR] = await env.DB.batch([
+                    env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`SCH_STA_${s}_${d}`),
+                    env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`SCH_STA_${e}_${d}`),
+                    env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'LIVE_DATA'")
+                ]);
+
+                const sT = sR.results[0] ? JSON.parse(sR.results[0].Value) : [];
+                const eT = eR.results[0] ? JSON.parse(eR.results[0].Value) : [];
+                const liveMap = liveR.results[0] ? JSON.parse(liveR.results[0].Value) : {};
                 const eM = Object.fromEntries(eT.map(t => [t.No, t]));
-                const res = sT
-                    .filter(st => eM[st.No] && st.Seq < eM[st.No].Seq && st.SuspendedFlag !== 1 && eM[st.No].SuspendedFlag !== 1)
-                    .map(st => ({
-                        TrainNo: st.No,
-                        TrainTypeName: st.Type,
-                        DepartureTime: st.Dep,
-                        ArrivalTime: eM[st.No].Arr,
-                        EndingStationName: st.Dest,
-                        Note: st.Note,
-                        TrainSuspendedFlag: st.TrainSuspendedFlag || 0
-                    }))
-                    .sort((a,b) => a.DepartureTime.localeCompare(b.DepartureTime));
-                return new Response(JSON.stringify(res), { headers: { ...cors, 'Content-Type': 'application/json' } });
+
+                const directRoutes = [];
+                const leg1Candidates = [];
+                const leg2Candidates = [];
+
+                // [Step 2] 分離直達車與轉乘候選車次
+                sT.forEach(st => {
+                    if (st.SuspendedFlag === 1) return;
+                    const depMins = parseTimeMins(st.Dep);
+                    if (depMins !== null && depMins < targetTime) return; // 濾掉時間已過的車
+
+                    if (eM[st.No] && st.Seq < eM[st.No].Seq && eM[st.No].SuspendedFlag !== 1) {
+                        // 找到直達車
+                        const delay = Number(liveMap[st.No]?.delay || 0);
+                        directRoutes.push({
+                            TrainNo: String(st.No),     // 原本欄位名稱保留給前端相容
+                            TrainTypeName: st.Type,
+                            typeName: st.Type, 
+                            DepartureTime: st.Dep.slice(0, 5),
+                            ArrivalTime: eM[st.No].Arr.slice(0, 5),
+                            EndingStationName: st.Dest,
+                            status: (liveMap[st.No]?.status === 2 || st.TrainSuspendedFlag === 1) ? 2 : 0,
+                            DelayTime: delay,
+                            TrainSuspendedFlag: st.TrainSuspendedFlag || 0
+                        });
+                    } else {
+                        // 加入第一段轉乘候選清單
+                        leg1Candidates.push(st);
+                    }
+                });
+
+                eT.forEach(et => {
+                    if (et.SuspendedFlag === 1) return;
+                    const arrMins = parseTimeMins(et.Arr);
+                    if (arrMins !== null && arrMins >= targetTime && !eM[et.No] /*非直達*/) {
+                        leg2Candidates.push(et);
+                    }
+                });
+
+                // [Step 3] 蒐集需要查完整時刻表的火車 (取起迄站最接近目標時間的前 45 班車)
+                const topLeg1 = leg1Candidates.sort((a, b) => parseTimeMins(a.Dep) - parseTimeMins(b.Dep)).slice(0, 45);
+                const topLeg2 = leg2Candidates.sort((a, b) => parseTimeMins(a.Arr) - parseTimeMins(b.Arr)).slice(0, 45);
+                const uniqueTrainNos = [...new Set([...topLeg1.map(t => t.No), ...topLeg2.map(t => t.No)])];
+
+                // [Step 4] D1 Batch 查詢火力展示：瞬間抓取所有火車的完整停靠站
+                const scheduleMap = {};
+                if (uniqueTrainNos.length > 0) {
+                    const stmts = uniqueTrainNos.map(no => 
+                        env.DB.prepare("SELECT Key, Value FROM AppConfig WHERE Key = ?").bind(`SCH_TRN_${no}_${d}`)
+                    );
+                    
+                    // Cloudflare D1 每個 Batch 最多 100 句，做個分塊策畧
+                    const chunkSize = 90;
+                    for (let i = 0; i < stmts.length; i += chunkSize) {
+                        const batchRes = await env.DB.batch(stmts.slice(i, i + chunkSize));
+                        batchRes.forEach((r, idx) => {
+                            if (r.results && r.results[0]) {
+                                const trainNo = uniqueTrainNos[i + idx];
+                                scheduleMap[trainNo] = JSON.parse(r.results[0].Value).Stops;
+                            }
+                        });
+                    }
+                }
+
+                // [Step 5] 記憶體內極速圖論交集比對 (Graph Intersection)
+                const transferCandidates = [];
+                const seenPairs = new Set();
+
+                for (const leg1 of topLeg1) {
+                    const stops1 = scheduleMap[leg1.No];
+                    if (!stops1) continue;
+                    const idxA = stops1.findIndex(x => x.SID === s);
+                    if (idxA === -1) continue;
+                    const depA = parseTimeMins(stops1[idxA].Dep);
+
+                    for (let i = idxA + 1; i < stops1.length; i++) {
+                        const transStop = stops1[i];
+                        if (transStop.SuspendedFlag === 1) continue;
+                        const arrTrans1 = parseTimeMins(transStop.Arr || transStop.Dep);
+
+                        for (const leg2 of topLeg2) {
+                            if (leg1.No === leg2.No) continue;
+                            const pairKey = `${leg1.No}_${leg2.No}`;
+                            if (seenPairs.has(pairKey)) continue;
+
+                            const stops2 = scheduleMap[leg2.No];
+                            if (!stops2) continue;
+
+                            const idxTrans2 = stops2.findIndex(x => x.SID === transStop.SID);
+                            const idxB = stops2.findIndex(x => x.SID === e);
+
+                            if (idxTrans2 === -1 || idxB === -1 || idxTrans2 >= idxB) continue;
+                            if (stops2[idxTrans2].SuspendedFlag === 1 || stops2[idxB].SuspendedFlag === 1) continue;
+
+                            let depTrans2 = parseTimeMins(stops2[idxTrans2].Dep || stops2[idxTrans2].Arr);
+                            let arrB = parseTimeMins(stops2[idxB].Arr || stops2[idxB].Dep);
+
+                            // 跨日處理
+                            while (depTrans2 < arrTrans1 - 180) { depTrans2 += 1440; arrB += 1440; }
+
+                            const schedWait = depTrans2 - arrTrans1;
+                            if (schedWait < minWait || schedWait > maxWait) continue;
+
+                            const delay1 = Number(liveMap[leg1.No]?.delay || 0);
+                            const actualWait = schedWait - delay1;
+
+                            // 轉乘時間充裕才列入
+                            if (actualWait >= 1) {
+                                seenPairs.add(pairKey);
+                                transferCandidates.push({
+                                    transferStationCode: transStop.SID,
+                                    transferStation: transStop.Name,
+                                    schedWaitMinutes: schedWait,
+                                    actualWaitMinutes: actualWait,
+                                    leg1Delay: delay1,
+                                    totalMinutes: (arrB - depA),
+                                    endArrTimeAbs: arrB,
+                                    leg1: {
+                                        trainNo: leg1.No,
+                                        typeName: leg1.Type,
+                                        depTime: stops1[idxA].Dep.slice(0, 5),
+                                        arrTime: (transStop.Arr || transStop.Dep).slice(0, 5)
+                                    },
+                                    leg2: {
+                                        trainNo: leg2.No,
+                                        typeName: leg2.Type,
+                                        depTime: (stops2[idxTrans2].Dep || stops2[idxTrans2].Arr).slice(0, 5),
+                                        arrTime: (stops2[idxB].Arr || stops2[idxB].Dep).slice(0, 5)
+                                    }
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // 排序並取最佳 12 筆轉乘方案
+                transferCandidates.sort((a, b) => {
+                    if (a.endArrTimeAbs !== b.endArrTimeAbs) return a.endArrTimeAbs - b.endArrTimeAbs;
+                    return a.totalMinutes - b.totalMinutes;
+                });
+
+                const finalTransfers = [];
+                const seenFirstLegs = new Set();
+                for (const c of transferCandidates) {
+                    if (!seenFirstLegs.has(c.leg1.trainNo)) {
+                        finalTransfers.push(c);
+                        seenFirstLegs.add(c.leg1.trainNo);
+                    }
+                }
+
+                return new Response(JSON.stringify({
+                    direct: directRoutes.sort((a,b) => a.DepartureTime.localeCompare(b.DepartureTime)),
+                    transfers: finalTransfers.slice(0, 12)
+                }), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
-            // 4. 票價
+            // 4. 票價 (🆕 升級支援轉乘加總計算)
             if (url.pathname === "/api/fare") {
-                const s = url.searchParams.get("start"), e = url.searchParams.get("end"), token = await getTdxToken(env);
-                const res = await fetch(`https://tdx.transportdata.tw/api/basic/v2/Rail/TRA/ODFare/${s}/to/${e}?%24format=JSON`, { headers: { "Authorization": `Bearer ${token}` } });
-                return new Response(JSON.stringify(await res.json()), { headers: { ...cors, 'Content-Type': 'application/json' } });
+                const s = url.searchParams.get("start");
+                const e = url.searchParams.get("end");
+                const via = url.searchParams.get("via"); // 新增經由站參數
+                const token = await getTdxToken(env);
+
+                if (via) {
+                    // 如果是轉乘，平行發送兩個請求給 TDX
+                    const [res1, res2] = await Promise.all([
+                        fetch(`https://tdx.transportdata.tw/api/basic/v2/Rail/TRA/ODFare/${s}/to/${via}?%24format=JSON`, { headers: { "Authorization": `Bearer ${token}` } }),
+                        fetch(`https://tdx.transportdata.tw/api/basic/v2/Rail/TRA/ODFare/${via}/to/${e}?%24format=JSON`, { headers: { "Authorization": `Bearer ${token}` } })
+                    ]);
+                    const [data1, data2] = await Promise.all([res1.json(), res2.json()]);
+                    return new Response(JSON.stringify({ isTransfer: true, leg1: data1, leg2: data2 }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+                } else {
+                    // 直達車票價 (維持原狀)
+                    const res = await fetch(`https://tdx.transportdata.tw/api/basic/v2/Rail/TRA/ODFare/${s}/to/${e}?%24format=JSON`, { headers: { "Authorization": `Bearer ${token}` } });
+                    return new Response(JSON.stringify(await res.json()), { headers: { ...cors, 'Content-Type': 'application/json' } });
+                }
             }
 
             // 5. 通阻
