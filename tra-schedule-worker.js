@@ -13,6 +13,27 @@ const getTwDateString = (offsetDays = 0) => {
     return twTime.toISOString().split('T')[0];
 };
 
+// 🚄 雙鐵共構/共線車站代碼對照表 (資料來源：高鐵標準說明文件 P.48)
+// 格式： { '高鐵代碼': '台鐵代碼', ... }
+const THSR_TRA_MAPPING = {
+    "0990": "1006", // 南港
+    "1000": "1008", // 臺北
+    "1010": "1011", // 板橋
+    "1030": "2214", // 新竹(高鐵) <-> 六家(台鐵)
+    "1040": "1324", // 臺中(高鐵) <-> 新烏日(台鐵)
+    "1060": "5102", // 臺南(高鐵) <-> 沙崙(台鐵)
+    "1070": "1242"  // 左營(高鐵) <-> 新左營(台鐵)
+};
+
+// 建立反向查詢表 { '台鐵代碼': '高鐵代碼' }
+const TRA_THSR_MAPPING = Object.fromEntries(Object.entries(THSR_TRA_MAPPING).map(([k, v]) => [v, k]));
+
+const isThsrStationCode = (code) => {
+    if (!code || code.length !== 4) return false;
+    const n = parseInt(code, 10);
+    return Number.isFinite(n) && n >= 990 && n <= 1070;
+};
+
 const getTdxToken = async (env) => {
     const now = Math.floor(Date.now() / 1000);
     try {
@@ -78,6 +99,69 @@ const syncDailyScheduleBlob = async (env, offsetDaysArray = [0]) => {
         for (const [k, v] of Object.entries(staMap)) batch.push(env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value, ExpiresAt) VALUES (?, ?, ?)").bind(`SCH_STA_${k}_${date}`, JSON.stringify(v), expireTime));
         for (const [k, v] of Object.entries(trnMap)) batch.push(env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value, ExpiresAt) VALUES (?, ?, ?)").bind(`SCH_TRN_${k}_${date}`, JSON.stringify(v), expireTime));
         await env.DB.batch(batch);
+    }
+};
+
+// --- 🚄 同步高鐵時刻表 (Blob 模式) ---
+const syncThsrDailyScheduleBlob = async (env, offsetDaysArray = [0]) => {
+    const token = await getTdxToken(env);
+    const expireTime = Math.floor(Date.now() / 1000) + (7 * 86400);
+
+    for (const offset of offsetDaysArray) {
+        const date = getTwDateString(offset);
+        const res = await fetch(`https://tdx.transportdata.tw/api/basic/v2/Rail/THSR/DailyTimetable/TrainDate/${date}?%24format=JSON`, {
+            headers: { "Authorization": `Bearer ${token}` }
+        });
+
+        if (!res.ok) continue;
+        const trains = await res.json();
+        const staMap = {};
+        const trnMap = {};
+
+        for (const t of trains) {
+            const no = t.DailyTrainInfo.TrainNo;
+            trnMap[no] = {
+                Note: t.DailyTrainInfo.Note?.Zh_tw || "",
+                Type: "高鐵",
+                TripLine: 0,
+                TrainSuspendedFlag: 0,
+                Stops: t.StopTimes.map(s => ({
+                    Seq: s.StopSequence,
+                    SID: s.StationID,
+                    Name: s.StationName?.Zh_tw,
+                    Arr: s.ArrivalTime,
+                    Dep: s.DepartureTime,
+                    SuspendedFlag: 0
+                }))
+            };
+
+            for (const s of t.StopTimes) {
+                if (!staMap[s.StationID]) staMap[s.StationID] = [];
+                staMap[s.StationID].push({
+                    No: no,
+                    Dir: t.DailyTrainInfo.Direction || 0,
+                    Type: "高鐵",
+                    Dest: t.DailyTrainInfo.EndingStationName?.Zh_tw,
+                    Arr: s.ArrivalTime,
+                    Dep: s.DepartureTime,
+                    Seq: s.StopSequence,
+                    Note: t.DailyTrainInfo.Note?.Zh_tw,
+                    SuspendedFlag: 0
+                });
+            }
+        }
+
+        const batch = [];
+        for (const [k, v] of Object.entries(staMap)) {
+            batch.push(env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value, ExpiresAt) VALUES (?, ?, ?)").bind(`SCH_THSR_STA_${k}_${date}`, JSON.stringify(v), expireTime));
+        }
+        for (const [k, v] of Object.entries(trnMap)) {
+            batch.push(env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value, ExpiresAt) VALUES (?, ?, ?)").bind(`SCH_THSR_TRN_${k}_${date}`, JSON.stringify(v), expireTime));
+        }
+
+        for (let i = 0; i < batch.length; i += 90) {
+            await env.DB.batch(batch.slice(i, i + 90));
+        }
     }
 };
 
@@ -154,6 +238,7 @@ export default {
         // 每天凌晨 2 點 0 分：更新「未來四天」的常態時刻表，確保預售票資料正確
         if (h === 2 && m === 0) {
             tasks.push(syncDailyScheduleBlob(env, [1, 2, 3, 4]));
+            tasks.push(syncThsrDailyScheduleBlob(env, [0, 1, 2, 3, 4]));
         }
 
         ctx.waitUntil(Promise.allSettled(tasks));
@@ -262,12 +347,12 @@ export default {
                         // 找到直達車
                         const delay = Number(liveMap[st.No]?.delay || 0);
                         directRoutes.push({
-                            TrainNo: String(st.No),     // 原本欄位名稱保留給前端相容
-                            TrainTypeName: st.Type,
-                            typeName: st.Type, 
-                            DepartureTime: st.Dep.slice(0, 5),
-                            ArrivalTime: eM[st.No].Arr.slice(0, 5),
-                            EndingStationName: st.Dest,
+                            trainNo: String(st.No),
+                            rawType: st.Type,
+                            typeName: st.Type, // 前端會再 Normalize
+                            dep: st.Dep.slice(0, 5),
+                            arr: eM[st.No].Arr.slice(0, 5),
+                            dest: st.Dest,
                             status: (liveMap[st.No]?.status === 2 || st.TrainSuspendedFlag === 1) ? 2 : 0,
                             DelayTime: delay,
                             TrainSuspendedFlag: st.TrainSuspendedFlag || 0
@@ -303,7 +388,7 @@ export default {
                     for (let i = 0; i < stmts.length; i += chunkSize) {
                         const batchRes = await env.DB.batch(stmts.slice(i, i + chunkSize));
                         batchRes.forEach((r, idx) => {
-                            if (r.results && r.results[0]) {
+                            if (r.results[0]) {
                                 const trainNo = uniqueTrainNos[i + idx];
                                 scheduleMap[trainNo] = JSON.parse(r.results[0].Value).Stops;
                             }
@@ -397,32 +482,47 @@ export default {
                     }
                 }
 
+                // 回傳整理好的漂亮 JSON
                 return new Response(JSON.stringify({
-                    direct: directRoutes.sort((a,b) => a.DepartureTime.localeCompare(b.DepartureTime)),
+                    direct: directRoutes.sort((a, b) => a.dep.localeCompare(b.dep)),
                     transfers: finalTransfers.slice(0, 12)
                 }), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
-            // 4. 票價 (🆕 升級支援轉乘加總計算)
+            // 4. 票價 (支援台鐵與高鐵)
             if (url.pathname === "/api/fare") {
                 const s = url.searchParams.get("start");
                 const e = url.searchParams.get("end");
-                const via = url.searchParams.get("via"); // 新增經由站參數
+                const via = url.searchParams.get("via");
                 const token = await getTdxToken(env);
 
                 if (via) {
-                    // 如果是轉乘，平行發送兩個請求給 TDX
+                    // 保留既有轉乘票價邏輯（目前先用台鐵 ODFare）
                     const [res1, res2] = await Promise.all([
                         fetch(`https://tdx.transportdata.tw/api/basic/v2/Rail/TRA/ODFare/${s}/to/${via}?%24format=JSON`, { headers: { "Authorization": `Bearer ${token}` } }),
                         fetch(`https://tdx.transportdata.tw/api/basic/v2/Rail/TRA/ODFare/${via}/to/${e}?%24format=JSON`, { headers: { "Authorization": `Bearer ${token}` } })
                     ]);
                     const [data1, data2] = await Promise.all([res1.json(), res2.json()]);
                     return new Response(JSON.stringify({ isTransfer: true, leg1: data1, leg2: data2 }), { headers: { ...cors, 'Content-Type': 'application/json' } });
-                } else {
-                    // 直達車票價 (維持原狀)
-                    const res = await fetch(`https://tdx.transportdata.tw/api/basic/v2/Rail/TRA/ODFare/${s}/to/${e}?%24format=JSON`, { headers: { "Authorization": `Bearer ${token}` } });
-                    return new Response(JSON.stringify(await res.json()), { headers: { ...cors, 'Content-Type': 'application/json' } });
                 }
+
+                const isThsr = isThsrStationCode(s) && isThsrStationCode(e);
+                const fetchUrl = isThsr
+                    ? `https://tdx.transportdata.tw/api/basic/v2/Rail/THSR/ODFare/${s}/to/${e}?%24format=JSON`
+                    : `https://tdx.transportdata.tw/api/basic/v2/Rail/TRA/ODFare/${s}/to/${e}?%24format=JSON`;
+
+                const res = await fetch(fetchUrl, { headers: { "Authorization": `Bearer ${token}` } });
+                const data = await res.json();
+
+                if (isThsr && Array.isArray(data) && data.length > 0) {
+                    const standardFare = data[0].Fares?.find(f => f.TicketType === 1 && f.CabinClass === 1)?.Price || 0;
+                    return new Response(JSON.stringify({
+                        isTHSR: true,
+                        price: standardFare
+                    }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+                }
+
+                return new Response(JSON.stringify(data), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
             // 5. 通阻
