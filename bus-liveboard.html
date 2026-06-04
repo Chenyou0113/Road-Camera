@@ -1017,6 +1017,7 @@
     let fetchQueue = [];
     let activeFetches = 0;
     let lastFetchTime = 0;
+    let currentModalSession = 0;
     const MAX_CONCURRENT_FETCHES = 2;
     const MIN_FETCH_INTERVAL = 220;
 
@@ -1565,6 +1566,9 @@
 
     // 🌟 時刻表彈窗 (接軌 Worker 新 API 結構)
     async function showTimetableModal() {
+        currentModalSession++; // 🌟 發行新的彈窗身分證
+        const session = currentModalSession;
+
         document.getElementById('options-dropdown').style.display = 'none';
         const modal = document.getElementById('modal-overlay');
         const title = document.getElementById('modal-title');
@@ -1579,6 +1583,7 @@
             const res = await throttledFetch(url);
             const data = await res.json();
             const scheduleData = data && data.timetables ? data.timetables : [];
+            if (currentModalSession !== session) return;
             if (!Array.isArray(scheduleData) || scheduleData.length === 0) {
                 body.innerHTML = '<div style="padding:20px; text-align:center; color:#666;">查無班次資料</div>';
                 return;
@@ -1691,6 +1696,10 @@
     // 🌟 票價資訊彈窗 (加入起訖站互動試算功能)
     async function showFareModal() {
         document.getElementById('options-dropdown').style.display = 'none';
+
+        currentModalSession++; // 🌟 發行新的彈窗身分證
+        const session = currentModalSession;
+
         const modal = document.getElementById('modal-overlay');
         const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
@@ -1704,8 +1713,10 @@
                 const url = `${WORKER_URL}/?action=fare&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
                 const res = await throttledFetch(url);
                 const data = await res.json();
+                if (currentModalSession !== session) return; // 🌟 核心防護：已切換彈窗則中斷
                 currentData.fare = data?.fares || [];
             } catch (e) {
+                if (currentModalSession !== session) return; // 🌟 核心防護
                 body.innerHTML = `<div style="text-align:center; color:#ef4444; padding:20px;">票價資料載入失敗</div>`;
                 return;
             }
@@ -2156,6 +2167,9 @@
     }
 
     async function openCityNewsModal(targetCity = null) {
+        currentModalSession++; // 🌟 發行新的彈窗身分證
+        const session = currentModalSession;
+
         const modal = document.getElementById('modal-overlay');
         const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
@@ -2214,6 +2228,8 @@
                 throttledFetch(`${WORKER_URL}/?action=news&category=${type}&city=${city}`).then(r => r.json()),
                 throttledFetch(`${WORKER_URL}/?action=alert&category=${type}&city=${city}`).then(r => r.json())
             ]);
+
+            if (currentModalSession !== session) return; // 🌟 核心防護斷
 
             const allItems = [...(Array.isArray(alertRes) ? alertRes : []).map(a => ({ title: a.Title, desc: a.Description, date: a.StartTime, tag: '通阻', cls: 'tag-alert' })),
                               ...(Array.isArray(newsRes) ? newsRes : []).map(n => ({ title: n.Title, desc: n.Description, date: n.PublishTime, tag: '消息', cls: 'tag-news' }))]
