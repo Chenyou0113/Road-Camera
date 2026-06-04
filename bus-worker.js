@@ -1,12 +1,12 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║  TDX 公車 Cloudflare Worker — 最終救贖旗艦版 (v30.0)           ║
- * ║  新增：智慧按需同步 (Self-Healing) - 徹底解決其他縣市空白問題    ║
+ * ║  TDX 公車 Cloudflare Worker — 最終救贖旗艦版 (v30.1)           ║
+ * ║  新增：零容忍全域報錯機制，拒絕任何隱藏的空集合 []             ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
 const CONFIG = {
-    VERSION: "v30.0-Master-SelfHealing",
+    VERSION: "v30.1-No-Empty-Arrays",
     CITIES: ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung", "Keelung", "InterCity"],
     TOKEN_URL: "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
     BASE_API: "https://tdx.transportdata.tw/api/basic",
@@ -39,30 +39,16 @@ const norm = (n) => {
             .trim();
 };
 
-// 🌟 智能名稱淨化器：過濾 TDX 冗餘的重複路線號碼與超長文字
 const formatDisplayName = (rName, sName) => {
     let main = getZh(rName).trim();
     let sub = getZh(sName).trim();
-    
-    // 如果附屬名稱不存在，或跟主名稱一模一樣，直接回傳主名稱
     if (!sub || main === sub) return main;
-
-    // 剔除附屬名稱中「重複出現的主路線號碼」 (解決 "307" 跟 "307西藏" 變成 "307307西藏" 的問題)
-    if (sub.startsWith(main)) {
-        sub = sub.substring(main.length).trim();
-    } else if (sub.includes(main)) {
-        sub = sub.replace(main, '').trim();
-    }
-
-    // 清除開頭奇怪的標點符號
+    if (sub.startsWith(main)) sub = sub.substring(main.length).trim();
+    else if (sub.includes(main)) sub = sub.replace(main, '').trim();
     sub = sub.replace(/^[-\/_(（]/, '').replace(/[)）]$/, '').trim();
-
     if (!sub) return main;
-
-    // 若業者把整段站牌寫進去，限制字數以免版面爆炸
     if (sub.length > 10) sub = sub.substring(0, 10) + "...";
-
-    return `${main} ${sub}`; // 完美排版：主號碼 + 空白 + 乾淨的附屬名
+    return `${main} ${sub}`;
 };
 
 const formatServiceDay = (sd) => {
@@ -81,12 +67,38 @@ const formatServiceDay = (sd) => {
 
 const getRouteKey = (city, type, routeName) => `${type}:${city}:${norm(routeName)}`;
 
-const safeJsonParse = (text, fallback) => {
-    try {
-        return JSON.parse(text);
-    } catch {
-        return fallback;
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// 🌟 無敵防禦型請求：失敗絕對不回傳空集合，而是直接報錯
+async function safeTdxFetch(url, token, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        const text = await res.text();
+        
+        if (res.status === 429 || text.includes("API rate limit exceeded")) {
+            console.warn(`[Rate Limit] 觸發頻率限制，重試第 ${i + 1} 次`);
+            await sleep((i + 1) * 500 + Math.random() * 200);
+            continue; 
+        }
+
+        if (!res.ok) return { ok: false, errorText: text };
+
+        try {
+            const data = JSON.parse(text);
+            if (data?.Message === "API rate limit exceeded") {
+                await sleep(500 + Math.random() * 200);
+                continue;
+            }
+            return { ok: true, data };
+        } catch {
+            return { ok: false, errorText: text };
+        }
     }
+    throw new Error(`TDX API 拒絕連線 (已達最大重試次數，可能是額度耗盡) URL: ${url}`);
+}
+
+const safeJsonParse = (text, fallback) => {
+    try { return JSON.parse(text); } catch { return fallback; }
 };
 
 async function getCachedJson(env, table, whereSql, binds, maxAgeMs) {
@@ -95,10 +107,7 @@ async function getCachedJson(env, table, whereSql, binds, maxAgeMs) {
         if (!row || !row.data) return null;
         if (maxAgeMs && row.updated_at && (Date.now() - row.updated_at > maxAgeMs)) return null;
         return safeJsonParse(row.data, null);
-    } catch (e) {
-        // 若資料表不存在或其他錯誤，直接回傳 null 視同無快取，不中斷程式
-        return null; 
-    }
+    } catch { return null; }
 }
 
 async function upsertJson(env, table, columns, values) {
@@ -107,7 +116,7 @@ async function upsertJson(env, table, columns, values) {
     await env.DB.prepare(`INSERT OR REPLACE INTO ${table} (${cols}) VALUES (${placeholders})`).bind(...values).run();
 }
 
-// 🌟 智能 OData 降級抓取器 (解決 TDX RouteName 型別錯亂問題)
+// 🌟 升級版降級抓取器：拒絕靜默失敗
 async function fetchRouteData(baseUrl, routePrefix, token) {
     const safeValue = (routePrefix || "").replace(/'/g, "''");
     const buildUrl = (filter) => {
@@ -115,21 +124,6 @@ async function fetchRouteData(baseUrl, routePrefix, token) {
         if (filter) params.set("$filter", filter);
         params.set("$format", "JSON");
         return `${baseUrl}?${params.toString()}`;
-    };
-    const tryFetch = async (filter) => {
-        const res = await fetch(buildUrl(filter), { headers: { Authorization: `Bearer ${token}` } });
-        const text = await res.text();
-        if (!res.ok) return { ok: false, errorText: text };
-        let data;
-        try {
-            data = JSON.parse(text);
-        } catch {
-            return { ok: false, errorText: text };
-        }
-        if (Array.isArray(data)) return { ok: true, data };
-        if (Array.isArray(data?.value)) return { ok: true, data: data.value };
-        if (data?.Message || data?.error) return { ok: false, errorText: text };
-        return { ok: true, data };
     };
 
     const candidates = [
@@ -140,98 +134,84 @@ async function fetchRouteData(baseUrl, routePrefix, token) {
 
     let lastError = "Unknown error";
     for (const filter of candidates) {
-        const result = await tryFetch(filter);
-        if (result.ok) return result.data;
+        const result = await safeTdxFetch(buildUrl(filter), token);
+        if (result.ok) {
+            let data = result.data;
+            if (Array.isArray(data)) return data;
+            if (Array.isArray(data?.value)) return data.value;
+            return data;
+        }
         if (result.errorText) lastError = result.errorText;
     }
-
-    throw new Error(lastError);
+    throw new Error(`資料抓取徹底失敗: ${lastError} (請求網址: ${baseUrl})`);
 }
 
-// 🌟 升級：精準對接 TDX 官方 v3 / v2 API 路徑規範
 async function autoSyncCity(city, cat, token, env) {
-    let apiVer = "v2";
-    let apiPath = `City/${city}`;
-
-    // 依據類別動態切換 API 版本與路徑
-    if (cat === "InterCity") {
-        apiVer = "v2";
-        apiPath = "InterCity";
-    } else if (cat === "DRTS") {
-        apiVer = "v3"; // 官方明訂 DRTS 使用 v3
-        apiPath = `DRTS/City/${city}`;
-    } else if (cat === "SciencePark") {
-        apiVer = "v2";
-        apiPath = `SciencePark/${city}`;
-    } else {
-        // 一般 CityBus
-        apiVer = city === "Tainan" ? "v3" : "v2";
-        apiPath = `City/${city}`;
+    let apiVer = "v2", apiPath = `City/${city}`;
+    if (cat === "InterCity") { apiVer = "v2"; apiPath = "InterCity"; } 
+    else if (cat === "DRTS") { apiVer = "v3"; apiPath = `DRTS/City/${city}`; } 
+    else if (cat === "SciencePark") { apiVer = "v2"; apiPath = `SciencePark/${city}`; } 
+    else { apiVer = city === "Tainan" ? "v3" : "v2"; apiPath = `City/${city}`; }
+    
+    const result = await safeTdxFetch(`${CONFIG.BASE_API}/${apiVer}/Bus/StopOfRoute/${apiPath}?$format=JSON`, token);
+    if (!result.ok) throw new Error(`TDX 路線同步失敗: ${result.errorText}`);
+    
+    const data = result.data;
+    if (!Array.isArray(data) || data.length === 0) {
+        throw new Error(`TDX 回傳了空的路線資料 (可能該縣市無資料，或 API 路徑變更)`);
     }
-    
-    const res = await fetch(`${CONFIG.BASE_API}/${apiVer}/Bus/StopOfRoute/${apiPath}?$format=JSON`, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) return [];
-    
-    const data = await res.json();
-    const type = cat; // 沿用傳入的類別
+
+    const type = cat;
     const startTime = Date.now();
     let batch = [], seen = new Set(), results = [];
-    const routeStopsMap = new Map();
-    const stopRoutesMap = new Map();
+    const routeStopsMap = new Map(), stopRoutesMap = new Map();
     const stmt = env.DB.prepare("INSERT OR REPLACE INTO routes_v2 (uid, city, name, departure, destination, type, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
     
-    if (Array.isArray(data)) {
-        data.forEach(r => {
-            if (!r.Stops || r.Stops.length < 2) return;
-            const rName = r.RouteName;
-            const sName = r.SubRouteName;
-            // 🌟 使用淨化器產生給民眾看的完美名稱
-            let finalName = formatDisplayName(rName, sName);
+    data.forEach(r => {
+        if (!r.Stops || r.Stops.length < 2) return;
+        let finalName = getZh(r.RouteName).trim();
+        finalName = finalName.replace(/^[-\/_(（]/, '').replace(/[)）]$/, '').trim();
 
-            const uniqKey = `${city}_${finalName}`;
-            if (!seen.has(uniqKey)) {
-                seen.add(uniqKey);
-                const dep = getZh(r.Stops[0].StopName);
-                const dest = getZh(r.Stops[r.Stops.length-1].StopName);
-                
-                batch.push(stmt.bind(r.SubRouteUID || r.RouteID, city, finalName, dep, dest, type, startTime));
-                results.push({ name: finalName, departure: dep, destination: dest, city: city, type: type });
-            }
+        const uniqKey = `${city}_${finalName}`;
+        if (!seen.has(uniqKey)) {
+            seen.add(uniqKey);
+            const dep = getZh(r.Stops[0].StopName);
+            const dest = getZh(r.Stops[r.Stops.length-1].StopName);
+            batch.push(stmt.bind(r.SubRouteUID || r.RouteID, city, finalName, dep, dest, type, startTime));
+            results.push({ name: finalName, departure: dep, destination: dest, city: city, type: type });
+        }
 
-            const routeKey = getRouteKey(city, type, getZh(r.SubRouteName) || getZh(r.RouteName));
-            const slimItem = { RouteName: r.RouteName, SubRouteName: r.SubRouteName, Direction: r.Direction, Stops: r.Stops, Operators: r.Operators || [] };
-            if (!routeStopsMap.has(routeKey)) routeStopsMap.set(routeKey, []);
-            routeStopsMap.get(routeKey).push(slimItem);
+        const routeKey = getRouteKey(city, type, getZh(r.SubRouteName) || getZh(r.RouteName));
+        const slimItem = { RouteName: r.RouteName, SubRouteName: r.SubRouteName, Direction: r.Direction, Stops: r.Stops, Operators: r.Operators || [] };
+        if (!routeStopsMap.has(routeKey)) routeStopsMap.set(routeKey, []);
+        routeStopsMap.get(routeKey).push(slimItem);
 
-            r.Stops.forEach(s => {
-                const stopName = getZh(s.StopName);
-                if (!stopName) return;
-                if (!stopRoutesMap.has(stopName)) stopRoutesMap.set(stopName, new Set());
-                stopRoutesMap.get(stopName).add(finalName);
-            });
+        r.Stops.forEach(s => {
+            const stopName = getZh(s.StopName);
+            if (!stopName) return;
+            if (!stopRoutesMap.has(stopName)) stopRoutesMap.set(stopName, new Set());
+            stopRoutesMap.get(stopName).add(finalName);
         });
-        
-        for (let i = 0; i < batch.length; i += 100) await env.DB.batch(batch.slice(i, i + 100));
-
-        const stopBatch = [];
-        const routeStopStmt = env.DB.prepare("INSERT OR REPLACE INTO route_stops (route_key, city, route_name, type, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)");
-        for (const [key, items] of routeStopsMap.entries()) {
-            const routeName = items[0]?.SubRouteName || items[0]?.RouteName || "";
-            stopBatch.push(routeStopStmt.bind(key, city, getZh(routeName), type, JSON.stringify(items), startTime));
-        }
-        for (let i = 0; i < stopBatch.length; i += 100) await env.DB.batch(stopBatch.slice(i, i + 100));
-
-        const stopRouteBatch = [];
-        const stopRouteStmt = env.DB.prepare("INSERT OR REPLACE INTO stop_routes (city, stop_name, routes, updated_at) VALUES (?, ?, ?, ?)");
-        for (const [stopName, routeSet] of stopRoutesMap.entries()) {
-            const routeList = Array.from(routeSet).sort((a, b) => a.localeCompare(b, 'zh-Hant'));
-            stopRouteBatch.push(stopRouteStmt.bind(city, stopName, JSON.stringify(routeList), startTime));
-        }
-        for (let i = 0; i < stopRouteBatch.length; i += 100) await env.DB.batch(stopRouteBatch.slice(i, i + 100));
-    }
+    });
     
-    results.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
-    return results;
+    for (let i = 0; i < batch.length; i += 100) await env.DB.batch(batch.slice(i, i + 100));
+
+    const stopBatch = [];
+    const routeStopStmt = env.DB.prepare("INSERT OR REPLACE INTO route_stops (route_key, city, route_name, type, data, updated_at) VALUES (?, ?, ?, ?, ?, ?)");
+    for (const [key, items] of routeStopsMap.entries()) {
+        const routeName = items[0]?.SubRouteName || items[0]?.RouteName || "";
+        stopBatch.push(routeStopStmt.bind(key, city, getZh(routeName), type, JSON.stringify(items), startTime));
+    }
+    for (let i = 0; i < stopBatch.length; i += 100) await env.DB.batch(stopBatch.slice(i, i + 100));
+
+    const stopRouteBatch = [];
+    const stopRouteStmt = env.DB.prepare("INSERT OR REPLACE INTO stop_routes (city, stop_name, routes, updated_at) VALUES (?, ?, ?, ?)");
+    for (const [stopName, routeSet] of stopRoutesMap.entries()) {
+        stopRouteBatch.push(stopRouteStmt.bind(city, stopName, JSON.stringify(Array.from(routeSet).sort()), startTime));
+    }
+    for (let i = 0; i < stopRouteBatch.length; i += 100) await env.DB.batch(stopRouteBatch.slice(i, i + 100));
+    
+    return results.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
 }
 
 export default {
@@ -241,8 +221,7 @@ export default {
         if (request.method === "OPTIONS") return new Response(null, { headers: CONFIG.CORS });
 
         const send = (data, status = 200, extraHeaders = {}) => new Response(
-            JSON.stringify(data),
-            { status, headers: { ...CONFIG.CORS, ...extraHeaders } }
+            JSON.stringify(data), { status, headers: { ...CONFIG.CORS, ...extraHeaders } }
         );
 
         try {
@@ -253,75 +232,52 @@ export default {
             const cat = params.get("category") || "CityBus";
 
             if (action === "db_init") {
-                // 將 routes 改為 routes_v2 強制重建乾淨的資料庫
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS routes_v2 (uid TEXT PRIMARY KEY, city TEXT, name TEXT, departure TEXT, destination TEXT, type TEXT, updated_at INTEGER)`).run();
-                await env.DB.prepare(`CREATE TABLE IF NOT EXISTS bus_snapshot (id INTEGER PRIMARY KEY AUTOINCREMENT, plate TEXT, route_name TEXT, lat REAL, lon REAL, time TEXT)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_stops (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, type TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS stop_routes (city TEXT, stop_name TEXT, routes TEXT, updated_at INTEGER, PRIMARY KEY (city, stop_name))`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_shapes (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_fares (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
-                await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
-                await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables_v3 (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables_v8 (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS bus_news (cache_key TEXT PRIMARY KEY, city TEXT, type TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS bus_alerts (cache_key TEXT PRIMARY KEY, city TEXT, type TEXT, data TEXT, updated_at INTEGER)`).run();
                 return send({ status: "D1 Tables Initialized" });
             }
 
-            if (action === "sync_db") {
-                const startTime = Date.now();
-                const targetCity = params.get("city");
-                const list = targetCity ? [targetCity] : CONFIG.CITIES;
-                
-                let added = 0;
-                for (const c of list) {
-                    const results = await autoSyncCity(c, "CityBus", token, env);
-                    added += results.length;
+            if (action === "clear_cache") {
+                const tables = ["routes_v2", "route_stops", "route_shapes", "route_fares", "route_timetables_v8", "sys_config"];
+                for (const t of tables) {
+                    try { await env.DB.prepare(`DELETE FROM ${t}`).run(); } catch(e) {}
                 }
-                if (!targetCity) await env.DB.prepare("DELETE FROM routes_v2 WHERE updated_at < ?").bind(startTime).run();
-                return send({ status: "success", added_or_updated: added });
+                return send({ status: "Cache Cleared! 路線與舊 Token 已徹底清空！" });
             }
 
             if (action === "list_all") {
                 const search = params.get("search");
-                const targetCity = params.get("city");
-                
                 let sql = "SELECT name, departure, destination, city, type FROM routes_v2 WHERE 1=1";
                 let binds = [];
                 if (search) { sql += " AND (name LIKE ? OR departure LIKE ? OR destination LIKE ?)"; binds.push(`%${search}%`, `%${search}%`, `%${search}%`); }
-                if (targetCity) { sql += " AND city = ?"; binds.push(targetCity); }
+                if (city && !search) { sql += " AND city = ?"; binds.push(city); }
                 
                 const { results } = await env.DB.prepare(sql + " ORDER BY name ASC LIMIT 1000").bind(...binds).all();
 
-                // 🌟 核心魔法：如果 D1 裡沒資料，且用戶是選擇了特定縣市，自動觸發即時同步修復！
-                if (results.length === 0 && targetCity && !search) {
-                    try {
-                        const syncedData = await autoSyncCity(targetCity, cat, token, env);
-                        return send(syncedData);
-                    } catch (e) {
-                        console.error("Auto Sync Error:", e);
-                    }
+                if (results.length === 0 && city && !search) {
+                    const syncedData = await autoSyncCity(city, cat, token, env);
+                    if (!syncedData || syncedData.length === 0) throw new Error("TDX 雖然連線成功，但該縣市回傳了 0 筆路線資料！");
+                    return send(syncedData);
                 }
-
                 return send(results || []);
             }
 
             if (action === "stop_info") {
                 const stopName = params.get("name") || "";
-                if (!stopName) return send({ routes: [] });
-                
-                // 自訂查詢函數，因為 stop_routes 儲存陣列的欄位叫做 'routes' 而不是 'data'
-                const getStopRoutes = async () => {
-                    const row = await env.DB.prepare("SELECT routes FROM stop_routes WHERE city = ? AND stop_name = ?").bind(city, stopName).first();
-                    return row ? safeJsonParse(row.routes, null) : null;
-                };
-
-                let routes = await getStopRoutes();
-                if (!routes) {
+                if (!stopName) throw new Error("缺少站牌名稱參數");
+                let row = await env.DB.prepare("SELECT routes FROM stop_routes WHERE city = ? AND stop_name = ?").bind(city, stopName).first();
+                if (!row) {
                     await autoSyncCity(city, cat, token, env);
-                    routes = await getStopRoutes();
+                    row = await env.DB.prepare("SELECT routes FROM stop_routes WHERE city = ? AND stop_name = ?").bind(city, stopName).first();
                 }
-                return send({ routes: Array.isArray(routes) ? routes : [] });
+                if (!row) throw new Error(`該站牌查無任何路線資料 (${stopName})`);
+                return send({ routes: safeJsonParse(row.routes, []) });
             }
 
             if (action === "news" || action === "alert") {
@@ -331,358 +287,198 @@ export default {
                 const cached = await getCachedJson(env, table, "cache_key = ?", [cacheKey], ttlMs);
                 if (cached) return send(cached);
 
-                try {
-                    const fresh = await fetchBusNewsOrAlert(action, city, token);
-                    await upsertJson(env, table, ["cache_key", "city", "type", "data", "updated_at"], [cacheKey, city, cat, JSON.stringify(fresh), Date.now()]);
-                    return send(fresh);
-                } catch (err) {
-                    const stale = await getCachedJson(env, table, "cache_key = ?", [cacheKey], null);
-                    if (stale) return send(stale);
-                    return send({ error: "Failed to fetch bus alerts/news", details: err.message }, 500);
-                }
+                const fresh = await fetchBusNewsOrAlert(action, city, token);
+                await upsertJson(env, table, ["cache_key", "city", "type", "data", "updated_at"], [cacheKey, city, cat, JSON.stringify(fresh), Date.now()]);
+                return send(fresh);
             }
 
             if (route) {
-                // 🌟 新增對 DRTS 與 SciencePark 的 API 路徑判斷 (依據 TDX 官方 v3 文件)
-                let apiVer = "v2";
-                let apiPath = `City/${city}`;
+                let apiVer = "v2", apiPath = `City/${city}`;
+                if (cat === "InterCity") { apiVer = "v2"; apiPath = "InterCity"; } 
+                else if (cat === "DRTS") { apiVer = "v3"; apiPath = `DRTS/City/${city}`; } 
+                else if (cat === "SciencePark") { apiVer = "v2"; apiPath = `SciencePark/${city}`; } 
+                else { apiVer = city === "Tainan" ? "v3" : "v2"; apiPath = `City/${city}`; }
 
-                if (cat === "InterCity") {
-                    apiVer = "v2";
-                    apiPath = "InterCity";
-                } else if (cat === "DRTS") {
-                    apiVer = "v3"; // 官方明訂 DRTS 使用 v3
-                    apiPath = `DRTS/City/${city}`;
-                } else if (cat === "SciencePark") {
-                    apiVer = "v2";
-                    apiPath = `SciencePark/${city}`;
-                } else {
-                    apiVer = city === "Tainan" ? "v3" : "v2";
-                    apiPath = `City/${city}`;
-                }
-
-                // 為了不改動下方大量的抓取邏輯，直接將所有版本變數對齊 apiVer，路徑對齊 apiPath
-                const dynVer = apiVer;
-                const staticVer = apiVer; 
-                const stopVer = apiVer;
-                const path = apiPath;
-
+                const dynVer = apiVer, staticVer = apiVer, stopVer = apiVer, path = apiPath;
                 const routePrefix = route.split(' ')[0]; 
                 const targetNorm = norm(route);
                 const routeKey = getRouteKey(city, cat, route);
-                const match = (i) => norm(getZh(i.SubRouteName) || getZh(i.RouteName)) === targetNorm;
 
-                // 🔸 4A-1. 取得路線站牌 (StopOfRoute)
+                const match = (i) => {
+                    const generatedName = formatDisplayName(i.RouteName, i.SubRouteName);
+                    return norm(generatedName) === targetNorm || norm(getZh(i.SubRouteName) || getZh(i.RouteName)) === targetNorm;
+                };
+
                 if (action === "info") {
                     const cached = await getCachedJson(env, "route_stops", "route_key = ?", [routeKey], null);
                     if (cached) return send(cached);
-
-                    try {
-                        const data = await fetchRouteData(`${CONFIG.BASE_API}/${stopVer}/Bus/StopOfRoute/${apiPath}`, routePrefix, token);
-                        const items = data.filter(match).map(r => ({
-                            RouteName: r.RouteName,
-                            SubRouteName: r.SubRouteName,
-                            Direction: r.Direction,
-                            Stops: r.Stops,
-                            Operators: r.Operators || []
-                        }));
-
-                        if (items.length > 0) {
-                            await upsertJson(env, "route_stops", ["route_key", "city", "route_name", "type", "data", "updated_at"], [routeKey, city, route, cat, JSON.stringify(items), Date.now()]);
-                        }
-
-                        return send(items);
-                    } catch (err) {
-                        return send({ error: "Failed to fetch route info", details: err.message }, 500);
-                    }
+                    const data = await fetchRouteData(`${CONFIG.BASE_API}/${stopVer}/Bus/StopOfRoute/${apiPath}`, routePrefix, token);
+                    const items = data.filter(match).map(r => ({ RouteName: r.RouteName, SubRouteName: r.SubRouteName, Direction: r.Direction, Stops: r.Stops, Operators: r.Operators || [] }));
+                    if (items.length === 0) throw new Error(`查無站牌清單資料，可能是路線名稱不符: ${route}`);
+                    await upsertJson(env, "route_stops", ["route_key", "city", "route_name", "type", "data", "updated_at"], [routeKey, city, route, cat, JSON.stringify(items), Date.now()]);
+                    return send(items);
                 }
 
-                // 🔸 4A-2. 取得路線形狀 (Shape)
                 if (action === "shape") {
                     const cached = await getCachedJson(env, "route_shapes", "route_key = ?", [routeKey], null);
                     if (cached) return send(cached);
-
-                    try {
-                        const data = await fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/Shape/${apiPath}`, routePrefix, token);
-                        const shapes = data.filter(i => {
-                            const n = norm(getZh(i.SubRouteName) || getZh(i.RouteName));
-                            return n === targetNorm;
-                        });
-                        await upsertJson(env, "route_shapes", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(shapes), Date.now()]);
-                        return send(shapes);
-                    } catch (err) {
-                        return send({ error: "Failed to fetch shapes", details: err.message }, 500);
-                    }
+                    const data = await fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/Shape/${apiPath}`, routePrefix, token);
+                    const shapes = data.filter(i => norm(getZh(i.SubRouteName) || getZh(i.RouteName)) === targetNorm);
+                    await upsertJson(env, "route_shapes", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(shapes), Date.now()]);
+                    return send(shapes);
                 }
 
-                // 🔸 4B. 取得時刻表 (Schedule) & 班距發車 (Frequency)
                 if (action === "timetable") {
-                    // 升級為 v8，啟動最強的 4合1 聚合抓取機制 (修復 TDX 拼字錯誤)
-                    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables_v8 (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
-
                     const cached = await getCachedJson(env, "route_timetables_v8", "route_key = ?", [routeKey], null);
                     if (cached) return send({ route, timetables: cached });
 
-                    try {
-                        // 🌟 吸星大法：4 種可能存放時刻表的 API 全部一次抓回來
-                        const [schedData, dailyData, genStopData, dailyStopData] = await Promise.all([
-                            fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/Schedule/${path}`, routePrefix, token).catch(() => []),
-                            fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/DailyTimeTable/${path}`, routePrefix, token).catch(() => []),
-                            fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/GeneralStopTimeTable/${path}`, routePrefix, token).catch(() => []),
-                            fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/DailyStopTimeTable/${path}`, routePrefix, token).catch(() => [])
-                        ]);
+                    const [schedData, dailyData, genStopData, dailyStopData] = await Promise.all([
+                        fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/Schedule/${path}`, routePrefix, token).catch(()=>[]),
+                        fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/DailyTimeTable/${path}`, routePrefix, token).catch(()=>[]),
+                        fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/GeneralStopTimeTable/${path}`, routePrefix, token).catch(()=>[]),
+                        fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/DailyStopTimeTable/${path}`, routePrefix, token).catch(()=>[])
+                    ]);
 
-                        const dirMap = {};
-                        const initDir = (r) => {
-                            const dirLabel = r.Direction === 0 ? "去程" : (r.Direction === 1 ? "返程" : "迴圈");
-                            if (!dirMap[dirLabel]) {
-                                dirMap[dirLabel] = {
-                                    direction: dirLabel,
-                                    route_name: getZh(r.SubRouteName) || getZh(r.RouteName),
-                                    schedules: [],
-                                    frequencies: []
-                                };
-                            }
-                            return dirMap[dirLabel];
-                        };
+                    const dirMap = {};
+                    const initDir = (r) => {
+                        const dirLabel = r.Direction === 0 ? "去程" : (r.Direction === 1 ? "返程" : "迴圈");
+                        if (!dirMap[dirLabel]) dirMap[dirLabel] = { direction: dirLabel, route_name: getZh(r.SubRouteName) || getZh(r.RouteName), schedules: [], frequencies: [] };
+                        return dirMap[dirLabel];
+                    };
 
-                        // 處理班距的輔助函數
-                        const processFrequencies = (r, target) => {
-                            const fm = {};
-                            // 🌟 防禦 TDX 的拼字錯誤：同時支援 Frequencies 與 Frequencys
-                            const rawFreqs = r.Frequencies || r.Frequencys || [];
-                            rawFreqs.forEach(f => {
+                    [ { data: schedData, type: 'basic', isDaily: false }, { data: dailyData, type: 'basic', isDaily: true }, { data: genStopData, type: 'stop', isDaily: false }, { data: dailyStopData, type: 'stop', isDaily: true } ]
+                    .forEach(dataset => {
+                        (Array.isArray(dataset.data) ? dataset.data : []).filter(match).forEach(r => {
+                            const target = initDir(r);
+                            (r.Frequencies || r.Frequencys || []).forEach(f => {
                                 const day = formatServiceDay(f.ServiceDay);
-                                if (!fm[day]) fm[day] = { service_day: day, ranges: [] };
-                                fm[day].ranges.push({
-                                    time_range: `${(f.StartTime||"").substring(0,5)} - ${(f.EndTime||"").substring(0,5)}`,
-                                    min: f.MinHeadwayMins,
-                                    max: f.MaxHeadwayMins
+                                target.frequencies.push({ service_day: day, ranges: [{ time_range: `${(f.StartTime||"").substring(0,5)} - ${(f.EndTime||"").substring(0,5)}`, min: f.MinHeadwayMins, max: f.MaxHeadwayMins }] });
+                            });
+                            if (dataset.type === 'basic') {
+                                (r.TimeTables || r.Timetables || []).forEach(t => {
+                                    const day = dataset.isDaily ? "今日時刻表" : formatServiceDay(t.ServiceDay);
+                                    let depTime = t.DepartureTime || (t.StopTimes && t.StopTimes.length > 0 ? t.StopTimes[0].DepartureTime || t.StopTimes[0].ArrivalTime : null);
+                                    if (depTime) target.schedules.push({ service_day: day, is_low_floor: t.IsLowFloor === 1, departure_times: [depTime] });
                                 });
-                            });
-                            target.frequencies.push(...Object.values(fm));
-                        };
-
-                        // 處理常態與每日時刻表的輔助函數 (順便防禦 TimeTables 的大小寫問題)
-                        const processTimeTables = (r, target, isDaily) => {
-                            const sm = {};
-                            // 🌟 同時支援 TimeTables 與 Timetables (大小寫問題)
-                            const rawTimes = r.TimeTables || r.Timetables || [];
-                            rawTimes.forEach(t => {
-                                const day = isDaily ? "今日時刻表" : formatServiceDay(t.ServiceDay);
-                                const isLow = t.IsLowFloor === 1;
-                                const key = `${day}_${isLow}`;
-                                if (!sm[key]) sm[key] = { service_day: day, is_low_floor: isLow, departure_times: [] };
-                                
-                                let depTime = t.DepartureTime;
-                                if (!depTime && t.StopTimes && t.StopTimes.length > 0) {
-                                    // 確保抓出順序最前面那一站的時間
-                                    const fst = t.StopTimes.reduce((min, curr) => ((curr.StopSequence||0) < (min.StopSequence||0) ? curr : min), t.StopTimes[0]);
-                                    depTime = fst.DepartureTime || fst.ArrivalTime;
-                                }
-                                if (depTime) sm[key].departure_times.push(depTime);
-                            });
-                            const arr = Object.values(sm).filter(s => s.departure_times.length > 0);
-                            target.schedules.push(...arr);
-                        };
-
-                        // 處理站別時刻表的輔助函數
-                        const processStops = (r, target, isDaily) => {
-                            const sm = {};
-                            if (r.Stops && r.Stops.length > 0) {
-                                const hasSeq = r.Stops[0].StopSequence !== undefined;
-                                let firstStops = hasSeq 
-                                    ? r.Stops.filter(s => (s.StopSequence || 0) === Math.min(...r.Stops.map(x => x.StopSequence || 0)))
-                                    : r.Stops.filter(s => s.StopID === r.Stops[0].StopID);
-                                    
-                                firstStops.forEach(st => {
-                                    const day = isDaily ? "今日時刻表" : formatServiceDay(st.ServiceDay);
-                                    // 🌟 同時支援 TimeTables 與 Timetables
-                                    const stTimeTables = st.TimeTables || st.Timetables || [];
-                                    stTimeTables.forEach(t => {
-                                        const isLow = t.IsLowFloor === 1;
-                                        const key = `${day}_${isLow}`;
-                                        if (!sm[key]) sm[key] = { service_day: day, is_low_floor: isLow, departure_times: [] };
-                                        if (t.DepartureTime || t.ArrivalTime) sm[key].departure_times.push(t.DepartureTime || t.ArrivalTime);
+                            } else {
+                                if (r.Stops && r.Stops.length > 0) {
+                                    r.Stops.forEach(st => {
+                                        const day = dataset.isDaily ? "今日時刻表" : formatServiceDay(st.ServiceDay);
+                                        (st.TimeTables || st.Timetables || []).forEach(t => {
+                                            if (t.DepartureTime || t.ArrivalTime) target.schedules.push({ service_day: day, is_low_floor: t.IsLowFloor === 1, departure_times: [t.DepartureTime || t.ArrivalTime] });
+                                        });
                                     });
-                                });
+                                }
                             }
-                            const arr = Object.values(sm).filter(s => s.departure_times.length > 0);
-                            target.schedules.push(...arr);
-                        };
-
-                        // 開始聚合所有資料來源
-                        const allDatasets = [
-                            { data: schedData, type: 'basic', isDaily: false },
-                            { data: dailyData, type: 'basic', isDaily: true },
-                            { data: genStopData, type: 'stop', isDaily: false },
-                            { data: dailyStopData, type: 'stop', isDaily: true }
-                        ];
-
-                        allDatasets.forEach(dataset => {
-                            (Array.isArray(dataset.data) ? dataset.data : []).filter(match).forEach(r => {
-                                const target = initDir(r);
-                                processFrequencies(r, target);
-                                if (dataset.type === 'basic') processTimeTables(r, target, dataset.isDaily);
-                                else processStops(r, target, dataset.isDaily);
-                            });
                         });
+                    });
 
-                        // 🌟 合併、去重並排序
-                        Object.values(dirMap).forEach(target => {
-                            // 1. 合併相同的 service_day，把時間加進 Set 裡去重
-                            const mergedSm = {};
-                            target.schedules.forEach(s => {
-                                const key = `${s.service_day}_${s.is_low_floor}`;
-                                if (!mergedSm[key]) mergedSm[key] = { ...s, departure_times: new Set(s.departure_times) };
-                                else s.departure_times.forEach(t => mergedSm[key].departure_times.add(t));
-                            });
-                            // 排序時間
-                            target.schedules = Object.values(mergedSm).map(s => ({
-                                ...s, 
-                                departure_times: [...s.departure_times].sort((a, b) => a.localeCompare(b))
-                            }));
-                            
-                            // 2. 去除重複的班距區間
-                            target.frequencies = target.frequencies.filter((v, i, a) => a.findIndex(t => (t.service_day === v.service_day)) === i);
+                    Object.values(dirMap).forEach(target => {
+                        const mergedSm = {};
+                        target.schedules.forEach(s => {
+                            const key = `${s.service_day}_${s.is_low_floor}`;
+                            if (!mergedSm[key]) mergedSm[key] = { ...s, departure_times: new Set(s.departure_times) };
+                            else s.departure_times.forEach(t => mergedSm[key].departure_times.add(t));
                         });
+                        target.schedules = Object.values(mergedSm).map(s => ({ ...s, departure_times: [...s.departure_times].sort((a,b)=>a.localeCompare(b)) }));
+                        target.frequencies = target.frequencies.filter((v,i,a) => a.findIndex(t => t.service_day === v.service_day) === i);
+                    });
 
-                        const timetables = Object.values(dirMap);
-                        await upsertJson(env, "route_timetables_v8", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(timetables), Date.now()]);
-                        return send({ route, timetables });
-                    } catch (err) {
-                        return send({ error: "Failed to fetch timetable", details: err.message }, 500);
-                    }
+                    await upsertJson(env, "route_timetables_v8", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(Object.values(dirMap)), Date.now()]);
+                    return send({ route, timetables: Object.values(dirMap) });
                 }
 
-                // 🔸 4C. 取得票價資訊 (RouteFare)
                 if (action === "fare") {
                     const cached = await getCachedJson(env, "route_fares", "route_key = ?", [routeKey], null);
                     if (cached) return send({ route, fares: cached });
-
-                    try {
-                        const data = await fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/RouteFare/${apiPath}`, routePrefix, token);
-                        const fares = data.filter(match).map(r => {
-                            const pricingType = DICT.PRICING_TYPE[r.FarePricingType] || r.FarePricingType;
-                            const mapFares = (fareArray) => (fareArray || []).map(f => ({
-                                type: DICT.TICKET_TYPE[f.TicketType] || `類別${f.TicketType}`,
-                                class: DICT.FARE_CLASS[f.FareClass] || `對象${f.FareClass}`,
-                                price: f.Price
-                            }));
-
-                            const sectionData = r.SectionFares || r.SectionFare || [];
-                            const odData = r.ODFares || r.StageFares || [];
-
-                            return {
-                                route_name: getZh(r.SubRouteName) || getZh(r.RouteName),
-                                pricing_type: pricingType,
-                                is_free: r.IsFreeBus === 1,
-                                section_fares: (Array.isArray(sectionData) ? sectionData : [sectionData]).map(sf => ({
-                                    direction: sf.Direction === 0 ? "去程" : (sf.Direction === 1 ? "返程" : "迴圈"),
-                                    buffer_zones: (sf.BufferZones || []).map(bz => ({
-                                        origin: getZh(bz.FareBufferZoneOrigin?.StopName || bz.FareBufferZoneOrigin?.OriginStopName),
-                                        destination: getZh(bz.FareBufferZoneDestination?.StopName || bz.FareBufferZoneDestination?.DestinationStopName)
-                                    })),
-                                    fares: mapFares(sf.Fares)
-                                })),
-                                od_fares: (Array.isArray(odData) ? odData : [odData]).map(od => ({
-                                    direction: od.Direction === 0 ? "去程" : (od.Direction === 1 ? "返程" : "迴圈"),
-                                    origin: getZh(od.OriginStop?.StopName || od.OriginStage?.StopName),
-                                    destination: getZh(od.DestinationStop?.StopName || od.DestinationStage?.StopName),
-                                    fares: mapFares(od.Fares)
-                                }))
-                            };
-                        });
-                        await upsertJson(env, "route_fares", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(fares), Date.now()]);
-                        return send({ route, fares });
-                    } catch (err) {
-                        const details = err?.message || "Unknown error";
-                        return send({ error: "Failed to fetch fares", details }, 500);
-                    }
+                    const data = await fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/RouteFare/${apiPath}`, routePrefix, token);
+                    const fares = data.filter(match).map(r => {
+                        const mapFares = (arr) => (arr || []).map(f => ({ type: DICT.TICKET_TYPE[f.TicketType], class: DICT.FARE_CLASS[f.FareClass], price: f.Price }));
+                        return {
+                            route_name: getZh(r.SubRouteName) || getZh(r.RouteName),
+                            pricing_type: DICT.PRICING_TYPE[r.FarePricingType] || r.FarePricingType,
+                            is_free: r.IsFreeBus === 1,
+                            section_fares: (Array.isArray(r.SectionFares||r.SectionFare) ? (r.SectionFares||r.SectionFare) : [r.SectionFares||r.SectionFare]).filter(Boolean).map(sf => ({
+                                direction: sf.Direction === 0 ? "去程" : (sf.Direction === 1 ? "返程" : "迴圈"),
+                                buffer_zones: (sf.BufferZones || []).map(bz => ({ origin: getZh(bz.FareBufferZoneOrigin?.StopName), destination: getZh(bz.FareBufferZoneDestination?.StopName) })),
+                                fares: mapFares(sf.Fares)
+                            })),
+                            od_fares: (Array.isArray(r.ODFares||r.StageFares) ? (r.ODFares||r.StageFares) : [r.ODFares||r.StageFares]).filter(Boolean).map(od => ({
+                                direction: od.Direction === 0 ? "去程" : (od.Direction === 1 ? "返程" : "迴圈"),
+                                origin: getZh(od.OriginStop?.StopName || od.OriginStage?.StopName), destination: getZh(od.DestinationStop?.StopName || od.DestinationStage?.StopName),
+                                fares: mapFares(od.Fares)
+                            }))
+                        };
+                    });
+                    await upsertJson(env, "route_fares", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(fares), Date.now()]);
+                    return send({ route, fares });
                 }
 
-                // 🔸 4D. 取得公車車籍資料 (供首頁與地圖解析使用)
                 if (action === "vehicle") {
-                    try {
-                        const res = await fetch(`${CONFIG.BASE_API}/${staticVer}/Bus/Vehicle/${apiPath}?$format=JSON`, { headers: { Authorization: `Bearer ${token}` } });
-                        if (!res.ok) return send({});
-                        const data = await res.json();
-                        const dict = {};
-                        data.forEach(v => {
-                            dict[v.PlateNumb] = {
-                                year: v.ManufactureYear || (v.PurchaseTime ? v.PurchaseTime.substring(0, 4) : '不詳'),
-                                isLowFloor: v.IsLowFloor === 1 || v.HasLiftOrRamp === 1,
-                                hasWifi: v.HasWifi === 1,
-                                isElectric: v.IsElectric === 1 || v.VehicleType === 1,
-                                hasLift: v.HasLiftOrRamp === 1
-                            };
-                        });
-                        return send(dict);
-                    } catch (err) {
-                        return send({});
-                    }
+                    const result = await safeTdxFetch(`${CONFIG.BASE_API}/${staticVer}/Bus/Vehicle/${apiPath}?$format=JSON`, token);
+                    if (!result.ok) throw new Error(`車籍資料獲取失敗: ${result.errorText}`);
+                    const dict = {};
+                    result.data.forEach(v => {
+                        dict[v.PlateNumb] = { year: v.ManufactureYear || (v.PurchaseTime ? v.PurchaseTime.substring(0, 4) : '不詳'), isLowFloor: v.IsLowFloor === 1 || v.HasLiftOrRamp === 1, hasWifi: v.HasWifi === 1, isElectric: v.IsElectric === 1 || v.VehicleType === 1, hasLift: v.HasLiftOrRamp === 1 };
+                    });
+                    return send(dict);
                 }
 
-                // 🔸 4E. 預設：取得即時動態 (RealTime & EstimatedTime)
                 const [resPos, resEst] = await Promise.all([
-                    fetchRouteData(`${CONFIG.BASE_API}/${dynVer}/Bus/RealTimeByFrequency/${apiPath}`, routePrefix, token),
-                    fetchRouteData(`${CONFIG.BASE_API}/${dynVer}/Bus/EstimatedTimeOfArrival/${apiPath}`, routePrefix, token)
+                    fetchRouteData(`${CONFIG.BASE_API}/${dynVer}/Bus/RealTimeByFrequency/${apiPath}`, routePrefix, token).catch(()=>[]),
+                    fetchRouteData(`${CONFIG.BASE_API}/${dynVer}/Bus/EstimatedTimeOfArrival/${apiPath}`, routePrefix, token).catch(()=>[])
                 ]);
-
                 const buses = (Array.isArray(resPos) ? resPos : []).filter(b => b.BusStatus === 0 && match(b));
                 const ests = (Array.isArray(resEst) ? resEst : []).filter(e => match(e));
 
                 return send({
-                    buses: buses.map(b => ({ 
-                        plate: b.PlateNumb, 
-                        lat: b.BusPosition?.PositionLat, 
-                        lon: b.BusPosition?.PositionLon, 
-                        azi: b.Azimuth, 
-                        dir: b.Direction 
-                    })),
+                    buses: buses.map(b => ({ plate: b.PlateNumb, lat: b.BusPosition?.PositionLat, lon: b.BusPosition?.PositionLon, azi: b.Azimuth, dir: b.Direction })),
                     estimates: ests.reduce((acc, e) => {
                         const key = `${e.Direction}_${e.StopUID}`;
                         const sec = e.EstimateTime ?? null;
-                        if (!acc[key] || (sec !== null && (acc[key].sec === null || sec < acc[key].sec))) {
-                            acc[key] = { sec, status: e.StopStatus, plate: e.PlateNumb, nextBusTime: e.NextBusTime };
-                        }
+                        if (!acc[key] || (sec !== null && (acc[key].sec === null || sec < acc[key].sec))) acc[key] = { sec, status: e.StopStatus, plate: e.PlateNumb, nextBusTime: e.NextBusTime };
                         return acc;
                     }, {})
                 });
             }
 
-            const { results } = await env.DB.prepare("SELECT COUNT(*) as total FROM routes_v2").all();
-            return send({ status: "running", version: CONFIG.VERSION, db_count: results[0].total });
+            return send({ status: "Error", message: "未知的 action" }, 400);
 
         } catch (e) {
-            return send({ error: e.message, hint: "請檢查 API Key 或網路連線。" }, 500);
+            // 🌟 最終攔截網：任何上述拋出的錯誤，都會變成明確的 JSON 顯示在畫面上！
+            return send({ 
+                error: "系統異常或 TDX 連線失敗", 
+                details: e.message, 
+                hint: "此錯誤代表後端有捕捉到異常，請參考 details 說明。" 
+            }, 500);
         }
     }
 };
 
 async function getAuthToken(env) {
+    try { await env.DB.prepare(`CREATE TABLE IF NOT EXISTS sys_config (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER)`).run(); } catch(e){}
+    const cached = await env.DB.prepare(`SELECT value, updated_at FROM sys_config WHERE key = 'tdx_token'`).first();
+    if (cached && cached.value && (Date.now() - cached.updated_at < 20 * 60 * 60 * 1000)) return cached.value;
+
     const res = await fetch(CONFIG.TOKEN_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ grant_type: "client_credentials", client_id: env.TDX_CLIENT_ID, client_secret: env.TDX_CLIENT_SECRET })
     });
     const text = await res.text();
     try {
         const data = JSON.parse(text);
-        if (data.access_token) return data.access_token;
+        if (data.access_token) {
+            try { await env.DB.prepare(`INSERT OR REPLACE INTO sys_config (key, value, updated_at) VALUES ('tdx_token', ?, ?)`).bind(data.access_token, Date.now()).run(); } catch (e) {}
+            return data.access_token;
+        }
         throw new Error();
-    } catch (e) {
-        throw new Error(`TDX 授權失敗！回應內容：${text.substring(0, 100)}`);
-    }
+    } catch (e) { throw new Error(`TDX 授權失敗 (Token 申請遭拒)！回應內容：${text.substring(0, 150)}`); }
 }
 
 async function fetchBusNewsOrAlert(type, city, token) {
-    const isInter = city === "InterCity";
     const target = type === "news" ? "News" : "Alert";
-    const path = isInter ? "InterCity" : `City/${city}`;
-    const url = `${CONFIG.BASE_API}/v2/Bus/${target}/${path}?$format=JSON`;
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return Array.isArray(data) ? data : (data?.value || []);
+    const path = city === "InterCity" ? "InterCity" : `City/${city}`;
+    const result = await safeTdxFetch(`${CONFIG.BASE_API}/v2/Bus/${target}/${path}?$format=JSON`, token);
+    if (!result.ok) throw new Error(`公告抓取失敗: ${result.errorText}`);
+    return Array.isArray(result.data) ? result.data : (result.data?.value || []);
 }
