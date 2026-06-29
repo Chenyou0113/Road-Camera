@@ -204,15 +204,16 @@ const syncTraAlerts = async (env) => {
     
     const alerts = (await res.json()).Alerts.map(a => {
         // 🚀 增強版：連續替換各種台鐵可能手打的醜醜符號
-        let cleanDesc = a.Description
+        // 使用 (a.Description || "") 防止 Description 不存在時報錯
+        let cleanDesc = (a.Description || "")
             .replace(/<-->|<->/g, '＜－－＞') // 攔截半形拼裝箭頭
             .replace(/([一-龥]+)\s*[=＝]\s*([一-龥]+)/g, '$1＜－－＞$2') // 攔截等號
             .replace(/([一-龥]+)\s*~\s*([一-龥]+)/g, '$1 至 $2') // 把波浪號換成"至"
             .trim();
             
         return { 
-            AlertID: a.AlertID, 
-            Title: a.Title, 
+            AlertID: a.AlertID || "", 
+            Title: a.Title || "", 
             Description: cleanDesc, 
             Status: a.Status 
         };
