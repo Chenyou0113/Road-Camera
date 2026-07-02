@@ -570,8 +570,16 @@ export default {
             if (url.pathname === "/api/pids/marquee") {
                 const conf = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'PIDS_TOP_MARQUEE'").first();
                 const alR = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'ALERTS_DATA'").first();
-                const als = JSON.parse(alR?.Value || "[]"), prop = conf?.Value || "歡迎搭乘臺鐵。";
-                return new Response(JSON.stringify({ text: als.map(a=>`⚠️【${a.Title}】${a.Description}`).join(" ❖ ") + (als.length?" ❖ ":"") + prop }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+                const als = JSON.parse(alR?.Value || "[]");
+                const prop = conf?.Value || "歡迎搭乘臺鐵。";
+                const marqueeText = als.map(a => {
+                    const title = String(a.Title || '');
+                    const description = String(a.Description || '');
+                    const isNormal = (title + description).includes('正常');
+                    const icon = isNormal ? 'ℹ️' : '⚠️';
+                    return `${icon}【${title}】${description}`;
+                }).join(" ❖ ") + (als.length ? " ❖ " : "") + prop;
+                return new Response(JSON.stringify({ text: marqueeText }), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
             if (url.pathname === "/api/pids/assets") {
                 const img = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'PIDS_IMAGES'").first();
