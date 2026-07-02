@@ -1203,6 +1203,17 @@
             filtered.forEach(s => select.add(new Option(`${s.code} - ${s.name}`, s.code)));
         }
 
+        // --- 修正：精準計算實際到站/開車時間 ---
+        function addDelayToTime(timeStr, delayMins) {
+            if (!timeStr || timeStr === '--:--' || timeStr.length < 5) return timeStr || '--:--';
+            const d = Number(delayMins) || 0;
+            const [h, m] = timeStr.slice(0, 5).split(':').map(Number);
+            if (isNaN(h) || isNaN(m)) return timeStr.slice(0, 5);
+            if (d === 0) return timeStr.slice(0, 5);
+            const total = h * 60 + m + d;
+            return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+        }
+
         async function loadTraAlerts() {
             const panel = document.getElementById('traAlertPanel');
             const content = document.getElementById('traAlertContent');
@@ -1213,7 +1224,7 @@
                 if (!res.ok) throw new Error("API Error");
                 const data = await res.json();
                 if (Array.isArray(data) && data.length > 0) {
-                    const isNormal = data.every(a => `${a.Title || ''}${a.Description || ''}`.includes('正常'));
+                    const isNormal = data.every(a => String(a.Status) === '1');
 
                     if (isNormal) {
                         panel.style.borderLeftColor = '#4CAF50';
@@ -1359,9 +1370,13 @@
                 list = data.filter(t => {
                     const ts = t.TrainStatus !== undefined ? t.TrainStatus : t.Status;
                     const tsf = Number(t.TrainSuspendedFlag || 0);
-                    if (String(ts) === '2' || Boolean(t.IsSuspended) || Number(t.SuspendedFlag) === 1 || Boolean(t.IsPartiallySuspended) || tsf === 2 || tsf === 1) return true;
+                    const isSuspended = String(ts) === '2' || Boolean(t.IsSuspended) || Number(t.SuspendedFlag) === 1 || Boolean(t.IsPartiallySuspended) || tsf === 2 || tsf === 1;
                     const [h, m] = (t.Dep || t.Arr || "00:00").slice(0, 5).split(':').map(Number);
-                    return (h * 60 + m) + parseInt(t.DelayTime || t.Delay || 0) >= nowMins;
+                    const schedMins = h * 60 + m;
+
+                    // 停駛車次保留到表定時間後 60 分鐘；正常車次保留到實際時間後 30 分鐘
+                    if (isSuspended) return schedMins >= (nowMins - 60);
+                    return schedMins + parseInt(t.DelayTime || t.Delay || 0) >= nowMins;
                 });
             }
             const dir = currentDirection;
@@ -1374,8 +1389,11 @@
                 const rawType = String(t?.TrainTypeName || t?.Type || '').trim();
                 const note = String(t?.Note || '').trim();
                 const typeName = normalizeTrainTypeLabel(rawType, note);
-                const arr = (t.ArrivalTime || t.Arr || "--:--").slice(0, 5), dep = (t.DepartureTime || t.Dep || "--:--").slice(0, 5);
+                const schedArr = (t.ArrivalTime || t.Arr || "--:--").slice(0, 5);
+                const schedDep = (t.DepartureTime || t.Dep || "--:--").slice(0, 5);
                 const delay = Number(t.DelayTime || t.Delay || 0) || 0;
+                const actualArr = addDelayToTime(schedArr, delay);
+                const actualDep = addDelayToTime(schedDep, delay);
                 const dest = normalizeTaiText(t.EndingStationName || t.Dest || '');
                 const ts = t.TrainStatus !== undefined ? t.TrainStatus : t.Status, tsf = Number(t.TrainSuspendedFlag || 0);
                 const isSuspended = Boolean(t.IsSuspended) || Number(t.SuspendedFlag) === 1;
@@ -1384,11 +1402,11 @@
                 const statusText = isSuspended ? '停駛' : (isPartiallySuspended ? '部分停駛' : (isCancelled ? '停駛' : ''));
                 const delayText = statusText || (delay > 0 ? `晚 ${delay} 分` : '準點');
                 const delayClass = statusText ? 'delay-warn' : (delay > 0 ? 'delay-warn' : 'delay-ok');
-                html += `<div class="train-card" data-train-no="${trainNo}" data-delay="${delay}" data-time="${arr}" data-type-name="${typeName}" data-dest-name="${dest}"><div><strong>${trainNo}</strong></div><div><span class="train-type-badge ${getTrainTypeClass(`${rawType} ${typeName}`)}">${typeName}</span></div><div>${dest || '--'}</div><div class="${delay > 0 ? 'delay-warn' : ''}">${arr}/${dep}</div><div class="${delayClass}">${delayText}</div></div>`;
+                html += `<div class="train-card" data-train-no="${trainNo}" data-delay="${delay}" data-arr="${actualArr}" data-dep="${actualDep}" data-type-name="${typeName}" data-dest-name="${dest}"><div><strong>${trainNo}</strong></div><div><span class="train-type-badge ${getTrainTypeClass(`${rawType} ${typeName}`)}">${typeName}</span></div><div>${dest || '--'}</div><div class="${delay > 0 ? 'delay-warn' : ''}">${actualArr} / ${actualDep}</div><div class="${delayClass}">${delayText}</div></div>`;
             }
             board.innerHTML = html;
             board.querySelectorAll('.train-card').forEach(card => { 
-                card.addEventListener('click', () => { const d = card.dataset; showTrainMarquee(card, d.trainNo, d.delay || '0', d.time || '', d.typeName || '', d.destName || ''); }); 
+                card.addEventListener('click', () => { const d = card.dataset; showTrainMarquee(card, d.trainNo, d.delay || '0', d.arr || '', d.dep || '', d.typeName || '', d.destName || ''); }); 
             });
             if (savedMarqueeRow && currentExpandedNo) {
                 const newCard = board.querySelector(`.train-card[data-train-no="${currentExpandedNo}"]`);
@@ -1549,7 +1567,7 @@
             // 綁定直達車點擊事件(展開跑馬燈)
             board.querySelectorAll('.train-card').forEach(card => card.addEventListener('click', () => { 
                 const d = card.dataset; 
-                showTrainMarquee(card, d.trainNo, d.delay || '0', d.time || '', d.typeName || '', d.destName || ''); 
+                showTrainMarquee(card, d.trainNo, d.delay || '0', d.arr || '', d.dep || '', d.typeName || '', d.destName || ''); 
             }));
         }
 
@@ -1583,7 +1601,8 @@
             resBox.innerHTML = html + `</div></div>`;
         }
 
-        function showTrainMarquee(cardEl, trainNo, delayStr, schedTime, typeName, destName) {
+        // 🌟 參數改為接收 actualArr 與 actualDep
+        function showTrainMarquee(cardEl, trainNo, delayStr, actualArr, actualDep, typeName, destName) {
             const board = document.getElementById('trainsBoard');
             const date = document.getElementById('queryDate').value;
             const delay = parseInt(delayStr || 0);
@@ -1604,8 +1623,7 @@
             infoRow.innerHTML = '<div class="train-inline-marquee-track"><div class="train-inline-marquee-inner"></div></div>';
             cardEl.insertAdjacentElement('afterend', infoRow);
             const inner = infoRow.querySelector('.train-inline-marquee-inner');
-            let expTime = schedTime.slice(0,5);
-            if (delay > 0 && expTime) { const totalMins = expTime.split(':').map(Number).reduce((acc, curr, i) => acc + (i === 0 ? curr * 60 : curr), 0) + delay; expTime = `${String(Math.floor(totalMins/60)%24).padStart(2,'0')}:${String(totalMins%60).padStart(2,'0')}`; }
+            let expTime = (actualArr && actualArr !== '--:--') ? actualArr : actualDep;
             const sep = `<span style="color:#555; margin:0 15px;">|</span>`;
             const basicHtml = `<span style="color:#ffeb3b; font-weight:700;">${trainNo} 次</span> <span style="color:#fff;">往 ${destName} ${typeName}</span> ${sep} <span style="color:#fff;">本站預計 <span style="color:#00e676; font-weight:700;">${expTime}</span> 抵達</span> ${sep} <span style="color:#aaa;"><i class="fas fa-spinner fa-spin"></i> 正在連線取得即時位置與詳細停靠站...</span>`;
             inner.innerHTML = basicHtml;
@@ -1621,7 +1639,7 @@
                 else if (schedSuspended === 2) statusText = "本車次部分停駛";
                 else if ((liveData && liveData.status === 2) || schedSuspended === 1) statusText = "本車次今日停駛";
                 else if (liveData && liveData.station) { let st = liveData.station; if (typeof st === 'object') st = st.Zh_tw || st.StationName?.Zh_tw || st.name || ""; statusText = `列車目前位置：${normalizeTaiText(st)}`; }
-                else if (date === todayStr) { const [h, m] = String(schedTime || '').slice(0, 5).split(':').map(Number); if (Number.isFinite(h) && Number.isFinite(m) && (h * 60 + m) > (new Date().getHours() * 60 + new Date().getMinutes())) statusText = "列車尚未發車"; }
+                else if (date === todayStr) { const compareTime = (actualDep && actualDep !== '--:--') ? actualDep : actualArr; const [h, m] = String(compareTime || '').slice(0, 5).split(':').map(Number); if (Number.isFinite(h) && Number.isFinite(m) && (h * 60 + m) > (new Date().getHours() * 60 + new Date().getMinutes())) statusText = "列車尚未發車"; }
                 let effType = String(typeName || '').trim() || normalizeTrainTypeLabel(data?.TrainTypeName || data?.Type || data?.Note || '', data?.Note || '');
                 let effDest = String(destName || '').trim() || normalizeTaiText(stops[stops.length - 1]?.StationName?.Zh_tw || stops[stops.length - 1]?.Name || '');
                 const curIdx = stops.findIndex(s => (s.StationID || s.ID) === currentStationID);
@@ -1629,7 +1647,12 @@
                 const viaTags = getViaTags(data, stops);
                 const rawNote = String(data?.Note || '').trim();
                 const noteHtml = rawNote ? `<span style="color:#ff9800; font-weight:bold;">備註：${rawNote}</span> ${sep} ` : '';
-                const marqueeHtml = `<span style="color:#ffeb3b; font-weight:700;">${trainNo} 次</span> <span style="color:#fff;">往 ${effDest} ${effType}</span> ${sep} <span style="color:#fff;">本站預計 <span style="color:#00e676; font-weight:700;">${expTime}</span> 抵達</span> ${sep} <span style="color:#4fc3f7;">${statusText}</span> ${sep} ${viaTags.length > 0 ? `<span style="color:#ffeb3b; font-weight:bold;">經由${viaTags.join('、')}</span> ${sep} ` : ''} ${noteHtml}<span style="color:#fff;">沿途停靠：</span>${stopsHtml}`;
+                // 停駛時直接覆蓋預計抵達文字，避免顯示凍結的延誤時間
+                let expTimeHtml = `<span style="color:#fff;">本站預計 <span style="color:#00e676; font-weight:700;">${expTime}</span> 抵達</span> ${sep} `;
+                if (statusText.includes('停駛')) {
+                    expTimeHtml = `<span style="color:#ff5252; font-weight:700;">🚫 本站停靠取消</span> ${sep} `;
+                }
+                const marqueeHtml = `<span style="color:#ffeb3b; font-weight:700;">${trainNo} 次</span> <span style="color:#fff;">往 ${effDest} ${effType}</span> ${sep} ${expTimeHtml} <span style="color:#4fc3f7;">${statusText}</span> ${sep} ${viaTags.length > 0 ? `<span style="color:#ffeb3b; font-weight:bold;">經由${viaTags.join('、')}</span> ${sep} ` : ''} ${noteHtml}<span style="color:#fff;">沿途停靠：</span>${stopsHtml}`;
                 inner.innerHTML = marqueeHtml;
                 inner.style.animation = `train-inline-scroll ${Math.max(15, marqueeHtml.replace(/<[^>]*>/g, '').trim().length * TRAIN_MARQUEE_SEC_PER_CHAR)}s linear infinite`;
             }).catch(e => {

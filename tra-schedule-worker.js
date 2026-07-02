@@ -279,7 +279,17 @@ export default {
                         IsPartiallySuspended: t.TrainSuspendedFlag === 2,
                         _actual: (h * 60 + m) + (isToday ? l.delay : 0)
                     };
-                }).filter(t => !isToday || t._actual >= nowM - 30 || t.TrainStatus === 2 || t.IsSuspended).sort((a,b) => a._actual - b._actual);
+                }).filter(t => {
+                    if (!isToday) return true;
+                    const [h, m] = (t.Dep || t.Arr).split(':').map(Number);
+                    const schedMins = h * 60 + m;
+                    // 停駛車次：只保留到表定時間後 60 分鐘
+                    if (t.TrainStatus === 2 || t.IsSuspended || t.IsPartiallySuspended) {
+                        return schedMins >= nowM - 60;
+                    }
+                    // 正常車次：依據實際時間(含延誤)過後 30 分鐘才消失
+                    return t._actual >= nowM - 30;
+                }).sort((a,b) => a._actual - b._actual);
                 return new Response(JSON.stringify(res), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
@@ -575,7 +585,7 @@ export default {
                 const marqueeText = als.map(a => {
                     const title = String(a.Title || '');
                     const description = String(a.Description || '');
-                    const isNormal = (title + description).includes('正常');
+                    const isNormal = String(a.Status) === '1';
                     const icon = isNormal ? 'ℹ️' : '⚠️';
                     return `${icon}【${title}】${description}`;
                 }).join(" ❖ ") + (als.length ? " ❖ " : "") + prop;
