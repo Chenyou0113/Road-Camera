@@ -13,11 +13,35 @@ const getTwDateString = (offsetDays = 0) => {
     return twTime.toISOString().split('T')[0];
 };
 
-const patchTrainType = (no, originalType) => {
+const patchTrainType = (no, originalType, note = "", start = "", dest = "") => {
     const n = parseInt(no, 10);
+    const noteStr = String(note || "");
+    const startStr = String(start || "");
+    const destStr = String(dest || "");
+    
+    // 判斷慧燈專車 (車次 661 開頭且起終點是宜蘭與台北/臺北)
+    const isYiLanTaipei = (startStr.includes("宜蘭") && destStr.includes("臺北")) || 
+                          (startStr.includes("臺北") && destStr.includes("宜蘭")) ||
+                          (startStr.includes("宜蘭") && destStr.includes("台北")) ||
+                          (startStr.includes("台北") && destStr.includes("宜蘭"));
+    if (String(no).startsWith("661") && isYiLanTaipei) {
+        return "慧燈專車";
+    }
+    
+    // 判斷莒光(專車)
+    if (noteStr.includes("莒光(專車)") || (String(originalType).includes("莒光") && noteStr.includes("專車"))) {
+        return "莒光(專車)";
+    }
+    
     if ((n >= 6001 && n <= 6099) || (n >= 6701 && n <= 6799)) return "鳴日號";
-    if (n >= 6501 && n <= 6599) return "山嵐號";
-    if (n >= 6601 && n <= 6699) return "海風號";
+    
+    if ((n >= 6501 && n <= 6599) || (n >= 6601 && n <= 6699)) {
+        if (noteStr.includes("自強(專列)")) {
+            return "自強(專列)";
+        }
+        return "區間(專車)";
+    }
+    
     if (n === 1 || n === 2) return "環島之星";
     if (n >= 6801 && n <= 6899) return "入伍專車";
     return originalType;
@@ -94,6 +118,7 @@ const syncDailyScheduleBlob = async (env, offsetDaysArray = [0]) => {
                     No: no,
                     Dir: t.TrainInfo.Direction || 0,
                     Type: t.TrainInfo.TrainTypeName?.Zh_tw,
+                    Start: t.TrainInfo.StartingStationName?.Zh_tw,
                     Dest: t.TrainInfo.EndingStationName?.Zh_tw,
                     Arr: s.ArrivalTime,
                     Dep: s.DepartureTime,
@@ -281,7 +306,7 @@ export default {
                 const res = trains.map(t => {
                     const l = liveM[t.No] || { delay: 0, status: 0, station: "" };
                     const [h, m] = (t.Dep || t.Arr).split(':').map(Number);
-                    const patchedType = patchTrainType(t.No, t.Type);
+                    const patchedType = patchTrainType(t.No, t.Type, t.Note, t.Start, t.Dest);
                     return {
                         ...t,
                         Type: patchedType,
@@ -311,7 +336,9 @@ export default {
                 const tno = url.searchParams.get("trainNo"), date = url.searchParams.get("date") || getTwDateString(0);
                 const row = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`SCH_TRN_${tno}_${date}`).first();
                 const trn = row ? JSON.parse(row.Value) : { Stops: [] };
-                const patchedType = patchTrainType(tno, trn.Type);
+                const start = trn.Stops && trn.Stops.length > 0 ? (trn.Stops[0].Name || "") : "";
+                const dest = trn.Stops && trn.Stops.length > 0 ? (trn.Stops[trn.Stops.length - 1].Name || "") : "";
+                const patchedType = patchTrainType(tno, trn.Type, trn.Note, start, dest);
                 return new Response(JSON.stringify({
                     TrainNo: tno,
                     TrainTypeName: patchedType,
@@ -371,7 +398,7 @@ export default {
                     if (eM[st.No] && st.Seq < eM[st.No].Seq && eM[st.No].SuspendedFlag !== 1) {
                         // 找到直達車
                         const delay = Number(liveMap[st.No]?.delay || 0);
-                        const patchedType = patchTrainType(st.No, st.Type);
+                        const patchedType = patchTrainType(st.No, st.Type, st.Note, st.Start, st.Dest);
                         directRoutes.push({
                             trainNo: String(st.No),
                             rawType: patchedType,
@@ -477,13 +504,13 @@ export default {
                                     endArrTimeAbs: arrB,
                                     leg1: {
                                         trainNo: leg1.No,
-                                        typeName: patchTrainType(leg1.No, leg1.Type),
+                                        typeName: patchTrainType(leg1.No, leg1.Type, leg1.Note, leg1.Start, leg1.Dest),
                                         depTime: stops1[idxA].Dep.slice(0, 5),
                                         arrTime: (transStop.Arr || transStop.Dep).slice(0, 5)
                                     },
                                     leg2: {
                                         trainNo: leg2.No,
-                                        typeName: patchTrainType(leg2.No, leg2.Type),
+                                        typeName: patchTrainType(leg2.No, leg2.Type, leg2.Note, leg2.Start, leg2.Dest),
                                         depTime: (stops2[idxTrans2].Dep || stops2[idxTrans2].Arr).slice(0, 5),
                                         arrTime: (stops2[idxB].Arr || stops2[idxB].Dep).slice(0, 5)
                                     }
