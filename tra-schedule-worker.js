@@ -13,6 +13,16 @@ const getTwDateString = (offsetDays = 0) => {
     return twTime.toISOString().split('T')[0];
 };
 
+const patchTrainType = (no, originalType) => {
+    const n = parseInt(no, 10);
+    if ((n >= 6001 && n <= 6099) || (n >= 6701 && n <= 6799)) return "鳴日號";
+    if (n >= 6501 && n <= 6599) return "山嵐號";
+    if (n >= 6601 && n <= 6699) return "海風號";
+    if (n === 1 || n === 2) return "環島之星";
+    if (n >= 6801 && n <= 6899) return "入伍專車";
+    return originalType;
+};
+
 // 🚄 雙鐵共構/共線車站代碼對照表 (資料來源：高鐵標準說明文件 P.48)
 // 格式： { '高鐵代碼': '台鐵代碼', ... }
 const THSR_TRA_MAPPING = {
@@ -271,8 +281,11 @@ export default {
                 const res = trains.map(t => {
                     const l = liveM[t.No] || { delay: 0, status: 0, station: "" };
                     const [h, m] = (t.Dep || t.Arr).split(':').map(Number);
+                    const patchedType = patchTrainType(t.No, t.Type);
                     return {
                         ...t,
+                        Type: patchedType,
+                        TrainTypeName: patchedType,
                         DelayTime: isToday ? l.delay : 0,
                         TrainStatus: isToday ? l.status : 0,
                         IsSuspended: t.SuspendedFlag === 1,
@@ -298,9 +311,10 @@ export default {
                 const tno = url.searchParams.get("trainNo"), date = url.searchParams.get("date") || getTwDateString(0);
                 const row = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`SCH_TRN_${tno}_${date}`).first();
                 const trn = row ? JSON.parse(row.Value) : { Stops: [] };
+                const patchedType = patchTrainType(tno, trn.Type);
                 return new Response(JSON.stringify({
                     TrainNo: tno,
-                    TrainTypeName: trn.Type,
+                    TrainTypeName: patchedType,
                     Note: trn.Note,
                     TripLine: trn.TripLine,
                     TrainSuspendedFlag: trn.TrainSuspendedFlag || 0,
@@ -357,10 +371,11 @@ export default {
                     if (eM[st.No] && st.Seq < eM[st.No].Seq && eM[st.No].SuspendedFlag !== 1) {
                         // 找到直達車
                         const delay = Number(liveMap[st.No]?.delay || 0);
+                        const patchedType = patchTrainType(st.No, st.Type);
                         directRoutes.push({
                             trainNo: String(st.No),
-                            rawType: st.Type,
-                            typeName: st.Type, // 前端會再 Normalize
+                            rawType: patchedType,
+                            typeName: patchedType, // 前端會再 Normalize
                             dep: st.Dep.slice(0, 5),
                             arr: eM[st.No].Arr.slice(0, 5),
                             dest: st.Dest,
@@ -462,13 +477,13 @@ export default {
                                     endArrTimeAbs: arrB,
                                     leg1: {
                                         trainNo: leg1.No,
-                                        typeName: leg1.Type,
+                                        typeName: patchTrainType(leg1.No, leg1.Type),
                                         depTime: stops1[idxA].Dep.slice(0, 5),
                                         arrTime: (transStop.Arr || transStop.Dep).slice(0, 5)
                                     },
                                     leg2: {
                                         trainNo: leg2.No,
-                                        typeName: leg2.Type,
+                                        typeName: patchTrainType(leg2.No, leg2.Type),
                                         depTime: (stops2[idxTrans2].Dep || stops2[idxTrans2].Arr).slice(0, 5),
                                         arrTime: (stops2[idxB].Arr || stops2[idxB].Dep).slice(0, 5)
                                     }
