@@ -847,6 +847,10 @@
             if (t.includes('新自強') || t.includes('3000')) return 'type-new-tc';
             if (t.includes('普悠瑪')) return 'type-puyuma';
             if (t.includes('太魯閣')) return 'type-taroko';
+            if (t.includes('慧燈專車')) return 'type-special';
+            if (t.includes('自強(專列)')) return 'type-tc';
+            if (t.includes('區間(專車)')) return 'type-special';
+            if (t.includes('莒光(專車)')) return 'type-juguang';
             if (t.includes('專車') || t.includes('郵輪') || t.includes('包車')) return 'type-special';
             if (t.includes('莒光')) return 'type-juguang';
             if (t.includes('普快')) return 'type-ot';
@@ -856,11 +860,33 @@
             return 'type-ot';
         }
 
-        function normalizeTrainTypeLabel(typeName, note = '', trainNo = '') {
+        function normalizeTrainTypeLabel(typeName, note = '', trainNo = '', start = '', dest = '') {
             const no = Number(trainNo || 0);
+            const noteStr = String(note || '');
+            const startStr = String(start || '');
+            const destStr = String(dest || '');
+            
+            const isYiLanTaipei = (startStr.includes("宜蘭") && destStr.includes("臺北")) || 
+                                  (startStr.includes("臺北") && destStr.includes("宜蘭")) ||
+                                  (startStr.includes("宜蘭") && destStr.includes("台北")) ||
+                                  (startStr.includes("台北") && destStr.includes("宜蘭"));
+            if (String(trainNo).startsWith("661") && isYiLanTaipei) {
+                return '慧燈專車';
+            }
+
+            if (noteStr.includes("莒光(專車)") || (String(typeName).includes("莒光") && noteStr.includes("專車"))) {
+                return '莒光(專車)';
+            }
+
             if ((no >= 6001 && no <= 6099) || (no >= 6701 && no <= 6799)) return '鳴日號';
-            if (no >= 6501 && no <= 6599) return '山嵐號';
-            if (no >= 6601 && no <= 6699) return '海風號';
+            
+            if ((no >= 6501 && no <= 6599) || (no >= 6601 && no <= 6699)) {
+                if (noteStr.includes("自強(專列)")) {
+                    return '自強(專列)';
+                }
+                return '區間(專車)';
+            }
+            
             if (no === 1 || no === 2) return '環島之星';
             if (no >= 6801 && no <= 6899) return '入伍專車';
 
@@ -989,7 +1015,7 @@
                 trainNo: String(t?.TrainNo || t?.No || ''),
                 rawType: String(t?.TrainTypeName || t?.Type || ''),
                 note: String(t?.Note || '').trim(),
-                typeName: normalizeTrainTypeLabel(String(t?.TrainTypeName || t?.Type || ''), String(t?.Note || '').trim(), String(t?.TrainNo || t?.No || '')),
+                typeName: normalizeTrainTypeLabel(String(t?.TrainTypeName || t?.Type || ''), String(t?.Note || '').trim(), String(t?.TrainNo || t?.No || ''), String(t?.StartingStationName || t?.Start || ''), String(t?.EndingStationName || t?.Dest || '')),
                 dep: String(t?.DepartureTime || t?.Dep || '').slice(0, 5),
                 arr: String(t?.ArrivalTime || t?.Arr || '').slice(0, 5),
                 dest: normalizeTaiText(t?.EndingStationName || t?.Dest || ''),
@@ -1410,7 +1436,7 @@
                 const trainNo = String(t.TrainNo || t.No || '').trim();
                 const rawType = String(t?.TrainTypeName || t?.Type || '').trim();
                 const note = String(t?.Note || '').trim();
-                const typeName = normalizeTrainTypeLabel(rawType, note, trainNo);
+                const typeName = normalizeTrainTypeLabel(rawType, note, trainNo, t.StartingStationName || t.Start || '', t.EndingStationName || t.Dest || '');
                 const schedArr = (t.ArrivalTime || t.Arr || "--:--").slice(0, 5);
                 const schedDep = (t.DepartureTime || t.Dep || "--:--").slice(0, 5);
                 const delay = Number(t.DelayTime || t.Delay || 0) || 0;
@@ -1598,7 +1624,10 @@
             const trainNo = String(sch.TrainNo || sch.No || '');
             const liveInfo = normalizeLivePayload(live);
             const delay = Number(liveInfo.delay || 0), curSta = liveInfo.station || "";
-            const trainTypeLabel = normalizeTrainTypeLabel(sch.TrainTypeName || sch.Type || sch.Note || "", sch.Note || "");
+            const stopsArray = sch.Stops || sch.StopTimes || [];
+            const startSta = stopsArray.length > 0 ? (stopsArray[0].StationName?.Zh_tw || stopsArray[0].Name || "") : "";
+            const destSta = stopsArray.length > 0 ? (stopsArray[stopsArray.length-1].StationName?.Zh_tw || stopsArray[stopsArray.length-1].Name || "") : "";
+            const trainTypeLabel = normalizeTrainTypeLabel(sch.TrainTypeName || sch.Type || sch.Note || "", sch.Note || "", trainNo, startSta, destSta);
             const tsf = Number(sch.TrainSuspendedFlag || 0), ls = Number(liveInfo.status || 0);
             const isCancelled = ls === 2 || tsf === 1, isPartiallySuspended = tsf === 2;
             let statusText = delay > 0 ? `晚 ${delay} 分` : '準點', statusColor = delay > 0 ? '#ff5252' : '#00e676';
@@ -1662,7 +1691,13 @@
                 else if ((liveData && liveData.status === 2) || schedSuspended === 1) statusText = "本車次今日停駛";
                 else if (liveData && liveData.station) { let st = liveData.station; if (typeof st === 'object') st = st.Zh_tw || st.StationName?.Zh_tw || st.name || ""; statusText = `列車目前位置：${normalizeTaiText(st)}`; }
                 else if (date === todayStr) { const compareTime = (actualDep && actualDep !== '--:--') ? actualDep : actualArr; const [h, m] = String(compareTime || '').slice(0, 5).split(':').map(Number); if (Number.isFinite(h) && Number.isFinite(m) && (h * 60 + m) > (new Date().getHours() * 60 + new Date().getMinutes())) statusText = "列車尚未發車"; }
-                let effType = String(typeName || '').trim() || normalizeTrainTypeLabel(data?.TrainTypeName || data?.Type || data?.Note || '', data?.Note || '');
+                let effType = String(typeName || '').trim() || normalizeTrainTypeLabel(
+                    data?.TrainTypeName || data?.Type || data?.Note || '', 
+                    data?.Note || '', 
+                    trainNo,
+                    stops.length > 0 ? (stops[0].StationName?.Zh_tw || stops[0].Name || "") : "",
+                    stops.length > 0 ? (stops[stops.length-1].StationName?.Zh_tw || stops[stops.length-1].Name || "") : ""
+                );
                 let effDest = String(destName || '').trim() || normalizeTaiText(stops[stops.length - 1]?.StationName?.Zh_tw || stops[stops.length - 1]?.Name || '');
                 const curIdx = stops.findIndex(s => (s.StationID || s.ID) === currentStationID);
                 let stopsHtml = curIdx !== -1 && curIdx < stops.length - 1 ? stops.slice(curIdx + 1).map(s => { let st = (s.ArrivalTime || s.Arr || "").slice(0,5); if (delay > 0 && st) { const tm = st.split(':').map(Number).reduce((a,c,i)=>a+(i===0?c*60:c),0)+delay; st = `${String(Math.floor(tm/60)%24).padStart(2,'0')}:${String(tm%60).padStart(2,'0')}`; } return `<span style="color:#ffeb3b;">${normalizeTaiText(s.StationName?.Zh_tw || s.Name)}</span> <span style="color:#ccc;">(${st})</span>`; }).join(' <span style="color:#888; font-size:0.9em; margin: 0 8px;">►</span> ') : (curIdx === stops.length - 1 ? '<span style="color:#aaa;">本站為終點站</span>' : '<span style="color:#aaa;">無法取得後續停靠站</span>');
