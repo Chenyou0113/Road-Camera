@@ -19,7 +19,12 @@ const patchTrainType = (no, originalType, note = "", start = "", dest = "") => {
     const startStr = String(start || "");
     const destStr = String(dest || "");
     
-    // 判斷慧燈專車 (車次 661 開頭且起終點是宜蘭與台北/臺北)
+    // 1. 2026蒸汽火車 (4666, 4667 郵輪式列車)
+    if (n === 4666 || n === 4667) {
+        return "蒸汽火車";
+    }
+
+    // 2. 慧燈專車 (車次 661 開頭且起終點是宜蘭與台北/臺北)
     const isYiLanTaipei = (startStr.includes("宜蘭") && destStr.includes("臺北")) || 
                           (startStr.includes("臺北") && destStr.includes("宜蘭")) ||
                           (startStr.includes("宜蘭") && destStr.includes("台北")) ||
@@ -27,14 +32,26 @@ const patchTrainType = (no, originalType, note = "", start = "", dest = "") => {
     if (String(no).startsWith("661") && isYiLanTaipei) {
         return "慧燈專車";
     }
+
+    // 3. 海風號 (6652, 6655)
+    if (n === 6652 || n === 6655) {
+        return "海風號";
+    }
+
+    // 4. 山嵐號 (6631, 6632, 6633)
+    if (n === 6631 || n === 6632 || n === 6633) {
+        return "山嵐號";
+    }
     
-    // 判斷莒光(專車)
+    // 5. 莒光(專車)
     if (noteStr.includes("莒光(專車)") || (String(originalType).includes("莒光") && noteStr.includes("專車"))) {
         return "莒光(專車)";
     }
     
+    // 6. 鳴日號 (專用車次區間)
     if ((n >= 6001 && n <= 6099) || (n >= 6701 && n <= 6799)) return "鳴日號";
     
+    // 7. 剩餘普通專門客製車次 (排除已被上方攔截的專屬編號)
     if ((n >= 6501 && n <= 6599) || (n >= 6601 && n <= 6699)) {
         if (noteStr.includes("自強(專列)")) {
             return "自強(專列)";
@@ -42,8 +59,10 @@ const patchTrainType = (no, originalType, note = "", start = "", dest = "") => {
         return "區間(專車)";
     }
     
+    // 8. 其他特製包車
     if (n === 1 || n === 2) return "環島之星";
     if (n >= 6801 && n <= 6899) return "入伍專車";
+    
     return originalType;
 };
 
@@ -88,7 +107,7 @@ const getTdxToken = async (env) => {
 const syncDailyScheduleBlob = async (env, offsetDaysArray = [0]) => {
     const token = await getTdxToken(env);
     const dates = offsetDaysArray.map(getTwDateString); // 根據傳入的陣列取得日期
-    const expireTime = Math.floor(Date.now() / 1000) + (7 * 86400); 
+    const expireTime = Math.floor(Date.now() / 1000) + (70 * 86400); // 延長至 70 天以配合 60 天查詢
     for (const date of dates) {
         const res = await fetch(`https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/DailyTrainTimetable/TrainDate/${date}?%24format=JSON`, { headers: { "Authorization": `Bearer ${token}` } });
         if (!res.ok) continue;
@@ -140,7 +159,7 @@ const syncDailyScheduleBlob = async (env, offsetDaysArray = [0]) => {
 // --- 🚄 同步高鐵時刻表 (Blob 模式) ---
 const syncThsrDailyScheduleBlob = async (env, offsetDaysArray = [0]) => {
     const token = await getTdxToken(env);
-    const expireTime = Math.floor(Date.now() / 1000) + (7 * 86400);
+    const expireTime = Math.floor(Date.now() / 1000) + (70 * 86400); // 延長至 70 天以配合 60 天查詢
 
     for (const offset of offsetDaysArray) {
         const date = getTwDateString(offset);
@@ -263,18 +282,20 @@ export default {
         const m = date.getMinutes();
         const h = (date.getUTCHours() + 8) % 24; // 轉為台灣時間的小時
 
-        // 任務包：所有排程都會執行的基礎任務 (即時誤點 + 跑馬燈警報)
+        // 基礎任務 (即時動態與警報)
         const tasks = [syncTrainLiveBoard(env), syncTraAlerts(env), syncMrtLiveBoard(env)];
 
-        // 每 15 分鐘 (0, 15, 30, 45)：只更新「今天」的時刻表，用來抓突發停駛狀態！
+        // 每 15 分鐘：更新「今天」的時刻表，用來抓突發停駛狀態
         if (m % 15 === 0) {
             tasks.push(syncDailyScheduleBlob(env, [0]));
         }
 
-        // 每天凌晨 2 點 0 分：更新「未來四天」的常態時刻表，確保預售票資料正確
+        // 每天凌晨 2 點 0 分：更新「未來 60 天」的常態時刻表，確保長途與假日預售票資料正確
         if (h === 2 && m === 0) {
-            tasks.push(syncDailyScheduleBlob(env, [1, 2, 3, 4]));
-            tasks.push(syncThsrDailyScheduleBlob(env, [0, 1, 2, 3, 4]));
+            const traOffsets = Array.from({ length: 60 }, (_, i) => i + 1); // 產生 [1, 2, ..., 60] 陣列
+            const thsrOffsets = Array.from({ length: 61 }, (_, i) => i);     // 產生 [0, 1, ..., 60] 陣列
+            tasks.push(syncDailyScheduleBlob(env, traOffsets));
+            tasks.push(syncThsrDailyScheduleBlob(env, thsrOffsets));
         }
 
         ctx.waitUntil(Promise.allSettled(tasks));
@@ -644,7 +665,11 @@ export default {
                 const type = url.searchParams.get("type");
                 if (type === 'live') await syncTrainLiveBoard(env); 
                 else if (type === 'alerts') await syncTraAlerts(env);
-                else if (type === 'schedule') await syncDailyScheduleBlob(env, [0, 1, 2, 3, 4]);
+                else if (type === 'schedule') {
+                    // 🚀 手動同步時同樣支援拉取 60 天
+                    const traOffsets = Array.from({ length: 61 }, (_, i) => i); // [0, 1, ..., 60]
+                    await syncDailyScheduleBlob(env, traOffsets);
+                }
                 return new Response(`✅ ${type} 同步成功！`, { headers: cors });
             }
             if (request.method === "POST") {
