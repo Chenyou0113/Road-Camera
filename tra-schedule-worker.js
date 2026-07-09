@@ -1,11 +1,7 @@
 /**
  * ==============================================================================
- * 🚀 TRA Worker v9.4.1 (Final Master Edition - Complete Codebase)
+ * 🚀 TRA Worker v9.5.0 (Data-Retention & 60-Day Extended Master Edition)
  * ==============================================================================
- * 1. 完整路由：/liveboard/station, /schedule, /route, /fare, /live, /alerts, /pids/marquee, /pids/assets, /sync
- * 2. 管理接口：支援 POST 更新 PIDS 文字與多媒體資產 (Images/Videos)
- * 3. 區間美化：[站名=站名] 轉換為 [站名＜－－＞站名]
- * 4. 帳單救星：JSON Blob 儲存模式，寫入次數極低，保證免費額度。
  */
 
 const getTwDateString = (offsetDays = 0) => {
@@ -19,12 +15,8 @@ const patchTrainType = (no, originalType, note = "", start = "", dest = "") => {
     const startStr = String(start || "");
     const destStr = String(dest || "");
     
-    // 1. 2026蒸汽火車 (4666, 4667 郵輪式列車)
-    if (n === 4666 || n === 4667) {
-        return "蒸汽火車";
-    }
+    if (n === 4666 || n === 4667) return "蒸汽火車";
 
-    // 2. 慧燈專車 (車次 661 開頭且起終點是宜蘭與台北/臺北)
     const isYiLanTaipei = (startStr.includes("宜蘭") && destStr.includes("臺北")) || 
                           (startStr.includes("臺北") && destStr.includes("宜蘭")) ||
                           (startStr.includes("宜蘭") && destStr.includes("台北")) ||
@@ -32,26 +24,16 @@ const patchTrainType = (no, originalType, note = "", start = "", dest = "") => {
     if (String(no).startsWith("661") && isYiLanTaipei) {
         return "慧燈專車";
     }
-
-    // 3. 海風號 (6652, 6655)
-    if (n === 6652 || n === 6655) {
-        return "海風號";
-    }
-
-    // 4. 山嵐號 (6631, 6632, 6633)
-    if (n === 6631 || n === 6632 || n === 6633) {
-        return "山嵐號";
-    }
     
-    // 5. 莒光(專車)
+    if (n === 6652 || n === 6655) return "海風號";
+    if (n === 6631 || n === 6632 || n === 6633) return "山嵐號";
+
     if (noteStr.includes("莒光(專車)") || (String(originalType).includes("莒光") && noteStr.includes("專車"))) {
         return "莒光(專車)";
     }
     
-    // 6. 鳴日號 (專用車次區間)
     if ((n >= 6001 && n <= 6099) || (n >= 6701 && n <= 6799)) return "鳴日號";
     
-    // 7. 剩餘普通專門客製車次 (排除已被上方攔截的專屬編號)
     if ((n >= 6501 && n <= 6599) || (n >= 6601 && n <= 6699)) {
         if (noteStr.includes("自強(專列)")) {
             return "自強(專列)";
@@ -59,26 +41,15 @@ const patchTrainType = (no, originalType, note = "", start = "", dest = "") => {
         return "區間(專車)";
     }
     
-    // 8. 其他特製包車
     if (n === 1 || n === 2) return "環島之星";
     if (n >= 6801 && n <= 6899) return "入伍專車";
-    
     return originalType;
 };
 
-// 🚄 雙鐵共構/共線車站代碼對照表 (資料來源：高鐵標準說明文件 P.48)
-// 格式： { '高鐵代碼': '台鐵代碼', ... }
+// 🚄 雙鐵共構車站代碼
 const THSR_TRA_MAPPING = {
-    "0990": "1006", // 南港
-    "1000": "1008", // 臺北
-    "1010": "1011", // 板橋
-    "1030": "2214", // 新竹(高鐵) <-> 六家(台鐵)
-    "1040": "1324", // 臺中(高鐵) <-> 新烏日(台鐵)
-    "1060": "5102", // 臺南(高鐵) <-> 沙崙(台鐵)
-    "1070": "1242"  // 左營(高鐵) <-> 新左營(台鐵)
+    "0990": "1006", "1000": "1008", "1010": "1011", "1030": "2214", "1040": "1324", "1060": "5102", "1070": "1242"
 };
-
-// 建立反向查詢表 { '台鐵代碼': '高鐵代碼' }
 const TRA_THSR_MAPPING = Object.fromEntries(Object.entries(THSR_TRA_MAPPING).map(([k, v]) => [v, k]));
 
 const isThsrStationCode = (code) => {
@@ -103,11 +74,32 @@ const getTdxToken = async (env) => {
     return data.access_token;
 };
 
+// 確保 D1 資料庫結構完整
+const verifySchema = async (env) => {
+    await env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS TrainLiveLogs (
+            TrainNo TEXT,
+            Timestamp INTEGER,
+            StationName TEXT,
+            DelayTime INTEGER,
+            PRIMARY KEY (TrainNo, Timestamp)
+        )
+    `).run();
+    await env.DB.prepare(`
+        CREATE INDEX IF NOT EXISTS idx_live_logs_time ON TrainLiveLogs(Timestamp)
+    `).run();
+    await env.DB.prepare(`
+        CREATE INDEX IF NOT EXISTS idx_live_logs_train ON TrainLiveLogs(TrainNo)
+    `).run();
+};
+
 // --- 同步時刻表 (Blob 模式) ---
 const syncDailyScheduleBlob = async (env, offsetDaysArray = [0]) => {
     const token = await getTdxToken(env);
-    const dates = offsetDaysArray.map(getTwDateString); // 根據傳入的陣列取得日期
-    const expireTime = Math.floor(Date.now() / 1000) + (70 * 86400); // 延長至 70 天以配合 60 天查詢
+    const dates = offsetDaysArray.map(getTwDateString); 
+    // 配合 60 天查詢，將快取過期時間延長為 70 天，避免被快取清除機制提早釋放
+    const expireTime = Math.floor(Date.now() / 1000) + (70 * 86400); 
+    
     for (const date of dates) {
         const res = await fetch(`https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/DailyTrainTimetable/TrainDate/${date}?%24format=JSON`, { headers: { "Authorization": `Bearer ${token}` } });
         if (!res.ok) continue;
@@ -156,10 +148,10 @@ const syncDailyScheduleBlob = async (env, offsetDaysArray = [0]) => {
     }
 };
 
-// --- 🚄 同步高鐵時刻表 (Blob 模式) ---
+// --- 同步高鐵時刻表 (Blob 模式) ---
 const syncThsrDailyScheduleBlob = async (env, offsetDaysArray = [0]) => {
     const token = await getTdxToken(env);
-    const expireTime = Math.floor(Date.now() / 1000) + (70 * 86400); // 延長至 70 天以配合 60 天查詢
+    const expireTime = Math.floor(Date.now() / 1000) + (70 * 86400); // 同步延長高鐵保存期限
 
     for (const offset of offsetDaysArray) {
         const date = getTwDateString(offset);
@@ -219,60 +211,71 @@ const syncThsrDailyScheduleBlob = async (env, offsetDaysArray = [0]) => {
     }
 };
 
-// --- 同步即時動態 ---
+// --- 同步即時動態與背景全線紀錄模組 ---
 const syncTrainLiveBoard = async (env) => {
+    await verifySchema(env);
     const token = await getTdxToken(env);
     const res = await fetch("https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/TrainLiveBoard?%24format=JSON", { headers: { "Authorization": `Bearer ${token}` } });
     if (!res.ok) return;
+    
     const json = await res.json(), liveMap = {};
-    (json.TrainLiveBoards || []).forEach(t => { 
-        liveMap[t.TrainNo] = { delay: Number(t.DelayTime) || 0, status: Number(t.TrainStatus) || 0, station: t.StationName?.Zh_tw || t.StationID || "" }; 
+    const timestampSec = Math.floor(Date.now() / 1000);
+    
+    // 兩週過期界限清理 (14天 = 14 * 86400 秒 = 1209600 秒)
+    const logCutoffSec = timestampSec - 1209600;
+    await env.DB.prepare("DELETE FROM TrainLiveLogs WHERE Timestamp < ?").bind(logCutoffSec).run();
+
+    const trains = json.TrainLiveBoards || [];
+    const batchStatements = [];
+
+    trains.forEach(t => { 
+        const tno = String(t.TrainNo);
+        const delay = Number(t.DelayTime) || 0;
+        const station = t.StationName?.Zh_tw || t.StationID || "";
+        liveMap[tno] = { delay, status: Number(t.TrainStatus) || 0, station }; 
+
+        // 即使沒人看，後端每分鐘背景收集定位，寫入 D1 SQLite 中
+        if (station) {
+            batchStatements.push(
+                env.DB.prepare("INSERT OR REPLACE INTO TrainLiveLogs (TrainNo, Timestamp, StationName, DelayTime) VALUES (?, ?, ?, ?)")
+                    .bind(tno, timestampSec, station, delay)
+            );
+        }
     });
+
+    // 批次快速將當分鐘數據落盤保存
+    const chunkSize = 80;
+    for (let i = 0; i < batchStatements.length; i += chunkSize) {
+        await env.DB.batch(batchStatements.slice(i, i + chunkSize));
+    }
+
     await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('LIVE_DATA', ?)").bind(JSON.stringify(liveMap)).run();
 };
 
-// --- 🆕 新增：同步捷運即時動態 (依據 PDF 第 16 章規格) ---
 const syncMrtLiveBoard = async (env) => {
     const token = await getTdxToken(env);
-    // 以台北捷運為例
-    const res = await fetch("https://tdx.transportdata.tw/api/basic/v2/Rail/Metro/LiveBoard/TRTC?%24format=JSON", { 
-        headers: { "Authorization": `Bearer ${token}` } 
-    });
+    const res = await fetch("https://tdx.transportdata.tw/api/basic/v2/Rail/Metro/LiveBoard/TRTC?%24format=JSON", { headers: { "Authorization": `Bearer ${token}` } });
     if (!res.ok) return;
-    const json = await res.json();
-    const liveMap = {};
-    // 依據 PDF 規範，捷運使用的是 StationID 與 EstimateTime
+    const json = await res.json(), liveMap = {};
     (json.StationLiveBoards || []).forEach(t => { 
-        // 使用 StationID + DestinationStationID 作為 Key
         const key = `${t.StationID}_${t.DestinationStationID}`;
         liveMap[key] = { estimate: t.EstimateTime, status: t.ServiceStatus }; 
     });
     await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('MRT_LIVE_TRTC', ?)").bind(JSON.stringify(liveMap)).run();
 };
 
-// --- 同步通阻 ---
 const syncTraAlerts = async (env) => {
     const token = await getTdxToken(env);
     const res = await fetch("https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/Alert?%24format=JSON", { headers: { "Authorization": `Bearer ${token}` } });
     if (!res.ok) return;
-    
     const alerts = (await res.json()).Alerts.map(a => {
-        // 🚀 增強版：連續替換各種台鐵可能手打的醜醜符號
-        // 使用 (a.Description || "") 防止 Description 不存在時報錯
         let cleanDesc = (a.Description || "")
-            .replace(/<-->|<->/g, '＜－－＞') // 攔截半形拼裝箭頭
-            .replace(/([一-龥]+)\s*[=＝]\s*([一-龥]+)/g, '$1＜－－＞$2') // 攔截等號
-            .replace(/([一-龥]+)\s*~\s*([一-龥]+)/g, '$1 至 $2') // 把波浪號換成"至"
+            .replace(/<-->|<->/g, '＜－－＞')
+            .replace(/([一-龥]+)\s*[=＝]\s*([一-龥]+)/g, '$1＜－－＞$2')
+            .replace(/([一-龥]+)\s*~\s*([一-龥]+)/g, '$1 至 $2')
             .trim();
-            
-        return { 
-            AlertID: a.AlertID || "", 
-            Title: a.Title || "", 
-            Description: cleanDesc, 
-            Status: a.Status 
-        };
+        return { AlertID: a.AlertID || "", Title: a.Title || "", Description: cleanDesc, Status: a.Status };
     });
-    
     await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('ALERTS_DATA', ?)").bind(JSON.stringify(alerts)).run();
 };
 
@@ -280,20 +283,18 @@ export default {
     async scheduled(event, env, ctx) {
         const date = new Date();
         const m = date.getMinutes();
-        const h = (date.getUTCHours() + 8) % 24; // 轉為台灣時間的小時
+        const h = (date.getUTCHours() + 8) % 24;
 
-        // 基礎任務 (即時動態與警報)
         const tasks = [syncTrainLiveBoard(env), syncTraAlerts(env), syncMrtLiveBoard(env)];
 
-        // 每 15 分鐘：更新「今天」的時刻表，用來抓突發停駛狀態
         if (m % 15 === 0) {
             tasks.push(syncDailyScheduleBlob(env, [0]));
         }
 
-        // 每天凌晨 2 點 0 分：更新「未來 60 天」的常態時刻表，確保長途與假日預售票資料正確
+        // 每日凌晨 2 點 0 分：背景全自動抓取並建立「未來 60 天」的台鐵/高鐵全部時刻表
         if (h === 2 && m === 0) {
-            const traOffsets = Array.from({ length: 60 }, (_, i) => i + 1); // 產生 [1, 2, ..., 60] 陣列
-            const thsrOffsets = Array.from({ length: 61 }, (_, i) => i);     // 產生 [0, 1, ..., 60] 陣列
+            const traOffsets = Array.from({ length: 60 }, (_, i) => i + 1); 
+            const thsrOffsets = Array.from({ length: 61 }, (_, i) => i);     
             tasks.push(syncDailyScheduleBlob(env, traOffsets));
             tasks.push(syncThsrDailyScheduleBlob(env, thsrOffsets));
         }
@@ -302,7 +303,6 @@ export default {
     },
 
     async fetch(request, env) {
-        // 🚀 升級 CORS 標頭，並對 preflight 明確回應 204
         const cors = { 
             "Access-Control-Allow-Origin": "*", 
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS", 
@@ -342,11 +342,7 @@ export default {
                     if (!isToday) return true;
                     const [h, m] = (t.Dep || t.Arr).split(':').map(Number);
                     const schedMins = h * 60 + m;
-                    // 停駛車次：只保留到表定時間後 60 分鐘
-                    if (t.TrainStatus === 2 || t.IsSuspended || t.IsPartiallySuspended) {
-                        return schedMins >= nowM - 60;
-                    }
-                    // 正常車次：依據實際時間(含延誤)過後 30 分鐘才消失
+                    if (t.TrainStatus === 2 || t.IsSuspended || t.IsPartiallySuspended) { return schedMins >= nowM - 60; }
                     return t._actual >= nowM - 30;
                 }).sort((a,b) => a._actual - b._actual);
                 return new Response(JSON.stringify(res), { headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -376,25 +372,22 @@ export default {
                 }), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
-            // 3. 站到站 (進化版：包含 D1 批次高效能轉乘演算法)
+            // 3. 站到站
             if (url.pathname === "/api/route") {
                 const s = url.searchParams.get("start");
                 const e = url.searchParams.get("end");
                 const d = url.searchParams.get("date") || getTwDateString(0);
                 
-                // 接收前端傳來的時間與過濾參數 (若無則給預設值)
                 const targetTime = parseInt(url.searchParams.get("time") || 0);
                 const minWait = parseInt(url.searchParams.get("minWait") || 5);
                 const maxWait = parseInt(url.searchParams.get("maxWait") || 120);
 
-                // Helper：時間轉分鐘
                 const parseTimeMins = (t) => {
                     if (!t) return null;
                     const [h, m] = t.slice(0, 5).split(':').map(Number);
                     return h * 60 + m;
                 };
 
-                // [Step 1] 抓取起站、迄站的當日清單，以及全線即時誤點資料 (只需 1 次 Batch 查詢)
                 const [sR, eR, liveR] = await env.DB.batch([
                     env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`SCH_STA_${s}_${d}`),
                     env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`SCH_STA_${e}_${d}`),
@@ -410,20 +403,18 @@ export default {
                 const leg1Candidates = [];
                 const leg2Candidates = [];
 
-                // [Step 2] 分離直達車與轉乘候選車次
                 sT.forEach(st => {
                     if (st.SuspendedFlag === 1) return;
                     const depMins = parseTimeMins(st.Dep);
-                    if (depMins !== null && depMins < targetTime) return; // 濾掉時間已過的車
+                    if (depMins !== null && depMins < targetTime) return; 
 
                     if (eM[st.No] && st.Seq < eM[st.No].Seq && eM[st.No].SuspendedFlag !== 1) {
-                        // 找到直達車
                         const delay = Number(liveMap[st.No]?.delay || 0);
                         const patchedType = patchTrainType(st.No, st.Type, st.Note, st.Start, st.Dest);
                         directRoutes.push({
                             trainNo: String(st.No),
                             rawType: patchedType,
-                            typeName: patchedType, // 前端會再 Normalize
+                            typeName: patchedType, 
                             dep: st.Dep.slice(0, 5),
                             arr: eM[st.No].Arr.slice(0, 5),
                             dest: st.Dest,
@@ -432,7 +423,6 @@ export default {
                             TrainSuspendedFlag: st.TrainSuspendedFlag || 0
                         });
                     } else {
-                        // 加入第一段轉乘候選清單
                         leg1Candidates.push(st);
                     }
                 });
@@ -440,24 +430,21 @@ export default {
                 eT.forEach(et => {
                     if (et.SuspendedFlag === 1) return;
                     const arrMins = parseTimeMins(et.Arr);
-                    if (arrMins !== null && arrMins >= targetTime && !eM[et.No] /*非直達*/) {
+                    if (arrMins !== null && arrMins >= targetTime && !eM[et.No]) {
                         leg2Candidates.push(et);
                     }
                 });
 
-                // [Step 3] 蒐集需要查完整時刻表的火車 (取起迄站最接近目標時間的前 45 班車)
                 const topLeg1 = leg1Candidates.sort((a, b) => parseTimeMins(a.Dep) - parseTimeMins(b.Dep)).slice(0, 45);
                 const topLeg2 = leg2Candidates.sort((a, b) => parseTimeMins(a.Arr) - parseTimeMins(b.Arr)).slice(0, 45);
                 const uniqueTrainNos = [...new Set([...topLeg1.map(t => t.No), ...topLeg2.map(t => t.No)])];
 
-                // [Step 4] D1 Batch 查詢火力展示：瞬間抓取所有火車的完整停靠站
                 const scheduleMap = {};
                 if (uniqueTrainNos.length > 0) {
                     const stmts = uniqueTrainNos.map(no => 
                         env.DB.prepare("SELECT Key, Value FROM AppConfig WHERE Key = ?").bind(`SCH_TRN_${no}_${d}`)
                     );
                     
-                    // Cloudflare D1 每個 Batch 最多 100 句，做個分塊策畧
                     const chunkSize = 90;
                     for (let i = 0; i < stmts.length; i += chunkSize) {
                         const batchRes = await env.DB.batch(stmts.slice(i, i + chunkSize));
@@ -470,7 +457,6 @@ export default {
                     }
                 }
 
-                // [Step 5] 記憶體內極速圖論交集比對 (Graph Intersection)
                 const transferCandidates = [];
                 const seenPairs = new Set();
 
@@ -503,7 +489,6 @@ export default {
                             let depTrans2 = parseTimeMins(stops2[idxTrans2].Dep || stops2[idxTrans2].Arr);
                             let arrB = parseTimeMins(stops2[idxB].Arr || stops2[idxB].Dep);
 
-                            // 跨日處理
                             while (depTrans2 < arrTrans1 - 180) { depTrans2 += 1440; arrB += 1440; }
 
                             const schedWait = depTrans2 - arrTrans1;
@@ -512,7 +497,6 @@ export default {
                             const delay1 = Number(liveMap[leg1.No]?.delay || 0);
                             const actualWait = schedWait - delay1;
 
-                            // 轉乘時間充裕才列入
                             if (actualWait >= 1) {
                                 seenPairs.add(pairKey);
                                 transferCandidates.push({
@@ -541,7 +525,6 @@ export default {
                     }
                 }
 
-                // 排序並取最佳 12 筆轉乘方案
                 transferCandidates.sort((a, b) => {
                     if (a.endArrTimeAbs !== b.endArrTimeAbs) return a.endArrTimeAbs - b.endArrTimeAbs;
                     return a.totalMinutes - b.totalMinutes;
@@ -556,14 +539,13 @@ export default {
                     }
                 }
 
-                // 回傳整理好的漂亮 JSON
                 return new Response(JSON.stringify({
                     direct: directRoutes.sort((a, b) => a.dep.localeCompare(b.dep)),
                     transfers: finalTransfers.slice(0, 12)
                 }), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
-            // 4. 票價 (支援台鐵與高鐵)
+            // 4. 票價
             if (url.pathname === "/api/fare") {
                 const s = url.searchParams.get("start");
                 const e = url.searchParams.get("end");
@@ -571,7 +553,6 @@ export default {
                 const token = await getTdxToken(env);
 
                 if (via) {
-                    // 保留既有轉乘票價邏輯（目前先用台鐵 ODFare）
                     const [res1, res2] = await Promise.all([
                         fetch(`https://tdx.transportdata.tw/api/basic/v2/Rail/TRA/ODFare/${s}/to/${via}?%24format=JSON`, { headers: { "Authorization": `Bearer ${token}` } }),
                         fetch(`https://tdx.transportdata.tw/api/basic/v2/Rail/TRA/ODFare/${via}/to/${e}?%24format=JSON`, { headers: { "Authorization": `Bearer ${token}` } })
@@ -590,10 +571,7 @@ export default {
 
                 if (isThsr && Array.isArray(data) && data.length > 0) {
                     const standardFare = data[0].Fares?.find(f => f.TicketType === 1 && f.CabinClass === 1)?.Price || 0;
-                    return new Response(JSON.stringify({
-                        isTHSR: true,
-                        price: standardFare
-                    }), { headers: { ...cors, 'Content-Type': 'application/json' } });
+                    return new Response(JSON.stringify({ isTHSR: true, price: standardFare }), { headers: { ...cors, 'Content-Type': 'application/json' } });
                 }
 
                 return new Response(JSON.stringify(data), { headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -605,26 +583,39 @@ export default {
                 return new Response(row?.Value || "[]", { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
-            // 6. 即時位置 (支援單一車次查詢 & 全線列車查詢)
+            // 6. 即時位置與【D1 歷史快照端點重構】
             if (url.pathname === "/api/live") {
                 const tno = url.searchParams.get("trainNo");
                 const row = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'LIVE_DATA'").first();
                 const liveMap = row ? JSON.parse(row.Value) : {};
 
-                // 狀況 A：有指定車次，回傳單一車次資料
                 if (tno) {
                     const live = liveMap[tno] || { delay: 0, status: 0, station: "" };
+                    
+                    // 🆕 全自動查詢後端記錄的 2 週歷史路徑與延誤事件，而不再依賴前端本地 LocalStorage
+                    let historyLogs = [];
+                    try {
+                        await verifySchema(env);
+                        const dbResult = await env.DB.prepare("SELECT Timestamp, StationName, DelayTime FROM TrainLiveLogs WHERE TrainNo = ? ORDER BY Timestamp DESC LIMIT 35").bind(tno).all();
+                        historyLogs = (dbResult.results || []).map(r => ({
+                            ts: r.Timestamp * 1000, // 轉回毫秒供前端相容渲染
+                            station: r.StationName,
+                            delay: r.DelayTime
+                        }));
+                    } catch (err) {
+                        console.error("無法加載 D1 歷史軌跡：", err);
+                    }
+
                     const liveCompat = {
                         TrainNo: tno,
                         ...live,
                         DelayTime: Number(live.delay) || 0,
                         TrainStatus: Number(live.status) || 0,
-                        StationName: live.station ? { Zh_tw: live.station } : null
+                        StationName: live.station ? { Zh_tw: live.station } : null,
+                        History: historyLogs // 將 2 週背景自動收集的軌跡，直接封包返給前端
                     };
                     return new Response(JSON.stringify(liveCompat), { headers: { ...cors, 'Content-Type': 'application/json' } });
-                } 
-                // 狀況 B：沒有指定車次，回傳全台所有有動態的列車陣列
-                else {
+                } else {
                     const allLiveTrains = Object.keys(liveMap).map(key => {
                         const live = liveMap[key];
                         return {
@@ -666,8 +657,8 @@ export default {
                 if (type === 'live') await syncTrainLiveBoard(env); 
                 else if (type === 'alerts') await syncTraAlerts(env);
                 else if (type === 'schedule') {
-                    // 🚀 手動同步時同樣支援拉取 60 天
-                    const traOffsets = Array.from({ length: 61 }, (_, i) => i); // [0, 1, ..., 60]
+                    // 手動同步亦同步拉取 60 天範圍
+                    const traOffsets = Array.from({ length: 61 }, (_, i) => i); 
                     await syncDailyScheduleBlob(env, traOffsets);
                 }
                 return new Response(`✅ ${type} 同步成功！`, { headers: cors });
@@ -684,7 +675,7 @@ export default {
                 return new Response(JSON.stringify({ success: true }), { headers: cors });
             }
 
-            return new Response("TRA Worker v9.4.0 Final", { headers: cors });
+            return new Response("TRA Worker v9.5.0", { headers: cors });
         } catch (e) { return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: cors }); }
     }
 };
