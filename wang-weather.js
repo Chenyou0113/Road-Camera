@@ -134,6 +134,40 @@ export default {
     }
 
     // ============================
+    // API: 列車與區段停駛規則設定
+    // ============================
+    if (url.pathname === '/api/admin/suspension-rules' && request.method === 'GET') {
+        try {
+            const record = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'SUSPENSION_RULES'").first();
+            return new Response(record?.Value || "[]", {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        } catch (e) {
+            return new Response(JSON.stringify([]), { headers: corsHeaders });
+        }
+    }
+
+    if (url.pathname === '/api/admin/update-suspension-rules' && request.method === 'POST') {
+        const auth = await authenticate();
+        if (!auth.success) return new Response(JSON.stringify(auth), { status: 401, headers: corsHeaders });
+
+        try {
+            const body = await request.json(); // 預期接收一個陣列
+            const rulesJson = JSON.stringify(Array.isArray(body) ? body : []);
+
+            await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('SUSPENSION_RULES', ?)")
+                .bind(rulesJson)
+                .run();
+
+            return new Response(JSON.stringify({ success: true }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        } catch (e) {
+            return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: corsHeaders });
+        }
+    }
+
+    // ============================
     // API: PIDS 跑馬燈/素材管理 (for tra-worker AppConfig)
     // ============================
     if (url.pathname === '/api/pids/marquee' && request.method === 'GET') {
