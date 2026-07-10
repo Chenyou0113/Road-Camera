@@ -155,7 +155,7 @@ export default {
             const body = await request.json(); // 預期接收一個陣列
             const rulesJson = JSON.stringify(Array.isArray(body) ? body : []);
 
-            await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value) VALUES ('SUSPENSION_RULES', ?)")
+            await env.DB.prepare("INSERT OR REPLACE INTO AppConfig (Key, Value, ExpiresAt) VALUES ('SUSPENSION_RULES', ?, 9999999999)")
                 .bind(rulesJson)
                 .run();
 
