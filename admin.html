@@ -343,63 +343,109 @@
             }
         }
 
-        // 自然語言快捷指令解析器
+        // 🤖 升級版：批量多行指令解析器
         function parseQuickSuspension() {
             const input = document.getElementById('quickSuspensionInp').value.trim();
             if (!input) return;
 
-            let matched = false;
+            let parsedRulesCount = 0;
+            const normalizeStation = name => String(name || "").replace(/台/g, "臺").replace(/站$/g, "").trim();
+
+            // 1. 批量正則匹配：[站名] ＜－－＞ [站名] : [狀態] (支援多行與各種箭頭符號)
+            const bulkRegex = /([\u4e00-\u9fff]+)\s*(?:＜－－＞|⇄|==|=|至|與|和|－|-)\s*([\u4e00-\u9fff]+)\s*:\s*([^\n\s，。；\(\)]+)/g;
+            let match;
             
-            // 模式 1: 車次 區段 備註 (例如: "408 臺北-花蓮 因地震影響")
-            const reg1 = /^(\d+)\s+([^\s\-]+)\s*[\-至往]\s*([^\s\-]+)(?:\s+(.*))?$/;
-            const m1 = input.match(reg1);
-            if (m1) {
-                document.getElementById('ruleType').value = 'train';
-                document.getElementById('ruleTrainNo').value = m1[1];
-                document.getElementById('ruleStart').value = m1[2];
-                document.getElementById('ruleEnd').value = m1[3];
-                document.getElementById('ruleScope').value = 'all';
-                document.getElementById('ruleNote').value = m1[4] || '區間停駛';
-                matched = true;
+            while ((match = bulkRegex.exec(input)) !== null) {
+                const start = normalizeStation(match[1]);
+                const end = normalizeStation(match[2]);
+                const statusText = match[3];
+                let scope = 'all';
+
+                // 根據狀態文字，智慧型判定列車受影響範圍
+                if (statusText.includes("各級列車停駛") || statusText.includes("各類列車停駛") || statusText.includes("全部停駛") || (statusText.includes("停駛") && !statusText.includes("對號") && !statusText.includes("非對號"))) {
+                    scope = 'all';
+                } else if (statusText.includes("非對號") && statusText.includes("正常")) {
+                    scope = 'reserved'; // 非對號正常 -> 對號停駛
+                } else if (statusText.includes("對號") && statusText.includes("正常")) {
+                    scope = 'local';    // 對號正常 -> 非對號停駛
+                } else if (statusText.includes("對號") && statusText.includes("停駛")) {
+                    scope = 'reserved';
+                } else if (statusText.includes("非對號") && statusText.includes("停駛")) {
+                    scope = 'local';
+                }
+
+                // 直接推入規則陣列
+                activeSuspensionRules.push({
+                    type: 'segment',
+                    trainNo: '',
+                    startStation: start,
+                    endStation: end,
+                    scope: scope,
+                    note: statusText
+                });
+                parsedRulesCount++;
             }
 
-            // 模式 2: 類型 區段 備註 (例如: "對號 宜蘭-羅東 電車線故障")
-            if (!matched) {
-                const reg2 = /^(全部|對號|非對號|區間)\s+([^\s\-]+)\s*[\-至往]\s*([^\s\-]+)(?:\s+(.*))?$/;
-                const m2 = input.match(reg2);
-                if (m2) {
-                    document.getElementById('ruleType').value = 'segment';
-                    document.getElementById('ruleTrainNo').value = '';
-                    document.getElementById('ruleStart').value = m2[2];
-                    document.getElementById('ruleEnd').value = m2[3];
-                    
-                    const scopeMap = { '全部': 'all', '對號': 'reserved', '非對號': 'local', '區間': 'local' };
-                    document.getElementById('ruleScope').value = scopeMap[m2[1]] || 'all';
-                    document.getElementById('ruleNote').value = m2[4] || '區間停駛';
-                    matched = true;
+            // 2. 單行備用解析 (如果上面批量完全沒有匹配到，才走單行匹配)
+            if (parsedRulesCount === 0) {
+                // 備用 A: 車次 區段 備註
+                const reg1 = /^(\d+)\s+([^\s\-]+)\s*[\-至往]\s*([^\s\-]+)(?:\s+(.*))?$/;
+                const m1 = input.match(reg1);
+                if (m1) {
+                    activeSuspensionRules.push({
+                        type: 'train',
+                        trainNo: m1[1],
+                        startStation: normalizeStation(m1[2]),
+                        endStation: normalizeStation(m1[3]),
+                        scope: 'all',
+                        note: m1[4] || '區間停駛'
+                    });
+                    parsedRulesCount++;
+                }
+                
+                // 備用 B: 類型 區段 備註
+                if (parsedRulesCount === 0) {
+                    const reg2 = /^(全部|對號|非對號|區間)\s+([^\s\-]+)\s*[\-至往]\s*([^\s\-]+)(?:\s+(.*))?$/;
+                    const m2 = input.match(reg2);
+                    if (m2) {
+                        const scopeMap = { '全部': 'all', '對號': 'reserved', '非對號': 'local', '區間': 'local' };
+                        activeSuspensionRules.push({
+                            type: 'segment',
+                            trainNo: '',
+                            startStation: normalizeStation(m2[2]),
+                            endStation: normalizeStation(m2[3]),
+                            scope: scopeMap[m2[1]] || 'all',
+                            note: m2[4] || '區間停駛'
+                        });
+                        parsedRulesCount++;
+                    }
+                }
+
+                // 備用 C: 單一車次停駛
+                if (parsedRulesCount === 0) {
+                    const reg3 = /^(\d+)\s+停駛(?:\s+(.*))?$/;
+                    const m3 = input.match(reg3);
+                    if (m3) {
+                        activeSuspensionRules.push({
+                            type: 'train',
+                            trainNo: m3[1],
+                            startStation: '',
+                            endStation: '',
+                            scope: 'all',
+                            note: m3[2] || '本日停駛'
+                        });
+                        parsedRulesCount++;
+                    }
                 }
             }
 
-            // 模式 3: 單一車次整段停駛 (例如: "121 停駛 全區間停駛")
-            if (!matched) {
-                const reg3 = /^(\d+)\s+停駛(?:\s+(.*))?$/;
-                const m3 = input.match(reg3);
-                if (m3) {
-                    document.getElementById('ruleType').value = 'train';
-                    document.getElementById('ruleTrainNo').value = m3[1];
-                    document.getElementById('ruleStart').value = '';
-                    document.getElementById('ruleEnd').value = '';
-                    document.getElementById('ruleScope').value = 'all';
-                    document.getElementById('ruleNote').value = m3[2] || '本日停駛';
-                    matched = true;
-                }
-            }
-
-            if (matched) {
-                toggleRuleFields();
-                alert('已成功解析指令並自動填入下方欄位，確認無誤後請點擊「新增停駛規則」');
+            // 3. 渲染與提示
+            if (parsedRulesCount > 0) {
+                renderSuspensionRulesTable();
+                alert(`🎉 成功解析並批量匯入 ${parsedRulesCount} 筆停駛規則！\n\n請在下方列表進行檢視，如有不需設定的區段，可點擊紅色垃圾桶刪除。\n確認無誤後，請點擊下方的「新增停駛規則」(或任何儲存按鈕) 進行儲存存檔！`);
+                document.getElementById('quickSuspensionInp').value = '';
             } else {
-                alert('無法自動辨識格式，請手動填寫下方欄位');
+                alert('⚠️ 無法辨識此格式。\n\n批量解析請確認格式類似：\n「彰化 ＜－－＞ 基隆 : 各級列車停駛」\n\n或您也可以直接手動填寫下方表單！');
             }
         }
 
