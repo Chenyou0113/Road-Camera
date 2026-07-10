@@ -48,6 +48,62 @@ const getTrainClassGroup = (typeName) => {
     return 'reserved';
 };
 
+// 🚄 台鐵幹線全線環島拓撲定義 (順時針排列，用於最短環狀路徑計算)
+const MAIN_RING = "基隆,三坑,八堵,七堵,百福,五堵,汐止,汐科,南港,松山,臺北,萬華,板橋,浮洲,樹林,南樹林,山佳,鶯歌,桃園,內壢,中壢,埔心,楊梅,富岡,新富,北湖,湖口,新豐,竹北,北新竹,新竹,三姓橋,香山,崎頂,竹南,造橋,豐富,苗栗,南勢,銅鑼,三義,泰安,后里,豐原,栗林,潭子,頭家厝,松竹,太原,精武,臺中,五權,大慶,烏日,新烏日,成功,彰化,花壇,大村,員林,永靖,社頭,田中,二水,林內,石榴,斗六,斗南,石龜,大林,民雄,嘉北,嘉義,水上,南靖,後壁,新營,柳營,林鳳營,隆田,拔林,善化,南科,新市,永康,大橋,臺南,保安,仁德,中洲,大湖,路竹,岡山,橋頭,楠梓,新左營,左營,內惟,美術館,鼓山,三塊厝,高雄,民族,科工館,正義,鳳山,後庄,九曲堂,六塊厝,屏東,歸來,麟洛,西勢,竹田,潮州,八老爺,崁頂,南州,鎮安,林邊,佳冬,東海,枋寮,加祿,內獅,枋山,大武,瀧溪,金崙,太麻里,知本,康樂,臺東,山里,鹿野,瑞源,瑞和,關山,海端,池上,富里,東竹,東里,玉里,三民,瑞穗,富源,大富,光復,萬榮,鳳林,南平,林榮新光,豐田,壽豐,平和,志學,吉安,花蓮,北埔,景美,新城,崇德,和仁,和平,漢本,武塔,南澳,東澳,永樂,蘇澳新,新馬,冬山,羅東,中里,二結,宜蘭,四城,礁溪,頂埔,頭城,外澳,梗枋,龜山,大溪,大里,石城,福隆,貢寮,雙溪,牡丹,三貂嶺,猴硐,瑞芳,四腳亭,暖暖".split(",");
+
+const SEA_LINE = "竹南,談文,大山,後龍,龍港,白沙屯,新埔,通霄,苑裡,日南,大甲,臺中港,清水,沙鹿,龍井,大肚,追分,彰化".split(",");
+
+// 🤖 台鐵幹線最短環狀路徑演算法
+const getShortestCircularPath = (start, end) => {
+    const norm = s => String(s || "").replace(/台/g, "臺").replace(/站$/g, "").trim();
+    const sNorm = norm(start);
+    const eNorm = norm(end);
+
+    const findIndex = (arr, val) => arr.findIndex(x => norm(x) === val);
+
+    let idxS = findIndex(MAIN_RING, sNorm);
+    let idxE = findIndex(MAIN_RING, eNorm);
+
+    let inSeaS = false, inSeaE = false;
+    if (idxS === -1) {
+        idxS = findIndex(SEA_LINE, sNorm);
+        if (idxS !== -1) inSeaS = true;
+    }
+    if (idxE === -1) {
+        idxE = findIndex(SEA_LINE, eNorm);
+        if (idxE !== -1) inSeaE = true;
+    }
+
+    // A. 起訖站皆在主環線
+    if (!inSeaS && !inSeaE && idxS !== -1 && idxE !== -1) {
+        // 順時針路徑
+        let path1 = [];
+        if (idxS <= idxE) {
+            path1 = MAIN_RING.slice(idxS, idxE + 1);
+        } else {
+            path1 = MAIN_RING.slice(idxS).concat(MAIN_RING.slice(0, idxE + 1));
+        }
+        // 逆時針路徑
+        let path2 = [];
+        if (idxE <= idxS) {
+            path2 = MAIN_RING.slice(idxE, idxS + 1).reverse();
+        } else {
+            path2 = MAIN_RING.slice(idxE).concat(MAIN_RING.slice(0, idxS + 1)).reverse();
+        }
+        return path1.length <= path2.length ? path1 : path2;
+    }
+
+    // B. 起訖點皆在海線
+    if (inSeaS && inSeaE && idxS !== -1 && idxE !== -1) {
+        const min = Math.min(idxS, idxE);
+        const max = Math.max(idxS, idxE);
+        return SEA_LINE.slice(min, max + 1);
+    }
+
+    // C. 跨海線/主環線 (回傳空，退回 Stops 順序比對)
+    return [];
+};
+
 const getTdxToken = async (env) => {
     const now = Math.floor(Date.now() / 1000);
     try {
@@ -99,41 +155,124 @@ const parseRulesFromAlerts = (alerts) => {
     return rules;
 };
 
-// 判斷套用停駛規則 (不更動備註，僅調整 Flag)
+// 判斷套用停駛規則 (完美解決山海線分流與最短路徑版，兼顧 Flag 降級鎖定)
 const applySuspensionRules = (trainNo, typeName, stops, trainSuspendedFlag, note, rules) => {
     let updatedStops = JSON.parse(JSON.stringify(stops || []));
     let updatedSuspendedFlag = Number(trainSuspendedFlag || 0);
     let updatedNote = String(note || "").trim();
     const trnClass = getTrainClassGroup(typeName);
 
-    for (const rule of rules) {
-        const normRuleStart = normalizeStationName(rule.startStation);
-        const normRuleEnd = normalizeStationName(rule.endStation);
+    const norm = name => String(name || "").replace(/台/g, "臺").replace(/站$/g, "").trim();
 
+    for (const rule of rules) {
+        const normRuleStart = norm(rule.startStation);
+        const normRuleEnd = norm(rule.endStation);
+
+        // A. 車次層級停駛
         if (rule.type === 'train' && String(rule.trainNo).trim() === String(trainNo).trim()) {
             if (!normRuleStart && !normRuleEnd) {
-                updatedSuspendedFlag = 1;
+                updatedSuspendedFlag = 1; // 全面停駛
                 updatedStops.forEach(s => s.SuspendedFlag = 1);
             } else {
-                const idxStart = updatedStops.findIndex(s => normalizeStationName(s.Name || s.StationName?.Zh_tw) === normRuleStart);
-                const idxEnd = updatedStops.findIndex(s => normalizeStationName(s.Name || s.StationName?.Zh_tw) === normRuleEnd);
-                if (idxStart !== -1 && idxEnd !== -1) {
-                    const minIdx = Math.min(idxStart, idxEnd);
-                    const maxIdx = Math.max(idxStart, idxEnd);
-                    for (let i = minIdx; i <= maxIdx; i++) updatedStops[i].SuspendedFlag = 1;
-                    if (updatedSuspendedFlag !== 1) updatedSuspendedFlag = 2;
+                let affectedSet = null;
+                const affectedStations = getShortestCircularPath(normRuleStart, normRuleEnd);
+                if (affectedStations.length > 0) {
+                    affectedSet = new Set(affectedStations.map(norm));
+                    
+                    // 🌀 核心修復：如果範圍同時跨越「彰化」與「竹南」，自動將山線與海線全部納入停駛！
+                    if (affectedSet.has(norm("彰化")) && affectedSet.has(norm("竹南"))) {
+                        const mountainAndSea = [
+                            "造橋", "豐富", "苗栗", "南勢", "銅鑼", "三義", "泰安", "后里", "豐原", "栗林", "潭子", "頭家厝", "松竹", "太原", "精武", "臺中", "五權", "大慶", "烏日", "新烏日", "成功",
+                            "談文", "大山", "後龍", "龍港", "白沙屯", "新埔", "通霄", "苑裡", "日南", "大甲", "臺中港", "清水", "沙鹿", "龍井", "大肚", "追分"
+                        ];
+                        mountainAndSea.forEach(s => affectedSet.add(norm(s)));
+                    }
+                }
+
+                if (affectedSet) {
+                    let hasSuspended = false;
+                    updatedStops.forEach(s => {
+                        if (affectedSet.has(norm(s.Name || s.StationName?.Zh_tw))) {
+                            s.SuspendedFlag = 1;
+                            hasSuspended = true;
+                        }
+                    });
+                    if (hasSuspended) {
+                        const allSuspended = updatedStops.every(s => s.SuspendedFlag === 1);
+                        if (allSuspended) {
+                            updatedSuspendedFlag = 1;
+                        } else if (updatedSuspendedFlag !== 1) {
+                            updatedSuspendedFlag = 2; // 區段停駛
+                        }
+                    }
+                } else {
+                    // 支線與備用匹配 (站點順序匹配)
+                    const idxStart = updatedStops.findIndex(s => norm(s.Name || s.StationName?.Zh_tw) === normRuleStart);
+                    const idxEnd = updatedStops.findIndex(s => norm(s.Name || s.StationName?.Zh_tw) === normRuleEnd);
+                    if (idxStart !== -1 && idxEnd !== -1) {
+                        const minIdx = Math.min(idxStart, idxEnd);
+                        const maxIdx = Math.max(idxStart, idxEnd);
+                        for (let i = minIdx; i <= maxIdx; i++) updatedStops[i].SuspendedFlag = 1;
+                        const allSuspended = updatedStops.every(s => s.SuspendedFlag === 1);
+                        if (allSuspended) {
+                            updatedSuspendedFlag = 1;
+                        } else if (updatedSuspendedFlag !== 1) {
+                            updatedSuspendedFlag = 2; // 區段停駛
+                        }
+                    }
                 }
             }
-        } else if (rule.type === 'segment') {
+        } 
+        // B. 區段層級停駛 (所有/分類列車)
+        else if (rule.type === 'segment') {
             const matchesScope = rule.scope === 'all' || rule.scope === trnClass || !rule.scope;
             if (matchesScope && normRuleStart && normRuleEnd) {
-                const idxStart = updatedStops.findIndex(s => normalizeStationName(s.Name || s.StationName?.Zh_tw) === normRuleStart);
-                const idxEnd = updatedStops.findIndex(s => normalizeStationName(s.Name || s.StationName?.Zh_tw) === normRuleEnd);
-                if (idxStart !== -1 && idxEnd !== -1) {
-                    const minIdx = Math.min(idxStart, idxEnd);
-                    const maxIdx = Math.max(idxStart, idxEnd);
-                    for (let i = minIdx; i <= maxIdx; i++) updatedStops[i].SuspendedFlag = 1;
-                    if (updatedSuspendedFlag !== 1) updatedSuspendedFlag = 2;
+                let affectedSet = null;
+                const affectedStations = getShortestCircularPath(normRuleStart, normRuleEnd);
+                if (affectedStations.length > 0) {
+                    affectedSet = new Set(affectedStations.map(norm));
+                    
+                    // 🌀 核心修復：如果範圍同時跨越「彰化」與「竹南」，自動將山線與海線全部納入停駛！
+                    if (affectedSet.has(norm("彰化")) && affectedSet.has(norm("竹南"))) {
+                        const mountainAndSea = [
+                            "造橋", "豐富", "苗栗", "南勢", "銅鑼", "三義", "泰安", "后里", "豐原", "栗林", "潭子", "頭家厝", "松竹", "太原", "精武", "臺中", "五權", "大慶", "烏日", "新烏日", "成功",
+                            "談文", "大山", "後龍", "龍港", "白沙屯", "新埔", "通霄", "苑裡", "日南", "大甲", "臺中港", "清水", "沙鹿", "龍井", "大肚", "追分"
+                        ];
+                        mountainAndSea.forEach(s => affectedSet.add(norm(s)));
+                    }
+                }
+
+                if (affectedSet) {
+                    let hasSuspended = false;
+                    updatedStops.forEach(s => {
+                        if (affectedSet.has(norm(s.Name || s.StationName?.Zh_tw))) {
+                            s.SuspendedFlag = 1;
+                            hasSuspended = true;
+                        }
+                    });
+                    if (hasSuspended) {
+                        const allSuspended = updatedStops.every(s => s.SuspendedFlag === 1);
+                        if (allSuspended) {
+                            updatedSuspendedFlag = 1;
+                        } else if (updatedSuspendedFlag !== 1) {
+                            updatedSuspendedFlag = 2; // 區段停駛
+                        }
+                    }
+                } else {
+                    // 支線備用匹配
+                    const idxStart = updatedStops.findIndex(s => norm(s.Name || s.StationName?.Zh_tw) === normRuleStart);
+                    const idxEnd = updatedStops.findIndex(s => norm(s.Name || s.StationName?.Zh_tw) === normRuleEnd);
+                    if (idxStart !== -1 && idxEnd !== -1) {
+                        const minIdx = Math.min(idxStart, idxEnd);
+                        const maxIdx = Math.max(idxStart, idxEnd);
+                        for (let i = minIdx; i <= maxIdx; i++) updatedStops[i].SuspendedFlag = 1;
+                        const allSuspended = updatedStops.every(s => s.SuspendedFlag === 1);
+                        if (allSuspended) {
+                            updatedSuspendedFlag = 1;
+                        } else if (updatedSuspendedFlag !== 1) {
+                            updatedSuspendedFlag = 2; // 區段停駛
+                        }
+                    }
                 }
             }
         }
