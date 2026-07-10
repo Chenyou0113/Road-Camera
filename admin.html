@@ -122,6 +122,74 @@
                     <button style="background: linear-gradient(135deg, #8246af, #5e35b1);" onclick="saveMetroSettings()">儲存捷運看板設定</button>
                     <div class="status" id="metroStatus"></div>
                 </div>
+
+                <!-- 🆕 列車與區段停駛管理 -->
+                <div class="card" style="border-top: 4px solid #ff1744;">
+                    <h3 style="color: #ff1744;"><i class="fas fa-ban"></i> 列車與區段停駛管理</h3>
+                    
+                    <label style="font-size:0.8rem; color:#888;">⚡ 快速指令解析（輸入後按解析按鈕即可自動填寫下方欄位）</label>
+                    <div style="display:flex; gap:10px; margin-bottom:15px;">
+                        <input type="text" id="quickSuspensionInp" placeholder="例如：408 臺北-花蓮 因地震 或 對號 宜蘭-羅東 或 121 停駛">
+                        <button onclick="parseQuickSuspension()" style="background:#555; width:120px; flex-shrink:0; padding: 0;">解析指令</button>
+                    </div>
+
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-bottom:15px;">
+                        <div>
+                            <label style="font-size:0.8rem; color:#888;">規則類型</label>
+                            <select id="ruleType" onchange="toggleRuleFields()" style="width:100%; padding:12px; background:#2c2c2c; border:1px solid #444; color:#fff; border-radius:6px; outline:none;">
+                                <option value="train">特定車次全線或區間停駛</option>
+                                <option value="segment">特定區間所有/分類列車停駛</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size:0.8rem; color:#888;">車次 (若為特定車次)</label>
+                            <input type="text" id="ruleTrainNo" placeholder="例如: 408" style="margin-bottom:0;">
+                        </div>
+                    </div>
+
+                    <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:15px; margin-bottom:15px;">
+                        <div>
+                            <label style="font-size:0.8rem; color:#888;">起點站名</label>
+                            <input type="text" id="ruleStart" placeholder="例如: 臺北" style="margin-bottom:0;">
+                        </div>
+                        <div>
+                            <label style="font-size:0.8rem; color:#888;">終點站名</label>
+                            <input type="text" id="ruleEnd" placeholder="例如: 花蓮" style="margin-bottom:0;">
+                        </div>
+                        <div>
+                            <label style="font-size:0.8rem; color:#888;">列車範圍 (區段停駛)</label>
+                            <select id="ruleScope" style="width:100%; padding:12px; background:#2c2c2c; border:1px solid #444; color:#fff; border-radius:6px; outline:none;">
+                                <option value="all">所有列車</option>
+                                <option value="reserved">僅對號列車</option>
+                                <option value="local">僅非對號列車 (區間)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <label style="font-size:0.8rem; color:#888;">📝 停駛備註/原因</label>
+                    <input type="text" id="ruleNote" placeholder="例如: 因坍方土石流影響、電車線設備故障" style="margin-bottom:15px;">
+
+                    <button class="btn-warn" onclick="addSuspensionRule()" style="background: linear-gradient(135deg, #ff1744, #d50000); margin-bottom:20px;">新增停駛規則</button>
+
+                    <label style="font-size:0.95rem; color:#fff; font-weight:bold; display:block; margin-bottom:10px;">📋 目前生效中的停駛規則</label>
+                    <div style="overflow-x:auto;">
+                        <table style="width:100%; border-collapse:collapse; background:#1e1e1e; font-size:0.9rem; border:1px solid #333; text-align:left;">
+                            <thead>
+                                <tr style="background:#2c2c2c;">
+                                    <th style="padding:10px; border-bottom:1px solid #333;">類型</th>
+                                    <th style="padding:10px; border-bottom:1px solid #333;">車次</th>
+                                    <th style="padding:10px; border-bottom:1px solid #333;">停駛區段</th>
+                                    <th style="padding:10px; border-bottom:1px solid #333;">適用範圍</th>
+                                    <th style="padding:10px; border-bottom:1px solid #333; width:60px;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="suspensionRulesBody">
+                                <tr><td colspan="5" style="padding:15px; text-align:center; color:#888;">載入中...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="status" id="suspensionStatus"></div>
+                </div>
             </div>
 
             
@@ -248,7 +316,177 @@
                 const dataA = await resA.json();
                 document.getElementById('pidsImagesInput').value = dataA.images.join('\n');
                 document.getElementById('pidsVideoInput').value = dataA.video.join('\n');
+                
+                // 載入停駛規則
+                loadSuspensionRules();
             } catch (e) { console.error("資料載入失敗", e); }
+        }
+
+        // 儲存全域停駛規則陣列
+        let activeSuspensionRules = [];
+
+        function toggleRuleFields() {
+            const type = document.getElementById('ruleType').value;
+            const trainInp = document.getElementById('ruleTrainNo');
+            const scopeInp = document.getElementById('ruleScope');
+            
+            if (type === 'train') {
+                trainInp.disabled = false;
+                trainInp.style.opacity = '1';
+                scopeInp.disabled = true;
+                scopeInp.style.opacity = '0.5';
+            } else {
+                trainInp.disabled = true;
+                trainInp.style.opacity = '0.5';
+                scopeInp.disabled = false;
+                scopeInp.style.opacity = '1';
+            }
+        }
+
+        // 自然語言快捷指令解析器
+        function parseQuickSuspension() {
+            const input = document.getElementById('quickSuspensionInp').value.trim();
+            if (!input) return;
+
+            let matched = false;
+            
+            // 模式 1: 車次 區段 備註 (例如: "408 臺北-花蓮 因地震影響")
+            const reg1 = /^(\d+)\s+([^\s\-]+)\s*[\-至往]\s*([^\s\-]+)(?:\s+(.*))?$/;
+            const m1 = input.match(reg1);
+            if (m1) {
+                document.getElementById('ruleType').value = 'train';
+                document.getElementById('ruleTrainNo').value = m1[1];
+                document.getElementById('ruleStart').value = m1[2];
+                document.getElementById('ruleEnd').value = m1[3];
+                document.getElementById('ruleScope').value = 'all';
+                document.getElementById('ruleNote').value = m1[4] || '區間停駛';
+                matched = true;
+            }
+
+            // 模式 2: 類型 區段 備註 (例如: "對號 宜蘭-羅東 電車線故障")
+            if (!matched) {
+                const reg2 = /^(全部|對號|非對號|區間)\s+([^\s\-]+)\s*[\-至往]\s*([^\s\-]+)(?:\s+(.*))?$/;
+                const m2 = input.match(reg2);
+                if (m2) {
+                    document.getElementById('ruleType').value = 'segment';
+                    document.getElementById('ruleTrainNo').value = '';
+                    document.getElementById('ruleStart').value = m2[2];
+                    document.getElementById('ruleEnd').value = m2[3];
+                    
+                    const scopeMap = { '全部': 'all', '對號': 'reserved', '非對號': 'local', '區間': 'local' };
+                    document.getElementById('ruleScope').value = scopeMap[m2[1]] || 'all';
+                    document.getElementById('ruleNote').value = m2[4] || '區間停駛';
+                    matched = true;
+                }
+            }
+
+            // 模式 3: 單一車次整段停駛 (例如: "121 停駛 全區間停駛")
+            if (!matched) {
+                const reg3 = /^(\d+)\s+停駛(?:\s+(.*))?$/;
+                const m3 = input.match(reg3);
+                if (m3) {
+                    document.getElementById('ruleType').value = 'train';
+                    document.getElementById('ruleTrainNo').value = m3[1];
+                    document.getElementById('ruleStart').value = '';
+                    document.getElementById('ruleEnd').value = '';
+                    document.getElementById('ruleScope').value = 'all';
+                    document.getElementById('ruleNote').value = m3[2] || '本日停駛';
+                    matched = true;
+                }
+            }
+
+            if (matched) {
+                toggleRuleFields();
+                alert('已成功解析指令並自動填入下方欄位，確認無誤後請點擊「新增停駛規則」');
+            } else {
+                alert('無法自動辨識格式，請手動填寫下方欄位');
+            }
+        }
+
+        async function loadSuspensionRules() {
+            try {
+                const res = await apiRequest(`${WEATHER_API}/api/admin/suspension-rules`, 'GET', null, false);
+                activeSuspensionRules = await res.json();
+                renderSuspensionRulesTable();
+            } catch (e) {
+                console.error("無法加載停駛規則", e);
+            }
+        }
+
+        function renderSuspensionRulesTable() {
+            const tbody = document.getElementById('suspensionRulesBody');
+            if (activeSuspensionRules.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="5" style="padding:15px; text-align:center; color:#888;">目前無生效中的停駛規則</td></tr>`;
+                return;
+            }
+
+            const typeMap = { 'train': '特定車次', 'segment': '特定區間' };
+            const scopeMap = { 'all': '所有列車', 'reserved': '僅對號車', 'local': '僅非對號' };
+
+            tbody.innerHTML = activeSuspensionRules.map((rule, idx) => `
+                <tr style="border-bottom:1px solid #333;">
+                    <td style="padding:10px;">${typeMap[rule.type] || rule.type}</td>
+                    <td style="padding:10px; font-weight:bold; color:#ffeb3b;">${rule.trainNo || '-'}</td>
+                    <td style="padding:10px;">${(rule.startStation && rule.endStation) ? `${rule.startStation} ⇄ ${rule.endStation}` : '全線停駛'}</td>
+                    <td style="padding:10px;">${scopeMap[rule.scope] || '-'}</td>
+                    <td style="padding:10px;">
+                        <button onclick="deleteSuspensionRule(${idx})" style="background:#ff5252; padding:4px 8px; font-size:12px; width:auto; display:inline-block;"><i class="fas fa-trash-alt"></i></button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+
+        async function addSuspensionRule() {
+            const statusEl = document.getElementById('suspensionStatus');
+            const type = document.getElementById('ruleType').value;
+            const trainNo = document.getElementById('ruleTrainNo').value.trim();
+            const startStation = document.getElementById('ruleStart').value.trim().replace(/台/g, '臺');
+            const endStation = document.getElementById('ruleEnd').value.trim().replace(/台/g, '臺');
+            const scope = document.getElementById('ruleScope').value;
+            const note = document.getElementById('ruleNote').value.trim() || '停駛';
+
+            if (type === 'train' && !trainNo) {
+                alert('請輸入車次編號');
+                return;
+            }
+            if (type === 'segment' && (!startStation || !endStation)) {
+                alert('設定區間停駛時，起點站與終點站皆不得為空');
+                return;
+            }
+
+            const newRule = { type, trainNo, startStation, endStation, scope, note };
+            activeSuspensionRules.push(newRule);
+            
+            await saveSuspensionRulesToServer();
+        }
+
+        async function deleteSuspensionRule(index) {
+            if (confirm('確定要刪除此項停駛規則嗎？')) {
+                activeSuspensionRules.splice(index, 1);
+                await saveSuspensionRulesToServer();
+            }
+        }
+
+        async function saveSuspensionRulesToServer() {
+            const statusEl = document.getElementById('suspensionStatus');
+            statusEl.innerText = "⏳ 儲存中...";
+            try {
+                const res = await apiRequest(`${WEATHER_API}/api/admin/update-suspension-rules`, 'POST', activeSuspensionRules, true);
+                if (res.ok) {
+                    statusEl.innerText = "✅ 停駛規則已更新，並即時同步前台";
+                    renderSuspensionRulesTable();
+                    // 清空輸入欄位
+                    document.getElementById('ruleTrainNo').value = '';
+                    document.getElementById('ruleStart').value = '';
+                    document.getElementById('ruleEnd').value = '';
+                    document.getElementById('ruleNote').value = '';
+                    document.getElementById('quickSuspensionInp').value = '';
+                } else {
+                    statusEl.innerText = "❌ 儲存失敗，請確認登入狀態";
+                }
+            } catch (e) {
+                statusEl.innerText = "❌ 連線異常";
+            }
         }
 
         // 儲存功能
