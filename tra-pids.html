@@ -889,7 +889,74 @@
                         let min=h*60+m+delay;
                         td=`${String(Math.floor(min/60)%24).padStart(2,'0')}:${String(min%60).padStart(2,'0')}`
                     }
-                }        async function updateMarquee(elId,list){
+                }
+                let dest=translateStation(t.EndingStationName,rc);
+                const clone=tpl.content.cloneNode(true);
+                const cells=clone.querySelectorAll('td');
+                cells[0].textContent=td;
+                cells[0].className=isDel?'expected-time':'normal-time';
+                cells[1].textContent=dest;
+                cells[2].textContent=String(t.TrainNo);
+                cells[2].className='train-no-cell';
+                cells[3].textContent=info.name;
+                cells[3].className='train-type-cell type-'+info.cls;
+                cells[4].textContent=status;
+                cells[4].className=cls;
+                frag.appendChild(clone);
+            });
+            for(let i=Math.min(list.length,max);i<max;i++)frag.appendChild(tpl.content.cloneNode(true));
+            tb.appendChild(frag);
+        }
+        function analyzeStopsSuspension(stops) {
+            if (!stops || stops.length === 0) return { isAllSuspended: false, isAllNormal: true, suspendedSegments: [], normalStations: [] };
+            const normName = s => String(s.Name || s.StationName?.Zh_tw || "").replace(/站$/g, "").trim();
+            const normalStations = stops.filter(s => Number(s.SuspendedFlag || s.Susp || 0) !== 1).map(normName);
+            const suspendedStations = stops.filter(s => Number(s.SuspendedFlag || s.Susp || 0) === 1).map(normName);
+
+            if (normalStations.length === 0) {
+                return { isAllSuspended: true, isAllNormal: false, suspendedSegments: [], normalStations: [] };
+            }
+            if (suspendedStations.length === 0) {
+                return { isAllSuspended: false, isAllNormal: true, suspendedSegments: [], normalStations };
+            }
+
+            const suspendedSegments = [];
+            let startSuspended = null;
+            let lastSuspended = null;
+
+            for (let i = 0; i < stops.length; i++) {
+                const isSusp = Number(stops[i].SuspendedFlag || stops[i].Susp || 0) === 1;
+                const name = normName(stops[i]);
+
+                if (isSusp) {
+                    if (startSuspended === null) {
+                        startSuspended = name;
+                    }
+                    lastSuspended = name;
+                } else {
+                    if (startSuspended !== null) {
+                        if (startSuspended === lastSuspended) {
+                            suspendedSegments.push(startSuspended);
+                        } else {
+                            suspendedSegments.push(`${startSuspended}至${lastSuspended}`);
+                        }
+                        startSuspended = null;
+                        lastSuspended = null;
+                    }
+                }
+            }
+            if (startSuspended !== null) {
+                if (startSuspended === lastSuspended) {
+                    suspendedSegments.push(startSuspended);
+                } else {
+                    suspendedSegments.push(`${startSuspended}至${lastSuspended}`);
+                }
+            }
+
+            return { isAllSuspended: false, isAllNormal: false, suspendedSegments, normalStations };
+        }
+
+        async function updateMarquee(elId,list){
             const el=document.getElementById(elId);
             const l=i18n[PIDS_APP.STATE.currentLang];
             let msg="";
@@ -1017,7 +1084,7 @@
             el.dataset.currentMsg=msg;
             el.dataset.nextMsg='';
             startMarquee(elId);
-        }
+        } 
         function goBack(){if(window.history.length>1){window.history.back()}else{window.location.href='tra_liveboard.html'}}
         document.addEventListener('DOMContentLoaded',()=>{
             PIDS_APP.init();
