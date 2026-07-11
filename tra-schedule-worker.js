@@ -484,7 +484,13 @@ export default {
                     if (!isToday) return true;
                     const [h, m] = (t.Dep || t.Arr).split(':').map(Number);
                     const schedMins = h * 60 + m;
-                    if (t.TrainStatus === 2 || t.IsSuspended || t.IsPartiallySuspended) { return schedMins >= nowM - 60; }
+                    
+                    // 🚫 核心優化：如果這班車在當前車站為「停駛」狀態，表定出發時間一過，立刻砍掉該班車，不保留！
+                    if (t.IsSuspended) { 
+                        return schedMins >= nowM; 
+                    }
+                    
+                    // 正常車次（含本站正常行駛、但其他區段停駛的列車）依然保留到實際開車時間後 30 分鐘
                     return t._actual >= nowM - 30;
                 }).sort((a,b) => a._actual - b._actual);
 
