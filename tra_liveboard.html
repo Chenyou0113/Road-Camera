@@ -1889,7 +1889,7 @@
             return { isAllSuspended: false, isAllNormal: false, suspendedSegments, normalStations };
         }
 
-        // 🌟 參數改為接收 actualArr 與 actualDep
+        // 🌟 參數改為接收 actualArr 與 actualDep (未來站點過濾 + 臨時終點站判定 + 各站時間累加版)
         function showTrainMarquee(cardEl, trainNo, delayStr, actualArr, actualDep, typeName, destName) {
             const board = document.getElementById('trainsBoard');
             const date = document.getElementById('queryDate').value;
@@ -1939,24 +1939,31 @@
                 
                 const analysis = analyzeStopsSuspension(stops);
                 const isCancelled = (liveData && liveData.status === 2) || schedSuspended === 1;
+                const curIdx = stops.findIndex(s => (s.StationID || s.ID) === currentStationID);
 
                 let marqueeHtml = "";
                 if (isCancelled || analysis.isAllSuspended) {
                     marqueeHtml = `<span style="color:#ffeb3b; font-weight:700;">${trainNo} 次</span> <span style="color:#fff;">${effType} 往 ${effDest}</span> ${sep} <span style="color:#ff5252; font-weight:700;">🚫 本車次今日停駛</span>`;
                 } else if (analysis.suspendedSegments.length > 0) {
                     const segText = analysis.suspendedSegments.join('、');
-                    const normList = stops.filter(s => Number(s.SuspendedFlag || s.Susp || 0) !== 1).map(s => {
-                        const sName = normalizeTaiText(s.StationName?.Zh_tw || s.Name || "");
-                        let sTime = s.ArrivalTime || s.Arr || s.DepartureTime || s.Dep || "";
-                        if (sTime) {
-                            sTime = sTime.slice(0, 5);
-                            if (delay > 0) {
-                                sTime = addDelayToTime(sTime, delay);
+                    const curIdx = stops.findIndex(s => String(s.StationID || s.ID || '') === String(currentStationID || ''));
+                    const futureStops = curIdx !== -1 ? stops.slice(curIdx + 1).filter(s => Number(s.SuspendedFlag || s.Susp || 0) !== 1) : [];
+                    
+                    let normList = "";
+                    if (futureStops.length === 0) {
+                        normList = `<span style="color:#ffeb3b; font-weight:bold;">本站為終點站</span>`;
+                    } else {
+                        normList = futureStops.map(s => {
+                            const sName = normalizeTaiText(s.StationName?.Zh_tw || s.Name || "");
+                            let sTime = s.ArrivalTime || s.Arr || s.DepartureTime || s.Dep || "";
+                            if (sTime) {
+                                sTime = sTime.slice(0, 5);
+                                if (delay > 0) sTime = addDelayToTime(sTime, delay);
+                                return `<span style="color:#ffeb3b;">${sName}</span> <span style="color:#00e676; font-size:0.9em; font-weight: bold;">(${sTime})</span>`;
                             }
-                            return `<span style="color:#ffeb3b;">${sName}</span> <span style="color:#00e676; font-size:0.9em; font-weight: bold;">(${sTime})</span>`;
-                        }
-                        return `<span style="color:#ffeb3b;">${sName}</span>`;
-                    }).join(' ➔ ');
+                            return `<span style="color:#ffeb3b;">${sName}</span>`;
+                        }).join(' ➔ ');
+                    }
 
                     let cancelNode = "";
                     if (stopSuspended) {
