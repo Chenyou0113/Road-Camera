@@ -37,16 +37,17 @@ try {
             stationDataMap[sid].class = info.class;
             stationDataMap[sid].address = info.address;
             stationDataMap[sid].phone = info.phone;
+            stationDataMap[sid].url = info.url;
         }
     });
     console.log('✅ 已完成資料合併模擬。');
 
     // 4. 驗證特定車站的合併結果
     const testCases = [
-        { id: '0900', name: '基隆', expectedClass: '1', expectedPhone: '02-24263743' },
-        { id: '0910', name: '三坑', expectedClass: '4', expectedPhone: '02-24230289' },
-        { id: '1000', name: '臺北', expectedClass: '0', expectedPhone: '02-23713558' },
-        { id: '0920', name: '八堵', expectedClass: '2', expectedPhone: '02-24560841' }
+        { id: '0900', name: '基隆', expectedClass: '1', expectedPhone: '02-24263743', expectedUrl: 'https://www.trc.com.tw/tra-tip-web/tip/tip00H/tipH41/viewStaInfo/0900' },
+        { id: '0910', name: '三坑', expectedClass: '4', expectedPhone: '02-24230289', expectedUrl: 'https://www.trc.com.tw/tra-tip-web/tip/tip00H/tipH41/viewStaInfo/0910' },
+        { id: '1000', name: '臺北', expectedClass: '0', expectedPhone: '02-23713558', expectedUrl: 'https://www.trc.com.tw/tra-tip-web/tip/tip00H/tipH41/viewStaInfo/1000' },
+        { id: '0920', name: '八堵', expectedClass: '2', expectedPhone: '02-24560841', expectedUrl: 'https://www.trc.com.tw/tra-tip-web/tip/tip00H/tipH41/viewStaInfo/0920' }
     ];
 
     let passed = true;
@@ -61,6 +62,7 @@ try {
         console.log(`\n🔍 檢查車站: ${tc.name} (${tc.id})`);
         console.log(`   - 等級: 實際 = "${station.class}", 預期 = "${tc.expectedClass}"`);
         console.log(`   - 電話: 實際 = "${station.phone}", 預期 = "${tc.expectedPhone}"`);
+        console.log(`   - 網址: 實際 = "${station.url}", 預期 = "${tc.expectedUrl}"`);
         console.log(`   - 地址: "${station.address}"`);
 
         if (station.class !== tc.expectedClass) {
@@ -69,6 +71,10 @@ try {
         }
         if (station.phone !== tc.expectedPhone) {
             console.error(`   ❌ 電話不相符！`);
+            passed = false;
+        }
+        if (station.url !== tc.expectedUrl) {
+            console.error(`   ❌ 網址不相符！`);
             passed = false;
         }
         if (!station.address) {
