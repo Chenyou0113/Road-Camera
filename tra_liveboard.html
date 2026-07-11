@@ -1587,10 +1587,8 @@
                 const actualDep = addDelayToTime(schedDep, delay);
                 const dest = normalizeTaiText(t.EndingStationName || t.Dest || '');
                 const ts = t.TrainStatus !== undefined ? t.TrainStatus : t.Status, tsf = Number(t.TrainSuspendedFlag || 0);
-                const isSuspended = Boolean(t.IsSuspended) || Number(t.SuspendedFlag) === 1;
-                const isPartiallySuspended = Boolean(t.IsPartiallySuspended) || tsf === 2;
-                const isCancelled = String(ts) === '2' || tsf === 1;
-                const statusText = isSuspended ? '停駛' : (isPartiallySuspended ? '區段停駛' : (isCancelled ? '停駛' : ''));
+                const isSuspended = Boolean(t.IsSuspended) || Number(t.SuspendedFlag) === 1 || String(ts) === '2' || tsf === 1;
+                const statusText = isSuspended ? '停駛' : '';
                 const delayText = statusText || (delay > 0 ? `晚 ${delay} 分` : '準點');
                 const delayClass = statusText ? 'delay-warn' : (delay > 0 ? 'delay-warn' : 'delay-ok');
                 const delayStyle = delayText.length === 2 ? ' style="font-size: 1.1rem;"' : '';
@@ -1947,12 +1945,24 @@
                     marqueeHtml = `<span style="color:#ffeb3b; font-weight:700;">${trainNo} 次</span> <span style="color:#fff;">${effType} 往 ${effDest}</span> ${sep} <span style="color:#ff5252; font-weight:700;">🚫 本車次今日停駛</span>`;
                 } else if (analysis.suspendedSegments.length > 0) {
                     const segText = analysis.suspendedSegments.join('、');
-                    const normList = analysis.normalStations.join('、');
+                    const normList = stops.filter(s => Number(s.SuspendedFlag || s.Susp || 0) !== 1).map(s => {
+                        const sName = normalizeTaiText(s.StationName?.Zh_tw || s.Name || "");
+                        let sTime = s.ArrivalTime || s.Arr || s.DepartureTime || s.Dep || "";
+                        if (sTime) {
+                            sTime = sTime.slice(0, 5);
+                            if (delay > 0) {
+                                sTime = addDelayToTime(sTime, delay);
+                            }
+                            return `<span style="color:#ffeb3b;">${sName}</span> <span style="color:#00e676; font-size:0.9em; font-weight: bold;">(${sTime})</span>`;
+                        }
+                        return `<span style="color:#ffeb3b;">${sName}</span>`;
+                    }).join(' ➔ ');
+
                     let cancelNode = "";
                     if (stopSuspended) {
                         cancelNode = `<span style="color:#ff5252; font-weight:700;">🚫 本站取消停靠</span> ${sep} `;
                     }
-                    marqueeHtml = `<span style="color:#ffeb3b; font-weight:700;">${trainNo} 次</span> <span style="color:#fff;">${effType} 往 ${effDest}</span> ${sep} ${cancelNode}<span style="color:#ff9800; font-weight:700;">⚠️ ${segText} 區間停駛</span> ${sep} <span style="color:#00e676; font-weight:700;">還會開的站點：${normList}</span>`;
+                    marqueeHtml = `<span style="color:#ffeb3b; font-weight:700;">${trainNo} 次</span> <span style="color:#fff;">${effType} 往 ${effDest}</span> ${sep} ${cancelNode}<span style="color:#ff5252; font-weight:700;">⚠️ ${segText} 區間停駛</span> ${sep} <span style="color:#4fc3f7; font-weight:bold;">${statusText}</span> ${sep} <span style="color:#fff;">還會停靠站點：</span>${normList}`;
                 } else {
                     const curIdx = stops.findIndex(s => (s.StationID || s.ID) === currentStationID);
                     let stopsHtml = curIdx !== -1 && curIdx < stops.length - 1 ? stops.slice(curIdx + 1).map(s => { let st = (s.ArrivalTime || s.Arr || "").slice(0,5); if (delay > 0 && st) { const tm = st.split(':').map(Number).reduce((a,c,i)=>a+(i===0?c*60:c),0)+delay; st = `${String(Math.floor(tm/60)%24).padStart(2,'0')}:${String(tm%60).padStart(2,'0')}`; } return `<span style="color:#ffeb3b;">${normalizeTaiText(s.StationName?.Zh_tw || s.Name)}</span> <span style="color:#ccc;">(${st})</span>`; }).join(' <span style="color:#888; font-size:0.9em; margin: 0 8px;">►</span> ') : (curIdx === stops.length - 1 ? '<span style="color:#aaa;">本站為終點站</span>' : '<span style="color:#aaa;">無法取得後續停靠站</span>');
