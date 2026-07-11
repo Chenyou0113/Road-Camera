@@ -1019,24 +1019,35 @@
                 if(isCancel||analysis.isAllSuspended){
                     msg=PIDS_APP.STATE.currentLang==='zh'?`🚫 ${t.TrainNo}次 ${info.name} 往${dest} 本車次今日停駛`:`🚫 Train ${t.TrainNo} ${info.name} to ${dest} CANCELLED`;
                 }else if(isPartial||analysis.suspendedSegments.length>0){
+                    
+                    // 🌟 核心修復：找到當前車站在這班車所有停靠站中的索引位置
+                    const curIdx = stops.findIndex(s => String(s.StationID) === String(GLOBAL_STATION_ID));
+                    
+                    // 🌟 核心修復：只截取當前車站（curIdx）之後的未來停靠站，徹底清除 12:26 歷史站點！
+                    const futureStops = curIdx !== -1 ? stops.slice(curIdx + 1).filter(s => Number(s.SuspendedFlag || s.Susp || 0) !== 1) : [];
+
                     if(PIDS_APP.STATE.currentLang==='zh'){
                         const segText=analysis.suspendedSegments.join('、');
                         
-                        // 🟢 中文版：精準渲染賸餘開行站點，並帶上預估到站時間
-                        const normList = stops.filter(s => Number(s.SuspendedFlag || s.Susp || 0) !== 1).map(s => {
-                            const sName = translateStation(s.StationName?.Zh_tw || s.Name || "");
-                            let sTime = s.ArrivalTime || s.Arr || s.DepartureTime || s.Dep || "";
-                            if (sTime) {
-                                sTime = sTime.slice(0, 5);
-                                if (delay > 0) sTime = getExpectedTime(sTime, delay);
-                                return `<span style="color:#ffeb3b;">${sName}</span> <span style="color:#00e676; font-size:0.9em; font-weight: bold;">(${sTime})</span>`;
-                            }
-                            return `<span style="color:#ffeb3b;">${sName}</span>`;
-                        }).join(' ➔ ');
+                        let normList = "";
+                        if (futureStops.length === 0) {
+                            // 🌟 終點站判定：如果後面沒站了，直接顯示「本站為終點站」！
+                            normList = `<span style="color:#ffeb3b; font-weight:bold;">本站為終點站</span>`;
+                        } else {
+                            normList = futureStops.map(s => {
+                                const sName = translateStation(s.StationName?.Zh_tw || s.Name || "");
+                                let sTime = s.ArrivalTime || s.Arr || s.DepartureTime || s.Dep || "";
+                                if (sTime) {
+                                    sTime = sTime.slice(0, 5);
+                                    if (delay > 0) sTime = getExpectedTime(sTime, delay);
+                                    return `<span style="color:#ffeb3b;">${sName}</span> <span style="color:#00e676; font-size:0.9em; font-weight: bold;">(${sTime})</span>`;
+                                }
+                                return `<span style="color:#ffeb3b;">${sName}</span>`;
+                            }).join(' ➔ ');
+                        }
 
                         msg=`⚠️ ${t.TrainNo}次 ${info.name} 往${dest} ${sep} <span style="color:#ff5252; font-weight:bold;">${segText} 區間停駛</span> ${sep} <span style="color:#4fc3f7; font-weight:bold;">${locText}</span> ${sep} <span style="color:#fff;">還會停靠站點：</span>${normList}`;
                     }else{
-                        // 🌟 英文版同步大升級：將動態區段與剩餘停靠站名全部智慧型英化！
                         const translateSegmentEn = (seg) => {
                             if (seg.includes("至")) {
                                 const [s1, s2] = seg.split("至");
@@ -1046,16 +1057,21 @@
                         };
                         const segTextEn = analysis.suspendedSegments.map(translateSegmentEn).join(', ');
                         
-                        const normListEn = stops.filter(s => Number(s.SuspendedFlag || s.Susp || 0) !== 1).map(s => {
-                            const sName = translateStation(s.StationName?.Zh_tw || s.Name || "", 'en');
-                            let sTime = s.ArrivalTime || s.Arr || s.DepartureTime || s.Dep || "";
-                            if (sTime) {
-                                sTime = sTime.slice(0, 5);
-                                if (delay > 0) sTime = getExpectedTime(sTime, delay);
-                                return `<span style="color:#ffeb3b;">${sName}</span> <span style="color:#00e676; font-size:0.9em; font-weight: bold;">(${sTime})</span>`;
-                            }
-                            return `<span style="color:#ffeb3b;">${sName}</span>`;
-                        }).join(' ➔ ');
+                        let normListEn = "";
+                        if (futureStops.length === 0) {
+                            normListEn = `<span style="color:#ffeb3b; font-weight:bold;">This station is the terminal station</span>`;
+                        } else {
+                            normListEn = futureStops.map(s => {
+                                const sName = translateStation(s.StationName?.Zh_tw || s.Name || "", 'en');
+                                let sTime = s.ArrivalTime || s.Arr || s.DepartureTime || s.Dep || "";
+                                if (sTime) {
+                                    sTime = sTime.slice(0, 5);
+                                    if (delay > 0) sTime = getExpectedTime(sTime, delay);
+                                    return `<span style="color:#ffeb3b;">${sName}</span> <span style="color:#00e676; font-size:0.9em; font-weight: bold;">(${sTime})</span>`;
+                                }
+                                return `<span style="color:#ffeb3b;">${sName}</span>`;
+                            }).join(' ➔ ');
+                        }
 
                         msg=`⚠️ Train ${t.TrainNo} ${info.name} to ${dest} ${sep} <span style="color:#ff5252; font-weight:bold;">Suspended: ${segTextEn}</span> ${sep} <span style="color:#4fc3f7; font-weight:bold;">${locText}</span> ${sep} <span style="color:#fff;">Remaining Stops: </span>${normListEn}`;
                     }
