@@ -351,7 +351,7 @@
             }
         }
 
-        // 🤖 升級版：批量多行指令解析器
+        // 🤖 升級版：批量多行指令解析器 (已修正非對號語意誤判 Bug)
         function parseQuickSuspension() {
             const input = document.getElementById('quickSuspensionInp').value.trim();
             if (!input) return;
@@ -369,17 +369,17 @@
                 const statusText = match[3];
                 let scope = 'all';
 
-                // 根據狀態文字，智慧型判定列車受影響範圍
+                // 根據狀態文字，智慧型判定列車受影響範圍 (排除非對號字串干擾)
                 if (statusText.includes("各級列車停駛") || statusText.includes("各類列車停駛") || statusText.includes("全部停駛") || (statusText.includes("停駛") && !statusText.includes("對號") && !statusText.includes("非對號"))) {
                     scope = 'all';
                 } else if (statusText.includes("非對號") && statusText.includes("正常")) {
                     scope = 'reserved'; // 非對號正常 -> 對號停駛
-                } else if (statusText.includes("對號") && statusText.includes("正常")) {
+                } else if (statusText.includes("對號") && !statusText.includes("非對號") && statusText.includes("正常")) {
                     scope = 'local';    // 對號正常 -> 非對號停駛
-                } else if (statusText.includes("對號") && statusText.includes("停駛")) {
-                    scope = 'reserved';
+                } else if (statusText.includes("對號") && !statusText.includes("非對號") && statusText.includes("停駛")) {
+                    scope = 'reserved'; // 對號停駛 -> 僅對號車
                 } else if (statusText.includes("非對號") && statusText.includes("停駛")) {
-                    scope = 'local';
+                    scope = 'local';    // 非對號停駛 -> 僅非對號
                 }
 
                 // 直接推入規則陣列
@@ -450,7 +450,6 @@
             // 3. 渲染與提示
             if (parsedRulesCount > 0) {
                 renderSuspensionRulesTable();
-                // 修正提示：明確引導點擊新加入的儲存按鈕
                 alert(`🎉 成功解析並批量匯入 ${parsedRulesCount} 筆停駛規則！\n\n請在下方列表進行檢視，如有不需要的區段，可點擊紅色垃圾桶刪除。\n\n確認無誤後，請務必點擊下方的「💾 儲存目前停駛設定」按鈕完成存檔！`);
                 document.getElementById('quickSuspensionInp').value = '';
             } else {
@@ -478,17 +477,30 @@
             const typeMap = { 'train': '特定車次', 'segment': '特定區間' };
             const scopeMap = { 'all': '所有列車', 'reserved': '僅對號車', 'local': '僅非對號' };
 
-            tbody.innerHTML = activeSuspensionRules.map((rule, idx) => `
-                <tr style="border-bottom:1px solid #333;">
-                    <td style="padding:10px;">${typeMap[rule.type] || rule.type}</td>
-                    <td style="padding:10px; font-weight:bold; color:#ffeb3b;">${rule.trainNo || '-'}</td>
-                    <td style="padding:10px;">${(rule.startStation && rule.endStation) ? `${rule.startStation} ⇄ ${rule.endStation}` : '全線停駛'}</td>
-                    <td style="padding:10px;">${scopeMap[rule.scope] || '-'}</td>
-                    <td style="padding:10px;">
-                        <button onclick="deleteSuspensionRule(${idx})" style="background:#ff5252; padding:4px 8px; font-size:12px; width:auto; display:inline-block;"><i class="fas fa-trash-alt"></i></button>
-                    </td>
-                </tr>
-            `).join('');
+            tbody.innerHTML = activeSuspensionRules.map((rule, idx) => {
+                // 🌀 核心語意修復：若是特定車次停駛，適用範圍顯示為「僅此車次」，避免顯示為所有列車
+                let displayScope = '-';
+                let scopeStyle = '';
+                
+                if (rule.type === 'train') {
+                    displayScope = '僅此車次';
+                    scopeStyle = ' style="color: #ff9800; font-weight: bold;"'; // 亮眼橘色
+                } else {
+                    displayScope = scopeMap[rule.scope] || '-';
+                }
+
+                return `
+                    <tr style="border-bottom:1px solid #333;">
+                        <td style="padding:10px;">${typeMap[rule.type] || rule.type}</td>
+                        <td style="padding:10px; font-weight:bold; color:#ffeb3b;">${rule.trainNo || '-'}</td>
+                        <td style="padding:10px;">${(rule.startStation && rule.endStation) ? `${rule.startStation} ⇄ ${rule.endStation}` : '全線停駛'}</td>
+                        <td style="padding:10px;"${scopeStyle}>${displayScope}</td>
+                        <td style="padding:10px;">
+                            <button onclick="deleteSuspensionRule(${idx})" style="background:#ff5252; padding:4px 8px; font-size:12px; width:auto; display:inline-block;"><i class="fas fa-trash-alt"></i></button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
         }
 
         async function addSuspensionRule() {
