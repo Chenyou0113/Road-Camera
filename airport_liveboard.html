@@ -386,9 +386,123 @@
         const WORKER_URL = "https://airport.xiaoyouwu5-fd3.workers.dev/"; 
         let currentData = null;
         let autoRefreshInterval = null;
+        let airportLookup = {};
+        let airportList = [];
+        let airlineLookup = {};
 
-        document.addEventListener('DOMContentLoaded', () => {
+        async function loadAirlineLookup() {
+            try {
+                const res = await fetch('桃園機場_全部航廈_航空公司名單_2026-07-18.json');
+                if (res.ok) {
+                    const list = await res.json();
+                    list.forEach(item => {
+                        if (item.code) {
+                            airlineLookup[item.code.toUpperCase()] = {
+                                zh: item.nameZh || '',
+                                en: item.nameEn || ''
+                            };
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error("無法載入航空公司對照表:", e);
+            }
+        }
+
+        function getAirlineName(code) {
+            if (!code) return '';
+            const found = airlineLookup[code.toUpperCase()];
+            return found ? found.zh : code;
+        }
+
+        async function loadAirportLookup() {
+            try {
+                const res = await fetch('全台機場_資料_2026-07-18.json');
+                if (res.ok) {
+                    airportList = await res.json();
+                    airportList.forEach(item => {
+                        if (item.AirportID) {
+                            airportLookup[item.AirportID] = {
+                                zh: item.AirportName?.Zh_tw || '',
+                                en: item.AirportName?.En || '',
+                                cityZh: item.AirportCityName?.Zh_tw || '',
+                                cityEn: item.AirportCityName?.En || ''
+                            };
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error("無法載入機場對照表:", e);
+            }
+        }
+
+        function parseAirportName(destText) {
+            if (!destText) return { cn: '未知', en: '', code: '' };
+            destText = destText.trim();
+
+            // 1. 純三碼大寫代碼
+            if (/^[A-Z]{3}$/.test(destText)) {
+                const found = airportLookup[destText];
+                if (found) {
+                    return {
+                        cn: (found.zh || '').replace(/(國際)?機場$/, '') || destText,
+                        en: found.en || '',
+                        code: destText
+                    };
+                }
+            }
+
+            // 2. 內含三碼代碼
+            const iataMatch = destText.match(/\b([A-Z]{3})\b/);
+            if (iataMatch) {
+                const code = iataMatch[1];
+                const found = airportLookup[code];
+                if (found) {
+                    return {
+                        cn: (found.zh || '').replace(/(國際)?機場$/, '') || code,
+                        en: found.en || '',
+                        code: code
+                    };
+                }
+            }
+
+            // 3. 中文模糊比對
+            const zhMatch = destText.match(/[\u4e00-\u9fa5]+/);
+            if (zhMatch) {
+                const zhKey = zhMatch[0];
+                const foundItem = airportList.find(item => {
+                    const nameZh = item.AirportName?.Zh_tw || '';
+                    const cityZh = item.AirportCityName?.Zh_tw || '';
+                    const nameClean = nameZh.replace(/(國際)?機場$/, '');
+                    
+                    return (nameZh && nameZh.includes(zhKey)) || 
+                           (cityZh && cityZh.includes(zhKey)) || 
+                           (nameClean && zhKey.includes(nameClean));
+                });
+
+                if (foundItem && foundItem.AirportName?.Zh_tw) {
+                    return {
+                        cn: foundItem.AirportName.Zh_tw.replace(/(國際)?機場$/, ''),
+                        en: foundItem.AirportName.En || '',
+                        code: foundItem.AirportID
+                    };
+                }
+            }
+
+            // 4. Fallback 原始邏輯
+            let parts = destText.split(' ');
+            let cn = parts[1] || parts[0];
+            let code = "";
+            if (destText.match(/^[A-Z]{3}/)) code = destText.substring(0,3);
+            if (!cn.match(/[\u4e00-\u9fa5]/)) cn = destText;
+            
+            return { cn: cn, en: '', code: code };
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
             initTheme();
+            await loadAirportLookup();
+            await loadAirlineLookup();
             handleAirportChange();
         });
 
@@ -530,12 +644,10 @@
 
             let html = '';
             flights.forEach(f => {
-                // 目的地顯示：中文 + 三碼代號
-                let parts = f.dest.split(' ');
-                let cn = parts[1] || parts[0]; 
-                let code = "";
-                if (f.dest.match(/^[A-Z]{3}/)) code = f.dest.substring(0,3);
-                if (!cn.match(/[\u4e00-\u9fa5]/)) cn = f.dest;
+                // 目的地顯示：使用機場對照表美化
+                const apInfo = parseAirportName(f.dest);
+                const cn = apInfo.cn;
+                const code = apInfo.code;
 
                 // 時間顯示 (支援延誤)
                 let timeHtml = `<div class="time-main">${f.time}</div>`;
@@ -565,11 +677,13 @@
                     statusText = '取消';
                 }
 
+                const airlineName = getAirlineName(f.airline);
+
                 html += `
                 <div class="flight-card status-${typeClass}">
                     <div>${timeHtml}</div>
                     <div>
-                        <span class="airline-tag">${f.airline}</span>
+                        <span class="airline-tag">${airlineName}</span>
                         <div>
                             <span class="flight-no">${f.flight.split('-')[1] || f.flight}</span>
                             <span class="dest-cn">${cn}</span>

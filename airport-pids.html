@@ -99,7 +99,123 @@
     <script>
         const WORKER_URL = "https://airport.xiaoyouwu5-fd3.workers.dev/"; 
         let CurrentFlightData = null;
-        // 不需要 checkAirportType
+        let airportLookup = {};
+        let airportList = [];
+        let airlineLookup = {};
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            await loadAirportLookup();
+            await loadAirlineLookup();
+        });
+
+        async function loadAirlineLookup() {
+            try {
+                const res = await fetch('桃園機場_全部航廈_航空公司名單_2026-07-18.json');
+                if (res.ok) {
+                    const list = await res.json();
+                    list.forEach(item => {
+                        if (item.code) {
+                            airlineLookup[item.code.toUpperCase()] = {
+                                zh: item.nameZh || '',
+                                en: item.nameEn || ''
+                            };
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error("無法載入航空公司對照表:", e);
+            }
+        }
+
+        function getAirlineName(code) {
+            if (!code) return '';
+            const found = airlineLookup[code.toUpperCase()];
+            return found ? found.zh : code;
+        }
+
+        async function loadAirportLookup() {
+            try {
+                const res = await fetch('全台機場_資料_2026-07-18.json');
+                if (res.ok) {
+                    airportList = await res.json();
+                    airportList.forEach(item => {
+                        if (item.AirportID) {
+                            airportLookup[item.AirportID] = {
+                                zh: item.AirportName?.Zh_tw || '',
+                                en: item.AirportName?.En || '',
+                                cityZh: item.AirportCityName?.Zh_tw || '',
+                                cityEn: item.AirportCityName?.En || ''
+                            };
+                        }
+                    });
+                }
+            } catch (e) {
+                console.error("無法載入機場對照表:", e);
+            }
+        }
+
+        function parseAirportName(destText) {
+            if (!destText) return { cn: '未知', en: '', code: '' };
+            destText = destText.trim();
+
+            // 1. 純三碼大寫代碼
+            if (/^[A-Z]{3}$/.test(destText)) {
+                const found = airportLookup[destText];
+                if (found) {
+                    return {
+                        cn: (found.zh || '').replace(/(國際)?機場$/, '') || destText,
+                        en: found.en || '',
+                        code: destText
+                    };
+                }
+            }
+
+            // 2. 內含三碼代碼
+            const iataMatch = destText.match(/\b([A-Z]{3})\b/);
+            if (iataMatch) {
+                const code = iataMatch[1];
+                const found = airportLookup[code];
+                if (found) {
+                    return {
+                        cn: (found.zh || '').replace(/(國際)?機場$/, '') || code,
+                        en: found.en || '',
+                        code: code
+                    };
+                }
+            }
+
+            // 3. 中文模糊比對
+            const zhMatch = destText.match(/[\u4e00-\u9fa5]+/);
+            if (zhMatch) {
+                const zhKey = zhMatch[0];
+                const foundItem = airportList.find(item => {
+                    const nameZh = item.AirportName?.Zh_tw || '';
+                    const cityZh = item.AirportCityName?.Zh_tw || '';
+                    const nameClean = nameZh.replace(/(國際)?機場$/, '');
+                    
+                    return (nameZh && nameZh.includes(zhKey)) || 
+                           (cityZh && cityZh.includes(zhKey)) || 
+                           (nameClean && zhKey.includes(nameClean));
+                });
+
+                if (foundItem && foundItem.AirportName?.Zh_tw) {
+                    return {
+                        cn: foundItem.AirportName.Zh_tw.replace(/(國際)?機場$/, ''),
+                        en: foundItem.AirportName.En || '',
+                        code: foundItem.AirportID
+                    };
+                }
+            }
+
+            // 4. Fallback 原始邏輯
+            let parts = destText.split(' ');
+            let cn = parts[1] || parts[0];
+            let code = "";
+            if (destText.match(/^[A-Z]{3}/)) code = destText.substring(0,3);
+            if (!cn.match(/[\u4e00-\u9fa5]/)) cn = destText;
+            
+            return { cn: cn, en: '', code: code };
+        }
 
         async function showSystem() {
             const airportCode = document.getElementById('airport-select').value;
@@ -219,20 +335,17 @@
                             if(flight.type === 'ontime') cellHtml = `<span class="status-ontime">${cellData}</span>`;
                             else cellHtml = `<span class="status-badge status-${flight.type}">${cellData}</span>`;
                         } else if (col.dataKey === 'dest') {
-                            let parts = cellData.split(' ');
-                            let cn = parts[1] || parts[0]; 
-                            let code = "";
-                            if (cellData.match(/^[A-Z]{3}/)) code = cellData.substring(0,3);
-                            if (!cn.match(/[\u4e00-\u9fa5]/)) cn = cellData;
-
-                            cellHtml = `<span class="dest-cn">${cn}</span><span class="dest-en">${code}</span>`;
+                            const apInfo = parseAirportName(cellData);
+                            cellHtml = `<span class="dest-cn">${apInfo.cn}</span><span class="dest-en">${apInfo.code}</span>`;
                         } else if (col.dataKey === 'airline') {
                             let color = '#fff';
                             if(['CI','AE'].includes(cellData)) color='#e0a0ff';
                             if(['BR','B7'].includes(cellData)) color='#00a651';
                             if(['JX'].includes(cellData)) color='#cda45e';
                             if(['IT'].includes(cellData)) color='#f68b1f';
-                            cellHtml = `<div style="text-align: center; font-weight: bold; color:${color}; font-size: 1.2em;">${cellData}</div>`;
+                            const nameZh = getAirlineName(cellData);
+                            const showText = (nameZh === cellData) ? cellData : `${nameZh} ${cellData}`;
+                            cellHtml = `<div style="text-align: center; font-weight: bold; color:${color}; font-size: 1.1em;">${showText}</div>`;
                         } else {
                             const align = (col.dataKey === 'dest') ? 'left' : 'center';
                             cellHtml = `<div style="text-align: ${align};">${cellData}</div>`;
