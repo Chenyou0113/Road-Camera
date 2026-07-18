@@ -274,7 +274,8 @@
             background: #000;
         }
 
-        #video-iframe {
+        /* 影片播放器 CSS 變更為對應 div */
+        #video-player {
             position: absolute;
             top: 0;
             left: 0;
@@ -282,6 +283,7 @@
             height: 100%;
             border: none;
             transform: scale(1.01);
+            pointer-events: none; /* 避免使用者點擊暫停 */
         }
 
         /* --- PIDS 擁擠度優化版 (加大 + 數字) --- */
@@ -1087,11 +1089,9 @@
         </div>
 
         <div class="main-display">
+            <!-- 改變為使用 YouTube API 控制的 div -->
             <div class="video-container">
-                <iframe id="video-iframe"
-                    src="https://www.youtube.com/embed/Y_siE2Wsp38?autoplay=1&mute=1&loop=1&playlist=Y_siE2Wsp38&controls=0&modestbranding=1&rel=0"
-                    allow="autoplay; encrypted-media">
-                </iframe>
+                <div id="video-player"></div>
             </div>
             <div class="congestion-area"></div>
         </div>
@@ -1104,8 +1104,70 @@
         </div>
     </div>
 
+    <!-- 🔥 引入 YouTube Iframe API 腳本 -->
+    <script src="https://www.youtube.com/iframe_api"></script>
     <script>
         const METRO_STATIONS = fetch('metro-stations-raw.json').then(r => r.json()).catch(() => null);
+
+        // 🔥 影片 API 變數宣告
+        let ytPlayer;
+        let isYtApiReady = false;
+        let pendingVideoIds = [];
+        let currentPlaylistStr = "";
+
+        // YouTube API 準備就緒時觸發的函式
+        function onYouTubeIframeAPIReady() {
+            isYtApiReady = true;
+            ytPlayer = new YT.Player('video-player', {
+                videoId: 'Y_siE2Wsp38', // 預設先播一部
+                playerVars: {
+                    'autoplay': 1,
+                    'controls': 0,
+                    'mute': 1,      // 啟動靜音
+                    'loop': 1,
+                    'playlist': 'Y_siE2Wsp38',
+                    'modestbranding': 1,
+                    'rel': 0,
+                    'showinfo': 0,
+                    'disablekb': 1
+                },
+                events: {
+                    'onReady': onPlayerReady,
+                    'onStateChange': onPlayerStateChange
+                }
+            });
+        }
+
+        function onPlayerReady(event) {
+            event.target.mute(); // 載入完畢馬上強制靜音
+            event.target.playVideo();
+            
+            // 如果在 API 就緒前就已經抓到影片 ID，這裡補更新
+            if (pendingVideoIds.length > 0) {
+                updateYouTubePlaylist(pendingVideoIds);
+                pendingVideoIds = [];
+            }
+        }
+
+        function onPlayerStateChange(event) {
+            // 🎯 最關鍵：不管是切換下一部、暫停還是什麼狀態，都強制靜音！
+            if (event.target && event.target.mute) {
+                event.target.mute();
+            }
+        }
+
+        // 更新影片播放清單邏輯
+        function updateYouTubePlaylist(videoIds) {
+            const playlistStr = videoIds.join(',');
+            // 如果清單沒變就不用重整
+            if (currentPlaylistStr !== playlistStr) {
+                currentPlaylistStr = playlistStr;
+                ytPlayer.loadPlaylist({
+                    playlist: videoIds
+                });
+                ytPlayer.setLoop(true); // 開啟循環播放
+            }
+        }
 
         // 🚨 這是 TDX Worker (給非北捷系統用)
         const METRO_API_TDX = 'https://metro-api-worker.weacamm.org/api';
@@ -1120,7 +1182,7 @@
         const station = params.get('sid') || params.get('station') || 'A8';
 
         let countdownSecs = { dir0: -1, dir1: -1 };
-        const sysColors = { 'TRTC': '#0070bd', 'KRTC': '#f58220', 'TYMC': '#8246af', 'TMRT': '#b2d235', 'NTMC': '#0096cc', 'KLRT': '#2e7d32' };
+        const sysColors = { 'TRTC': '#0a59ae', 'KRTC': '#f8b61c', 'TYMC': '#8246af', 'TMRT': '#84bd00', 'NTMC': '#0096cc', 'KLRT': '#2e7d32' };
         let GLOBAL_STATIONS = null;
 
         function updateClock() {
@@ -1186,12 +1248,36 @@
 
                             let themeColor = foundLine.color;
                             if (system === 'TRTC') {
-                                if (station.startsWith('GA')) themeColor = '#8fc31f';
-                                if (station.startsWith('RA')) themeColor = '#fd92a3';
+                                const stUpper = station.toUpperCase();
+                                let lineKey = '';
+                                if (stUpper.startsWith('BR')) lineKey = 'BR';
+                                else if (stUpper.startsWith('BL')) lineKey = 'BL';
+                                else if (stUpper.startsWith('GA')) lineKey = 'GA';
+                                else if (stUpper.startsWith('RA')) lineKey = 'RA';
+                                else if (stUpper.startsWith('Y')) lineKey = 'Y';
+                                else lineKey = stUpper.substring(0, 1);
+                                
+                                const trtcColors = {
+                                    'BL': '#0a59ae',
+                                    'BR': '#b57a25',
+                                    'G': '#107547',
+                                    'O': '#f5a818',
+                                    'R': '#d90023',
+                                    'GA': '#8fc31f',
+                                    'RA': '#fd92a3',
+                                    'Y': '#fedb00'
+                                };
+                                if (trtcColors[lineKey]) {
+                                    themeColor = trtcColors[lineKey];
+                                }
                             }
                             if (system === 'KRTC') {
                                 if (station.startsWith('R')) themeColor = '#e3002c';
                                 if (station.startsWith('O')) themeColor = '#f8b61c';
+                            }
+                            if (system === 'NTMC') {
+                                if (station.toUpperCase().startsWith('K')) themeColor = '#9e925e';
+                                if (station.toUpperCase().startsWith('V')) themeColor = '#0096cc';
                             }
                             if (themeColor) document.documentElement.style.setProperty('--theme-color', themeColor);
                         }
@@ -1211,6 +1297,13 @@
             setInterval(updateVideo, 300000); // 每5分鐘檢查一次影片有無更換
             updateClock();
             setInterval(updateClock, 1000);
+
+            // 每秒強制靜音，確保在各種極端情況下（如瀏覽器自動解鎖聲音、玩家意外操作）都不會發出聲音
+            setInterval(() => {
+                if (isYtApiReady && ytPlayer && typeof ytPlayer.mute === 'function') {
+                    ytPlayer.mute();
+                }
+            }, 1000);
 
             setInterval(() => {
                 [0, 1].forEach(i => {
@@ -1358,7 +1451,16 @@
                     DestinationStationName: { Zh_tw: t.DestinationName, En: '' },
                     EstimateTime: parseTRTCTime(t.CountDown),
                     TrainNumber: t.TrainNumber,
-                    LineColor: ({ 'GA': '#8fc31f', 'RA': '#fd92a3' }[currentLine]) || getComputedStyle(document.documentElement).getPropertyValue('--theme-color').trim(),
+                    LineColor: ({
+                        'BL': '#0a59ae',
+                        'BR': '#b57a25',
+                        'G': '#107547',
+                        'O': '#f5a818',
+                        'R': '#d90023',
+                        'GA': '#8fc31f',
+                        'RA': '#fd92a3',
+                        'Y': '#fedb00'
+                    }[currentLine]) || getComputedStyle(document.documentElement).getPropertyValue('--theme-color').trim(),
                     platformSide: isUpstream ? 0 : 1
                 };
             });
@@ -1504,6 +1606,17 @@
                 } else {
                     lineBadge.style.background = item.LineColor || "#808080";
                 }
+            } else if (system === 'TYMC') {
+                lineBadge.style.background = '#8246af';
+            } else if (system === 'NTMC') {
+                const prefix = ((destID || lbText) || '').toString().toUpperCase();
+                if (prefix.startsWith('K')) {
+                    lineBadge.style.background = '#9e925e';
+                } else {
+                    lineBadge.style.background = '#0096cc';
+                }
+            } else if (system === 'TMRT') {
+                lineBadge.style.background = '#84bd00';
             } else {
                 lineBadge.style.background = item.LineColor || "#808080";
             }
@@ -1792,17 +1905,10 @@
 
                         // 2. 只要有成功解析出影片，就更新播放器
                         if (videoIds.length > 0) {
-                            const firstVideoId = videoIds[0]; // 主播放器的 ID 必須是第一部
-                            const playlistStr = videoIds.join(','); // 把所有影片 ID 用逗號串起來
-                            
-                            const iframe = document.getElementById('video-iframe');
-                            
-                            // 組合 YouTube 播放清單網址 (playlist 包含所有影片)
-                            const newSrc = `https://www.youtube.com/embed/${firstVideoId}?autoplay=1&mute=1&loop=1&playlist=${playlistStr}&controls=0&modestbranding=1&rel=0`;
-                            
-                            // 檢查網址有沒有變更，有變更才重新載入畫面 (避免每5分鐘閃爍一次)
-                            if (iframe.src !== newSrc) {
-                                iframe.src = newSrc;
+                            if (isYtApiReady && ytPlayer && typeof ytPlayer.loadPlaylist === 'function') {
+                                updateYouTubePlaylist(videoIds);
+                            } else {
+                                pendingVideoIds = videoIds;
                             }
                         }
                     }
