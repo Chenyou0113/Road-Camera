@@ -146,7 +146,7 @@ new_pids_app = '''const PIDS_APP = {
                     const data = await res.json();
                     
                     if (data && Array.isArray(data) && data.length > 0) {
-                        const alertMsg = data.map(a => `⚠️ 【${a.Title}】 ${a.Description}`).join("   ❖   ");
+                        const alertMsg = data.map(a => `${a.Title.includes('正常') ? '✅' : '⚠️'} 【${a.Title}】 ${a.Description}`).join("   ❖   ");
                         this.STATE.alertText = alertMsg;
                     } else {
                         this.STATE.alertText = '';
