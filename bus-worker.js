@@ -1,12 +1,12 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║  TDX 公車 Cloudflare Worker — 最終救贖旗艦版 (v30.1)           ║
- * ║  新增：零容忍全域報錯機制，拒絕任何隱藏的空集合 []             ║
+ * ║  TDX 公車 Cloudflare Worker — 最終救贖旗艦版 (v30.3)           ║
+ * ║  修正：智慧型括號清除(防呆)、強化 routePrefix 搜尋字首擷取       ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
 const CONFIG = {
-    VERSION: "v30.1-No-Empty-Arrays",
+    VERSION: "v30.3",
     CITIES: ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung", "Keelung", "InterCity"],
     TOKEN_URL: "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
     BASE_API: "https://tdx.transportdata.tw/api/basic",
@@ -32,9 +32,10 @@ const DICT = {
 
 const getZh = (obj) => (typeof obj === 'object' ? (obj?.Zh_tw || "") : (obj || "")).toString().trim();
 
+// 🌟 無敵正規化：即使左括號沒有對應的右括號，也能強制把後方的所有贅字清空
 const norm = (n) => {
     if (!n) return "";
-    return n.replace(/[\(（][^\)）]*[\)）]/g, "")
+    return n.replace(/[\(（].*?([\)）]|$)/g, "")
             .replace(/(去程半|返程半|去程|返程|狗狗公車|動物園專車|夜間公車|區間車|區|繞駛|繞|延駛|延|調度站發車|發車|往[^\s]+|經[^\s]+)/g, "")
             .trim();
 };
@@ -69,14 +70,12 @@ const getRouteKey = (city, type, routeName) => `${type}:${city}:${norm(routeName
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// 🌟 無敵防禦型請求：失敗絕對不回傳空集合，而是直接報錯
 async function safeTdxFetch(url, token, retries = 3) {
     for (let i = 0; i < retries; i++) {
         const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         const text = await res.text();
         
         if (res.status === 429 || text.includes("API rate limit exceeded")) {
-            console.warn(`[Rate Limit] 觸發頻率限制，重試第 ${i + 1} 次`);
             await sleep((i + 1) * 500 + Math.random() * 200);
             continue; 
         }
@@ -94,7 +93,7 @@ async function safeTdxFetch(url, token, retries = 3) {
             return { ok: false, errorText: text };
         }
     }
-    throw new Error(`TDX API 拒絕連線 (已達最大重試次數，可能是額度耗盡) URL: ${url}`);
+    throw new Error(`TDX API 拒絕連線 (已達最大重試次數) URL: ${url}`);
 }
 
 const safeJsonParse = (text, fallback) => {
@@ -116,7 +115,6 @@ async function upsertJson(env, table, columns, values) {
     await env.DB.prepare(`INSERT OR REPLACE INTO ${table} (${cols}) VALUES (${placeholders})`).bind(...values).run();
 }
 
-// 🌟 升級版降級抓取器：拒絕靜默失敗
 async function fetchRouteData(baseUrl, routePrefix, token) {
     const safeValue = (routePrefix || "").replace(/'/g, "''");
     const buildUrl = (filter) => {
@@ -127,8 +125,7 @@ async function fetchRouteData(baseUrl, routePrefix, token) {
     };
 
     const candidates = [
-        `contains(RouteName/Zh_tw,'${safeValue}')`,
-        `contains(RouteName,'${safeValue}')`,
+        `contains(RouteName/Zh_tw,'${safeValue}') or contains(SubRouteName/Zh_tw,'${safeValue}')`,
         null
     ];
 
@@ -139,7 +136,7 @@ async function fetchRouteData(baseUrl, routePrefix, token) {
             let data = result.data;
             if (Array.isArray(data)) return data;
             if (Array.isArray(data?.value)) return data.value;
-            return data;
+            return data || [];
         }
         if (result.errorText) lastError = result.errorText;
     }
@@ -177,11 +174,11 @@ async function autoSyncCity(city, cat, token, env) {
             seen.add(uniqKey);
             const dep = getZh(r.Stops[0].StopName);
             const dest = getZh(r.Stops[r.Stops.length-1].StopName);
-            batch.push(stmt.bind(r.SubRouteUID || r.RouteID, city, finalName, dep, dest, type, startTime));
+            batch.push(stmt.bind(r.RouteID || r.SubRouteUID, city, finalName, dep, dest, type, startTime));
             results.push({ name: finalName, departure: dep, destination: dest, city: city, type: type });
         }
 
-        const routeKey = getRouteKey(city, type, getZh(r.SubRouteName) || getZh(r.RouteName));
+        const routeKey = getRouteKey(city, type, finalName);
         const slimItem = { RouteName: r.RouteName, SubRouteName: r.SubRouteName, Direction: r.Direction, Stops: r.Stops, Operators: r.Operators || [] };
         if (!routeStopsMap.has(routeKey)) routeStopsMap.set(routeKey, []);
         routeStopsMap.get(routeKey).push(slimItem);
@@ -292,29 +289,60 @@ export default {
                 return send(fresh);
             }
 
+            // 確保這個判斷是獨立在外層的！這樣沒有帶入 route 也會執行
+            if (action === "vehicle") {
+                let apiVer = "v2", apiPath = `City/${city}`;
+                if (cat === "InterCity" || city === "InterCity") { apiVer = "v2"; apiPath = "InterCity"; } 
+                else if (cat === "DRTS") { apiVer = "v3"; apiPath = `DRTS/City/${city}`; } 
+                else if (cat === "SciencePark") { apiVer = "v2"; apiPath = `SciencePark/${city}`; } 
+                else { apiVer = city === "Tainan" ? "v3" : "v2"; apiPath = `City/${city}`; }
+
+                const result = await safeTdxFetch(`${CONFIG.BASE_API}/${apiVer}/Bus/Vehicle/${apiPath}?$format=JSON`, token);
+                if (!result.ok) throw new Error(`車籍資料獲取失敗: ${result.errorText}`);
+                const dict = {};
+                result.data.forEach(v => {
+                    dict[v.PlateNumb] = { 
+                        year: v.ManufactureYear || (v.PurchaseTime ? v.PurchaseTime.substring(0, 4) : '不詳'), 
+                        isLowFloor: v.IsLowFloor === 1 || v.HasLiftOrRamp === 1, 
+                        hasWifi: v.HasWifi === 1, 
+                        isElectric: v.IsElectric === 1 || v.VehicleType === 1, 
+                        hasLift: v.HasLiftOrRamp === 1 
+                    };
+                });
+                return send(dict);
+            }
+
             if (route) {
                 let apiVer = "v2", apiPath = `City/${city}`;
-                if (cat === "InterCity") { apiVer = "v2"; apiPath = "InterCity"; } 
+                if (cat === "InterCity" || city === "InterCity") { apiVer = "v2"; apiPath = "InterCity"; } 
                 else if (cat === "DRTS") { apiVer = "v3"; apiPath = `DRTS/City/${city}`; } 
                 else if (cat === "SciencePark") { apiVer = "v2"; apiPath = `SciencePark/${city}`; } 
                 else { apiVer = city === "Tainan" ? "v3" : "v2"; apiPath = `City/${city}`; }
 
                 const dynVer = apiVer, staticVer = apiVer, stopVer = apiVer, path = apiPath;
-                const routePrefix = route.split(' ')[0]; 
+                
+                // 🌟 強化版前綴截取：不管有沒有誇號、名稱多髒，純粹切出前面的中英文數字當前綴，保證能查到 TDX 大集合
+                let routePrefix = (route.match(/^[a-zA-Z0-9\-]+/) || [""])[0];
+                if (!routePrefix) routePrefix = route.split(/[ (（]/)[0]; // Fallback
+
                 const targetNorm = norm(route);
                 const routeKey = getRouteKey(city, cat, route);
 
                 const match = (i) => {
+                    const rn = norm(getZh(i.RouteName));
+                    const srn = norm(getZh(i.SubRouteName));
                     const generatedName = formatDisplayName(i.RouteName, i.SubRouteName);
-                    return norm(generatedName) === targetNorm || norm(getZh(i.SubRouteName) || getZh(i.RouteName)) === targetNorm;
+                    return rn === targetNorm || srn === targetNorm || norm(generatedName) === targetNorm;
                 };
 
                 if (action === "info") {
                     const cached = await getCachedJson(env, "route_stops", "route_key = ?", [routeKey], null);
                     if (cached) return send(cached);
+                    
                     const data = await fetchRouteData(`${CONFIG.BASE_API}/${stopVer}/Bus/StopOfRoute/${apiPath}`, routePrefix, token);
                     const items = data.filter(match).map(r => ({ RouteName: r.RouteName, SubRouteName: r.SubRouteName, Direction: r.Direction, Stops: r.Stops, Operators: r.Operators || [] }));
                     if (items.length === 0) throw new Error(`查無站牌清單資料，可能是路線名稱不符: ${route}`);
+                    
                     await upsertJson(env, "route_stops", ["route_key", "city", "route_name", "type", "data", "updated_at"], [routeKey, city, route, cat, JSON.stringify(items), Date.now()]);
                     return send(items);
                 }
@@ -322,8 +350,10 @@ export default {
                 if (action === "shape") {
                     const cached = await getCachedJson(env, "route_shapes", "route_key = ?", [routeKey], null);
                     if (cached) return send(cached);
+                    
                     const data = await fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/Shape/${apiPath}`, routePrefix, token);
-                    const shapes = data.filter(i => norm(getZh(i.SubRouteName) || getZh(i.RouteName)) === targetNorm);
+                    const shapes = data.filter(match);
+                    
                     await upsertJson(env, "route_shapes", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(shapes), Date.now()]);
                     return send(shapes);
                 }
@@ -414,16 +444,6 @@ export default {
                     return send({ route, fares });
                 }
 
-                if (action === "vehicle") {
-                    const result = await safeTdxFetch(`${CONFIG.BASE_API}/${staticVer}/Bus/Vehicle/${apiPath}?$format=JSON`, token);
-                    if (!result.ok) throw new Error(`車籍資料獲取失敗: ${result.errorText}`);
-                    const dict = {};
-                    result.data.forEach(v => {
-                        dict[v.PlateNumb] = { year: v.ManufactureYear || (v.PurchaseTime ? v.PurchaseTime.substring(0, 4) : '不詳'), isLowFloor: v.IsLowFloor === 1 || v.HasLiftOrRamp === 1, hasWifi: v.HasWifi === 1, isElectric: v.IsElectric === 1 || v.VehicleType === 1, hasLift: v.HasLiftOrRamp === 1 };
-                    });
-                    return send(dict);
-                }
-
                 const [resPos, resEst] = await Promise.all([
                     fetchRouteData(`${CONFIG.BASE_API}/${dynVer}/Bus/RealTimeByFrequency/${apiPath}`, routePrefix, token).catch(()=>[]),
                     fetchRouteData(`${CONFIG.BASE_API}/${dynVer}/Bus/EstimatedTimeOfArrival/${apiPath}`, routePrefix, token).catch(()=>[])
@@ -445,7 +465,6 @@ export default {
             return send({ status: "Error", message: "未知的 action" }, 400);
 
         } catch (e) {
-            // 🌟 最終攔截網：任何上述拋出的錯誤，都會變成明確的 JSON 顯示在畫面上！
             return send({ 
                 error: "系統異常或 TDX 連線失敗", 
                 details: e.message, 
