@@ -451,7 +451,7 @@ export default {
                 const ests = (Array.isArray(resEst) ? resEst : []).filter(e => match(e));
 
                 return send({
-                    buses: buses.map(b => ({ plate: b.PlateNumb, lat: b.BusPosition?.PositionLat, lon: b.BusPosition?.PositionLon, azi: b.Azimuth, dir: b.Direction })),
+                    buses: buses.map(b => ({ plate: b.PlateNumb, lat: b.BusPosition?.PositionLat, lon: b.BusPosition?.PositionLon, azi: b.Azimuth, dir: b.Direction, time: b.DataTime || b.SrcUpdateTime })),
                     estimates: ests.reduce((acc, e) => {
                         const key = `${e.Direction}_${e.StopUID}`;
                         const sec = e.EstimateTime ?? null;
