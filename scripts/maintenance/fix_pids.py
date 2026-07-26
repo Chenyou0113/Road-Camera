@@ -145,7 +145,7 @@ new_app = """const PIDS_APP = {
                     
                     const isZh = this.STATE.currentLang === 'zh';
                     if (data && Array.isArray(data) && data.length > 0) {
-                        const alertMsg = data.map(a => `⚠️ 【${a.Title}】 ${a.Description}`).join("   ❖   ");
+                        const alertMsg = data.map(a => `${a.Title.includes('正常') ? '✅' : '⚠️'} 【${a.Title}】 ${a.Description}`).join("   ❖   ");
                         this.STATE.alertText = alertMsg;
                     } else {
                         this.STATE.alertText = '';
