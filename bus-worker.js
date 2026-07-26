@@ -1,12 +1,12 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║  TDX 公車 Cloudflare Worker — 最終救贖旗艦版 (v30.3)           ║
- * ║  修正：智慧型括號清除(防呆)、強化 routePrefix 搜尋字首擷取       ║
+ * ║  TDX 公車 Cloudflare Worker — 最終救贖旗艦版 (v30.6)           ║
+ * ║  修正：智慧型陣列解包器，避開 TDX v3 隱藏的 Messages 空陣列干擾    ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
 const CONFIG = {
-    VERSION: "v30.3",
+    VERSION: "v30.6",
     CITIES: ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung", "Keelung", "InterCity"],
     TOKEN_URL: "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
     BASE_API: "https://tdx.transportdata.tw/api/basic",
@@ -32,11 +32,11 @@ const DICT = {
 
 const getZh = (obj) => (typeof obj === 'object' ? (obj?.Zh_tw || "") : (obj || "")).toString().trim();
 
-// 🌟 無敵正規化：即使左括號沒有對應的右括號，也能強制把後方的所有贅字清空
 const norm = (n) => {
     if (!n) return "";
     return n.replace(/[\(（].*?([\)）]|$)/g, "")
             .replace(/(去程半|返程半|去程|返程|狗狗公車|動物園專車|夜間公車|區間車|區|繞駛|繞|延駛|延|調度站發車|發車|往[^\s]+|經[^\s]+)/g, "")
+            .replace(/\s+/g, "")
             .trim();
 };
 
@@ -69,6 +69,21 @@ const formatServiceDay = (sd) => {
 const getRouteKey = (city, type, routeName) => `${type}:${city}:${norm(routeName)}`;
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// 🌟 智慧型解包器 (v30.6 升級)：尋找資料量最大的陣列，避開 TDX 夾雜的 Messages: [] 空陣列
+const extractArray = (d) => {
+    if (!d) return [];
+    if (Array.isArray(d)) return d;
+    if (Array.isArray(d.value)) return d.value;
+    
+    let bestArr = [];
+    for (let k in d) {
+        if (Array.isArray(d[k]) && d[k].length > bestArr.length) {
+            bestArr = d[k];
+        }
+    }
+    return bestArr;
+};
 
 async function safeTdxFetch(url, token, retries = 3) {
     for (let i = 0; i < retries; i++) {
@@ -133,14 +148,13 @@ async function fetchRouteData(baseUrl, routePrefix, token) {
     for (const filter of candidates) {
         const result = await safeTdxFetch(buildUrl(filter), token);
         if (result.ok) {
-            let data = result.data;
-            if (Array.isArray(data)) return data;
-            if (Array.isArray(data?.value)) return data.value;
-            return data || [];
+            let arr = extractArray(result.data); 
+            if (arr.length > 0) return arr;
+        } else {
+            lastError = result.errorText;
         }
-        if (result.errorText) lastError = result.errorText;
     }
-    throw new Error(`資料抓取徹底失敗: ${lastError} (請求網址: ${baseUrl})`);
+    return [];
 }
 
 async function autoSyncCity(city, cat, token, env) {
@@ -153,9 +167,10 @@ async function autoSyncCity(city, cat, token, env) {
     const result = await safeTdxFetch(`${CONFIG.BASE_API}/${apiVer}/Bus/StopOfRoute/${apiPath}?$format=JSON`, token);
     if (!result.ok) throw new Error(`TDX 路線同步失敗: ${result.errorText}`);
     
-    const data = result.data;
-    if (!Array.isArray(data) || data.length === 0) {
-        throw new Error(`TDX 回傳了空的路線資料 (可能該縣市無資料，或 API 路徑變更)`);
+    const data = extractArray(result.data);
+    if (data.length === 0) {
+        // 🌟 萬一真的抓不到，印出前 150 字元供 debug 判斷
+        throw new Error(`TDX 回傳了空的路線資料 (Raw: ${JSON.stringify(result.data).substring(0, 150)})`);
     }
 
     const type = cat;
@@ -174,7 +189,7 @@ async function autoSyncCity(city, cat, token, env) {
             seen.add(uniqKey);
             const dep = getZh(r.Stops[0].StopName);
             const dest = getZh(r.Stops[r.Stops.length-1].StopName);
-            batch.push(stmt.bind(r.RouteID || r.SubRouteUID, city, finalName, dep, dest, type, startTime));
+            batch.push(stmt.bind(r.RouteUID || r.RouteID || r.SubRouteUID, city, finalName, dep, dest, type, startTime));
             results.push({ name: finalName, departure: dep, destination: dest, city: city, type: type });
         }
 
@@ -299,13 +314,15 @@ export default {
                 const result = await safeTdxFetch(`${CONFIG.BASE_API}/${apiVer}/Bus/Vehicle/${apiPath}?$format=JSON`, token);
                 if (!result.ok) throw new Error(`車籍資料獲取失敗: ${result.errorText}`);
                 const dict = {};
-                result.data.forEach(v => {
+                
+                const arr = extractArray(result.data);
+                arr.forEach(v => {
                     dict[v.PlateNumb] = { 
                         year: v.ManufactureYear || (v.PurchaseTime ? v.PurchaseTime.substring(0, 4) : '不詳'), 
                         isLowFloor: v.IsLowFloor === 1 || v.HasLiftOrRamp === 1 || v.VehicleType === 2, 
                         hasWifi: v.HasWifi === 1, 
                         isElectric: v.IsElectric === 1 || v.IsElectric === true, 
-                        hasLift: v.HasLiftOrRamp === 1 || v.VehicleType === 3 || v.VehicleType === 5 
+                        hasLift: v.HasLiftOrRamp === 1 || v.VehicleType === 3 || v.VehicleType === 5
                     };
                 });
                 return send(dict);
@@ -319,10 +336,7 @@ export default {
                 else { apiVer = city === "Tainan" ? "v3" : "v2"; apiPath = `City/${city}`; }
 
                 const dynVer = apiVer, staticVer = apiVer, stopVer = apiVer, path = apiPath;
-                
-                // 🌟 強化版前綴截取：不管有沒有誇號、名稱多髒，純粹切出前面的中英文數字當前綴，保證能查到 TDX 大集合
-                let routePrefix = (route.match(/^[a-zA-Z0-9\-]+/) || [""])[0];
-                if (!routePrefix) routePrefix = route.split(/[ (（]/)[0]; // Fallback
+                let routePrefix = route.split(/[ (（_-]/)[0]; 
 
                 const targetNorm = norm(route);
                 const routeKey = getRouteKey(city, cat, route);
@@ -496,7 +510,21 @@ async function getAuthToken(env) {
 async function fetchBusNewsOrAlert(type, city, token) {
     const target = type === "news" ? "News" : "Alert";
     const path = city === "InterCity" ? "InterCity" : `City/${city}`;
-    const result = await safeTdxFetch(`${CONFIG.BASE_API}/v2/Bus/${target}/${path}?$format=JSON`, token);
-    if (!result.ok) throw new Error(`公告抓取失敗: ${result.errorText}`);
-    return Array.isArray(result.data) ? result.data : (result.data?.value || []);
+    
+    try {
+        const result = await safeTdxFetch(`${CONFIG.BASE_API}/v2/Bus/${target}/${path}?$format=JSON`, token);
+        
+        if (!result.ok) {
+            // 🌟 終極防禦：只要 TDX 拒絕回應 (不論是 400, 404 還是 500)
+            // 我們絕對不拋出 Error，而是直接回傳空陣列，保護網頁正常運作！
+            console.warn(`[TDX 公告警告] ${city} 抓取失敗:`, result.errorText);
+            return []; 
+        }
+        
+        return extractArray(result.data);
+    } catch (e) {
+        // 🌟 網路斷線或 JSON 解析失敗時，同樣回傳空陣列
+        console.warn(`[TDX 公告異常]`, e);
+        return [];
+    }
 }
