@@ -289,7 +289,6 @@ export default {
                 return send(fresh);
             }
 
-            // 確保這個判斷是獨立在外層的！這樣沒有帶入 route 也會執行
             if (action === "vehicle") {
                 let apiVer = "v2", apiPath = `City/${city}`;
                 if (cat === "InterCity" || city === "InterCity") { apiVer = "v2"; apiPath = "InterCity"; } 
@@ -303,10 +302,10 @@ export default {
                 result.data.forEach(v => {
                     dict[v.PlateNumb] = { 
                         year: v.ManufactureYear || (v.PurchaseTime ? v.PurchaseTime.substring(0, 4) : '不詳'), 
-                        isLowFloor: v.IsLowFloor === 1 || v.HasLiftOrRamp === 1, 
+                        isLowFloor: v.IsLowFloor === 1 || v.HasLiftOrRamp === 1 || v.VehicleType === 2, 
                         hasWifi: v.HasWifi === 1, 
-                        isElectric: v.IsElectric === 1 || v.VehicleType === 1, 
-                        hasLift: v.HasLiftOrRamp === 1 
+                        isElectric: v.IsElectric === 1 || v.IsElectric === true, 
+                        hasLift: v.HasLiftOrRamp === 1 || v.VehicleType === 3 || v.VehicleType === 5 
                     };
                 });
                 return send(dict);
