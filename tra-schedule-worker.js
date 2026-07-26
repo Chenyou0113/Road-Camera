@@ -733,7 +733,7 @@ export default {
                 const alR = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'ALERTS_DATA'").first();
                 const als = JSON.parse(alR?.Value || "[]");
                 const prop = conf?.Value || "歡迎搭乘臺鐵。";
-                const marqueeText = als.map(a => `⚠️【${a.Title}】${a.Description}`).join(" ❖ ") + (als.length ? " ❖ " : "") + prop;
+                const marqueeText = als.map(a => `${a.Title.includes('正常') ? '✅' : '⚠️'}【${a.Title}】${a.Description}`).join(" ❖ ") + (als.length ? " ❖ " : "") + prop;
                 return new Response(JSON.stringify({ text: marqueeText }), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
             if (url.pathname === "/api/pids/assets") {
