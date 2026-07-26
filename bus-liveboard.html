@@ -1281,16 +1281,18 @@
         suggestionsBox.style.display = 'block';
     }
 
-    async function loadVehicleData(city) {
-        if (vehicleMap[city]) return;
-        vehicleMap[city] = {}; 
+    // 🌟 在這裡接收正確的 category，建立專屬的獨立快取防止污染
+    async function loadVehicleData(city, category) {
+        const cacheKey = `${category}_${city}`;
+        if (vehicleMap[cacheKey]) return;
+        vehicleMap[cacheKey] = {}; 
         try {
-            const res = await throttledFetch(`${WORKER_URL}/?action=vehicle&city=${city}`);
+            const res = await throttledFetch(`${WORKER_URL}/?action=vehicle&category=${category}&city=${city}`);
             const data = await res.json();
             
             if (Array.isArray(data)) {
                 data.forEach(v => {
-                    vehicleMap[city][v.PlateNumb] = {
+                    vehicleMap[cacheKey][v.PlateNumb] = {
                         year: v.ManufactureYear || (v.PurchaseTime ? v.PurchaseTime.substring(0, 4) : '不詳'),
                         isLowFloor: v.IsLowFloor === 1 || v.HasLiftOrRamp === 1,
                         hasWifi: v.HasWifi === 1,
@@ -1299,7 +1301,7 @@
                     };
                 });
             } else if (typeof data === 'object' && data !== null) {
-                vehicleMap[city] = data;
+                vehicleMap[cacheKey] = data;
             }
         } catch (e) { 
             console.warn(`車籍字典載入異常 (${city})`, e); 
@@ -1321,7 +1323,8 @@
         currentData.type = type || browser.type;
         currentData.fare = null;
 
-        loadVehicleData(currentData.city);
+        // 🌟 正確帶入類別（type）以支援跨種類公車車籍載入
+        loadVehicleData(currentData.city, currentData.type);
 
         try {
             const [infoRes, shapeRes, fareRes] = await Promise.all([
@@ -1557,7 +1560,8 @@
                     }
                 }
 
-                const cityRegistry = vehicleMap[currentData.city] || {};
+                // 🌟 改用獨立複合鍵抓取對應字典
+                const cityRegistry = vehicleMap[`${currentData.type}_${currentData.city}`] || {};
                 const vReg = cityRegistry[plate] || {};
                 const year = vReg.year && vReg.year !== '不詳' ? `${vReg.year}年車` : '年份不詳';
                 const isElectric = plate.startsWith('E') || plate.endsWith('FV') || vReg.isElectric; 
@@ -2067,7 +2071,8 @@
 
                 marker.addListener('gmp-click', () => {
                     if (activeInfoWindow) activeInfoWindow.close();
-                    const cityRegistry = vehicleMap[currentData.city] || {};
+                    // 🌟 同樣改用獨立複合鍵抓取對應字典
+                    const cityRegistry = vehicleMap[`${currentData.type}_${currentData.city}`] || {};
                     const vReg = cityRegistry[plate] || {};
                     const year = vReg.year && vReg.year !== '不詳' ? `${vReg.year}年` : '年份未知';
                     const isElectric = plate.startsWith('E') || plate.endsWith('FV') || vReg.isElectric; 
