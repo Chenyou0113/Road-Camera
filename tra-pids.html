@@ -722,7 +722,8 @@
         let ytPlaylist = [];
         let currentPlaylistIndex = 0;
         let isYtApiReady = false;
-        let isPlaylistPlaying = false; // 🌟 新增：記錄使用者是否已經按下「播放」
+        let isPlaylistPlaying = false; // 記錄使用者是否已經按下「播放」
+        let skipTimeout = null;        // 🌟 新增：用於防抖，避免無效影片引發無窮跳轉迴圈
 
         // 1. 提取 YouTube 影片 ID
         function extractYoutubeId(input) {
@@ -771,7 +772,7 @@
             }
         }
 
-        // 🌟 修正：供鍵盤快速鍵 '4' 呼叫的播放入口
+        // 供鍵盤快速鍵 '4' 呼叫的播放入口
         function startVideoPlayback() {
             if (ytPlayer && typeof ytPlayer.playVideo === 'function') {
                 isPlaylistPlaying = true;
@@ -819,11 +820,11 @@
                 height: '100%',
                 videoId: videoId,
                 playerVars: {
-                    'autoplay': 0,       // 🚫 首次載入一律不自動播放，等待點擊或按鍵 4
-                    'mute': 1,           // 靜音
-                    'controls': 0,       // 🚫 關閉原生控制列 (無進度條)
-                    'rel': 0,            // 不顯示相關影片
-                    'modestbranding': 1, // 隱藏 YouTube 商標
+                    'autoplay': 0,       
+                    'mute': 1,           
+                    'controls': 0,       
+                    'rel': 0,            
+                    'modestbranding': 1, 
                     'playsinline': 1,
                     'origin': window.location.origin
                 },
@@ -832,6 +833,7 @@
                         // 同步狀態
                         if (event.data === 1) { // 播放中
                             isPlaylistPlaying = true;
+                            clearTimeout(skipTimeout); // 成功播放則清除自動跳轉計時
                         }
                         if (event.data === 2) { // 暫停
                             isPlaylistPlaying = false;
@@ -839,8 +841,20 @@
                         if (event.data === 0) { // 播放結束 -> 自動循環載入並播放下一部
                             console.log('✅ 影片播放完畢，自動播放下一部');
                             isPlaylistPlaying = true; 
-                            playNextVideo();
+                            clearTimeout(skipTimeout);
+                            // 🌟 修正：延遲 1 秒再播下一部，避免無效影片瞬間瘋狂重導
+                            skipTimeout = setTimeout(() => {
+                                playNextVideo();
+                            }, 1000);
                         }
+                    },
+                    // 🌟 修正：處理影片無效/無法嵌入的情況，自動跳過
+                    'onError': function(event) {
+                        console.error('❌ 影片載入錯誤，錯誤碼:', event.data, '自動跳過下一部');
+                        clearTimeout(skipTimeout);
+                        skipTimeout = setTimeout(() => {
+                            playNextVideo();
+                        }, 1000);
                     }
                 }
             });
@@ -851,22 +865,24 @@
             if (!ytPlayer || typeof ytPlayer.getPlayerState !== 'function') return;
             const state = ytPlayer.getPlayerState();
             
-            if (state === 1 || state === 3) { // 正在播放或緩衝中
-                isPlaylistPlaying = false;    // 標記為暫停
+            if (state === 1 || state === 3) { 
+                isPlaylistPlaying = false;   
                 ytPlayer.pauseVideo();
-            } else {                          // 暫停或尚未開始
-                isPlaylistPlaying = true;     // 標記為播放中
+            } else {                          
+                isPlaylistPlaying = true;    
                 ytPlayer.playVideo();
             }
         }
 
         function playNextVideo() {
+            clearTimeout(skipTimeout); // 防按鈕連點
             if (ytPlaylist.length === 0) return;
             currentPlaylistIndex = (currentPlaylistIndex + 1) % ytPlaylist.length;
             initOrUpdatePlayer();
         }
 
         function playPrevVideo() {
+            clearTimeout(skipTimeout); // 防按鈕連點
             if (ytPlaylist.length === 0) return;
             currentPlaylistIndex = (currentPlaylistIndex - 1 + ytPlaylist.length) % ytPlaylist.length;
             initOrUpdatePlayer();
