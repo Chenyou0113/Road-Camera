@@ -742,6 +742,34 @@ export default {
                 return new Response(JSON.stringify({ images: JSON.parse(img?.Value || "[]"), video: JSON.parse(vid?.Value || "[]") }), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
+            // 9. 獲取全天時刻表 Blob (供列車運行圖使用)
+            if (url.pathname === "/api/timetable/daily") {
+                const date = url.searchParams.get("date") || getTwDateString(0);
+                const row = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`TIMETABLE_BLOB_${date}`).first();
+                
+                // 若資料庫內尚無此日時刻表 Blob，則自動判斷並即時同步該日的 TDX 時刻表
+                if (!row || !row.Value) {
+                    const targetDate = new Date(`${date}T00:00:00+08:00`);
+                    const todayDate = new Date(new Date(Date.now() + 8 * 3600000).toISOString().split('T')[0] + 'T00:00:00+08:00');
+                    const diffDays = Math.round((targetDate - todayDate) / 86400000);
+                    
+                    if (diffDays >= 0 && diffDays <= 60) {
+                        try {
+                            await syncDailyScheduleBlobSingle(env, diffDays);
+                            const retryRow = await env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`TIMETABLE_BLOB_${date}`).first();
+                            if (retryRow && retryRow.Value) {
+                                return new Response(retryRow.Value, { headers: { ...cors, 'Content-Type': 'application/json' } });
+                            }
+                        } catch (err) {
+                            console.error("即時同步 Schedule 失敗:", err);
+                        }
+                    }
+                    return new Response(JSON.stringify([]), { headers: { ...cors, 'Content-Type': 'application/json' } });
+                }
+                
+                return new Response(row.Value, { headers: { ...cors, 'Content-Type': 'application/json' } });
+            }
+
             // 8. 同步
             if (url.pathname === "/api/sync") {
                 const type = url.searchParams.get("type");
