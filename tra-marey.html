@@ -530,6 +530,7 @@
             const seriesData = [];
             const todayStr = dateStr;
             const isToday = (dateStr === getTwTodayString());
+            let searchedTimes = [];
 
             globalTimetable.forEach(train => {
                 let pathData = [];
@@ -564,6 +565,7 @@
                             opacity = 1;
                             lineWidth = 5;
                             zIndex = 10;
+                            searchedTimes.push(...pathData.map(p => p[0]));
                         } else {
                             opacity = 0.12;
                             lineWidth = 1;
@@ -596,10 +598,12 @@
                             seriesData.push({
                                 name: `${train.Type} ${train.No}次 (已行駛)`,
                                 type: 'line',
+                                triggerLineEvent: true,
                                 data: pastStops,
                                 symbol: 'circle',
                                 symbolSize: searchVal === String(train.No) ? 8 : 5, 
                                 showSymbol: searchVal === String(train.No), 
+                                emphasis: { focus: 'series', lineStyle: { width: 6 } },
                                 z: zIndex,
                                 lineStyle: {
                                     color: baseColor,
@@ -632,10 +636,12 @@
                             seriesData.push({
                                 name: `${train.Type} ${train.No}次 (預估延遲)`,
                                 type: 'line',
+                                triggerLineEvent: true,
                                 data: futureStops,
                                 symbol: 'circle',
                                 symbolSize: searchVal === String(train.No) ? 8 : 5, 
                                 showSymbol: searchVal === String(train.No), 
+                                emphasis: { focus: 'series', lineStyle: { width: 6 } },
                                 z: zIndex + 1, 
                                 lineStyle: {
                                     color: baseColor,
@@ -667,10 +673,12 @@
                         seriesData.push({
                             name: `${train.Type} ${train.No}次`,
                             type: 'line',
+                            triggerLineEvent: true,
                             data: pathData,
                             symbol: 'circle',
                             symbolSize: searchVal === String(train.No) ? 8 : 5, 
                             showSymbol: searchVal === String(train.No), 
+                            emphasis: { focus: 'series', lineStyle: { width: 6 } },
                             z: zIndex,
                             lineStyle: {
                                 color: baseColor,
@@ -703,16 +711,50 @@
             // 反轉 Y 軸分類，確保起點車站在上方
             const yAxisData = [...activeStations].reverse();
 
-            // 決定 X 軸預設視野
+            // 決定 X 軸視野 (Auto-zoom)
             let viewMin, viewMax;
-            if (isToday) {
-                const now = Date.now();
-                viewMin = now - (1 * 3600 * 1000);
-                viewMax = now + (3 * 3600 * 1000);
-            } else {
-                const baseTime = new Date(`${dateStr}T00:00:00+08:00`).getTime();
-                viewMin = baseTime + (6 * 3600 * 1000);
-                viewMax = baseTime + (12 * 3600 * 1000);
+            let searchFoundInLine = false;
+
+            if (searchVal !== "") {
+                if (searchedTimes.length > 0) {
+                    searchFoundInLine = true;
+                    const minTime = Math.min(...searchedTimes);
+                    const maxTime = Math.max(...searchedTimes);
+                    // 將畫面置中於該車次的運行時間，前後保留 1 小時
+                    viewMin = minTime - (1 * 3600 * 1000);
+                    viewMax = maxTime + (1 * 3600 * 1000);
+                } else {
+                    // 若當前線路無此車次，檢查是否在全域時刻表中有此車
+                    const trainExists = globalTimetable.some(t => String(t.No) === searchVal);
+                    const statusEl = document.getElementById('loading-status');
+                    statusEl.classList.remove('success');
+                    statusEl.style.opacity = '1';
+                    if (trainExists) {
+                        statusEl.style.borderColor = 'rgba(255, 165, 2, 0.5)';
+                        statusEl.style.background = 'rgba(255, 165, 2, 0.2)';
+                        statusEl.style.color = '#ffa502';
+                        statusEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i> 車次 ${searchVal} 未行經當前線路`;
+                    } else {
+                        statusEl.style.borderColor = 'rgba(255, 71, 87, 0.5)';
+                        statusEl.style.background = 'rgba(255, 71, 87, 0.2)';
+                        statusEl.style.color = '#ff4757';
+                        statusEl.innerHTML = `<i class="fas fa-times-circle"></i> 查無車次 ${searchVal}`;
+                    }
+                    if (window.searchWarningTimer) clearTimeout(window.searchWarningTimer);
+                    window.searchWarningTimer = setTimeout(() => { statusEl.style.opacity = '0'; }, 4000);
+                }
+            }
+
+            if (!searchFoundInLine) {
+                if (isToday) {
+                    const now = Date.now();
+                    viewMin = now - (1 * 3600 * 1000);
+                    viewMax = now + (3 * 3600 * 1000);
+                } else {
+                    const baseTime = new Date(`${dateStr}T00:00:00+08:00`).getTime();
+                    viewMin = baseTime + (6 * 3600 * 1000);
+                    viewMax = baseTime + (12 * 3600 * 1000);
+                }
             }
 
             // 🎯 新增一條垂直的「現在時間基準線」，比對任何列車與此垂直紅線的交點，即為該列車在現在那一刻所在的車站位置
@@ -800,15 +842,32 @@
 
             const trainColor = getTrainColor(train.Type, train.No);
             titleEl.innerHTML = `<span style="color:${trainColor}">${train.Type} <span style="font-family:'Outfit'">${train.No}</span>次</span>`;
-            routeEl.innerHTML = `<i class="fas fa-map-marker-alt" style="color:#a4b0be;"></i> ${train.StartStation} <i class="fas fa-arrow-right" style="margin: 0 4px; font-size: 0.8em; color: rgba(255,255,255,0.2)"></i> ${train.EndStation}`;
             
+            // 處理路線與狀態
+            let lineText = '';
+            if (train.Line === 1) lineText = '<span style="color:#2ed573; font-size:0.8em; border: 1px solid #2ed573; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">山線</span>';
+            else if (train.Line === 2) lineText = '<span style="color:#4facfe; font-size:0.8em; border: 1px solid #4facfe; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">海線</span>';
+            else if (train.Line === 3) lineText = '<span style="color:#e056fd; font-size:0.8em; border: 1px solid #e056fd; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">成追線</span>';
+            
+            let suspText = train.Susp === 1 || train.Susp === 2 ? '<span style="color:#ff4757; font-size:0.8em; border: 1px solid #ff4757; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">停駛</span>' : '';
+            
+            routeEl.innerHTML = `<i class="fas fa-map-marker-alt" style="color:#a4b0be;"></i> ${train.StartStation || train.Start} <i class="fas fa-arrow-right" style="margin: 0 4px; font-size: 0.8em; color: rgba(255,255,255,0.2)"></i> ${train.EndStation || train.Dest} ${lineText} ${suspText}`;
+            
+            // 如果有備註，加在下方
+            let noteHtml = '';
+            if (train.Note && train.Note.trim() !== '') {
+                noteHtml = `<div style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 6px; margin: 10px 20px 0; font-size: 0.85em; color: #a4b0be; border-left: 3px solid #4facfe;">
+                                <i class="fas fa-info-circle"></i> 備註：${train.Note}
+                            </div>`;
+            }
+
             const isDelayed = globalLiveMap[train.No] && globalLiveMap[train.No].DelayTime > 0;
             const delayMins = isDelayed ? globalLiveMap[train.No].DelayTime : 0;
             const nowTime = Date.now();
             const datePickerVal = document.getElementById('date-picker').value;
             const isToday = (datePickerVal === getTwTodayString());
 
-            let html = '';
+            let html = noteHtml + '<div class="timeline" id="sp-timeline" style="margin-top: 20px;">';
             let firstStopTimeMins = null;
 
             train.Stops.forEach((stop, index) => {
@@ -852,6 +911,7 @@
                 `;
             });
 
+            html += '</div>'; // close timeline div
             timelineEl.innerHTML = html;
             panel.classList.add('active');
         };
