@@ -226,7 +226,7 @@
         .timeline::before {
             content: '';
             position: absolute;
-            left: 55px; 
+            left: 58px; /* 對齊 node 中心 */
             top: 10px;
             bottom: 10px;
             width: 2px;
@@ -557,44 +557,66 @@
             let searchedTimes = [];
 
             globalTimetable.forEach(train => {
-                let pathData = [];
-                let firstStopTimeMins = null;
+                let pathSegments = [];
+                let currentSegment = [];
 
-                // 篩選出這班車在我們當前選取線路內的停靠站
-                const filteredStops = train.Stops.filter(stop => activeStations.includes(stop.Name));
+                // 計算整台車真正的第一站發車時間 (用來準確判斷跨夜)
+                let trueFirstStopTimeMins = null;
+                const firstTimeStr = train.Stops[0].Dep || train.Stops[0].Arr;
+                if (firstTimeStr) {
+                    const [h, m] = firstTimeStr.split(':').map(Number);
+                    trueFirstStopTimeMins = h * 60 + m;
+                }
 
-                if (filteredStops.length > 1) {
-                    filteredStops.forEach((stop, index) => {
+                train.Stops.forEach(stop => {
+                    // 處理環島列車特殊站名 "臺北-環島" -> "臺北"
+                    const stopName = stop.Name.replace("-環島", "");
+                    if (activeStations.includes(stopName)) {
+                        currentSegment.push({ ...stop, Name: stopName });
+                    } else {
+                        if (currentSegment.length > 1) {
+                            pathSegments.push(currentSegment);
+                        }
+                        currentSegment = [];
+                    }
+                });
+                if (currentSegment.length > 1) {
+                    pathSegments.push(currentSegment);
+                }
+
+                const isDelayed = globalLiveMap[train.No] && globalLiveMap[train.No].DelayTime > 0;
+                const delayMins = isDelayed ? globalLiveMap[train.No].DelayTime : 0;
+                const baseColor = getTrainColor(train.Type, train.No);
+
+                // 🎯 搜尋高亮與淡化背景邏輯
+                let opacity = 0.85;
+                let lineWidth = isDelayed ? 2.5 : 1.5;
+                let zIndex = 1;
+
+                if (searchVal !== "") {
+                    if (String(train.No) === searchVal) {
+                        opacity = 1;
+                        lineWidth = 5;
+                        zIndex = 10;
+                    } else {
+                        opacity = 0.12;
+                        lineWidth = 1;
+                        zIndex = 0;
+                    }
+                }
+
+                pathSegments.forEach((segmentStops, segmentIndex) => {
+                    let pathData = [];
+                    segmentStops.forEach(stop => {
                         const timeStr = stop.Dep || stop.Arr; 
                         if (timeStr) {
-                            const [h, m] = timeStr.split(':').map(Number);
-                            if (index === 0) firstStopTimeMins = h * 60 + m; 
-
-                            const timeVal = parseTimeToTimestamp(timeStr, todayStr, firstStopTimeMins);
+                            const timeVal = parseTimeToTimestamp(timeStr, todayStr, trueFirstStopTimeMins);
                             pathData.push([timeVal, stop.Name]);
                         }
                     });
 
-                    const isDelayed = globalLiveMap[train.No] && globalLiveMap[train.No].DelayTime > 0;
-                    const delayMins = isDelayed ? globalLiveMap[train.No].DelayTime : 0;
-                    const baseColor = getTrainColor(train.Type, train.No);
-
-                    // 🎯 搜尋高亮與淡化背景邏輯
-                    let opacity = 0.85;
-                    let lineWidth = isDelayed ? 2.5 : 1.5;
-                    let zIndex = 1;
-
-                    if (searchVal !== "") {
-                        if (String(train.No) === searchVal) {
-                            opacity = 1;
-                            lineWidth = 5;
-                            zIndex = 10;
-                            searchedTimes.push(...pathData.map(p => p[0]));
-                        } else {
-                            opacity = 0.12;
-                            lineWidth = 1;
-                            zIndex = 0;
-                        }
+                    if (String(train.No) === searchVal) {
+                        searchedTimes.push(...pathData.map(p => p[0]));
                     }
 
                     // 判斷是否需要拆分實虛線 (必須是今天且有延誤)
@@ -621,7 +643,7 @@
                         if (pastStops.length > 1) {
                             const shortType = getShortTrainType(train.Type, train.No);
                             seriesData.push({
-                                name: `${shortType} ${train.No}次 (已行駛)`,
+                                name: `${shortType} ${train.No}次 (已行駛)${pathSegments.length > 1 ? ` - 段${segmentIndex+1}` : ''}`,
                                 type: 'line',
                                 triggerLineEvent: true,
                                 data: pastStops,
@@ -631,12 +653,7 @@
                                 emphasis: { focus: 'series', lineStyle: { width: 6 } },
                                 endLabel: { show: futureStops.length <= 1, formatter: String(train.No), color: 'inherit', fontSize: 11, distance: 4 },
                                 z: zIndex,
-                                lineStyle: {
-                                    color: baseColor,
-                                    width: lineWidth,
-                                    type: 'solid', 
-                                    opacity: opacity
-                                },
+                                lineStyle: { color: baseColor, width: lineWidth, type: 'solid', opacity: opacity },
                                 itemStyle: { color: baseColor, opacity: opacity },
                                 tooltip: {
                                     formatter: function (params) {
@@ -662,7 +679,7 @@
                         if (futureStops.length > 1) {
                             const shortType = getShortTrainType(train.Type, train.No);
                             seriesData.push({
-                                name: `${shortType} ${train.No}次 (預估延遲)`,
+                                name: `${shortType} ${train.No}次 (預估延遲)${pathSegments.length > 1 ? ` - 段${segmentIndex+1}` : ''}`,
                                 type: 'line',
                                 triggerLineEvent: true,
                                 data: futureStops,
@@ -672,12 +689,7 @@
                                 emphasis: { focus: 'series', lineStyle: { width: 6 } },
                                 endLabel: { show: true, formatter: String(train.No), color: 'inherit', fontSize: 11, distance: 4 },
                                 z: zIndex + 1, 
-                                lineStyle: {
-                                    color: baseColor,
-                                    width: lineWidth,
-                                    type: 'dashed', 
-                                    opacity: opacity
-                                },
+                                lineStyle: { color: baseColor, width: lineWidth, type: 'dashed', opacity: opacity },
                                 itemStyle: { color: baseColor, opacity: opacity },
                                 tooltip: {
                                     formatter: function (params) {
@@ -702,7 +714,7 @@
                         // 無延遲，或非今天：整條實線
                         const shortType = getShortTrainType(train.Type, train.No);
                         seriesData.push({
-                            name: `${shortType} ${train.No}次`,
+                            name: `${shortType} ${train.No}次${pathSegments.length > 1 ? ` - 段${segmentIndex+1}` : ''}`,
                             type: 'line',
                             triggerLineEvent: true,
                             data: pathData,
@@ -712,12 +724,7 @@
                             emphasis: { focus: 'series', lineStyle: { width: 6 } },
                             endLabel: { show: true, formatter: String(train.No), color: 'inherit', fontSize: 11, distance: 4 },
                             z: zIndex,
-                            lineStyle: {
-                                color: baseColor,
-                                width: lineWidth,
-                                type: 'solid', 
-                                opacity: opacity
-                            },
+                            lineStyle: { color: baseColor, width: lineWidth, type: 'solid', opacity: opacity },
                             itemStyle: { color: baseColor, opacity: opacity },
                             tooltip: {
                                 formatter: function (params) {
@@ -727,7 +734,7 @@
                                     const estTime = new Date(estTimeMs).toLocaleTimeString('zh-TW', {hour12: false, hour: '2-digit', minute:'2-digit'});
                                     let delayStatusText = delayMins > 0 ? `<span style="color:#ff4757; font-weight:bold;">⚠️ 晚 ${delayMins} 分</span>` : '<span style="color:#2ed573; font-weight:bold;">✅ 準點</span>';
                                     return `<div style="padding:5px;">
-                                                <strong style="color:${baseColor}">${params.seriesName}</strong><br>
+                                                <strong style="color:${baseColor}">${params.seriesName.split(' - ')[0]}</strong><br>
                                                 📍 <b>${params.value[1]}</b> 站<br>
                                                 ⏱️ 預計時間：${time}<br>
                                                 🕒 實際時間：${estTime}<br>
@@ -737,7 +744,7 @@
                             }
                         });
                     }
-                }
+                });
             });
 
             // 反轉 Y 軸分類，確保起點車站在上方
@@ -832,17 +839,15 @@
                     textStyle: { color: '#f1f2f6', fontFamily: 'inherit' }
                 },
                 dataZoom: [
-                    { type: 'inside', xAxisIndex: 0, filterMode: 'none' }, 
+                    { type: 'inside', xAxisIndex: 0, filterMode: 'none', startValue: viewMin, endValue: viewMax }, 
                     { type: 'inside', yAxisIndex: 0, filterMode: 'none' }, 
-                    { type: 'slider', xAxisIndex: 0, bottom: 10, height: 20, borderColor: '#26262b', textStyle: { color: '#fff' } }
+                    { type: 'slider', xAxisIndex: 0, bottom: 10, height: 20, borderColor: '#26262b', textStyle: { color: '#fff' }, startValue: viewMin, endValue: viewMax }
                 ],
                 grid: { top: 30, right: 40, bottom: 50, left: 80 },
                 xAxis: {
                     type: 'time',
                     splitLine: { show: true, lineStyle: { color: '#1e1e24' } }, 
-                    axisLabel: { formatter: '{HH}:{mm}', color: '#a4b0be' },
-                    min: viewMin,
-                    max: viewMax
+                    axisLabel: { formatter: '{HH}:{mm}', color: '#a4b0be' }
                 },
                 yAxis: {
                     type: 'category',
