@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>臺鐵即時列車運行圖 (Marey Chart)</title>
+    <!-- 引入 Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- 引入 FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- 引入 Apache ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        body { 
+            margin: 0; padding: 0; 
+            background-color: #0f0f12; color: #f1f2f6; 
+            font-family: 'Outfit', 'Noto Sans TC', 'Segoe UI', sans-serif; 
+            overflow: hidden; 
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        #header { 
+            padding: 12px 24px; 
+            background: rgba(26, 26, 32, 0.95); 
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex; justify-content: space-between; align-items: center; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5); 
+            z-index: 10; position: relative;
+        }
+        .header-title-container {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .back-btn {
+            color: #a4b0be;
+            text-decoration: none;
+            font-size: 1.1rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.3s ease;
+        }
+        .back-btn:hover {
+            color: #fff;
+            background: rgba(79, 172, 254, 0.2);
+            border-color: #4facfe;
+            transform: translateX(-2px);
+        }
+        h2 { 
+            margin: 0; 
+            font-size: 20px; 
+            font-weight: 700;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        /* 控制列樣式 */
+        #toolbar {
+            background: rgba(20, 20, 26, 0.8); 
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 10px 24px;
+            display: flex; gap: 24px; align-items: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            z-index: 9; position: relative;
+            flex-wrap: wrap;
+        }
+        .toolbar-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .toolbar-item label {
+            color: #a4b0be;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        input[type="date"], input[type="text"], select {
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            outline: none;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        input[type="text"]:focus, input[type="date"]:focus, select:focus {
+            border-color: #4facfe;
+            background: rgba(25, 25, 30, 0.95);
+            box-shadow: 0 0 8px rgba(79, 172, 254, 0.4);
+        }
+        input[type="text"] { width: 180px; cursor: text; }
+        input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); cursor: pointer; }
+        select optgroup {
+            background: #1f1f26;
+            color: #fff;
+        }
+        select option {
+            background: #1f1f26;
+            color: #fff;
+        }
+
+        .status { 
+            font-size: 14px; 
+            font-weight: 500;
+            color: #ffa502; 
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(255, 165, 2, 0.1);
+            padding: 6px 12px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 165, 2, 0.2);
+            opacity: 1;
+            transition: opacity 0.5s ease;
+        }
+        .status.success {
+            color: #2ed573;
+            background: rgba(46, 213, 115, 0.1);
+            border-color: rgba(46, 213, 115, 0.2);
+        }
+        .status i {
+            animation: spin 2s linear infinite;
+        }
+        .status.success i {
+            animation: none;
+        }
+        .legend { font-size: 13px; display: flex; gap: 20px; align-items: center; }
+        .legend span { display: flex; align-items: center; gap: 6px; color: #a4b0be; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px currentColor; }
+        
+        #chart-container { 
+            flex: 1;
+            width: 100vw; 
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="header">
+        <div class="header-title-container">
+            <a href="index.html" class="back-btn" title="返回主頁"><i class="fas fa-arrow-left"></i></a>
+            <h2>🚄 臺鐵列車運行圖 (即時動態版)</h2>
+        </div>
+        <div class="legend">
+            <span><div class="dot" style="background:#de3923; color:#de3923;"></div>普悠瑪</span>
+            <span><div class="dot" style="background:#e6a822; color:#e6a822;"></div>太魯閣</span>
+            <span><div class="dot" style="background:#555555; color:#555555;"></div>新自強</span>
+            <span><div class="dot" style="background:#eb7405; color:#eb7405;"></div>自強</span>
+            <span><div class="dot" style="background:#9c612a; color:#9c612a;"></div>莒光</span>
+            <span><div class="dot" style="background:#6ac242; color:#6ac242;"></div>區間快</span>
+            <span><div class="dot" style="background:#48c5db; color:#48c5db;"></div>區間</span>
+            <span><div class="dot" style="background:#ffffff; color:#ffffff;"></div>準點</span>
+            <span><div style="border-bottom: 2px dashed #ff4757; width: 20px; box-shadow: 0 0 4px #ff4757;"></div>誤點</span>
+        </div>
+        <div class="status" id="loading-status">
+            <i class="fas fa-spinner"></i> <span id="status-text">準備載入資料...</span>
+        </div>
+    </div>
+
+    <!-- 查詢控制列 -->
+    <div id="toolbar">
+        <div class="toolbar-item">
+            <label for="line-select"><i class="fas fa-route"></i> 選擇線路：</label>
+            <select id="line-select">
+                <optgroup label="西部幹線">
+                    <option value="west-north" selected>北段 (基隆 － 竹南)</option>
+                    <option value="west-mountain">山線 (竹南 － 彰化)</option>
+                    <option value="west-sea">海線 (竹南 － 彰化)</option>
+                    <option value="west-south">南段 (彰化 － 高雄)</option>
+                    <option value="pingtung">屏東線 (高雄 － 枋寮)</option>
+                </optgroup>
+                <optgroup label="東部幹線與南迴線">
+                    <option value="yilan">宜蘭線 (八堵 － 蘇澳)</option>
+                    <option value="north-link">北迴線 (蘇澳新 － 花蓮)</option>
+                    <option value="taitung">台東線 (花蓮 － 台東)</option>
+                    <option value="south-link">南迴線 (台東 － 枋寮)</option>
+                </optgroup>
+                <optgroup label="支線">
+                    <option value="pingxi-shenao">平溪深澳線 (八斗子 － 菁桐)</option>
+                    <option value="neiwan">內灣線 (新竹 － 內灣)</option>
+                    <option value="liujia">六家線 (新竹 － 六家)</option>
+                    <option value="jiji">集集線 (二水 － 車埕)</option>
+                    <option value="shalun">沙崙線 (中洲 － 沙崙)</option>
+                </optgroup>
+            </select>
+        </div>
+        <div class="toolbar-item">
+            <label for="date-picker"><i class="far fa-calendar-alt"></i> 選擇日期：</label>
+            <input type="date" id="date-picker">
+        </div>
+        <div class="toolbar-item">
+            <label for="train-search"><i class="fas fa-search"></i> 車次查詢：</label>
+            <input type="text" id="train-search" placeholder="輸入車次 (例: 408)">
+        </div>
+    </div>
+
+    <!-- 運行圖將會渲染在這裡 -->
+    <div id="chart-container"></div>
+
+    <script>
+        // 🔴 使用檢索到的實際 Worker 網址
+        const API_BASE = "https://tra-schedule-worker.xiaoyouwu5-fd3.workers.dev"; 
+
+        // 定義所有拆分線路的車站設定
+        const LINE_CONFIG = {
+            "west-north": {
+                name: "西部幹線-北段 (基隆 － 竹南)",
+                stations: ["基隆", "三坑", "八堵", "七堵", "百福", "五堵", "汐止", "汐科", "南港", "松山", "臺北", "萬華", "板橋", "浮洲", "樹林", "南樹林", "山佳", "鶯歌", "鳳鳴", "桃園", "內壢", "中壢", "埔心", "楊梅", "富岡", "新富", "北湖", "湖口", "新豐", "竹北", "北新竹", "新竹", "三姓橋", "香山", "崎頂", "竹南"]
+            },
+            "west-mountain": {
+                name: "西部幹線-山線 (竹南 － 彰化)",
+                stations: ["竹南", "造橋", "豐富", "苗栗", "南勢", "銅鑼", "三義", "泰安", "后里", "豐原", "栗林", "潭子", "頭家厝", "松竹", "太原", "精武", "臺中", "五權", "大慶", "烏日", "新烏日", "成功", "彰化"]
+            },
+            "west-sea": {
+                name: "西部幹線-海線 (竹南 － 彰化)",
+                stations: ["竹南", "談文", "大山", "後龍", "龍港", "白沙屯", "新埔", "通霄", "苑裡", "日南", "大甲", "臺中港", "清水", "沙鹿", "龍井", "大肚", "追分", "彰化"]
+            },
+            "west-south": {
+                name: "西部幹線-南段 (彰化 － 高雄)",
+                stations: ["彰化", "花壇", "大村", "員林", "永靖", "社頭", "田中", "二水", "林內", "石榴", "斗六", "斗南", "石龜", "大林", "民雄", "嘉北", "嘉義", "水上", "南靖", "後壁", "新營", "柳營", "林鳳營", "隆田", "拔林", "善化", "南科", "新市", "永康", "大橋", "臺南", "保安", "仁德", "中洲", "大湖", "路竹", "岡山", "橋頭", "楠梓", "新左營", "左營", "內惟", "美術館", "鼓山", "三塊厝", "高雄"]
+            },
+            "pingtung": {
+                name: "西部幹線-屏東線 (高雄 － 枋寮)",
+                stations: ["高雄", "民族", "科工館", "正義", "鳳山", "後庄", "九曲堂", "六塊厝", "屏東", "歸來", "麟洛", "西勢", "竹田", "潮州", "崁頂", "南州", "鎮安", "林邊", "佳冬", "東海", "枋寮"]
+            },
+            "yilan": {
+                name: "東部幹線-宜蘭線 (八堵 － 蘇澳)",
+                stations: ["八堵", "暖暖", "四腳亭", "瑞芳", "猴硐", "三貂嶺", "牡丹", "雙溪", "貢寮", "福隆", "石城", "大里", "大溪", "龜山", "外澳", "頭城", "頂埔", "礁溪", "四城", "宜蘭", "二結", "中里", "羅東", "冬山", "新馬", "蘇澳新", "蘇澳"]
+            },
+            "north-link": {
+                name: "東部幹線-北迴線 (蘇澳新 － 花蓮)",
+                stations: ["蘇澳新", "永樂", "東澳", "南澳", "武塔", "漢本", "和平", "和仁", "崇德", "新城(太魯閣)", "景美", "北埔", "花蓮"]
+            },
+            "taitung": {
+                name: "東部幹線-台東線 (花蓮 － 台東)",
+                stations: ["花蓮", "吉安", "志學", "平和", "壽豐", "豐田", "林榮新光", "南平", "鳳林", "萬榮", "光復", "大富", "富源", "瑞穗", "三民", "玉里", "東里", "東竹", "富里", "池上", "海端", "關山", "瑞和", "瑞源", "鹿野", "山里", "臺東"]
+            },
+            "south-link": {
+                name: "東部幹線-南迴線 (台東 － 枋寮)",
+                stations: ["臺東", "康樂", "知本", "太麻里", "金崙", "瀧溪", "大武", "枋山", "內獅", "加祿", "枋寮"]
+            },
+            "pingxi-shenao": {
+                name: "支線-平溪深澳線 (八斗子 － 菁桐)",
+                stations: ["八斗子", "海科館", "瑞芳", "猴硐", "三貂嶺", "大華", "十分", "望古", "嶺腳", "平溪", "菁桐"]
+            },
+            "neiwan": {
+                name: "支線-內灣線 (新竹 － 內灣)",
+                stations: ["新竹", "北新竹", "千甲", "新莊", "竹中", "上員", "榮華", "竹東", "橫山", "九讚頭", "合興", "富貴", "內灣"]
+            },
+            "liujia": {
+                name: "支線-六家線 (新竹 － 六家)",
+                stations: ["新竹", "北新竹", "千甲", "新莊", "竹中", "六家"]
+            },
+            "jiji": {
+                name: "支線-集集線 (二水 － 車埕)",
+                stations: ["二水", "源泉", "濁水", "龍泉", "集集", "水里", "車埕"]
+            },
+            "shalun": {
+                name: "支線-沙崙線 (中洲 － 沙崙)",
+                stations: ["中洲", "長榮大學", "沙崙"]
+            }
+        };
+
+        // 根據台灣時間取得「今天」日期字串 YYYY-MM-DD
+        const getTwTodayString = () => {
+            return new Date(Date.now() + 8 * 3600000).toISOString().split('T')[0];
+        };
+
+        // 根據車種決定線條顏色，同步自 tra-pids 配色 (新自強改為深灰)
+        const getTrainColor = (type, trainNo) => {
+            const no = Number(trainNo || 0);
+            
+            // 特殊觀光與專用車次
+            if (no === 4666 || no === 4667) return '#ffd54f'; // steam 蒸汽火車
+            if ((no >= 6001 && no <= 6099) || (no >= 6701 && no <= 6799)) return '#e0821d'; // 鳴日號
+            if (no === 6652 || no === 6655) return '#7edece'; // 海風號
+            if (no === 6631 || no === 6632 || no === 6633) return '#d1f024'; // 山嵐號
+            if (no === 1 || no === 2) return '#f774ba'; // 環島之星
+            if (no >= 6801 && no <= 6899) return '#7db583'; // 入伍專車
+
+            // 一般車種
+            if (type.includes("新自強") || type.includes("EMU3000")) return '#555555'; // 新自強 (中深灰)
+            if (type.includes("太魯閣")) return '#e6a822'; // 太魯閣 (橙黃)
+            if (type.includes("普悠瑪")) return '#de3923'; // 普悠瑪 (紅色)
+            if (type.includes("自強")) return '#eb7405'; // 自強號 (深橘)
+            if (type.includes("莒光")) return '#9c612a'; // 莒光號 (棕褐)
+            if (type.includes("區間快")) return '#6ac242'; // 區間快 (嫩綠)
+            if (type.includes("區間") || type.includes("復興")) return '#48c5db'; // 區間車 (天藍)
+            if (type.includes("藍皮普快") || type.includes("普快")) return '#5047d1'; // 藍皮普快 (深藍)
+            if (type.includes("專車") || type.includes("郵輪") || type.includes("包車")) return '#a3175d'; // 專車 (暗紫)
+            
+            return '#a4b0be'; // 預設灰色
+        };
+
+        // 全域狀態變數
+        let globalTimetable = [];
+        let globalLiveMap = {};
+        let autoRefreshTimer = null; // 自動刷新定時器
+        const myChart = echarts.init(document.getElementById('chart-container'), 'dark');
+
+        // 將 HH:mm 轉換為 JS Timestamp，並處理跨夜列車問題
+        const parseTimeToTimestamp = (timeStr, baseDateStr, firstStopTimeMins) => {
+            if (!timeStr) return null;
+            const [h, m] = timeStr.split(':').map(Number);
+            const currentMins = h * 60 + m;
+            
+            let offsetDay = 0;
+            // 如果當前站的時間比發車站小超過 12 小時，判定為跨夜列車 (日期+1)
+            if (firstStopTimeMins !== null && currentMins < firstStopTimeMins - 720) {
+                offsetDay = 1;
+            }
+
+            const date = new Date(`${baseDateStr}T00:00:00+08:00`);
+            date.setDate(date.getDate() + offsetDay);
+            date.setHours(h, m, 0, 0);
+            return date.getTime();
+        };
+
+        // 核心渲染函數 (會根據搜尋框的內容動態改變透明度與粗細，並過濾當前線路車站)
+        const renderChart = (dateStr) => {
+            const lineKey = document.getElementById('line-select').value;
+            const activeStations = LINE_CONFIG[lineKey].stations;
+            const searchVal = document.getElementById('train-search').value.trim();
+            const seriesData = [];
+            const todayStr = dateStr;
+
+            globalTimetable.forEach(train => {
+                let pathData = [];
+                let firstStopTimeMins = null;
+
+                // 篩選出這班車在我們當前選取線路內的停靠站
+                const filteredStops = train.Stops.filter(stop => activeStations.includes(stop.Name));
+
+                if (filteredStops.length > 1) {
+                    filteredStops.forEach((stop, index) => {
+                        const timeStr = stop.Dep || stop.Arr; 
+                        if (timeStr) {
+                            const [h, m] = timeStr.split(':').map(Number);
+                            if (index === 0) firstStopTimeMins = h * 60 + m; 
+
+                            const timeVal = parseTimeToTimestamp(timeStr, todayStr, firstStopTimeMins);
+                            pathData.push([timeVal, stop.Name]);
+                        }
+                    });
+
+                    const isDelayed = globalLiveMap[train.No] && globalLiveMap[train.No].DelayTime > 0;
+                    const delayMins = isDelayed ? globalLiveMap[train.No].DelayTime : 0;
+                    const baseColor = getTrainColor(train.Type, train.No);
+
+                    // 🎯 搜尋高亮與淡化背景邏輯
+                    let opacity = 0.85;
+                    let lineWidth = isDelayed ? 2.5 : 1.5;
+                    let zIndex = 1;
+
+                    if (searchVal !== "") {
+                        if (String(train.No) === searchVal) {
+                            opacity = 1;
+                            lineWidth = 5;
+                            zIndex = 10;
+                        } else {
+                            opacity = 0.12;
+                            lineWidth = 1;
+                            zIndex = 0;
+                        }
+                    }
+
+                    // 判斷是否需要拆分實虛線 (必須是今天且有延誤)
+                    if (isToday && isDelayed) {
+                        const nowTime = Date.now();
+                        const pastStops = [];
+                        const futureStops = [];
+
+                        pathData.forEach(pt => {
+                            const stopTime = pt[0];
+                            if (stopTime <= nowTime) {
+                                pastStops.push(pt);
+                            } else {
+                                futureStops.push(pt);
+                            }
+                        });
+
+                        // 為了保證線路不中斷，如果兩邊都有點，將過去路段的最後一站複製到未來路段的起點
+                        if (pastStops.length > 0 && futureStops.length > 0) {
+                            futureStops.unshift(pastStops[pastStops.length - 1]);
+                        }
+
+                        // 渲染過去路段 (已駛過 - 實線)
+                        if (pastStops.length > 1) {
+                            seriesData.push({
+                                name: `${train.Type} ${train.No}次 (已行駛)`,
+                                type: 'line',
+                                data: pastStops,
+                                symbol: 'circle',
+                                symbolSize: searchVal === String(train.No) ? 8 : 5, 
+                                showSymbol: searchVal === String(train.No), 
+                                z: zIndex,
+                                lineStyle: {
+                                    color: baseColor,
+                                    width: lineWidth,
+                                    type: 'solid', 
+                                    opacity: opacity
+                                },
+                                itemStyle: { color: baseColor, opacity: opacity },
+                                tooltip: {
+                                    formatter: function (params) {
+                                        const baseTimeMs = params.value[0];
+                                        const time = new Date(baseTimeMs).toLocaleTimeString('zh-TW', {hour12: false, hour: '2-digit', minute:'2-digit'});
+                                        const actualTimeMs = baseTimeMs + delayMins * 60000;
+                                        const actualTime = new Date(actualTimeMs).toLocaleTimeString('zh-TW', {hour12: false, hour: '2-digit', minute:'2-digit'});
+                                        let delayStatusText = delayMins > 0 ? `<span style="color:#ff4757; font-weight:bold;">⚠️ 晚 ${delayMins} 分</span>` : '<span style="color:#2ed573; font-weight:bold;">✅ 準點</span>';
+                                        return `<div style="padding:5px;">
+                                                    <strong style="color:${baseColor}">${train.Type} ${train.No}次</strong><br>
+                                                    📍 <b>${params.value[1]}</b> 站<br>
+                                                    ⏱️ 預計時間：${time}<br>
+                                                    🕒 實際時間：${actualTime}<br>
+                                                    📊 運行狀況：${delayStatusText}
+                                                </div>`;
+                                    }
+                                }
+                            });
+                        }
+
+                        // 渲染未來路段 (預計延遲 - 虛線)
+                        if (futureStops.length > 1) {
+                            seriesData.push({
+                                name: `${train.Type} ${train.No}次 (預估延遲)`,
+                                type: 'line',
+                                data: futureStops,
+                                symbol: 'circle',
+                                symbolSize: searchVal === String(train.No) ? 8 : 5, 
+                                showSymbol: searchVal === String(train.No), 
+                                z: zIndex + 1, 
+                                lineStyle: {
+                                    color: baseColor,
+                                    width: lineWidth,
+                                    type: 'dashed', 
+                                    opacity: opacity
+                                },
+                                itemStyle: { color: baseColor, opacity: opacity },
+                                tooltip: {
+                                    formatter: function (params) {
+                                        const baseTimeMs = params.value[0];
+                                        const time = new Date(baseTimeMs).toLocaleTimeString('zh-TW', {hour12: false, hour: '2-digit', minute:'2-digit'});
+                                        const estTimeMs = baseTimeMs + delayMins * 60000;
+                                        const estTime = new Date(estTimeMs).toLocaleTimeString('zh-TW', {hour12: false, hour: '2-digit', minute:'2-digit'});
+                                        let delayStatusText = delayMins > 0 ? `<span style="color:#ff4757; font-weight:bold;">⚠️ 預計晚 ${delayMins} 分</span>` : '<span style="color:#2ed573; font-weight:bold;">✅ 預計準點</span>';
+                                        return `<div style="padding:5px;">
+                                                    <strong style="color:${baseColor}">${train.Type} ${train.No}次 (未來路段)</strong><br>
+                                                    📍 <b>${params.value[1]}</b> 站<br>
+                                                    ⏱️ 預計時間：${time}<br>
+                                                    🕒 實際時間：${estTime}<br>
+                                                    📊 運行狀況：${delayStatusText}
+                                                </div>`;
+                                    }
+                                }
+                            });
+                        }
+                    } else {
+                        // 無延遲，或非今天：整條實線
+                        seriesData.push({
+                            name: `${train.Type} ${train.No}次`,
+                            type: 'line',
+                            data: pathData,
+                            symbol: 'circle',
+                            symbolSize: searchVal === String(train.No) ? 8 : 5, 
+                            showSymbol: searchVal === String(train.No), 
+                            z: zIndex,
+                            lineStyle: {
+                                color: baseColor,
+                                width: lineWidth,
+                                type: 'solid', 
+                                opacity: opacity
+                            },
+                            itemStyle: { color: baseColor, opacity: opacity },
+                            tooltip: {
+                                formatter: function (params) {
+                                    const baseTimeMs = params.value[0];
+                                    const time = new Date(baseTimeMs).toLocaleTimeString('zh-TW', {hour12: false, hour: '2-digit', minute:'2-digit'});
+                                    const estTimeMs = baseTimeMs + delayMins * 60000;
+                                    const estTime = new Date(estTimeMs).toLocaleTimeString('zh-TW', {hour12: false, hour: '2-digit', minute:'2-digit'});
+                                    let delayStatusText = delayMins > 0 ? `<span style="color:#ff4757; font-weight:bold;">⚠️ 晚 ${delayMins} 分</span>` : '<span style="color:#2ed573; font-weight:bold;">✅ 準點</span>';
+                                    return `<div style="padding:5px;">
+                                                <strong style="color:${baseColor}">${params.seriesName}</strong><br>
+                                                📍 <b>${params.value[1]}</b> 站<br>
+                                                ⏱️ 預計時間：${time}<br>
+                                                🕒 實際時間：${estTime}<br>
+                                                📊 運行狀況：${delayStatusText}
+                                            </div>`;
+                                }
+                            }
+                        });
+                    }
+                }
+            });
+
+            // 反轉 Y 軸分類，確保起點車站在上方
+            const yAxisData = [...activeStations].reverse();
+
+            // 決定 X 軸預設視野
+            const isToday = (dateStr === getTwTodayString());
+            let viewMin, viewMax;
+            if (isToday) {
+                const now = Date.now();
+                viewMin = now - (1 * 3600 * 1000);
+                viewMax = now + (3 * 3600 * 1000);
+            } else {
+                const baseTime = new Date(`${dateStr}T00:00:00+08:00`).getTime();
+                viewMin = baseTime + (6 * 3600 * 1000);
+                viewMax = baseTime + (12 * 3600 * 1000);
+            }
+
+            // 🎯 新增一條垂直的「現在時間基準線」，比對任何列車與此垂直紅線的交點，即為該列車在現在那一刻所在的車站位置
+            if (isToday) {
+                seriesData.push({
+                    name: '現在時間',
+                    type: 'line',
+                    data: [],
+                    markLine: {
+                        symbol: ['none', 'none'],
+                        label: {
+                            show: true,
+                            formatter: '現在時間',
+                            position: 'end',
+                            color: '#ff4757',
+                            fontSize: 12,
+                            fontWeight: 'bold',
+                            backgroundColor: 'rgba(20, 20, 26, 0.95)',
+                            borderColor: 'rgba(255, 255, 255, 0.1)',
+                            borderWidth: 1,
+                            padding: [6, 10],
+                            borderRadius: 6
+                        },
+                        lineStyle: {
+                            color: '#ff4757',
+                            type: 'solid',
+                            width: 2,
+                            shadowColor: 'rgba(255, 71, 87, 0.5)',
+                            shadowBlur: 10
+                        },
+                        data: [{ xAxis: Date.now() }]
+                    }
+                });
+            }
+
+            const option = {
+                backgroundColor: '#0f0f12',
+                animation: false, 
+                tooltip: { 
+                    trigger: 'item',
+                    backgroundColor: 'rgba(26, 26, 32, 0.95)',
+                    borderColor: 'rgba(255, 255, 255, 0.1)',
+                    textStyle: { color: '#f1f2f6', fontFamily: 'inherit' }
+                },
+                dataZoom: [
+                    { type: 'inside', xAxisIndex: 0, filterMode: 'none' }, 
+                    { type: 'inside', yAxisIndex: 0, filterMode: 'none' }, 
+                    { type: 'slider', xAxisIndex: 0, bottom: 10, height: 20, borderColor: '#26262b', textStyle: { color: '#fff' } }
+                ],
+                grid: { top: 30, right: 40, bottom: 50, left: 80 },
+                xAxis: {
+                    type: 'time',
+                    splitLine: { show: true, lineStyle: { color: '#1e1e24' } }, 
+                    axisLabel: { formatter: '{HH}:{mm}', color: '#a4b0be' },
+                    min: viewMin,
+                    max: viewMax
+                },
+                yAxis: {
+                    type: 'category',
+                    data: yAxisData,
+                    splitLine: { show: true, lineStyle: { color: '#1e1e24' } },
+                    axisLabel: { color: '#f1f2f6', fontSize: 13, fontWeight: 'bold' }
+                },
+                series: seriesData
+            };
+
+            myChart.setOption(option);
+        };
+
+        // 設定每 60 秒的背景刷新定時器
+        const startAutoRefresh = () => {
+            if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+
+            autoRefreshTimer = setInterval(async () => {
+                const datePicker = document.getElementById('date-picker');
+                // 只有日期選定為「今天」時，才有即時位置與誤點更新的必要
+                if (datePicker.value === getTwTodayString()) {
+                    const statusEl = document.getElementById('loading-status');
+                    try {
+                        statusEl.classList.remove('success');
+                        statusEl.style.opacity = '1';
+                        statusEl.style.borderColor = 'rgba(255, 165, 2, 0.2)';
+                        statusEl.style.background = 'rgba(255, 165, 2, 0.1)';
+                        statusEl.style.color = '#ffa502';
+                        statusEl.innerHTML = `<i class="fas fa-sync fa-spin"></i> <span id="status-text">更新即時位置中...</span>`;
+                        
+                        const liveRes = await fetch(`${API_BASE}/api/live`);
+                        const liveData = await liveRes.json();
+                        globalLiveMap = {};
+                        liveData.forEach(t => { globalLiveMap[t.TrainNo] = t; });
+                        
+                        renderChart(datePicker.value);
+                        
+                        statusEl.classList.add('success');
+                        statusEl.innerHTML = `<i class="fas fa-check"></i> 即時位置已更新`;
+                        setTimeout(() => { statusEl.style.opacity = '0'; }, 3000);
+                    } catch (e) {
+                        console.error("每分鐘更新即時位置失敗:", e);
+                        statusEl.style.borderColor = 'rgba(255, 71, 87, 0.3)';
+                        statusEl.style.background = 'rgba(255, 71, 87, 0.1)';
+                        statusEl.style.color = '#ff4757';
+                        statusEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i> 位置更新失敗`;
+                        setTimeout(() => { statusEl.style.opacity = '0'; }, 3000);
+                    }
+                }
+            }, 60000); // 60 秒
+        };
+
+        // 從 API 下載資料並更新全域變數
+        const loadData = async (dateStr) => {
+            const statusEl = document.getElementById('loading-status');
+            
+            // 清除之前的自動更新定時器
+            if (autoRefreshTimer) {
+                clearInterval(autoRefreshTimer);
+                autoRefreshTimer = null;
+            }
+
+            try {
+                myChart.clear(); 
+                statusEl.classList.remove('success');
+                statusEl.style.opacity = '1';
+                statusEl.style.borderColor = 'rgba(255, 165, 2, 0.2)';
+                statusEl.style.background = 'rgba(255, 165, 2, 0.1)';
+                statusEl.style.color = '#ffa502';
+                statusEl.innerHTML = `<i class="fas fa-spinner fa-spin"></i> <span id="status-text">下載時刻表中...</span>`;
+                
+                const textEl = document.getElementById('status-text');
+
+                // 1. 抓取該日時刻表
+                const res = await fetch(`${API_BASE}/api/timetable/daily?date=${dateStr}`);
+                if (!res.ok) throw new Error("無該日時刻表資料");
+                globalTimetable = await res.json();
+                
+                // 2. 只有選擇「今天」才抓取即時誤點資料
+                if (dateStr === getTwTodayString()) {
+                    textEl.innerText = "抓取即時動態中...";
+                    const liveRes = await fetch(`${API_BASE}/api/live`);
+                    const liveData = await liveRes.json();
+                    globalLiveMap = {};
+                    liveData.forEach(t => { globalLiveMap[t.TrainNo] = t; });
+                } else {
+                    globalLiveMap = {}; 
+                }
+
+                textEl.innerText = "渲染圖表中...";
+                renderChart(dateStr);
+                
+                statusEl.classList.add('success');
+                statusEl.innerHTML = `<i class="fas fa-check"></i> 載入完成 (共 ${globalTimetable.length} 班次)`;
+                
+                // 載入成功後，如果是今天，則重新啟動自動更新定時器
+                if (dateStr === getTwTodayString()) {
+                    startAutoRefresh();
+                }
+
+                setTimeout(() => { 
+                    statusEl.style.opacity = '0'; 
+                    statusEl.style.transition = 'opacity 1s'; 
+                }, 3000);
+
+            } catch (err) {
+                console.error(err);
+                globalTimetable = [];
+                statusEl.style.borderColor = 'rgba(255, 71, 87, 0.3)';
+                statusEl.style.background = 'rgba(255, 71, 87, 0.1)';
+                statusEl.style.color = '#ff4757';
+                statusEl.innerHTML = `<i class="fas fa-times"></i> 載入失敗: ${err.message}`;
+            }
+        };
+
+        // 綁定事件監聽器
+        document.addEventListener('DOMContentLoaded', () => {
+            const lineSelect = document.getElementById('line-select');
+            const datePicker = document.getElementById('date-picker');
+            const searchInput = document.getElementById('train-search');
+
+            // 預設設定為今天
+            const todayStr = getTwTodayString();
+            datePicker.value = todayStr;
+            
+            // 限制日期選擇範圍為：今天至未來 60 天
+            datePicker.min = todayStr;
+            
+            const todayDate = new Date(Date.now() + 8 * 3600000);
+            const maxDate = new Date(todayDate);
+            maxDate.setDate(todayDate.getDate() + 60);
+            datePicker.max = maxDate.toISOString().split('T')[0];
+            
+            // 首次載入資料
+            loadData(datePicker.value);
+
+            // 當日期改變時，重新下載資料
+            datePicker.addEventListener('change', (e) => {
+                loadData(e.target.value);
+            });
+
+            // 當線路切換時，進行前端 0 延遲過濾與重繪
+            lineSelect.addEventListener('change', () => {
+                renderChart(datePicker.value);
+            });
+
+            // 當搜尋框內容改變時，重新繪製
+            searchInput.addEventListener('input', () => {
+                renderChart(datePicker.value);
+            });
+
+            // 讓圖表隨視窗縮放
+            window.addEventListener('resize', () => { myChart.resize(); });
+        });
+    </script>
+</body>
+</html>
