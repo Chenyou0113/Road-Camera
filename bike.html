@@ -50,13 +50,19 @@
 
         .content-container { flex: 1; position: relative; overflow: hidden; }
         #map { width: 100%; height: 100%; background: #e5e5e5; z-index: 1; }
-        #list-view { width: 100%; height: 100%; overflow-y: auto; background: #f5f5f5; padding: 10px; display: none; z-index: 2; }
+        #list-view { 
+            width: 100%; height: 100%; overflow-y: auto; background: #f5f5f5; padding: 10px; display: none; z-index: 2; 
+            -webkit-overflow-scrolling: touch; /* 讓 iOS 滾動更順滑 */
+            will-change: transform; /* 提示瀏覽器優化 */
+        }
 
         /* 卡片樣式 */
         .station-card {
             background: white; border-radius: 10px; padding: 15px; margin-bottom: 10px;
             box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-left: 5px solid #ccc; cursor: pointer;
             position: relative;
+            content-visibility: auto; /* 🌟 超強的現代 CSS，不在畫面中的卡片不會耗費資源渲染 */
+            contain-intrinsic-size: 150px; /* 給予一個估計高度，避免捲動軸跳動 */
         }
         .card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
         .st-name { font-size: 1.1rem; font-weight: bold; color: #333; }
@@ -192,7 +198,7 @@
         const API_URL = "https://bike-api.xiaoyouwu5-fd3.workers.dev/"; 
 
         let map;
-        let markers = [];
+        let markerMap = new Map(); // key: st.name, value: marker 物件
         let allStations = [];
         let currentView = 'map';
         let infoWindow;
@@ -213,7 +219,11 @@
             });
             infoWindow = new google.maps.InfoWindow();
             startAutoRefresh();
-            changeCity();
+            
+            // 🌟 延遲 100 毫秒載入資料，讓瀏覽器有時間先畫好網頁 UI
+            setTimeout(() => {
+                changeCity();
+            }, 100);
         }
 
         function switchView(view) {
@@ -248,6 +258,14 @@
         }
 
         async function changeCity() {
+            // 切換城市時，清空舊的 Markers
+            markerMap.forEach(m => m.setMap(null));
+            markerMap.clear();
+            if (markerCluster) {
+                markerCluster.clearMarkers();
+                markerCluster = null;
+            }
+            
             const city = document.getElementById('citySelect').value;
             await loadCityData(city, true);
         }
@@ -260,10 +278,17 @@
                 const data = await res.json();
                 allStations = data.stations || [];
                 
+                // 🌟 若已取得使用者位置，載入資料後立即一次性計算各站點距離
+                if (userLocation) {
+                    allStations.forEach(st => {
+                        st.distance = getDistance(userLocation.lat, userLocation.lng, st.lat, st.lng);
+                    });
+                }
+                
                 renderMarkers();
                 if (currentView === 'list') refreshListView();
                 
-                if (allStations.length > 0 && currentView === 'map') {
+                if (allStations.length > 0 && currentView === 'map' && showOverlay) {
                     const sample = allStations.slice(0, 50);
                     const bounds = new google.maps.LatLngBounds();
                     sample.forEach(s => bounds.extend({ lat: s.lat, lng: s.lng }));
@@ -279,12 +304,19 @@
         }
 
         function renderMarkers() {
-            markers.forEach(m => m.setMap(null));
-            if (markerCluster) {
-                markerCluster.clearMarkers();
-                markerCluster = null;
-            }
-            markers = [];
+            let newMarkersForCluster = [];
+            const currentNames = new Set(allStations.map(st => st.name));
+
+            // 1. 移除已不存在於新資料中的舊 Marker (例如資料庫更新後消失的站點)
+            markerMap.forEach((marker, name) => {
+                if (!currentNames.has(name)) {
+                    marker.setMap(null);
+                    markerMap.delete(name);
+                    if (markerCluster) {
+                        markerCluster.removeMarker(marker);
+                    }
+                }
+            });
 
             allStations.forEach(st => {
                 let color = '#27ae60';
@@ -293,20 +325,6 @@
                 else if (st.rent === 0) color = '#c0392b';
                 else if (st.rent < 3) color = '#f39c12';
 
-                const marker = new google.maps.Marker({
-                    position: { lat: st.lat, lng: st.lng },
-                    map: map,
-                    title: st.name,
-                    icon: {
-                        path: google.maps.SymbolPath.CIRCLE,
-                        scale: 7,
-                        fillColor: color,
-                        fillOpacity: 1,
-                        strokeWeight: 2,
-                        strokeColor: "white",
-                    }
-                });
-                
                 const popupContent = `
                     <div style="font-size:1rem; width:200px;">
                         <h3 style="margin:0 0 8px 0; color:#d35400; border-bottom:1px solid #eee; padding-bottom:5px;">${st.name}</h3>
@@ -333,17 +351,59 @@
                     </div>
                 `;
 
-                marker.addListener('click', () => {
-                    infoWindow.setContent(popupContent);
-                    infoWindow.open(map, marker);
-                });
-                
-                markers.push(marker);
+                // 2. 檢查這個站點是否已有 Marker
+                if (markerMap.has(st.name)) {
+                    const existingMarker = markerMap.get(st.name);
+                    
+                    // 只在顏色有變時才更新 Icon
+                    const currentIcon = existingMarker.getIcon();
+                    if (!currentIcon || currentIcon.fillColor !== color) {
+                        existingMarker.setIcon({
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 7,
+                            fillColor: color,
+                            fillOpacity: 1,
+                            strokeWeight: 2,
+                            strokeColor: "white",
+                        });
+                    }
+                    // 更新 popupContent 自訂屬性
+                    existingMarker.popupContent = popupContent;
+                } else {
+                    // 若沒有，則建立新的 Marker
+                    const marker = new google.maps.Marker({
+                        position: { lat: st.lat, lng: st.lng },
+                        map: map,
+                        title: st.name,
+                        icon: {
+                            path: google.maps.SymbolPath.CIRCLE,
+                            scale: 7,
+                            fillColor: color,
+                            fillOpacity: 1,
+                            strokeWeight: 2,
+                            strokeColor: "white",
+                        }
+                    });
+                    
+                    marker.popupContent = popupContent;
+                    marker.addListener('click', () => {
+                        infoWindow.setContent(marker.popupContent);
+                        infoWindow.open(map, marker);
+                    });
+
+                    markerMap.set(st.name, marker);
+                    newMarkersForCluster.push(marker);
+                }
             });
 
+            // 3. 處理 Marker Cluster
             const ClusterCtor = window.markerClusterer?.MarkerClusterer || window.MarkerClusterer;
-            if (ClusterCtor && markers.length > 0) {
-                markerCluster = new ClusterCtor({ map, markers });
+            if (ClusterCtor) {
+                if (!markerCluster) {
+                    markerCluster = new ClusterCtor({ map, markers: Array.from(markerMap.values()) });
+                } else if (newMarkersForCluster.length > 0) {
+                    markerCluster.addMarkers(newMarkersForCluster);
+                }
             }
         }
 
@@ -426,13 +486,11 @@
 
         function refreshListView() {
             const sortMode = document.getElementById('sortSelect').value;
-            const filtered = filterList().map(st => ({ ...st }));
+            const filtered = filterList(); // 不再複製物件，直接使用 filter 產生的陣列
 
             if (sortMode === 'distance' && userLocation) {
-                filtered.forEach(st => {
-                    st.distance = getDistance(userLocation.lat, userLocation.lng, st.lat, st.lng);
-                });
-                filtered.sort((a, b) => a.distance - b.distance);
+                // 直接使用已在 locateUser 或 loadCityData 中計算好的 distance 進行排序
+                filtered.sort((a, b) => (a.distance ?? 9999) - (b.distance ?? 9999));
             } else {
                 filtered.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
             }
@@ -452,7 +510,8 @@
             map.setCenter({ lat, lng });
             map.setZoom(18);
             
-            const target = markers.find(m => {
+            // 從 markerMap.values() 中尋找對應位置的 Marker
+            const target = Array.from(markerMap.values()).find(m => {
                 const pos = m.getPosition();
                 return Math.abs(pos.lat() - lat) < 0.000001 && Math.abs(pos.lng() - lng) < 0.000001;
             });
@@ -469,6 +528,11 @@
                     const lat = p.coords.latitude;
                     const lng = p.coords.longitude;
                     userLocation = { lat, lng };
+
+                    // 🌟 一次性計算並寫入 allStations 的 distance 屬性
+                    allStations.forEach(st => {
+                        st.distance = getDistance(lat, lng, st.lat, st.lng);
+                    });
 
                     map.setCenter({ lat, lng });
                     map.setZoom(16);
