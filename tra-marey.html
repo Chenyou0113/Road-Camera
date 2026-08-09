@@ -410,7 +410,6 @@
     <div id="header">
         <div class="header-title-container">
             <a href="index.html" class="back-btn" title="返回主頁"><i class="fas fa-arrow-left"></i></a>
-            <a href="tra_liveboard.html" class="back-btn" title="切換至台鐵即時看板" style="margin-left: 8px;"><i class="fas fa-list"></i></a>
             <h2>🚄 臺鐵列車運行圖 (即時動態版)</h2>
         </div>
         <div class="legend">
@@ -491,10 +490,16 @@
 
     <!-- 運行圖包裹器 -->
     <div id="chart-wrapper">
+        <!-- 左側：車站軸縮放 -->
+        <div class="chart-zoom-controls-y" style="position: absolute; top: 15px; left: 95px; display: flex; gap: 8px; z-index: 10;">
+            <button class="zoom-btn" onclick="handleZoomY('in')" title="拉開車站軸 (放大)"><i class="fas fa-arrows-alt-v"></i> 車站拉開</button>
+            <button class="zoom-btn" onclick="handleZoomY('out')" title="壓縮車站軸 (縮小)"><i class="fas fa-compress-alt"></i> 車站縮小</button>
+        </div>
+        <!-- 右側：時間軸縮放 -->
         <div class="chart-zoom-controls">
-            <button class="zoom-btn" onclick="handleZoom('in')" title="放大時間軸"><i class="fas fa-search-plus"></i> 放大</button>
-            <button class="zoom-btn" onclick="handleZoom('out')" title="縮小時間軸"><i class="fas fa-search-minus"></i> 縮小</button>
-            <button class="zoom-btn" onclick="resetZoom()" title="重設時間軸"><i class="fas fa-sync-alt"></i> 重設</button>
+            <button class="zoom-btn" onclick="handleZoom('in')" title="放大時間軸"><i class="fas fa-search-plus"></i> 時間放大</button>
+            <button class="zoom-btn" onclick="handleZoom('out')" title="縮小時間軸"><i class="fas fa-search-minus"></i> 時間縮小</button>
+            <button class="zoom-btn" onclick="resetZoom()" title="重設時間與車站軸"><i class="fas fa-sync-alt"></i> 重設全部</button>
         </div>
         <div id="chart-container"></div>
     </div>
@@ -660,6 +665,143 @@
             return date.getTime();
         };
 
+        // 八大核心跨線路接點定義
+        const JUNCTIONS = [
+            { name: "八堵", lines: ["west-north", "yilan"] },
+            { name: "竹南", lines: ["west-north", "west-mountain", "west-sea"] },
+            { name: "彰化", lines: ["west-mountain", "west-sea", "west-south"] },
+            { name: "高雄", lines: ["west-south", "pingtung"] },
+            { name: "枋寮", lines: ["pingtung", "south-link"] },
+            { name: "臺東", lines: ["south-link", "taitung"] },
+            { name: "花蓮", lines: ["taitung", "north-link"] },
+            { name: "蘇澳新", lines: ["north-link", "yilan"] }
+        ];
+
+        // 取得車站所屬線路
+        const getStationLines = (stationName) => {
+            const lines = [];
+            for (const [key, cfg] of Object.entries(LINE_CONFIG)) {
+                if (cfg.stations.includes(stationName)) {
+                    lines.push(key);
+                }
+            }
+            return lines;
+        };
+
+        // 尋找兩站之間跨線路的接點 (BFS 路徑搜尋)
+        const findJunctionsBetween = (statA, statB) => {
+            const linesA = getStationLines(statA);
+            const linesB = getStationLines(statB);
+            
+            if (linesA.some(l => linesB.includes(l))) {
+                return []; // 在同一條線路內，不需插接點
+            }
+            
+            const queue = [];
+            const visited = new Set();
+            const parent = {};
+            
+            linesA.forEach(l => {
+                queue.push(l);
+                visited.add(l);
+            });
+            
+            let foundLine = null;
+            while (queue.length > 0) {
+                const currLine = queue.shift();
+                if (linesB.includes(currLine)) {
+                    foundLine = currLine;
+                    break;
+                }
+                
+                for (const junc of JUNCTIONS) {
+                    if (junc.lines.includes(currLine)) {
+                        for (const nextLine of junc.lines) {
+                            if (!visited.has(nextLine)) {
+                                visited.add(nextLine);
+                                parent[nextLine] = { prevLine: currLine, junction: junc.name };
+                                queue.push(nextLine);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if (!foundLine) return [];
+            
+            const path = [];
+            let curr = foundLine;
+            while (parent[curr]) {
+                path.unshift(parent[curr].junction);
+                curr = parent[curr].prevLine;
+            }
+            return path;
+        };
+
+        // 插值計算接點的預估抵達/開車時間
+        const interpolateJunctionStops = (stopA, stopB, junctions) => {
+            const path = [stopA.Name, ...junctions, stopB.Name];
+            
+            const parseToMins = (tStr) => {
+                if (!tStr) return null;
+                const [h, m] = tStr.split(':').map(Number);
+                return h * 60 + m;
+            };
+            
+            const timesA = parseToMins(stopA.Dep || stopA.Arr);
+            let timesB = parseToMins(stopB.Arr || stopB.Dep);
+            
+            if (timesA === null || timesB === null) return [];
+            if (timesB < timesA) timesB += 1440; // 跨夜處理
+            
+            const distances = [];
+            for (let i = 0; i < path.length - 1; i++) {
+                const s1 = path[i];
+                const s2 = path[i+1];
+                const lines1 = getStationLines(s1);
+                const lines2 = getStationLines(s2);
+                const sharedLine = lines1.find(l => lines2.includes(l));
+                if (sharedLine) {
+                    const idx1 = LINE_CONFIG[sharedLine].stations.indexOf(s1);
+                    const idx2 = LINE_CONFIG[sharedLine].stations.indexOf(s2);
+                    distances.push(Math.abs(idx1 - idx2));
+                } else {
+                    distances.push(5); // 預設降級權重
+                }
+            }
+            
+            const totalDist = distances.reduce((a, b) => a + b, 0);
+            if (totalDist === 0) return [];
+            
+            const timeRange = timesB - timesA;
+            const virtualStops = [];
+            
+            let currentDist = 0;
+            for (let i = 0; i < junctions.length; i++) {
+                currentDist += distances[i];
+                const ratio = currentDist / totalDist;
+                const juncMins = timesA + timeRange * ratio;
+                
+                // 轉回 HH:mm:ss 字串
+                let normMins = Math.round(juncMins) % 1440;
+                if (normMins < 0) normMins += 1440;
+                const h = Math.floor(normMins / 60);
+                const m = normMins % 60;
+                const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+                
+                virtualStops.push({
+                    Seq: 999,
+                    SID: "",
+                    Name: junctions[i],
+                    Arr: timeStr,
+                    Dep: timeStr,
+                    Susp: stopA.Susp || stopB.Susp || 0
+                });
+            }
+            
+            return virtualStops;
+        };
+
         // 核心渲染函數 (會根據搜尋框的內容動態改變透明度與粗細，並過濾當前線路車站)
         const renderChart = (dateStr) => {
             const lineKey = document.getElementById('line-select').value;
@@ -670,8 +812,29 @@
             const todayStr = dateStr;
             const isToday = (dateStr === getTwTodayString());
             globalSearchedTimes = [];
+            
+            // 複製並擴充時刻表：自動偵測跨線路接點並進行時間插值
+            const processedTimetable = globalTimetable.map(train => {
+                const expandedStops = [];
+                for (let i = 0; i < train.Stops.length; i++) {
+                    expandedStops.push(train.Stops[i]);
+                    if (i < train.Stops.length - 1) {
+                        const stopA = train.Stops[i];
+                        const stopB = train.Stops[i+1];
+                        const nameA = stopA.Name.replace("-環島", "");
+                        const nameB = stopB.Name.replace("-環島", "");
+                        
+                        const junctions = findJunctionsBetween(nameA, nameB);
+                        if (junctions.length > 0) {
+                            const virtualStops = interpolateJunctionStops(stopA, stopB, junctions);
+                            expandedStops.push(...virtualStops);
+                        }
+                    }
+                }
+                return { ...train, Stops: expandedStops };
+            });
 
-            globalTimetable.forEach(train => {
+            processedTimetable.forEach(train => {
                 let pathSegments = [];
                 let currentSegment = [];
                 let currentSuspState = null;
@@ -1078,9 +1241,10 @@
                     { type: 'inside', yAxisIndex: 0, filterMode: 'none' }, 
                     { type: 'slider', xAxisIndex: 0, bottom: 10, height: 20, borderColor: '#26262b', textStyle: { color: '#fff' }, startValue: viewMin, endValue: viewMax }
                 ],
-                grid: { top: 30, right: 40, bottom: 50, left: 80 },
+                grid: { top: 60, right: 40, bottom: 35, left: 80 },
                 xAxis: {
                     type: 'time',
+                    position: 'top', // 時間軸顯示在上方
                     interval: 5 * 60 * 1000, // 強制每 5 分鐘畫一條垂直線
                     splitLine: { show: true, lineStyle: { color: 'rgba(255, 255, 255, 0.15)' } }, 
                     axisLabel: { formatter: '{HH}:{mm}', color: '#a4b0be', hideOverlap: true }
@@ -1495,7 +1659,45 @@
             });
         };
 
-        // 重設 X 軸為當天預設視野
+        // 放大與縮小 Y 軸車站範圍 (拉開/壓縮車站間距)
+        const handleZoomY = (direction) => {
+            const option = myChart.getOption();
+            if (!option || !option.dataZoom || option.dataZoom.length < 2) return;
+            
+            // Y 軸在 index 1
+            const dz = option.dataZoom[1];
+            const totalCount = option.yAxis[0].data.length;
+            
+            let currentMin = dz.startValue !== undefined ? dz.startValue : 0;
+            let currentMax = dz.endValue !== undefined ? dz.endValue : totalCount - 1;
+            
+            const range = currentMax - currentMin;
+            if (range <= 2 && direction === 'in') return; // 避免縮到只剩 2 站
+            
+            let newMin, newMax;
+            if (direction === 'in') {
+                // 放大：顯示更少車站 (範圍收縮 20%)
+                newMin = Math.round(currentMin + range * 0.1);
+                newMax = Math.round(currentMax - range * 0.1);
+            } else {
+                // 縮小：顯示更多車站 (範圍擴張 20%)
+                newMin = Math.max(0, Math.round(currentMin - range * 0.1));
+                newMax = Math.min(totalCount - 1, Math.round(currentMax + range * 0.1));
+            }
+            
+            if (newMin >= newMax) {
+                newMin = Math.max(0, newMax - 2);
+            }
+            
+            myChart.dispatchAction({
+                type: 'dataZoom',
+                dataZoomIndex: 1,
+                startValue: newMin,
+                endValue: newMax
+            });
+        };
+
+        // 重設 X 軸與 Y 軸為當天預設視野
         const resetZoom = () => {
             const datePicker = document.getElementById('date-picker');
             if (!datePicker) return;
@@ -1526,12 +1728,25 @@
                 }
             }
             
+            // 重設 X 軸
             myChart.dispatchAction({
                 type: 'dataZoom',
                 dataZoomIndex: 0,
                 startValue: viewMin,
                 endValue: viewMax
             });
+
+            // 重設 Y 軸 (顯示所有車站)
+            const option = myChart.getOption();
+            if (option && option.yAxis && option.yAxis[0]) {
+                const totalCount = option.yAxis[0].data.length;
+                myChart.dispatchAction({
+                    type: 'dataZoom',
+                    dataZoomIndex: 1,
+                    startValue: 0,
+                    endValue: totalCount - 1
+                });
+            }
         };
     </script>
 </body>
