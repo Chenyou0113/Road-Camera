@@ -920,28 +920,30 @@ body {
     gap: 16px;
     position: relative;
     padding-bottom: 24px;
-    opacity: 0.5; /* 預設未來站點淡化 */
+    opacity: 1; /* 未來的站點為不透明 */
 }
-.timeline-item.is-past { opacity: 1; }
+.timeline-item.is-past { opacity: 0.35; } /* 已通過的站點變淡 */
 .timeline-item.is-delayed .tl-time { color: var(--danger); font-weight: bold; }
 
 .tl-line {
     width: 2px;
     background: rgba(255,255,255,0.1);
     position: absolute;
-    left: 45px;
+    left: 50%;
+    transform: translateX(-50%);
     top: 10px;
     bottom: -10px;
 }
 .timeline-item:last-child .tl-line { display: none; }
 
 .tl-time {
-    width: 35px;
+    width: 45px;
     font-size: 13px;
     color: var(--text-secondary);
     font-family: 'Outfit', sans-serif;
     text-align: right;
     margin-top: -2px;
+    line-height: 1.4;
 }
 .tl-dot {
     width: 8px;
@@ -1183,6 +1185,10 @@ body {
             "west-sea": {
                 name: "西部幹線-海線 (竹南 － 彰化)",
                 stations: ["竹南", "談文", "大山", "後龍", "龍港", "白沙屯", "新埔", "通霄", "苑裡", "日南", "大甲", "臺中港", "清水", "沙鹿", "龍井", "大肚", "追分", "彰化"]
+            },
+            "chengzhui": {
+                name: "成追線",
+                stations: ["成功", "追分"]
             },
             "west-south": {
                 name: "西部幹線-南段 (彰化 － 高雄)",
@@ -1950,6 +1956,8 @@ body {
                 grid: { top: 60, right: 55, bottom: 35, left: 80 },
                 xAxis: {
                     type: 'time',
+                    min: new Date(`${dateStr}T00:00:00+08:00`).getTime(),
+                    max: new Date(`${dateStr}T00:00:00+08:00`).getTime() + 25 * 3600 * 1000,
                     position: 'top', // 時間軸顯示在上方
                     interval: 5 * 60 * 1000, // 強制每 5 分鐘畫一條垂直線
                     splitLine: { show: true, lineStyle: { color: 'rgba(255, 255, 255, 0.15)' } }, 
@@ -2020,6 +2028,17 @@ body {
                 const timeStrForCalc = depStr || arrStr;
                 if (!timeStrForCalc) return;
                 
+                let displayTimeHtml = '';
+                if (index === 0) {
+                    displayTimeHtml = depStr;
+                } else if (index === train.Stops.length - 1) {
+                    displayTimeHtml = arrStr;
+                } else if (arrStr === depStr) {
+                    displayTimeHtml = arrStr;
+                } else {
+                    displayTimeHtml = `${arrStr}<br><span style="opacity: 0.5;">${depStr}</span>`;
+                }
+
                 const [h, m] = timeStrForCalc.split(':').map(Number);
                 if (index === 0) firstStopTimeMins = h * 60 + m; 
                 const timeVal = parseTimeToTimestamp(timeStrForCalc, datePickerVal, firstStopTimeMins);
@@ -2030,9 +2049,19 @@ body {
                 
                 const delayedClass = (status.includes('delay') && !isPast) ? 'is-delayed' : '';
                 const pastClass = isPast ? 'is-past' : '';
-                const actualTimeStr = (status.includes('delay') && !isPast) ? 
-                    `<div style="font-size:11px; opacity:0.7; text-decoration:line-through;">${timeStrForCalc}</div>${calculateDelayedTimeStr(timeStrForCalc, globalLiveMap[train.No]?.DelayTime || 0)}` : 
-                    timeStrForCalc;
+                
+                let actualTimeStr = displayTimeHtml;
+                if (status.includes('delay') && !isPast) {
+                    const delayMins = globalLiveMap[train.No]?.DelayTime || 0;
+                    if (displayTimeHtml.includes('<br>')) {
+                        const delayedArr = calculateDelayedTimeStr(arrStr, delayMins);
+                        const delayedDep = calculateDelayedTimeStr(depStr, delayMins);
+                        actualTimeStr = `<div style="font-size:11px; opacity:0.7; text-decoration:line-through;">${arrStr}<br>${depStr}</div><div style="margin-top:2px">${delayedArr}</div><div style="opacity: 0.5;">${delayedDep}</div>`;
+                    } else {
+                        const delayedTime = calculateDelayedTimeStr(displayTimeHtml, delayMins);
+                        actualTimeStr = `<div style="font-size:11px; opacity:0.7; text-decoration:line-through;">${displayTimeHtml}</div><div style="margin-top:2px">${delayedTime}</div>`;
+                    }
+                }
 
                 timelineHtml += `
                     <div class="timeline-item ${pastClass} ${delayedClass}">
