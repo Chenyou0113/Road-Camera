@@ -178,7 +178,7 @@
             overflow: hidden; 
             width: 100vw; 
         }
-        #chart-container { 
+        #echarts-container { 
             flex: 1;
             width: 100%; 
         }
@@ -829,27 +829,115 @@ body {
     flex: 1;
 }
 
-/* Side panel */
-
+/* ================= Phase 5 & 6: Side Panel & Mobile ================= */
 #side-panel {
-    width: 360px;
-    background: rgba(18,20,26,.98);
-    border-left: 1px solid var(--border);
-    box-shadow: -10px 0 30px rgba(0,0,0,.25);
+    position: fixed;
+    inset: auto 0 0 0;
+    width: 100%;
+    height: 70vh; /* 手機版底部滑出 (Bottom Sheet) */
+    background: var(--bg-card);
+    border-top: 1px solid var(--border);
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    transform: translateY(100%);
+    transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+    box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
+    border-radius: 20px 20px 0 0;
 }
-
-.sp-header {
-    padding: 20px;
+#side-panel.active {
+    transform: translateY(0);
 }
-
-.sp-title {
-    font-size: 24px;
-    font-weight: 700;
+.sp-handle {
+    width: 40px;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 2px;
+    margin: 12px auto 0 auto;
 }
-
-.sp-route {
-    margin-top: 4px;
+.sp-close {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
     color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: 0.2s;
+}
+.sp-close:hover {
+    background: rgba(255,255,255,0.1);
+    color: #fff;
+}
+
+/* 桌面版覆蓋 */
+@media (min-width: 768px) {
+    #side-panel {
+        inset: 70px -400px 0 auto;
+        width: 380px;
+        height: auto;
+        border-top: none;
+        border-left: 1px solid var(--border);
+        border-radius: 0;
+        transform: translateX(100%);
+    }
+    #side-panel.active {
+        transform: translateX(0);
+        right: 0;
+    }
+    .sp-handle { display: none; }
+}
+
+/* Timeline 內部節點樣式 */
+.timeline-item {
+    display: flex;
+    gap: 16px;
+    position: relative;
+    padding-bottom: 24px;
+    opacity: 0.5; /* 預設未來站點淡化 */
+}
+.timeline-item.is-past { opacity: 1; }
+.timeline-item.is-delayed .tl-time { color: var(--danger); font-weight: bold; }
+
+.tl-line {
+    width: 2px;
+    background: rgba(255,255,255,0.1);
+    position: absolute;
+    left: 45px;
+    top: 10px;
+    bottom: -10px;
+}
+.timeline-item:last-child .tl-line { display: none; }
+
+.tl-time {
+    width: 35px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-family: 'Outfit', sans-serif;
+    text-align: right;
+    margin-top: -2px;
+}
+.tl-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    z-index: 1;
+    box-shadow: 0 0 0 4px var(--bg-card);
+}
+.timeline-item.is-past .tl-dot { background: var(--accent); }
+.timeline-item.is-delayed .tl-dot { background: var(--danger); }
+.tl-content {
+    flex: 1;
+    font-size: 15px;
+    margin-top: -5px;
+    color: var(--text-primary);
 }
 
 /* Responsive */
@@ -886,15 +974,6 @@ body {
     }
     .summary-card strong {
         font-size: 19px;
-    }
-    #side-panel {
-        position: fixed;
-        inset: auto 0 0 0;
-        width: 100%;
-        max-height: 70vh;
-        border-left: none;
-        border-top: 1px solid var(--border);
-        border-radius: 16px 16px 0 0;
     }
 }
     </style>
@@ -1037,29 +1116,32 @@ body {
 
     <!-- 列車詳細資訊側邊欄 -->
     <div id="side-panel">
+        <!-- 手機版下拉把手 -->
+        <div class="sp-handle"></div>
         <div class="sp-header">
+            <button class="sp-close" onclick="closeSidePanel()"><i class="fas fa-times"></i></button>
             <div class="sp-header-top">
-                <div class="sp-header-info">
-                    <div class="sp-title" id="sp-title">車次資訊</div>
-                    <div class="sp-route" id="sp-route"><i class="fas fa-map-marker-alt"></i> 載入中...</div>
-                </div>
-                <button class="sp-close" onclick="closeSidePanel()"><i class="fas fa-times"></i></button>
+                <h2 id="sp-title">--</h2>
             </div>
-            <!-- 行駛進度條 -->
-            <div id="sp-progress-wrapper" style="display: none;">
-                <div class="sp-progress-container">
-                    <div class="sp-progress-bar" id="sp-progress-bar"></div>
-                </div>
-                <div class="sp-progress-text">
-                    <span id="sp-progress-percent">0% 已完成</span>
-                    <span id="sp-progress-stations">0 / 0 站</span>
-                </div>
+            <div id="sp-route" style="margin-top: 8px; color: var(--text-muted); font-size: 14px; display: flex; align-items: center; gap: 8px;">
+                <!-- 路線起訖將注入於此 -->
+            </div>
+            <!-- 狀態 Badge -->
+            <div id="sp-status-badge" style="margin-top: 12px; display: inline-block;"></div>
+        </div>
+        
+        <div class="sp-progress-container" style="padding: 16px 20px; border-bottom: 1px solid var(--border);">
+            <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 8px; color: var(--text-secondary);">
+                <span>行程進度</span>
+                <span id="sp-progress-text">0 / 0 站</span>
+            </div>
+            <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden;">
+                <div id="sp-progress-bar" style="height: 100%; width: 0%; background: var(--accent); transition: width 0.3s ease;"></div>
             </div>
         </div>
-        <div class="sp-body">
-            <div class="timeline">
-                <!-- 時間軸節點將由 JS 動態生成 -->
-            </div>
+
+        <div class="sp-body" style="padding: 20px; overflow-y: auto; flex: 1;">
+            <!-- Timeline 逐站資料將注入於此 -->
         </div>
     </div>
 
@@ -1254,7 +1336,7 @@ body {
         let globalAlerts = [];
         let globalSearchedTimes = []; // 全域儲存搜尋車次的時刻，方便重設 zoom 視野
         let autoRefreshTimer = null; // 自動刷新定時器
-        const myChart = echarts.init(document.getElementById('chart-container'), 'dark');
+        const myChart = echarts.init(document.getElementById('echarts-container'), 'dark');
 
         // 將 HH:mm 轉換為 JS Timestamp，並處理跨夜列車問題
         const parseTimeToTimestamp = (timeStr, baseDateStr, firstStopTimeMins) => {
@@ -1866,18 +1948,11 @@ body {
 
         // 關閉側邊面板
         const closeSidePanel = () => {
-            const panel = document.getElementById('side-panel');
-            panel.classList.remove('active');
-            
-            // 清除搜尋狀態並恢復全網圖
-            const searchInput = document.getElementById('train-search');
-            if (searchInput.value !== '') {
-                searchInput.value = '';
-                renderChart(document.getElementById('date-picker').value);
-            }
+            document.getElementById('side-panel').classList.remove('active');
+            document.getElementById('train-search').value = '';
+            renderChart(document.getElementById('date-picker').value);
         };
 
-        // 顯示列車詳細資訊面板
         const showTrainDetails = (trainNo) => {
             const train = globalTimetable.find(t => String(t.No) === String(trainNo));
             if (!train) return;
@@ -1886,39 +1961,37 @@ body {
             const titleEl = document.getElementById('sp-title');
             const routeEl = document.getElementById('sp-route');
             const bodyEl = document.querySelector('.sp-body');
-
+            const badgeEl = document.getElementById('sp-status-badge');
+            
             const trainColor = getTrainColor(train.Type, train.No);
             const shortType = getShortTrainType(train.Type, train.No);
-            titleEl.innerHTML = `<span style="color:${trainColor}"><span style="font-family:'Outfit'">${train.No}</span>次 ${shortType}</span>`;
             
-            // 處理路線與狀態
-            let lineText = '';
-            if (train.Line === 1) lineText = '<span style="color:#2ed573; font-size:0.8em; border: 1px solid #2ed573; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">山線</span>';
-            else if (train.Line === 2) lineText = '<span style="color:#4facfe; font-size:0.8em; border: 1px solid #4facfe; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">海線</span>';
-            else if (train.Line === 3) lineText = '<span style="color:#e056fd; font-size:0.8em; border: 1px solid #e056fd; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">成追線</span>';
-            
-            let suspText = train.Susp === 1 || train.Susp === 2 ? '<span style="color:#ff4757; font-size:0.8em; border: 1px solid #ff4757; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">停駛</span>' : '';
-            
-            routeEl.innerHTML = `<i class="fas fa-map-marker-alt" style="color:#a4b0be;"></i> ${train.StartStation || train.Start} <i class="fas fa-arrow-right" style="margin: 0 4px; font-size: 0.8em; color: rgba(255,255,255,0.2)"></i> ${train.EndStation || train.Dest} ${lineText} ${suspText}`;
-            
-            // 如果有備註，加在下方
-            let noteHtml = '';
-            if (train.Note && train.Note.trim() !== '') {
-                noteHtml = `<div style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 6px; margin: 10px 20px 0; font-size: 0.85em; color: #a4b0be; border-left: 3px solid #4facfe;">
-                                <i class="fas fa-info-circle"></i> 備註：${escapeHtml(train.Note)}
-                            </div>`;
-            }
+            // Header
+            titleEl.innerHTML = `<span style="color:${trainColor}; font-family:'Outfit'; font-weight:800; font-size:24px;">${train.No}</span> <span style="font-size:18px;">${shortType}</span>`;
+            routeEl.innerHTML = `<i class="fas fa-map-marker-alt"></i> ${train.StartStation || train.Start} ➝ ${train.EndStation || train.Dest}`;
 
-            const isDelayed = globalLiveMap[train.No] && globalLiveMap[train.No].DelayTime > 0;
-            const delayMins = isDelayed ? globalLiveMap[train.No].DelayTime : 0;
-            const nowTime = Date.now();
+            // 狀態 Badge 判斷 (利用 State System)
+            const status = getTrainStatus(train);
+            let badgeHtml = '';
+            if (status === 'suspended') badgeHtml = '<span style="background:rgba(255,255,255,0.1); color:#fff; padding:4px 8px; border-radius:6px; font-size:12px;">停駛</span>';
+            else if (status === 'on-time') badgeHtml = '<span style="background:rgba(46,213,115,0.15); color:#2ed573; padding:4px 8px; border-radius:6px; font-size:12px;">準點</span>';
+            else badgeHtml = `<span style="background:rgba(255,71,87,0.15); color:#ff4757; padding:4px 8px; border-radius:6px; font-size:12px;">延誤 +${globalLiveMap[train.No]?.DelayTime || 0}分</span>`;
+            if (badgeEl) badgeEl.innerHTML = badgeHtml;
+
+            // Timeline 渲染準備
             const datePickerVal = document.getElementById('date-picker').value;
-            const isToday = (datePickerVal === getTwTodayString());
-
-            let html = noteHtml + '<div class="timeline" style="margin-top: 20px;">';
+            const nowTime = Date.now();
             let firstStopTimeMins = null;
             let pastCount = 0;
             const totalCount = train.Stops.length;
+            let timelineHtml = '';
+
+            const calculateDelayedTimeStr = (baseTimeStr, delayMins) => {
+                if (!baseTimeStr) return '';
+                const ms = parseTimeToTimestamp(baseTimeStr, datePickerVal, firstStopTimeMins) + delayMins * 60000;
+                const d = new Date(ms);
+                return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+            };
 
             train.Stops.forEach((stop, index) => {
                 const arrStr = stop.Arr;
@@ -1930,89 +2003,40 @@ body {
                 if (index === 0) firstStopTimeMins = h * 60 + m; 
                 const timeVal = parseTimeToTimestamp(timeStrForCalc, datePickerVal, firstStopTimeMins);
                 
-                let isPast = false;
-                let delayedClass = '';
-                let delayStatusHtml = '';
+                // 判斷是否為已駛過區間
+                let isPast = timeVal <= nowTime;
+                if (isPast) pastCount++;
+                
+                const delayedClass = (status.includes('delay') && !isPast) ? 'is-delayed' : '';
+                const pastClass = isPast ? 'is-past' : '';
+                const actualTimeStr = (status.includes('delay') && !isPast) ? 
+                    `<div style="font-size:11px; opacity:0.7; text-decoration:line-through;">${timeStrForCalc}</div>${calculateDelayedTimeStr(timeStrForCalc, globalLiveMap[train.No]?.DelayTime || 0)}` : 
+                    timeStrForCalc;
 
-                // 計算加上延遲後的實際時間
-                const getActualTimeStr = (baseTimeStr) => {
-                    if (!baseTimeStr) return '';
-                    const ms = parseTimeToTimestamp(baseTimeStr, datePickerVal, firstStopTimeMins) + delayMins * 60000;
-                    const d = new Date(ms);
-                    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-                };
-
-                let expectedHtml = '';
-                let actualHtml = '';
-
-                if (index === 0) {
-                    expectedHtml = `${depStr}`;
-                    actualHtml = `${getActualTimeStr(depStr)}`;
-                } else if (index === train.Stops.length - 1) {
-                    expectedHtml = `${arrStr}`;
-                    actualHtml = `${getActualTimeStr(arrStr)}`;
-                } else if (arrStr === depStr) {
-                    expectedHtml = `${arrStr}`;
-                    actualHtml = `${getActualTimeStr(arrStr)}`;
-                } else {
-                    expectedHtml = `${arrStr}<br>${depStr}`;
-                    actualHtml = `${getActualTimeStr(arrStr)}<br>${getActualTimeStr(depStr)}`;
-                }
-
-                if (isToday) {
-                    if (timeVal <= nowTime) {
-                        isPast = true;
-                        pastCount++;
-                    }
-                    if (stop.SuspendedFlag === 1) {
-                        delayStatusHtml = `<div class="ontime-tag" style="background:#8b0000; color:#ffffff; font-weight:bold;">停駛</div>`;
-                        expectedHtml = `<del style="opacity: 0.5;">${expectedHtml}</del>`;
-                        actualHtml = '';
-                    } else if (delayMins > 0) {
-                        delayStatusHtml = `<div class="delay-tag ${isPast ? 'past' : ''}">晚 ${delayMins} 分</div>`;
-                        delayedClass = 'delayed';
-                        expectedHtml = `<del style="opacity: 0.6;">${expectedHtml}</del>`;
-                    } else {
-                        delayStatusHtml = `<div class="ontime-tag">準點</div>`;
-                        actualHtml = ''; // 準點不顯示額外的紅字
-                    }
-                } else {
-                    actualHtml = '';
-                }
-
-                html += `
-                    <div class="timeline-item ${isPast ? 'past' : ''} ${delayedClass}">
-                        <div class="tl-time">
-                            <div class="expected">${expectedHtml}</div>
-                            ${actualHtml !== '' ? `<div class="actual">${actualHtml}</div>` : ''}
+                timelineHtml += `
+                    <div class="timeline-item ${pastClass} ${delayedClass}">
+                        <div class="tl-time">${actualTimeStr}</div>
+                        <div style="position:relative; display:flex; flex-direction:column; align-items:center;">
+                            <div class="tl-dot"></div>
+                            <div class="tl-line"></div>
                         </div>
-                        <div class="tl-node"></div>
                         <div class="tl-content">
-                            <div class="station-name">${stop.Name}</div>
-                            ${delayStatusHtml}
+                            <strong>${stop.Name}</strong>
                         </div>
                     </div>
                 `;
             });
 
-            // 計算與更新行駛進度條
-            const progressWrapper = document.getElementById('sp-progress-wrapper');
-            const progressBar = document.getElementById('sp-progress-bar');
-            const progressPercentText = document.getElementById('sp-progress-percent');
-            const progressStationsText = document.getElementById('sp-progress-stations');
-            
-            if (isToday && totalCount > 0) {
-                const percent = Math.min(100, Math.round((pastCount / totalCount) * 100));
-                progressBar.style.width = `${percent}%`;
-                progressPercentText.textContent = `行程進度 ${percent}%`;
-                progressStationsText.textContent = `${pastCount} / ${totalCount} 站`;
-                progressWrapper.style.display = 'block';
-            } else {
-                progressWrapper.style.display = 'none';
+            // 處理進度條
+            if (totalCount > 0) {
+                const progressPercent = Math.round((pastCount / totalCount) * 100);
+                const progressTextEl = document.getElementById('sp-progress-text');
+                const progressBarEl = document.getElementById('sp-progress-bar');
+                if (progressTextEl) progressTextEl.innerText = `${pastCount} / ${totalCount} 站`;
+                if (progressBarEl) progressBarEl.style.width = `${progressPercent}%`;
             }
 
-            html += '</div>'; // close timeline div
-            bodyEl.innerHTML = html;
+            bodyEl.innerHTML = timelineHtml;
             panel.classList.add('active');
         };
 
@@ -2062,22 +2086,23 @@ body {
         };
 
         const showAlertsModal = () => {
-            const overlay = document.getElementById('alerts-modal-overlay');
+            const modal = document.getElementById('alerts-modal-overlay');
             const box = document.getElementById('alerts-modal-box');
-            overlay.style.display = 'flex';
-            // Trigger reflow
-            void overlay.offsetWidth;
-            overlay.style.opacity = '1';
-            box.style.transform = 'scale(1)';
+            modal.style.display = 'flex';
+            // 簡單的 fade-in 動畫觸發
+            setTimeout(() => {
+                modal.style.opacity = '1';
+                box.style.transform = 'scale(1)';
+            }, 10);
         };
 
         const closeAlertsModal = () => {
-            const overlay = document.getElementById('alerts-modal-overlay');
+            const modal = document.getElementById('alerts-modal-overlay');
             const box = document.getElementById('alerts-modal-box');
-            overlay.style.opacity = '0';
+            modal.style.opacity = '0';
             box.style.transform = 'scale(0.95)';
             setTimeout(() => {
-                overlay.style.display = 'none';
+                modal.style.display = 'none';
             }, 300);
         };
 
@@ -2094,70 +2119,52 @@ body {
         };
 
         const updateAlertsMarquee = (alerts) => {
-            const marqueeContainer = document.getElementById('alerts-marquee');
+            const alertBar = document.getElementById('alert-bar');
+            const alertCount = document.getElementById('alert-count');
+            const alertIcon = document.getElementById('alert-icon-main');
             const marqueeText = document.getElementById('alerts-marquee-text');
-            const marqueeBadge = document.getElementById('alerts-marquee-badge');
             const modalBody = document.getElementById('alerts-modal-body');
             
             if (!alerts || alerts.length === 0) {
-                marqueeContainer.style.display = 'none';
+                alertBar.style.display = 'none';
                 return;
             }
             
-            // 判斷是否為正常狀態的輔助函式
             const isAlertNormal = (a) => a.Title.includes('正常') || a.Title.includes('恢復');
-            
-            // 挑出真正的異常通報
             const abnormalAlerts = alerts.filter(a => !isAlertNormal(a));
-            
-            // 如果完全沒有異常通報，代表目前全線正常
             const isAllNormal = abnormalAlerts.length === 0;
             
+            alertBar.style.display = 'flex';
+            
             if (isAllNormal) {
-                marqueeContainer.style.background = 'rgba(46, 213, 115, 0.15)';
-                marqueeContainer.style.borderBottom = '1px solid rgba(46, 213, 115, 0.3)';
-                marqueeContainer.style.color = '#2ed573';
-                marqueeBadge.style.borderRight = '1px solid rgba(46, 213, 115, 0.5)';
-                marqueeBadge.innerHTML = '✅ 營運通阻狀態';
+                alertBar.style.background = 'rgba(46, 213, 115, 0.08)';
+                alertBar.style.borderColor = 'rgba(46, 213, 115, 0.15)';
+                alertIcon.innerText = '✅';
+                alertCount.innerText = '全線正常';
+                alertCount.style.color = 'var(--success)';
+                marqueeText.innerHTML = '目前無重大營運通阻。';
             } else {
-                marqueeContainer.style.background = 'rgba(255, 71, 87, 0.15)';
-                marqueeContainer.style.borderBottom = '1px solid rgba(255, 71, 87, 0.3)';
-                marqueeContainer.style.color = '#ff4757';
-                marqueeBadge.style.borderRight = '1px solid rgba(255, 71, 87, 0.5)';
-                marqueeBadge.innerHTML = `⚠️ 目前 ${abnormalAlerts.length} 項營運異常`;
+                alertBar.style.background = 'rgba(255, 71, 87, 0.08)';
+                alertBar.style.borderColor = 'rgba(255, 71, 87, 0.15)';
+                alertIcon.innerText = '⚠️';
+                alertCount.innerText = `${abnormalAlerts.length} 項異常`;
+                alertCount.style.color = 'var(--danger)';
+                
+                // 只顯示第一筆摘要
+                const firstAlert = abnormalAlerts[0];
+                marqueeText.innerHTML = `<span style="color:var(--danger)">[${firstAlert.Title}]</span> ${firstAlert.Description}`;
             }
             
-            // 顯示邏輯：如果有異常，就「過濾掉」那些自打嘴巴的「全線營運正常」，避免混淆
-            const alertsToShow = isAllNormal ? alerts : abnormalAlerts;
-            
-            let html = '';
-            alertsToShow.forEach(a => {
+            // 渲染 Modal 詳細清單
+            modalBody.innerHTML = alerts.map(a => {
                 const normal = isAlertNormal(a);
-                const icon = normal ? '✅' : '⚠️';
-                const color = normal ? '#2ed573' : '#ff4757';
-                html += `<span style="margin-right: 40px;"><span style="color: ${color};">[${icon} ${escapeHtml(a.Title)}]</span> ${escapeHtml(a.Description)}</span>`;
-            });
-            // CSS marquee: 兩份內容交替滾動，實現無縫循環
-            marqueeText.innerHTML = `<div class="marquee-copy">${html}</div><div class="marquee-copy">${html}</div>`;
-            const charCount = marqueeText.textContent.length / 2;
-            marqueeText.style.animationDuration = `${Math.max(15, Math.round(charCount * 0.3))}s`;
-            marqueeContainer.style.display = 'flex';
-
-            // 產生 Modal 內容
-            let modalHtml = '';
-            alerts.forEach(a => {
-                const normal = isAlertNormal(a);
-                const isDisrupt = a.Title.includes('中斷') || a.Title.includes('不通');
-                const icon = normal ? '🟢' : (isDisrupt ? '🔴' : '🟠');
-                const color = normal ? '#2ed573' : (isDisrupt ? '#ff4757' : '#ffa502');
-                modalHtml += `
-                    <div style="background: rgba(255,255,255,0.03); border-left: 3px solid ${color}; padding: 12px 16px; border-radius: 4px;">
-                        <div style="color: ${color}; font-weight: bold; margin-bottom: 6px; font-size: 15px;">${icon} ${escapeHtml(a.Title)}</div>
-                        <div style="color: #a4b0be; font-size: 13.5px; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(a.Description)}</div>
-                    </div>
-                `;
-            });
-            modalBody.innerHTML = modalHtml || '<div style="color: #a4b0be; text-align: center; padding: 20px;">目前無通阻資訊</div>';
+                const color = normal ? 'var(--success)' : 'var(--danger)';
+                return `
+                <div style="background: rgba(255,255,255,0.03); padding: 16px; border-radius: 8px; border-left: 3px solid ${color};">
+                    <h4 style="margin: 0 0 8px 0; color: ${color};">${a.Title}</h4>
+                    <p style="margin: 0; font-size: 14px; color: var(--text-secondary); line-height: 1.5;">${a.Description}</p>
+                </div>`;
+            }).join('');
         };
 
         // 設定每 60 秒的背景刷新定時器
@@ -2354,20 +2361,41 @@ body {
                 renderChart(datePicker.value);
             });
 
-            // 當搜尋框內容改變時，重新繪製 (加 debounce 400ms 避免每按一鍵都觸發完整重繪)
-            let _searchDebounceTimer = null;
-            const triggerSearch = () => renderChart(datePicker.value);
-            
-            searchInput.addEventListener('input', () => {
-                clearTimeout(_searchDebounceTimer);
-                _searchDebounceTimer = setTimeout(triggerSearch, 400);
-            });
-            
-            searchInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    clearTimeout(_searchDebounceTimer);
-                    triggerSearch();
-                }
+            // 當搜尋框內容改變時，連動重繪、開啟 Side Panel 與自動 Zoom
+            let searchDebounceTimer;
+            searchInput.addEventListener('input', (e) => {
+                clearTimeout(searchDebounceTimer);
+                const val = e.target.value.trim();
+                
+                // 立即顯示載入中樣式 (Optional)
+                const loadingStatus = document.getElementById('loading-status');
+                if(loadingStatus && val) loadingStatus.innerHTML = '搜尋中...';
+
+                searchDebounceTimer = setTimeout(() => {
+                    // 保留原有 ECharts 核心呼叫
+                    renderChart(datePicker.value);
+                    
+                    if (val) {
+                        // 自動開啟 Side Panel
+                        showTrainDetails(val);
+
+                        // 自動 Zoom 到該車次的區間 (利用原有的 globalSearchedTimes)
+                        if (globalSearchedTimes && globalSearchedTimes.length > 0) {
+                            const minTime = Math.min(...globalSearchedTimes);
+                            const maxTime = Math.max(...globalSearchedTimes);
+                            const padding = 15 * 60 * 1000; // 前後預留 15 分鐘
+                            
+                            myChart.dispatchAction({
+                                type: 'dataZoom',
+                                dataZoomIndex: 0,
+                                startValue: minTime - padding,
+                                endValue: maxTime + padding
+                            });
+                        }
+                    } else {
+                        closeSidePanel(); // 清空時關閉面板
+                    }
+                }, 400); // 400ms debounce
             });
 
             const typeFilter = document.getElementById('type-filter');
