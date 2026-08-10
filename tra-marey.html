@@ -1849,51 +1849,10 @@ body {
                 }
             }
 
-            // 決定 X 軸視野 (Auto-zoom)
-            let viewMin, viewMax;
-            let searchFoundInLine = false;
-
-            if (searchVal !== "") {
-                if (globalSearchedTimes.length > 0) {
-                    searchFoundInLine = true;
-                    const minTime = Math.min(...globalSearchedTimes);
-                    const maxTime = Math.max(...globalSearchedTimes);
-                    // 將畫面置中於該車次的運行時間，前後保留 1 小時
-                    viewMin = minTime - (1 * 3600 * 1000);
-                    viewMax = maxTime + (1 * 3600 * 1000);
-                } else {
-                    // 若當前線路無此車次，檢查是否在全域時刻表中有此車
-                    const trainExists = globalTimetable.some(t => String(t.No) === searchVal);
-                    const statusEl = document.getElementById('loading-status');
-                    statusEl.classList.remove('success');
-                    statusEl.style.opacity = '1';
-                    if (trainExists) {
-                        statusEl.style.borderColor = 'rgba(255, 165, 2, 0.5)';
-                        statusEl.style.background = 'rgba(255, 165, 2, 0.2)';
-                        statusEl.style.color = '#ffa502';
-                        statusEl.innerHTML = `<i class="fas fa-exclamation-triangle"></i> 車次 ${escapeHtml(searchVal)} 未行經當前線路`;
-                    } else {
-                        statusEl.style.borderColor = 'rgba(255, 71, 87, 0.5)';
-                        statusEl.style.background = 'rgba(255, 71, 87, 0.2)';
-                        statusEl.style.color = '#ff4757';
-                        statusEl.innerHTML = `<i class="fas fa-times-circle"></i> 查無車次 ${escapeHtml(searchVal)}`;
-                    }
-                    if (window.searchWarningTimer) clearTimeout(window.searchWarningTimer);
-                    window.searchWarningTimer = setTimeout(() => { statusEl.style.opacity = '0'; }, 4000);
-                }
-            }
-
-            if (!searchFoundInLine) {
-                if (isToday) {
-                    const now = Date.now();
-                    viewMin = now - (1 * 3600 * 1000);
-                    viewMax = now + (3 * 3600 * 1000);
-                } else {
-                    const baseTime = new Date(`${dateStr}T00:00:00+08:00`).getTime();
-                    viewMin = baseTime + (6 * 3600 * 1000);
-                    viewMax = baseTime + (12 * 3600 * 1000);
-                }
-            }
+            // 固定顯示 25 小時
+            const baseTime = new Date(`${dateStr}T00:00:00+08:00`).getTime();
+            let viewMin = baseTime;
+            let viewMax = baseTime + 25 * 3600 * 1000;
 
             // 🎯 新增一條垂直的「現在時間基準線」，比對任何列車與此垂直紅線的交點，即為該列車在現在那一刻所在的車站位置
             if (isToday) {
@@ -1950,7 +1909,7 @@ body {
                 dataZoom: [
                     { type: 'inside', xAxisIndex: 0, filterMode: 'none', startValue: viewMin, endValue: viewMax }, 
                     { type: 'inside', yAxisIndex: 0, filterMode: 'none' }, 
-                    { type: 'slider', xAxisIndex: 0, bottom: 10, height: 20, borderColor: '#26262b', textStyle: { color: '#fff' }, startValue: viewMin, endValue: viewMax },
+                    { type: 'slider', xAxisIndex: 0, top: 15, height: 20, borderColor: '#26262b', textStyle: { color: '#fff' } },
                     { type: 'slider', yAxisIndex: 0, filterMode: 'none', right: 15, width: 20, borderColor: '#26262b', textStyle: { color: '#fff' } }
                 ],
                 grid: { top: 60, right: 55, bottom: 35, left: 80 },
@@ -2428,20 +2387,6 @@ body {
                     if (val) {
                         // 自動開啟 Side Panel
                         showTrainDetails(val);
-
-                        // 自動 Zoom 到該車次的區間 (利用原有的 globalSearchedTimes)
-                        if (globalSearchedTimes && globalSearchedTimes.length > 0) {
-                            const minTime = Math.min(...globalSearchedTimes);
-                            const maxTime = Math.max(...globalSearchedTimes);
-                            const padding = 15 * 60 * 1000; // 前後預留 15 分鐘
-                            
-                            myChart.dispatchAction({
-                                type: 'dataZoom',
-                                dataZoomIndex: 0,
-                                startValue: minTime - padding,
-                                endValue: maxTime + padding
-                            });
-                        }
                     } else {
                         closeSidePanel(); // 清空時關閉面板
                     }
@@ -2570,41 +2515,14 @@ body {
 
         // 重設 X 軸與 Y 軸為當天預設視野
         const resetZoom = () => {
-            const datePicker = document.getElementById('date-picker');
-            if (!datePicker) return;
-            const dateStr = datePicker.value;
-            const isToday = dateStr === getTwTodayString();
+            if (!myChart) return;
             
-            let viewMin, viewMax;
-            const searchVal = document.getElementById('train-search').value.trim();
-            
-            let searchFound = false;
-            if (searchVal !== "" && globalSearchedTimes && globalSearchedTimes.length > 0) {
-                searchFound = true;
-                const minTime = Math.min(...globalSearchedTimes);
-                const maxTime = Math.max(...globalSearchedTimes);
-                viewMin = minTime - (1 * 3600 * 1000);
-                viewMax = maxTime + (1 * 3600 * 1000);
-            }
-            
-            if (!searchFound) {
-                if (isToday) {
-                    const now = Date.now();
-                    viewMin = now - (1 * 3600 * 1000);
-                    viewMax = now + (3 * 3600 * 1000);
-                } else {
-                    const baseTime = new Date(`${dateStr}T00:00:00+08:00`).getTime();
-                    viewMin = baseTime + (6 * 3600 * 1000);
-                    viewMax = baseTime + (12 * 3600 * 1000);
-                }
-            }
-            
-            // 重設 X 軸
+            // 重設 X 軸 (全天 25 小時)
             myChart.dispatchAction({
                 type: 'dataZoom',
                 dataZoomIndex: 0,
-                startValue: viewMin,
-                endValue: viewMax
+                start: 0,
+                end: 100
             });
 
             // 重設 Y 軸 (顯示所有車站)
