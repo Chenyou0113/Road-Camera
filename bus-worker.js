@@ -1,12 +1,12 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║  TDX 公車 Cloudflare Worker — 最終救贖旗艦版 (v30.6)           ║
- * ║  修正：智慧型陣列解包器，避開 TDX v3 隱藏的 Messages 空陣列干擾    ║
+ * ║  TDX 公車 Cloudflare Worker — 最終救贖旗艦版 (v30.7)           ║
+ * ║  修正：車籍資料 API 容錯，防止不支援的縣市 (如 YilanCounty) 觸發 500 ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
 const CONFIG = {
-    VERSION: "v30.6",
+    VERSION: "v30.7",
     CITIES: ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung", "Keelung", "InterCity"],
     TOKEN_URL: "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
     BASE_API: "https://tdx.transportdata.tw/api/basic",
@@ -312,7 +312,12 @@ export default {
                 else { apiVer = city === "Tainan" ? "v3" : "v2"; apiPath = `City/${city}`; }
 
                 const result = await safeTdxFetch(`${CONFIG.BASE_API}/${apiVer}/Bus/Vehicle/${apiPath}?$format=JSON`, token);
-                if (!result.ok) throw new Error(`車籍資料獲取失敗: ${result.errorText}`);
+                
+                // 🌟 車籍防禦 (v30.7 升級)：若 TDX 不支援該縣市的車籍資料 (例如 YilanCounty)，回傳空物件保護前端
+                if (!result.ok) {
+                    console.warn(`[TDX 車籍警告] ${city} 抓取失敗，可能未支援該縣市:`, result.errorText);
+                    return send({}); // 直接回傳空物件，結束流程不噴錯
+                }
                 const dict = {};
                 
                 const arr = extractArray(result.data);
