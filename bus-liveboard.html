@@ -961,6 +961,205 @@
         return minD > 0.5 ? null : nearest;
     }
 
+    
+// 🎨 專業調校版：具備現代地標、捷運車站優先、微地名降噪的 MapLibre 樣式生成器
+function getMapStyle(theme) {
+    const isDark = theme === 'dark';
+    const GLYPHS_URL = 'https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf';
+    const MAP_PMTILES_URL = 'https://maps.weacamm.org/taiwan_full.pmtiles';
+    
+    return {
+        version: 8,
+        glyphs: GLYPHS_URL,
+        sources: {
+            'protomaps': {
+                type: 'vector',
+                url: `pmtiles://${MAP_PMTILES_URL}`,
+                attribution: '© OpenStreetMap contributors'
+            }
+        },
+        layers: [
+            {
+                id: 'background',
+                type: 'background',
+                paint: { 'background-color': isDark ? '#06090f' : '#f8fafc' }
+            },
+            {
+                id: 'water',
+                type: 'fill',
+                source: 'protomaps',
+                'source-layer': 'water',
+                paint: { 'fill-color': isDark ? '#0e1726' : '#bae6fd' }
+            },
+            {
+                id: 'landcover',
+                type: 'fill',
+                source: 'protomaps',
+                'source-layer': 'landcover',
+                paint: { 'fill-color': isDark ? '#0a141a' : '#dcfce7', 'fill-opacity': 0.4 }
+            },
+            {
+                id: 'buildings',
+                type: 'fill',
+                source: 'protomaps',
+                'source-layer': 'buildings',
+                minzoom: 14,
+                paint: { 'fill-color': isDark ? '#111827' : '#e2e8f0', 'fill-opacity': 0.6 }
+            },
+            {
+                id: 'roads-minor',
+                type: 'line',
+                source: 'protomaps',
+                'source-layer': 'roads',
+                filter: ['match', ['get', 'highway'], ['residential', 'service', 'unclassified', 'track', 'footway', 'path'], true, false],
+                paint: {
+                    'line-color': isDark ? '#182230' : '#e2e8f0',
+                    'line-width': ['interpolate', ['linear'], ['zoom'], 12, 0.4, 16, 2]
+                }
+            },
+            {
+                id: 'roads-major',
+                type: 'line',
+                source: 'protomaps',
+                'source-layer': 'roads',
+                filter: ['match', ['get', 'highway'], ['primary', 'secondary', 'tertiary'], true, false],
+                paint: {
+                    'line-color': isDark ? '#2a3a4e' : '#94a3b8',
+                    'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.8, 16, 4]
+                }
+            },
+            {
+                id: 'highways',
+                type: 'line',
+                source: 'protomaps',
+                'source-layer': 'roads',
+                filter: ['match', ['get', 'highway'], ['motorway', 'trunk'], true, false],
+                paint: {
+                    'line-color': isDark ? '#3b82f6' : '#64748b',
+                    'line-opacity': isDark ? 0.6 : 0.9,
+                    'line-width': ['interpolate', ['linear'], ['zoom'], 8, 1.2, 16, 5]
+                }
+            },
+            {
+                id: 'road-labels',
+                type: 'symbol',
+                source: 'protomaps',
+                'source-layer': 'roads',
+                minzoom: 13,
+                layout: {
+                    'symbol-placement': 'line',
+                    'text-field': ['coalesce', ['get', 'name:zh-Hant'], ['get', 'name:zh'], ['get', 'name']],
+                    'text-font': ['Noto Sans Regular'],
+                    'text-size': 11
+                },
+                paint: {
+                    'text-color': isDark ? '#64748b' : '#64748b',
+                    'text-halo-color': isDark ? '#06090f' : '#ffffff',
+                    'text-halo-width': 1.5
+                }
+            },
+            {
+                id: 'poi-transit-stations',
+                type: 'symbol',
+                source: 'protomaps',
+                'source-layer': 'pois',
+                minzoom: 11,
+                filter: ['match', ['get', 'class'], ['station', 'railway', 'subway', 'transit'], true, false],
+                layout: {
+                    'text-field': ['coalesce', ['get', 'name:zh-Hant'], ['get', 'name:zh'], ['get', 'name']],
+                    'text-font': ['Noto Sans Bold'],
+                    'text-size': ['interpolate', ['linear'], ['zoom'], 11, 11, 15, 14],
+                    'symbol-sort-key': 1,
+                    'text-optional': false
+                },
+                paint: {
+                    'text-color': isDark ? '#38bdf8' : '#0284c7',
+                    'text-halo-color': isDark ? '#082f49' : '#ffffff',
+                    'text-halo-width': 2
+                }
+            },
+            {
+                id: 'poi-major-landmarks',
+                type: 'symbol',
+                source: 'protomaps',
+                'source-layer': 'pois',
+                minzoom: 13,
+                filter: ['match', ['get', 'class'], ['hospital', 'university', 'college', 'school', 'attraction', 'monument', 'townhall', 'government', 'stadium', 'mall'], true, false],
+                layout: {
+                    'text-field': ['coalesce', ['get', 'name:zh-Hant'], ['get', 'name:zh'], ['get', 'name']],
+                    'text-font': ['Noto Sans Regular'],
+                    'text-size': 11,
+                    'symbol-sort-key': 2
+                },
+                paint: {
+                    'text-color': isDark ? '#e2e8f0' : '#334155',
+                    'text-halo-color': isDark ? '#06090f' : '#ffffff',
+                    'text-halo-width': 1.5
+                }
+            },
+            {
+                id: 'places-city',
+                type: 'symbol',
+                source: 'protomaps',
+                'source-layer': 'places',
+                maxzoom: 12,
+                filter: ['match', ['get', 'place'], ['city', 'province', 'state'], true, false],
+                layout: {
+                    'text-field': ['coalesce', ['get', 'name:zh-Hant'], ['get', 'name:zh'], ['get', 'name']],
+                    'text-font': ['Noto Sans Bold'],
+                    'text-size': 16,
+                    'symbol-sort-key': 0
+                },
+                paint: {
+                    'text-color': isDark ? '#ffffff' : '#0f172a',
+                    'text-halo-color': isDark ? '#1e293b' : '#ffffff',
+                    'text-halo-width': 2.5
+                }
+            },
+            {
+                id: 'places-town',
+                type: 'symbol',
+                source: 'protomaps',
+                'source-layer': 'places',
+                minzoom: 10,
+                maxzoom: 15,
+                filter: ['match', ['get', 'place'], ['town', 'district', 'borough', 'suburb'], true, false],
+                layout: {
+                    'text-field': ['coalesce', ['get', 'name:zh-Hant'], ['get', 'name:zh'], ['get', 'name']],
+                    'text-font': ['Noto Sans Regular'],
+                    'text-size': 13,
+                    'symbol-sort-key': 3
+                },
+                paint: {
+                    'text-color': isDark ? '#94a3b8' : '#475569',
+                    'text-halo-color': isDark ? '#06090f' : '#ffffff',
+                    'text-halo-width': 1.5
+                }
+            },
+            {
+                id: 'places-historic-localities',
+                type: 'symbol',
+                source: 'protomaps',
+                'source-layer': 'places',
+                minzoom: 15,
+                filter: ['match', ['get', 'place'], ['locality', 'hamlet', 'neighbourhood', 'isolated_dwelling'], true, false],
+                layout: {
+                    'text-field': ['coalesce', ['get', 'name:zh-Hant'], ['get', 'name:zh'], ['get', 'name']],
+                    'text-font': ['Noto Sans Regular'],
+                    'text-size': 10,
+                    'symbol-sort-key': 10
+                },
+                paint: {
+                    'text-color': isDark ? '#4b5563' : '#94a3b8',
+                    'text-opacity': 0.65,
+                    'text-halo-color': isDark ? '#06090f' : '#ffffff',
+                    'text-halo-width': 1
+                }
+            }
+        ]
+    };
+}
+
     window.initMap = function() {
         map = new google.maps.Map(document.getElementById('map'), {
             center: { lat: 25.0478, lng: 121.5170 },
@@ -1344,47 +1543,72 @@
 
             if (!est) {
                 timeEl.innerText = '--';
-                timeEl.classList.add('none');
+                timeEl.className = 'pill-badge none';
             } else if (est.status === 3) {
                 timeEl.innerText = '末班已過';
-                timeEl.classList.add('none');
+                timeEl.className = 'pill-badge none';
             } else if (est.status === 4) {
                 timeEl.innerText = '今日停駛';
-                timeEl.classList.add('none');
+                timeEl.className = 'pill-badge none';
+            } else if (est.status === 2) {
+                timeEl.innerText = '交管不停';
+                timeEl.className = 'pill-badge none';
             } else if (est.status === 1) {
                 let showTime = false;
                 if (est.nextBusTime) {
                     const nextDate = new Date(est.nextBusTime);
                     if (!isNaN(nextDate.getTime())) {
-                        const hours = nextDate.getHours().toString().padStart(2, '0');
-                        const mins = nextDate.getMinutes().toString().padStart(2, '0');
-                        timeEl.innerText = `${hours}:${mins}`; 
-                        timeEl.classList.add('badge-time', 'normal'); 
-                        timeEl.style.fontSize = '0.9rem'; 
+                        const hh = String(nextDate.getHours()).padStart(2, '0');
+                        const mm = String(nextDate.getMinutes()).padStart(2, '0');
+                        timeEl.innerText = `${hh}:${mm}`;
+                        timeEl.className = 'pill-badge normal';
                         showTime = true;
                     }
+                } else if (est.scheduledTime) {
+                    timeEl.innerText = est.scheduledTime.substring(0, 5);
+                    timeEl.className = 'pill-badge normal';
+                    showTime = true;
                 }
                 if (!showTime) {
                     timeEl.innerText = '未發車';
-                    timeEl.classList.add('none');
+                    timeEl.className = 'pill-badge none';
                 }
-            } else if (est.status === 2) {
-                timeEl.innerText = '不停靠';
-                timeEl.classList.add('none');
             } else if (est.sec != null) {
                 isActive = true; 
                 const min = Math.floor(est.sec / 60);
                 if (min < 1) {
                     timeEl.innerText = '進站中';
-                    timeEl.classList.add('coming');
+                    timeEl.className = 'pill-badge coming';
                     rowEl.classList.add('coming');
                 } else if (min <= 3) {
                     timeEl.innerText = `${min}分`;
-                    timeEl.classList.add('soon');
+                    timeEl.className = 'pill-badge soon';
                 } else {
                     timeEl.innerText = `${min}分`;
-                    timeEl.classList.add('normal');
+                    timeEl.className = 'pill-badge normal';
                 }
+
+                if (est.stopCountDown != null && est.stopCountDown > 0 && min >= 1) {
+                    timeEl.title = `距離本站還有 ${est.stopCountDown} 站`;
+                }
+            }
+
+            // 末班車醒目標籤
+            const parentNode = timeEl.parentNode;
+            let lastBusEl = parentNode.querySelector('.last-bus-badge');
+            if (est && est.isLastBus) {
+                if (!lastBusEl) {
+                    lastBusEl = document.createElement('span');
+                    lastBusEl.className = 'pill-badge last-bus-badge';
+                    lastBusEl.style.backgroundColor = 'var(--danger)';
+                    lastBusEl.style.color = '#fff';
+                    lastBusEl.style.marginLeft = '4px';
+                    lastBusEl.style.boxShadow = '0 0 8px rgba(239, 68, 68, 0.4)';
+                    lastBusEl.innerText = '末班';
+                    parentNode.appendChild(lastBusEl);
+                }
+            } else {
+                if (lastBusEl) lastBusEl.remove();
             }
 
             let targetBus = null;
