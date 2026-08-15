@@ -676,6 +676,12 @@
         }
 
 </style>
+
+    <!-- MapLibre GL & PMTiles -->
+    <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <script src="https://unpkg.com/pmtiles@2.11.0/dist/index.js"></script>
+
 </head>
 <body>
 
@@ -1160,45 +1166,35 @@ function getMapStyle(theme) {
     };
 }
 
-    window.initMap = function() {
-        map = new google.maps.Map(document.getElementById('map'), {
-            center: { lat: 25.0478, lng: 121.5170 },
+    
+    let liveBusMarkers = {};
+    let stopMarkers = [];
+    
+
+    function initMap() {
+        let protocol = new pmtiles.Protocol();
+        maplibregl.addProtocol("pmtiles", protocol.tile);
+
+        map = new maplibregl.Map({
+            container: 'map',
+            style: getMapStyle(currentTheme),
+            center: [121.5170, 25.0478],
             zoom: 13,
-            mapId: "DEMO_MAP_ID",
-            disableDefaultUI: true,
-            styles: [
-                { elementType: "geometry", stylers: [{ color: "#242f3e" }] },
-                { elementType: "labels.text.stroke", stylers: [{ color: "#242f3e" }] },
-                { elementType: "labels.text.fill", stylers: [{ color: "#746855" }] },
-                { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#d59563" }] },
-                { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#d59563" }] },
-                { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#263c3f" }] },
-                { featureType: "poi.park", elementType: "labels.text.fill", stylers: [{ color: "#6b9a76" }] },
-                { featureType: "road", elementType: "geometry", stylers: [{ color: "#38414e" }] },
-                { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#212a37" }] },
-                { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#9ca5b3" }] },
-                { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#746855" }] },
-                { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#1f2835" }] },
-                { featureType: "road.highway", elementType: "labels.text.fill", stylers: [{ color: "#f3d19c" }] },
-                { featureType: "transit", elementType: "geometry", stylers: [{ color: "#2f3948" }] },
-                { featureType: "transit.station", elementType: "labels.text.fill", stylers: [{ color: "#d59563" }] },
-                { featureType: "water", elementType: "geometry", stylers: [{ color: "#17263c" }] },
-                { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#515c6d" }] },
-                { featureType: "water", elementType: "labels.text.stroke", stylers: [{ color: "#17263c" }] }
-            ]
-        });
-        
-        map.addListener('idle', () => {
-            const center = map.getCenter();
-            const detectedCity = getCityByMapCenter(center.lat(), center.lng());
-            if (detectedCity && detectedCity !== browser.city && browser.type !== 'InterCity') {
-                selectCity(detectedCity); 
-            }
+            attributionControl: false
         });
 
-        updateMarqueeSection('marquee-city-text', 'Taipei', 'CityBus');
-        selectCity('Taipei');
-    };
+        map.on('load', () => {
+            if (typeof updateMarqueeSection === 'function') {
+                updateMarqueeSection('marquee-city-text', 'Taipei', 'CityBus');
+            }
+            selectCity('Taipei');
+        });
+    }
+
+    // Call initMap on window load
+    window.addEventListener('DOMContentLoaded', () => {
+        initMap();
+    });
 
     let browser = { type: 'CityBus', city: 'Taipei', cache: {} };
 
@@ -1529,13 +1525,13 @@ function getMapStyle(theme) {
             const uid = stop.StopUID;
             const est = estimates[`${currentData.direction}_${uid}`];
             
-            const timeEl = document.querySelector(`#stop-${uid} .badge-time`);
+            const timeEl = document.querySelector(`#stop-${uid} .pill-badge`);
             const busEl = document.querySelector(`#bus-${uid}`);
             const rowEl = document.getElementById(`stop-${uid}`);
             
             if (!timeEl || !busEl || !rowEl) return;
 
-            timeEl.className = 'badge-time';
+            timeEl.className = 'pill-badge';
             rowEl.classList.remove('coming', 'has-bus');
             busEl.innerHTML = ''; 
 
@@ -2286,6 +2282,102 @@ function getMapStyle(theme) {
         return txt.value;
     }
 
+    
+    function flyToCoord(lng, lat) {
+        if (!map || !lng || !lat) return;
+        map.flyTo({ center: [lng, lat], zoom: 16 });
+    }
+
+    function focusMap(lat, lng) {
+        if (!map || !lat || !lng) return;
+        map.flyTo({ center: [lng, lat], zoom: 16 });
+    }
+
+    function renderStopsOnMap(stops) {
+        stopMarkers.forEach(m => m.remove());
+        stopMarkers = [];
+
+        stops.forEach(s => {
+            if (!s.StopPosition) return;
+            const el = document.createElement('div');
+            el.className = 'map-stop-marker';
+            el.title = s.StopName?.Zh_tw || s.StopName;
+
+            const marker = new maplibregl.Marker({ element: el })
+                .setLngLat([s.StopPosition.PositionLon, s.StopPosition.PositionLat])
+                .addTo(map);
+
+            el.addEventListener('click', () => flyToCoord(s.StopPosition.PositionLon, s.StopPosition.PositionLat));
+            stopMarkers.push(marker);
+        });
+    }
+
+    function updateLiveBusMarkers(buses) {
+        const currentPlates = new Set(buses.map(b => b.plate));
+        Object.keys(liveBusMarkers).forEach(plate => {
+            if (!currentPlates.has(plate)) {
+                liveBusMarkers[plate].remove();
+                delete liveBusMarkers[plate];
+            }
+        });
+
+        buses.forEach(b => {
+            if (!b.lat || !b.lon) return;
+            if (liveBusMarkers[b.plate]) {
+                liveBusMarkers[b.plate].setLngLat([b.lon, b.lat]);
+                const el = liveBusMarkers[b.plate].getElement();
+                if (el) el.style.transform = `rotate(${b.azi || 0}deg)`;
+            } else {
+                const el = document.createElement('div');
+                el.className = 'map-bus-marker';
+                el.innerHTML = `<i class="fas fa-location-arrow"></i>`;
+                el.style.transform = `rotate(${b.azi || 0}deg)`;
+                el.title = `車牌：${b.plate}`;
+
+                const marker = new maplibregl.Marker({ element: el })
+                    .setLngLat([b.lon, b.lat])
+                    .addTo(map);
+
+                liveBusMarkers[b.plate] = marker;
+            }
+        });
+    }
+
+    function drawRouteShape(dir) {
+        if (!map) return;
+        if (map.getSource('route-line')) {
+            map.removeLayer('route-line-layer');
+            map.removeSource('route-line');
+        }
+
+        const shapeObj = (currentData.shapes || []).find(s => s.Direction == dir) || currentData.shapes[0];
+        if (!shapeObj || !shapeObj.Geometry) return;
+
+        const matches = shapeObj.Geometry.match(/-?d+.d+s+-?d+.d+/g) || [];
+        const coords = matches.map(m => {
+            const [lng, lat] = m.split(/s+/);
+            return [parseFloat(lng), parseFloat(lat)];
+        });
+
+        if (!coords.length) return;
+
+        map.addSource('route-line', {
+            type: 'geojson',
+            data: { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } }
+        });
+
+        map.addLayer({
+            id: 'route-line-layer',
+            type: 'line',
+            source: 'route-line',
+            paint: { 'line-color': '#3b82f6', 'line-width': 5, 'line-opacity': 0.85 }
+        });
+
+        const bounds = coords.reduce((b, coord) => b.extend(coord), new maplibregl.LngLatBounds(coords[0], coords[0]));
+        map.fitBounds(bounds, { padding: 60 });
+    }
+
+
     async function openCityNewsModal(targetCity = null) {
         currentModalSession++; // 🌟 發行新的彈窗身分證
         const session = currentModalSession;
@@ -2403,7 +2495,6 @@ function getMapStyle(theme) {
     }
 </script>
 
-<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=geometry,marker&language=zh-TW&callback=initMap" async defer></script>
 <div id="modal-overlay" class="modal-overlay" onclick="closeModal()">
     <div class="modal" onclick="event.stopPropagation()">
         <div class="modal-header">
