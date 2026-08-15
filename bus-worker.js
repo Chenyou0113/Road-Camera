@@ -1,12 +1,12 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║  TDX 公車 Cloudflare Worker — 最終救贖旗艦版 (v30.7)           ║
- * ║  修正：車籍資料 API 容錯，防止不支援的縣市 (如 YilanCounty) 觸發 500 ║
+ * ║  TDX 公車 Cloudflare Worker — 最終救贖旗艦版 (v30.8)           ║
+ * ║  修正：精準對接 TDX 車籍 API 規範 (區分六都與公路局代管縣市)       ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
 const CONFIG = {
-    VERSION: "v30.7",
+    VERSION: "v30.8",
     CITIES: ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung", "Keelung", "InterCity"],
     TOKEN_URL: "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
     BASE_API: "https://tdx.transportdata.tw/api/basic",
@@ -70,7 +70,6 @@ const getRouteKey = (city, type, routeName) => `${type}:${city}:${norm(routeName
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// 🌟 智慧型解包器 (v30.6 升級)：尋找資料量最大的陣列，避開 TDX 夾雜的 Messages: [] 空陣列
 const extractArray = (d) => {
     if (!d) return [];
     if (Array.isArray(d)) return d;
@@ -169,7 +168,6 @@ async function autoSyncCity(city, cat, token, env) {
     
     const data = extractArray(result.data);
     if (data.length === 0) {
-        // 🌟 萬一真的抓不到，印出前 150 字元供 debug 判斷
         throw new Error(`TDX 回傳了空的路線資料 (Raw: ${JSON.stringify(result.data).substring(0, 150)})`);
     }
 
@@ -305,21 +303,33 @@ export default {
             }
 
             if (action === "vehicle") {
-                let apiVer = "v2", apiPath = `City/${city}`;
-                if (cat === "InterCity" || city === "InterCity") { apiVer = "v2"; apiPath = "InterCity"; } 
-                else if (cat === "DRTS") { apiVer = "v3"; apiPath = `DRTS/City/${city}`; } 
-                else if (cat === "SciencePark") { apiVer = "v2"; apiPath = `SciencePark/${city}`; } 
-                else { apiVer = city === "Tainan" ? "v3" : "v2"; apiPath = `City/${city}`; }
+                // 🌟 TDX 車籍資料 API 區分邏輯 (v30.8 升級)
+                const sixCities = ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung"];
+                let vehicleUrl = "";
 
-                const result = await safeTdxFetch(`${CONFIG.BASE_API}/${apiVer}/Bus/Vehicle/${apiPath}?$format=JSON`, token);
-                
-                // 🌟 車籍防禦 (v30.7 升級)：若 TDX 不支援該縣市的車籍資料 (例如 YilanCounty)，回傳空物件保護前端
-                if (!result.ok) {
-                    console.warn(`[TDX 車籍警告] ${city} 抓取失敗，可能未支援該縣市:`, result.errorText);
-                    return send({}); // 直接回傳空物件，結束流程不噴錯
+                if (cat === "InterCity" || city === "InterCity") { 
+                    vehicleUrl = `${CONFIG.BASE_API}/v2/Bus/Vehicle/InterCity?$format=JSON`; 
+                } else if (cat === "DRTS") { 
+                    vehicleUrl = `${CONFIG.BASE_API}/v3/Bus/Vehicle/DRTS/City/${city}?$format=JSON`; 
+                } else if (cat === "SciencePark") { 
+                    vehicleUrl = `${CONFIG.BASE_API}/v2/Bus/Vehicle/SciencePark/${city}?$format=JSON`; 
+                } else if (sixCities.includes(city)) { 
+                    // 六都才有專屬的 City 參數
+                    const apiVer = city === "Tainan" ? "v3" : "v2";
+                    vehicleUrl = `${CONFIG.BASE_API}/${apiVer}/Bus/Vehicle/City/${city}?$format=JSON`; 
+                } else { 
+                    // 其他「公路局代管縣市」(如 YilanCounty, Keelung 等)，直接打總表
+                    vehicleUrl = `${CONFIG.BASE_API}/v2/Bus/Vehicle?$format=JSON`; 
                 }
-                const dict = {};
+
+                const result = await safeTdxFetch(vehicleUrl, token);
                 
+                if (!result.ok) {
+                    console.warn(`[TDX 車籍警告] ${city} 抓取失敗:`, result.errorText);
+                    return send({}); // 若依然失敗則靜默處理保護前端
+                }
+                
+                const dict = {};
                 const arr = extractArray(result.data);
                 arr.forEach(v => {
                     dict[v.PlateNumb] = { 
@@ -520,15 +530,12 @@ async function fetchBusNewsOrAlert(type, city, token) {
         const result = await safeTdxFetch(`${CONFIG.BASE_API}/v2/Bus/${target}/${path}?$format=JSON`, token);
         
         if (!result.ok) {
-            // 🌟 終極防禦：只要 TDX 拒絕回應 (不論是 400, 404 還是 500)
-            // 我們絕對不拋出 Error，而是直接回傳空陣列，保護網頁正常運作！
             console.warn(`[TDX 公告警告] ${city} 抓取失敗:`, result.errorText);
             return []; 
         }
         
         return extractArray(result.data);
     } catch (e) {
-        // 🌟 網路斷線或 JSON 解析失敗時，同樣回傳空陣列
         console.warn(`[TDX 公告異常]`, e);
         return [];
     }
