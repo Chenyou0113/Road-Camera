@@ -486,7 +486,7 @@ export default {
                     estimates: ests.reduce((acc, e) => {
                         const key = `${e.Direction}_${e.StopUID}`;
                         const sec = e.EstimateTime ?? null;
-                        if (!acc[key] || (sec !== null && (acc[key].sec === null || sec < acc[key].sec))) acc[key] = { sec, status: e.StopStatus, plate: e.PlateNumb, nextBusTime: e.NextBusTime };
+                        if (!acc[key] || (sec !== null && (acc[key].sec === null || sec < acc[key].sec))) acc[key] = { sec, status: e.StopStatus, plate: e.PlateNumb, nextBusTime: e.NextBusTime, isLastBus: e.IsLastBus || false };
                         return acc;
                     }, {})
                 });
