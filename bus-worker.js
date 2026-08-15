@@ -337,7 +337,9 @@ export default {
                         isLowFloor: v.IsLowFloor === 1 || v.HasLiftOrRamp === 1 || v.VehicleType === 2, 
                         hasWifi: v.HasWifi === 1, 
                         isElectric: v.IsElectric === 1 || v.IsElectric === true, 
-                        hasLift: v.HasLiftOrRamp === 1 || v.VehicleType === 3 || v.VehicleType === 5
+                        hasLift: v.HasLiftOrRamp === 1,
+                        vehicleClass: v.VehicleClass,
+                        vehicleType: v.VehicleType
                     };
                 });
                 return send(dict);
