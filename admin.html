@@ -123,10 +123,24 @@
                     <div class="status" id="metroStatus"></div>
                 </div>
 
-                <!-- 🆕 列車與區段停駛管理 -->
                 <div class="card" style="border-top: 4px solid #ff1744;">
                     <h3 style="color: #ff1744;"><i class="fas fa-ban"></i> 列車與區段停駛管理</h3>
                     
+                    <!-- 🤖 TDX 系統全自動即時通阻與停駛監測區塊 -->
+                    <div style="background: rgba(0, 188, 212, 0.08); border: 1px solid rgba(0, 188, 212, 0.3); border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 10px;">
+                            <span style="color: #00e5ff; font-weight: bold; font-size: 0.95rem;">
+                                <i class="fas fa-robot"></i> 🤖 TDX 系統全自動即時通阻監測（前/後端自動抓取生效，免手動）
+                            </span>
+                            <button onclick="importTdxAutoRules()" style="background: linear-gradient(135deg, #00bcd4, #0097a7); font-size: 0.8rem; padding: 6px 12px; width: auto; margin: 0; display: inline-flex; align-items: center; gap: 6px;">
+                                <i class="fas fa-file-import"></i> 📥 匯入自動解析規則至編輯區
+                            </button>
+                        </div>
+                        <div id="tdxAutoRulesContainer" style="font-size: 0.88rem; color: #ccc; max-height: 160px; overflow-y: auto; background: #121212; padding: 12px; border-radius: 6px; border: 1px solid #333; line-height: 1.6;">
+                            <i class="fas fa-spinner fa-spin"></i> 正在拉取 TDX 即時自動解析數據...
+                        </div>
+                    </div>
+
                     <label style="font-size:0.8rem; color:#888;">⚡ 快速指令解析（輸入後按解析按鈕即可自動填寫下方欄位）</label>
                     <div style="display:flex; gap:10px; margin-bottom:15px;">
                         <input type="text" id="quickSuspensionInp" placeholder="例如：408 臺北-花蓮 因地震 或 對號 宜蘭-羅東 或 121 停駛">
@@ -260,6 +274,7 @@
                 document.getElementById('currentUser').innerText = u;
                 loadAllData();
                 loadSuspensionRules(); // ⚡ 獨立加載，不與其他 API 綁定，防止連鎖中斷
+                loadAutoTdxRules();   // 🤖 自動加載 TDX 系統即時解析之通阻與停駛規則
             }
         }
 
@@ -443,6 +458,79 @@
             } else {
                 alert('⚠️ 無法辨識此格式。\n\n批量解析請確認格式類似：\n「彰化 ＜－－＞ 基隆 : 各級列車停駛」\n\n或您也可以直接手動填寫下方表單！');
             }
+        }
+
+        let tdxAutoRulesList = [];
+
+        async function loadAutoTdxRules() {
+            const container = document.getElementById('tdxAutoRulesContainer');
+            if (!container) return;
+            try {
+                const res = await fetch(`${PIDS_API}/api/alerts`);
+                if (!res.ok) throw new Error("Alert API Fail");
+                const alerts = await res.json();
+                
+                tdxAutoRulesList = parseAlertsToRules(alerts);
+
+                if (alerts.length === 0) {
+                    container.innerHTML = `<span style="color:#4caf50;"><i class="fas fa-check-circle"></i> 目前 TDX 全線營運正常，無即時通阻事件。系統正持續 24 小時自動監控與標記中...</span>`;
+                    return;
+                }
+
+                let html = alerts.map(a => `<div style="margin-bottom:6px; color:#ffb74d;"><strong>【${a.Title || '營運通告'}】</strong> ${a.Description}</div>`).join('');
+                if (tdxAutoRulesList.length > 0) {
+                    html += `<div style="margin-top:10px; border-top:1px dashed #444; padding-top:6px; color:#00e5ff;"><strong>🤖 系統自動解析出的停駛規則（已即時生效）：</strong><br>`;
+                    html += tdxAutoRulesList.map(r => {
+                        if (r.type === 'train') return `• 車次 <strong>${r.trainNo}</strong> 全線/區段停駛 (原因: ${r.note})`;
+                        return `• 區段停駛: <strong>${r.startStation || '?'} ⇄ ${r.endStation || '?'}</strong> (原因: ${r.note})`;
+                    }).join('<br>') + '</div>';
+                }
+                container.innerHTML = html;
+            } catch (e) {
+                container.innerHTML = `<span style="color:#888;">暫無即時 TDX 通阻事件數據 (或連線異常)</span>`;
+            }
+        }
+
+        function parseAlertsToRules(alerts) {
+            const rules = [];
+            (alerts || []).forEach(a => {
+                const desc = String(a.Description || "");
+                if (desc.includes("恢復行駛") || desc.includes("恢復通車") || desc.includes("雙線通車")) return;
+
+                const segmentRegex = /([\u4e00-\u9fff]+)\s*(?:至|＝|=|與|⇄)\s*([\u4e00-\u9fff]+)\s*間/g;
+                let m;
+                while ((m = segmentRegex.exec(desc)) !== null) {
+                    if (desc.includes("不通") || desc.includes("中斷") || desc.includes("停駛") || desc.includes("坍方") || desc.includes("封閉")) {
+                        rules.push({ type: 'segment', startStation: m[1].replace(/台/g, '臺'), endStation: m[2].replace(/台/g, '臺'), scope: 'all', note: a.Title || 'TDX自動通報' });
+                    }
+                }
+
+                const trainGroupRegex = /((?:\d+\s*[、,，]\s*)*\d+)\s*次/g;
+                let tm;
+                while ((tm = trainGroupRegex.exec(desc)) !== null) {
+                    const nos = tm[1].split(/[、,，]/).map(s => s.trim()).filter(Boolean);
+                    if (nos.length > 0 && (desc.includes("停駛") || desc.includes("取消") || desc.includes("不提供服務") || desc.includes("停辦"))) {
+                        nos.forEach(no => rules.push({ type: 'train', trainNo: no, startStation: '', endStation: '', scope: 'all', note: a.Title || 'TDX自動通報' }));
+                    }
+                }
+            });
+            return rules;
+        }
+
+        function importTdxAutoRules() {
+            if (!tdxAutoRulesList || tdxAutoRulesList.length === 0) {
+                return alert("目前沒有由 TDX 通報自動解析出的停駛規則。");
+            }
+            let count = 0;
+            tdxAutoRulesList.forEach(r => {
+                const exists = activeSuspensionRules.some(x => x.type === r.type && (r.type === 'train' ? x.trainNo === r.trainNo : (x.startStation === r.startStation && x.endStation === r.endStation)));
+                if (!exists) {
+                    activeSuspensionRules.push(r);
+                    count++;
+                }
+            });
+            renderSuspensionRulesTable();
+            alert(`🎉 已成功將 ${count} 筆 TDX 自動解析規則導入至手動編輯區！(您可手動微調並點擊儲存)`);
         }
 
         async function loadSuspensionRules() {

@@ -128,7 +128,6 @@ const parseRulesFromAlerts = (alerts) => {
         if (desc.includes("恢復行駛") || desc.includes("恢復通車") || desc.includes("已正常通車") || desc.includes("雙線通車")) continue;
 
         // 1. 自動定位區段中斷 (例如："瑞芳=猴硐間路線中斷" 或 "瑞芳至猴硐間")
-        // 修正：排除 |和 分隔符以免將和仁的和誤判
         const segmentRegex = /([\u4e00-\u9fff]+)\s*(?:至|＝|=|與|⇄)\s*([\u4e00-\u9fff]+)\s*間/g;
         let segmentMatch;
         while ((segmentMatch = segmentRegex.exec(desc)) !== null) {
@@ -139,16 +138,15 @@ const parseRulesFromAlerts = (alerts) => {
             }
         }
 
-        // 2. 自動匹配車次號碼 (例如："408次停駛" 或 "511、513次停駛")
-        const trainNoRegex = /(\d+)\s*次/g;
+        // 2. 自動匹配單車次或多車次號碼 (例如："408次停駛" 或 "511、513、515次列車停駛")
+        const trainGroupRegex = /((?:\d+\s*[、,，]\s*)*\d+)\s*次/g;
         let trainMatch;
-        const foundTrainNos = [];
-        while ((trainMatch = trainNoRegex.exec(desc)) !== null) {
-            foundTrainNos.push(trainMatch[1]);
-        }
-        if (foundTrainNos.length > 0 && (desc.includes("停駛") || desc.includes("取消"))) {
-            for (const tNo of foundTrainNos) {
-                rules.push({ type: "train", trainNo: tNo, startStation: "", endStation: "" });
+        while ((trainMatch = trainGroupRegex.exec(desc)) !== null) {
+            const nos = trainMatch[1].split(/[、,，]/).map(s => s.trim()).filter(Boolean);
+            if (nos.length > 0 && (desc.includes("停駛") || desc.includes("取消") || desc.includes("不提供服務") || desc.includes("停辦"))) {
+                for (const tNo of nos) {
+                    rules.push({ type: "train", trainNo: tNo, startStation: "", endStation: "" });
+                }
             }
         }
     }
@@ -336,10 +334,7 @@ const syncDailyScheduleBlob = async (env, offsetDaysArray = [0]) => {
 
 const syncTrainLiveBoard = async (env) => {
     const token = await getTdxToken(env);
-    const res = await fetch("https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/TrainLiveBoard?%24format=JSON", { headers: { "Authorization": `Bearer ${token}` } });
-    if (!res.ok) return;
-    
-    const json = await res.json(), liveMap = {};
+    const liveMap = {};
     const timestampSec = Math.floor(Date.now() / 1000);
     const logCutoffSec = timestampSec - 1209600;
     
@@ -347,22 +342,64 @@ const syncTrainLiveBoard = async (env) => {
         await env.DB.prepare("DELETE FROM TrainLiveLogs WHERE Timestamp < ?").bind(logCutoffSec).run();
     } catch (_) {}
 
-    const trains = json.TrainLiveBoards || [];
     const batchStatements = [];
 
-    trains.forEach(t => { 
-        const tno = String(t.TrainNo);
-        const delay = Number(t.DelayTime) || 0;
-        const station = t.StationName?.Zh_tw || t.StationID || "";
-        liveMap[tno] = { delay, status: Number(t.TrainStatus) || 0, station }; 
+    // A. 同步全台車次即時動態 (TrainLiveBoard)
+    try {
+        const resTrain = await fetch("https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/TrainLiveBoard?%24format=JSON", { headers: { "Authorization": `Bearer ${token}` } });
+        if (resTrain.ok) {
+            const jsonTrain = await resTrain.json();
+            (jsonTrain.TrainLiveBoards || []).forEach(t => { 
+                const tno = String(t.TrainNo);
+                const delay = Number(t.DelayTime) || 0;
+                const status = Number(t.TrainStatus) || 0;
+                const station = t.StationName?.Zh_tw || t.StationID || "";
+                liveMap[tno] = { delay, status, station }; 
 
-        if (station) {
-            batchStatements.push(
-                env.DB.prepare("INSERT OR REPLACE INTO TrainLiveLogs (TrainNo, Timestamp, StationName, DelayTime) VALUES (?, ?, ?, ?)")
-                    .bind(tno, timestampSec, station, delay)
-            );
+                if (station) {
+                    batchStatements.push(
+                        env.DB.prepare("INSERT OR REPLACE INTO TrainLiveLogs (TrainNo, Timestamp, StationName, DelayTime) VALUES (?, ?, ?, ?)")
+                            .bind(tno, timestampSec, station, delay)
+                    );
+                }
+            });
         }
-    });
+    } catch (e) {
+        console.warn("sync TrainLiveBoard error:", e);
+    }
+
+    // B. 同步全台車站即時動態 (StationLiveBoard) - 補充即時停駛狀態與月台
+    try {
+        const resStation = await fetch("https://tdx.transportdata.tw/api/basic/v3/Rail/TRA/StationLiveBoard?%24format=JSON", { headers: { "Authorization": `Bearer ${token}` } });
+        if (resStation.ok) {
+            const jsonStation = await resStation.json();
+            (jsonStation.StationLiveBoards || []).forEach(s => {
+                const tno = String(s.TrainNo);
+                const runningStatus = Number(s.RunningStatus) || 0;
+                const delay = Number(s.DelayTime) || 0;
+                const platform = s.Platform || "";
+
+                if (!liveMap[tno]) {
+                    liveMap[tno] = { delay, status: runningStatus, station: s.StationName?.Zh_tw || s.StationID || "" };
+                } else if (runningStatus === 2) {
+                    // 若 StationLiveBoard 標示取消/停駛，強烈優先將該車次狀態設為 2
+                    liveMap[tno].status = 2;
+                }
+
+                // 車站特定索引：ST_{StationID}_{TrainNo}
+                const stKey = `ST_${s.StationID}_${tno}`;
+                liveMap[stKey] = {
+                    delay,
+                    status: runningStatus,
+                    platform: (platform === "00" || !platform) ? "" : platform,
+                    arr: s.ScheduleArrivalTime || "",
+                    dep: s.ScheduleDepartureTime || ""
+                };
+            });
+        }
+    } catch (e) {
+        console.warn("sync StationLiveBoard error:", e);
+    }
 
     const chunkSize = 80;
     for (let i = 0; i < batchStatements.length; i += chunkSize) {
@@ -464,25 +501,38 @@ export default {
 
                 const res = trains.map(t => {
                     const l = liveM[t.No] || { delay: 0, status: 0, station: "" };
-                    const [h, m] = (t.Dep || t.Arr).split(':').map(Number);
+                    const stLive = liveM[`ST_${sid}_${t.No}`] || {};
+                    const effectiveStatus = isToday ? (stLive.status === 2 || l.status === 2 ? 2 : (stLive.status || l.status || 0)) : 0;
+                    const effectiveDelay = isToday ? (stLive.delay !== undefined ? stLive.delay : (l.delay || 0)) : 0;
+                    const effectivePlatform = stLive.platform || l.platform || "";
+
+                    const [h, m] = (t.Dep || t.Arr || "00:00").split(':').map(Number);
                     const patchedType = patchTrainType(t.No, t.Type, t.Note, t.Start, t.Dest);
                     
                     const ruleResult = applySuspensionRules(t.No, patchedType, t.fullStops, t.TrainSuspendedFlag, t.Note, rules);
                     const targetStopSuspended = ruleResult.stops.find(s => s.SID === sid)?.SuspendedFlag === 1;
 
+                    const isLiveCancelled = isToday && (effectiveStatus === 2);
+                    const isStationStopSuspended = targetStopSuspended || t.SuspendedFlag === 1 || isLiveCancelled;
+                    const isTrainFullySuspended = ruleResult.trainSuspendedFlag === 1 || t.TrainSuspendedFlag === 1 || isLiveCancelled;
+                    const isPartiallySuspended = !isTrainFullySuspended && (ruleResult.trainSuspendedFlag === 2 || t.TrainSuspendedFlag === 2 || isStationStopSuspended);
+
+                    const finalTrainSuspendedFlag = isTrainFullySuspended ? 1 : (isPartiallySuspended ? 2 : 0);
+                    const finalSuspendedFlag = (isStationStopSuspended || isTrainFullySuspended) ? 1 : 0;
+
                     return {
                         No: t.No, TrainNo: t.No, Dir: t.Dir, Type: patchedType, TrainTypeName: patchedType,
-                        Start: t.Start, Dest: t.Dest, Arr: t.Arr, Dep: t.Dep,
-                        DelayTime: isToday ? l.delay : 0, TrainStatus: isToday ? l.status : 0,
-                        Note: ruleResult.note, TrainSuspendedFlag: ruleResult.trainSuspendedFlag,
-                        SuspendedFlag: targetStopSuspended ? 1 : 0,
-                        IsSuspended: targetStopSuspended || ruleResult.trainSuspendedFlag === 1,
-                        IsPartiallySuspended: ruleResult.trainSuspendedFlag === 2,
-                        _actual: (h * 60 + m) + (isToday ? l.delay : 0)
+                        Start: t.Start, Dest: t.Dest, Arr: t.Arr, Dep: t.Dep, Platform: effectivePlatform,
+                        DelayTime: effectiveDelay, TrainStatus: effectiveStatus,
+                        Note: ruleResult.note, TrainSuspendedFlag: finalTrainSuspendedFlag,
+                        SuspendedFlag: finalSuspendedFlag,
+                        IsSuspended: isStationStopSuspended || isTrainFullySuspended,
+                        IsPartiallySuspended: isPartiallySuspended,
+                        _actual: (h * 60 + m) + effectiveDelay
                     };
                 }).filter(t => {
                     if (!isToday) return true;
-                    const [h, m] = (t.Dep || t.Arr).split(':').map(Number);
+                    const [h, m] = (t.Dep || t.Arr || "00:00").split(':').map(Number);
                     const schedMins = h * 60 + m;
                     
                     // 🚫 核心優化：如果這班車在當前車站為「停駛」狀態，表定出發時間一過，立刻砍掉該班車，不保留！
@@ -501,13 +551,15 @@ export default {
             if (url.pathname === "/api/schedule") {
                 const tno = url.searchParams.get("trainNo"), date = url.searchParams.get("date") || getTwDateString(0);
                 
-                const [blobRow, rulesRow, alertsRow] = await env.DB.batch([
+                const [blobRow, liveR, rulesRow, alertsRow] = await env.DB.batch([
                     env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = ?").bind(`TIMETABLE_BLOB_${date}`),
+                    env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'LIVE_DATA'"),
                     env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'SUSPENSION_RULES'"),
                     env.DB.prepare("SELECT Value FROM AppConfig WHERE Key = 'ALERTS_DATA'")
                 ]);
 
                 const timetable = blobRow.results[0] ? JSON.parse(blobRow.results[0].Value) : [];
+                const liveM = liveR.results[0] ? JSON.parse(liveR.results[0].Value) : {};
                 const trnData = timetable.find(t => String(t.No) === String(tno));
                 const trn = trnData ? {
                     Type: trnData.Type, Note: trnData.Note, Line: trnData.Line, TrainSuspendedFlag: trnData.Susp,
@@ -526,14 +578,23 @@ export default {
                 const patchedType = patchTrainType(tno, trn.Type, trn.Note, start, dest);
 
                 const ruleResult = applySuspensionRules(tno, patchedType, trn.Stops, trn.TrainSuspendedFlag, trn.Note, rules);
+                const liveInfo = liveM[tno] || { status: 0 };
+                const isLiveCancelled = (date === getTwDateString(0)) && (liveInfo.status === 2);
+                const isFullySuspended = ruleResult.trainSuspendedFlag === 1 || trnData?.Susp === 1 || isLiveCancelled;
+                const isPartiallySuspended = !isFullySuspended && (ruleResult.trainSuspendedFlag === 2 || trnData?.Susp === 2);
 
                 return new Response(JSON.stringify({
                     TrainNo: tno, TrainTypeName: patchedType, Note: ruleResult.note, TripLine: trn.Line,
-                    TrainSuspendedFlag: ruleResult.trainSuspendedFlag,
-                    StopTimes: ruleResult.stops.map(s => ({
-                        StationID: s.SID, StationName: { Zh_tw: s.Name },
-                        ArrivalTime: s.Arr, DepartureTime: s.Dep, SuspendedFlag: s.SuspendedFlag || 0
-                    }))
+                    TrainSuspendedFlag: isFullySuspended ? 1 : (isPartiallySuspended ? 2 : 0),
+                    IsSuspended: isFullySuspended,
+                    IsPartiallySuspended: isPartiallySuspended,
+                    StopTimes: ruleResult.stops.map(s => {
+                        const isStopSusp = isFullySuspended || s.SuspendedFlag === 1;
+                        return {
+                            StationID: s.SID, StationName: { Zh_tw: s.Name },
+                            ArrivalTime: s.Arr, DepartureTime: s.Dep, SuspendedFlag: isStopSusp ? 1 : 0
+                        };
+                    })
                 }), { headers: { ...cors, 'Content-Type': 'application/json' } });
             }
 
