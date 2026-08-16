@@ -62,10 +62,6 @@ export default {
       // 2. 站別時刻表 (StationTimeTable) - 完美解析版
       // ==========================================
       if (path === '/api/schedule') {
-        if (sys === 'TRTC' && sid.startsWith('BR')) {
-          return jsonRes({ Timetables: [] }); // 文湖線無時刻表
-        }
-        
         let targetSys = sys;
         if (sys === 'NTMC') {
             if (sid.startsWith('V')) targetSys = 'NTDLRT';
@@ -96,16 +92,8 @@ export default {
             });
         }
         
-        // 過濾掉過去的班次
-        const twTime = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Taipei"}));
-        const hh = String(twTime.getHours()).padStart(2, '0');
-        const mm = String(twTime.getMinutes()).padStart(2, '0');
-        const currentTimeStr = `${hh}:${mm}`;
-        
-        const futureTimetables = allTimetables.filter(t => (t.DepartureTime || "") >= currentTimeStr);
-        futureTimetables.sort((a, b) => (a.DepartureTime || "").localeCompare(b.DepartureTime || ""));
-
-        return jsonRes({ Timetables: futureTimetables });
+        allTimetables.sort((a, b) => (a.DepartureTime || "").localeCompare(b.DepartureTime || ""));
+        return jsonRes({ Timetables: allTimetables });
       }
 
       // ==========================================

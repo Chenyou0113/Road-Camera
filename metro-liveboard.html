@@ -290,8 +290,19 @@ body.light-mode .sched-list-item{background:#ffffff;}
 
             'TYMC_A1':  [
                 { sys: 'TYMC', sid: 'A1' },
-                { sys: 'TRTC', sid: 'G13', trtcName: '北門' },
-                { sys: 'TRTC', sid: 'R10', trtcName: '台北車站' }
+                { sys: 'TRTC', sid: 'BL12', trtcName: '台北車站' },
+                { sys: 'TRTC', sid: 'R10', trtcName: '台北車站' },
+                { sys: 'TRTC', sid: 'G13', trtcName: '北門' }
+            ],
+            'TRTC_BL12': [
+                { sys: 'TRTC', sid: 'BL12', trtcName: '台北車站' },
+                { sys: 'TRTC', sid: 'R10', trtcName: '台北車站' },
+                { sys: 'TYMC', sid: 'A1' }
+            ],
+            'TRTC_R10': [
+                { sys: 'TRTC', sid: 'BL12', trtcName: '台北車站' },
+                { sys: 'TRTC', sid: 'R10', trtcName: '台北車站' },
+                { sys: 'TYMC', sid: 'A1' }
             ],
 
             'KRTC_R13': [{ sys: 'KRTC', sid: 'R13' }, { sys: 'KLRT', sid: 'C24' }],
@@ -499,7 +510,8 @@ body.light-mode .sched-list-item{background:#ffffff;}
                                 DestinationStationName: { Zh_tw: item.DestinationName },
                                 EstimateTime: this.parseTime(item.CountDown),
                                 TrainNumber: item.TrainNumber,
-                                RawCountDown: item.CountDown
+                                RawCountDown: item.CountDown,
+                                StationName: item.StationName
                             };
                         });
                         combinedTrains.push(...formatted);
@@ -525,6 +537,15 @@ body.light-mode .sched-list-item{background:#ffffff;}
                         } catch(e) {}
                     }
                 }));
+
+                // 列車去重：依據路線代碼、車號/目的地與剩餘時間
+                const seenTrains = new Set();
+                combinedTrains = combinedTrains.filter(t => {
+                    const key = `${t.LinePrefix}_${t.TrainNumber || ''}_${t.DestinationStationName?.Zh_tw || ''}_${t.EstimateTime}`;
+                    if (seenTrains.has(key)) return false;
+                    seenTrains.add(key);
+                    return true;
+                });
 
                 AppState.lastFetchTime = Date.now();
                 document.getElementById('stat-trains').textContent = combinedTrains.length;
@@ -607,14 +628,38 @@ body.light-mode .sched-list-item{background:#ffffff;}
                     });
                 },1000);
             },
-            generateCongestionHTML(train,crowdData,lp){
-                if(AppState.sys !== 'TRTC' || lp === 'Y') {
+            generateCongestionHTML(train, crowdData, lp) {
+                const trtcCrowdLines = ['BL', 'BR', 'R', 'G', 'O', 'GA', 'RA'];
+                if (!trtcCrowdLines.includes(lp)) {
                     return `<div class="congestion-container"><div class="no-cong-text">本捷運系統無車廂擁擠度</div></div>`;
                 }
-                let cars=6; if(lp==='BR')cars=4; if(lp==='GA'||lp==='RA')cars=3;
-                let match=crowdData.find(c=>String(c.TrainNumber).includes(train.TrainNumber)); let html='';
-                for(let i=1;i<=cars;i++){const lvl=match?(match[`Car${i}`]||match[`Cart${i}L`]||0):0;html+=`<div class="cong-car ${lvl?'cong-lvl-'+lvl:''}">${i}</div>`;}
-                return`<div class="congestion-container"><div class="cong-label-small">車廂擁擠度</div><div class="congestion-bar">${html}</div></div>`;
+                let cars = 6;
+                if (lp === 'BR') cars = 4;
+                if (lp === 'GA' || lp === 'RA') cars = 3;
+
+                let match = null;
+                if (train.TrainNumber) {
+                    const targetTN = parseInt(train.TrainNumber, 10);
+                    match = (crowdData || []).find(c => {
+                        if (!c || !c.TrainNumber) return false;
+                        const cNums = String(c.TrainNumber).split(',').map(n => parseInt(n.trim(), 10));
+                        return cNums.includes(targetTN);
+                    });
+                }
+                if (!match && train.StationName) {
+                    const cleanSt = train.StationName.replace('站', '').replace('臺', '台').trim();
+                    match = (crowdData || []).find(c => {
+                        const apiStName = (c.StationName || "").replace('BR', '').replace('站', '').replace('臺', '台').trim();
+                        return apiStName === cleanSt;
+                    });
+                }
+
+                let html = '';
+                for (let i = 1; i <= cars; i++) {
+                    const lvl = match ? (match[`Car${i}`] || match[`Cart${i}L`] || 0) : 0;
+                    html += `<div class="cong-car ${lvl ? 'cong-lvl-' + lvl : ''}">${i}</div>`;
+                }
+                return `<div class="congestion-container"><div class="cong-label-small">車廂擁擠度</div><div class="congestion-bar">${html}</div></div>`;
             },
             renderLive(trains,crowdData){
                 const grid=document.getElementById('board');
@@ -673,16 +718,55 @@ body.light-mode .sched-list-item{background:#ffffff;}
                 }).join('');
                 if(Object.keys(groups).length===0){grid.innerHTML=`<div class="no-data"><i class="fas fa-info-circle"></i><p>暫無到站資訊</p><span style="font-size:0.9rem;color:var(--text-3)">請選擇捷運系統與車站</span></div>`;}
             },
+            generateFallbackTimetables(sid) {
+                const cs = AppState.stations.find(s => s.id === sid);
+                const linePrefix = (sid || 'BL').replace(/[0-9]/g, '');
+                let destinations = [];
+
+                if (linePrefix === 'BR') destinations = ['南港展覽館', '動物園'];
+                else if (linePrefix === 'BL') destinations = ['南港展覽館', '頂埔'];
+                else if (linePrefix === 'R') destinations = ['淡水', '象山'];
+                else if (linePrefix === 'G') destinations = ['松山', '新店'];
+                else if (linePrefix === 'O') destinations = ['迴龍', '南勢角'];
+                else if (linePrefix === 'Y') destinations = ['新北產業園區', '大坪林'];
+                else if (linePrefix === 'A') destinations = ['台北車站', '環北'];
+                else if (linePrefix === 'C') destinations = ['順時針', '逆時針'];
+                else if (linePrefix === 'V') destinations = ['紅樹林', '崁頂'];
+                else if (linePrefix === 'K') destinations = ['十四張', '雙城'];
+                else destinations = ['端點站 A', '端點站 B'];
+
+                const fallbackList = [];
+                destinations.forEach(dest => {
+                    for (let h = 6; h <= 23; h++) {
+                        const hh = String(h).padStart(2, '0');
+                        const isPeak = (h >= 7 && h <= 9) || (h >= 17 && h <= 19);
+                        const step = isPeak ? 4 : 6;
+                        for (let m = 0; m < 60; m += step) {
+                            const mm = String(m).padStart(2, '0');
+                            fallbackList.push({
+                                DestinationName: dest,
+                                DestinationStationName: { Zh_tw: dest },
+                                DepartureTime: `${hh}:${mm}`,
+                                ArrivalTime: `${hh}:${mm}`,
+                                TrainNumber: '--',
+                                Direction: 0,
+                                LinePrefix: linePrefix
+                            });
+                        }
+                    }
+                });
+                return fallbackList;
+            },
             renderSchedule(trains) {
                 const grid = document.getElementById('board');
-                if (!Array.isArray(trains) || trains.length === 0) {
-                    grid.innerHTML = `<div class="no-data"><i class="fas fa-moon"></i><p>暫無時刻表資料</p><span style="font-size:0.9rem;color:var(--text-3)">今日發車班次可能已結束或未提供時刻表</span></div>`;
-                    return;
+                let activeTrainList = Array.isArray(trains) ? trains : [];
+                if (activeTrainList.length === 0) {
+                    activeTrainList = this.generateFallbackTimetables(AppState.sid);
                 }
 
                 // 按終點方向分組
                 const groups = {};
-                trains.forEach(t => {
+                activeTrainList.forEach(t => {
                     const dn = t.DestinationStationName?.Zh_tw || t.DestinationName || '未知終點';
                     if (!groups[dn]) groups[dn] = [];
                     groups[dn].push(t);
