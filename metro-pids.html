@@ -1127,8 +1127,8 @@
     </div>
 
     <!-- 🔥 引入 YouTube Iframe API 腳本 -->
-    <script src="https://www.youtube.com/iframe_api" type="a6aede6feb47f2fcbd4b7b94-text/javascript"></script>
-    <script type="a6aede6feb47f2fcbd4b7b94-text/javascript">
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script>
         const METRO_STATIONS = fetch('metro-stations-raw.json').then(r => r.json()).catch(() => null);
 
         // 🔥 影片 API 變數宣告
@@ -1136,6 +1136,15 @@
         let isYtApiReady = false;
         let pendingVideoIds = [];
         let currentPlaylistStr = "";
+
+        // 解析任何格式的 YouTube 網址或原始 ID 為 11 位元標準 ID
+        function parseYouTubeId(url) {
+            if (!url) return null;
+            const str = String(url).trim();
+            if (/^[a-zA-Z0-9_-]{11}$/.test(str)) return str;
+            const match = str.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([a-zA-Z0-9_-]{11})/);
+            return match ? match[1] : null;
+        }
 
         // YouTube API 準備就緒時觸發的函式
         function onYouTubeIframeAPIReady() {
@@ -1172,22 +1181,50 @@
         }
 
         function onPlayerStateChange(event) {
-            // 🎯 最關鍵：不管是切換下一部、暫停還是什麼狀態，都強制靜音！
-            if (event.target && event.target.mute) {
+            // 🎯 強制靜音防干擾
+            if (event.target && typeof event.target.mute === 'function') {
                 event.target.mute();
+            }
+            // 🎯 當影片播放完畢 (ENDED = 0)，自動播放清單中的下一部影片！
+            if (event.data === (window.YT ? YT.PlayerState.ENDED : 0)) {
+                if (ytPlayer && typeof ytPlayer.nextVideo === 'function') {
+                    ytPlayer.nextVideo();
+                }
             }
         }
 
         // 更新影片播放清單邏輯
         function updateYouTubePlaylist(videoIds) {
+            if (!Array.isArray(videoIds) || videoIds.length === 0) return;
             const playlistStr = videoIds.join(',');
             // 如果清單沒變就不用重整
             if (currentPlaylistStr !== playlistStr) {
                 currentPlaylistStr = playlistStr;
-                ytPlayer.loadPlaylist({
-                    playlist: videoIds
-                });
-                ytPlayer.setLoop(true); // 開啟循環播放
+                if (ytPlayer && typeof ytPlayer.loadPlaylist === 'function') {
+                    ytPlayer.loadPlaylist({
+                        playlist: videoIds
+                    });
+                    ytPlayer.setLoop(true); // 開啟循環播放
+                }
+            }
+        }
+
+        // 🎯 後端影片配置抓取與更新函式
+        async function updateVideo() {
+            try {
+                const res = await fetch(`${METRO_API_TDX}/metro/assets`);
+                const data = await res.json();
+                const rawList = Array.isArray(data.video) ? data.video : (data.video ? [data.video] : []);
+                const validIds = rawList.map(parseYouTubeId).filter(Boolean);
+                const videoIds = validIds.length > 0 ? validIds : ['Y_siE2Wsp38'];
+
+                if (isYtApiReady && ytPlayer && typeof ytPlayer.loadPlaylist === 'function') {
+                    updateYouTubePlaylist(videoIds);
+                } else {
+                    pendingVideoIds = videoIds;
+                }
+            } catch (e) {
+                console.error("Fetch Video Config Error:", e);
             }
         }
 

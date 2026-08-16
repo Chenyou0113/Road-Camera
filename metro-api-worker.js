@@ -44,7 +44,13 @@ export default {
           const targetTdxId = METRO_CONFIG.TRTC.tdxIdMap[sid] || sid;
           filtered = filtered.filter(t => String(t.StationID) === targetTdxId);
         } else if (sid) {
-          filtered = filtered.filter(t => String(t.StationID).toUpperCase() === sid);
+          const sidUpper = sid.toUpperCase();
+          const sidPadded = sidUpper.replace(/^([A-Z]+)([0-9])$/, '$10$2');
+          const sidUnpadded = sidUpper.replace(/^([A-Z]+)0([0-9])$/, '$1$2');
+          filtered = filtered.filter(t => {
+            const tSid = String(t.StationID || '').toUpperCase();
+            return tSid === sidUpper || tSid === sidPadded || tSid === sidUnpadded;
+          });
         }
 
         const processed = filtered.map(item => {
