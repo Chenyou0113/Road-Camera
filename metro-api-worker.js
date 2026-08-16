@@ -49,10 +49,15 @@ export default {
 
         const processed = filtered.map(item => {
           let estimate = (item.EstimateTime != null) ? item.EstimateTime * 60 : 0;
-          let dest = item.DestinationStationName.Zh_tw;
+          let dest = item.DestinationStationName?.Zh_tw || item.TripHeadSign || "目的地";
           if (sys === 'KLRT' && item.TripHeadSign) dest = `${dest} (${item.TripHeadSign.replace('方向','')})`;
           
-          return { ...item, EstimateTime: estimate, Direction: dest };
+          return {
+            ...item,
+            EstimateTime: estimate,
+            Direction: dest,
+            TrainType: item.TrainType ?? (item.TripHeadSign?.includes('直達') ? 2 : (item.TripHeadSign?.includes('普通') ? 1 : 0))
+          };
         });
         
         return jsonRes(processed.sort((a, b) => a.EstimateTime - b.EstimateTime));
@@ -74,8 +79,11 @@ export default {
         let allTimetables = [];
         if (Array.isArray(data)) {
             data.forEach(routeObj => {
-                const destName = routeObj.DestinationStaionName?.Zh_tw || routeObj.DestinationStationName?.Zh_tw || "未知方向";
+                let destName = routeObj.DestinationStaionName?.Zh_tw || routeObj.DestinationStationName?.Zh_tw || "未知方向";
                 const direction = routeObj.Direction;
+                if (targetSys === 'KLRT' || sid.startsWith('C')) {
+                    destName = direction === 0 ? '順時針' : (direction === 1 ? '逆時針' : destName);
+                }
                 const timetablesArray = routeObj.Timetables || routeObj.TimeTables || [];
                 
                 timetablesArray.forEach(t => {
@@ -85,6 +93,7 @@ export default {
                         DepartureTime: t.DepartureTime || t.ArrivalTime,
                         ArrivalTime: t.ArrivalTime || t.DepartureTime,
                         TrainNumber: t.TrainNo || t.TrainNumber || '--',
+                        TrainType: t.TrainType || 0,
                         Direction: direction,
                         LinePrefix: sid.replace(/[0-9]/g, '')
                     });
@@ -141,6 +150,40 @@ export default {
           name: s.StationName.Zh_tw,
           line: s.StationID.replace(/[0-9]/g, '')
         })));
+      }
+
+      // ==========================================
+      // 6. 停站模式 (StoppingPattern)
+      // ==========================================
+      if (path === '/api/stopping-pattern' || path === '/api/pattern') {
+        const data = await fetchTDX(env, `https://tdx.transportdata.tw/api/basic/v2/Rail/Metro/StoppingPattern/${sys}?%24format=JSON`);
+        return jsonRes(data);
+      }
+
+      // ==========================================
+      // 7. 列車即時位置 (LivePosition - 預留未來地圖擴充)
+      // ==========================================
+      if (path === '/api/position' || path === '/api/liveposition') {
+        const data = await fetchTDX(env, `https://tdx.transportdata.tw/api/basic/v2/Rail/Metro/LivePosition/${sys}?%24format=JSON`);
+        let processed = [];
+        if (Array.isArray(data)) {
+          processed = data.map(item => {
+            let dirText = '未知';
+            if (item.Direction === 0) dirText = (sys === 'KLRT' || item.LineID === 'C') ? '順時針' : '去程';
+            else if (item.Direction === 1) dirText = (sys === 'KLRT' || item.LineID === 'C') ? '逆時針' : '返程';
+            else if (item.Direction === 2) dirText = '迴圈';
+            return { ...item, DirectionText: dirText };
+          });
+        }
+        return jsonRes(processed);
+      }
+
+      // ==========================================
+      // 8. 車站月台資料 (StationPlatform - 預留月台指引)
+      // ==========================================
+      if (path === '/api/platform' || path === '/api/station-platform') {
+        const data = await fetchTDX(env, `https://tdx.transportdata.tw/api/basic/v2/Rail/Metro/StationPlatform/${sys}?%24format=JSON`);
+        return jsonRes(data);
       }
 
       return jsonRes({ error: "Endpoint Not Found" }, 404);
