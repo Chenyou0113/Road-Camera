@@ -1346,10 +1346,31 @@
             }, 1000);
         }
 
+        function isWeekendOrHoliday(dateObj) {
+            const day = dateObj.getDay();
+            const currentMins = dateObj.getHours() * 60 + dateObj.getMinutes();
+            if (day === 0 || day === 6) return true; // 週日、週六
+            if (day === 5 && currentMins >= 23 * 60) return true; // 週五夜
+            
+            const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+            const date = String(dateObj.getDate()).padStart(2, '0');
+            const md = `${month}-${date}`;
+            const holidays = ['01-01', '02-28', '04-04', '04-05', '05-01', '10-10', '12-31'];
+            return holidays.includes(md);
+        }
+
         function getOfflineStatus() {
-            const h = new Date().getHours();
-            const isLateNight = (h >= 23 || h < 6);
-            if (isLateNight) {
+            const now = new Date();
+            const currentMins = now.getHours() * 60 + now.getMinutes();
+            const isWeekendHoliday = isWeekendOrHoliday(now);
+
+            // 平日：半夜 12:30 (00:30) 至清晨 05:15 自動視為收班離線
+            // 節假日：半夜 01:15 至清晨 05:15 自動視為收班離線
+            const cutoffMin = isWeekendHoliday ? (1 * 60 + 15) : (0 * 60 + 30);
+            const isAfterCutoff = (currentMins >= cutoffMin && currentMins < 5 * 60 + 15);
+            const isLateNight = (currentMins >= 23 * 60 || currentMins < 5 * 60 + 15);
+
+            if (isAfterCutoff || isLateNight) {
                 return {
                     destZh: "營運結束", destEn: "Service Ended",
                     timeText: "末班車已駛離", timeClass: "time-box end-service"
@@ -1508,11 +1529,29 @@
         }
 
         function parseTRTCTime(timeStr) {
-            if (!timeStr || timeStr === '列車進站' || timeStr.includes('進站') || timeStr === '資料擷取中') return 0;
-            if (timeStr.includes(':')) {
-                const [mm, ss] = timeStr.split(':').map(Number);
-                // 🚫 核心修復：如果倒數分鐘大於等於 60（如北捷深夜常見的 167 分鐘跨日數據），代表今晚列車已收班，傳回 9999 trigger 離線狀態！
-                if (isNaN(mm) || mm >= 60) return 9999;
+            if (!timeStr) return 9999;
+            const str = String(timeStr).trim();
+            if (str === '列車進站' || str.includes('進站')) return 0;
+            if (str === '資料擷取中' || str.includes('未發車') || str.includes('結束') || str.includes('駛離') || str === '---') return 9999;
+
+            if (str.includes(':')) {
+                const [mm, ss] = str.split(':').map(Number);
+                if (isNaN(mm)) return 9999;
+
+                const now = new Date();
+                const currentMins = now.getHours() * 60 + now.getMinutes();
+                const isWeekendHoliday = isWeekendOrHoliday(now);
+
+                // 🚫 平日半夜 12:30 (00:30) 過後至清晨 05:15，通通自動判定為末班已過 (除非正在進站 mm <= 5)
+                if (!isWeekendHoliday && currentMins >= 0 * 60 + 30 && currentMins < 5 * 60 + 15) {
+                    if (mm > 5) return 9999;
+                }
+
+                // 🚫 節假日或 23:00~05:15 一般夜間：若下一班倒數超過 20 分鐘，或資料大於等於 60 分鐘，自動判定為末班已過！
+                const isLateNight = (currentMins >= 23 * 60 || currentMins < 5 * 60 + 15);
+                if (isLateNight && mm > 20) return 9999;
+                if (mm >= 60) return 9999;
+
                 return (mm * 60) + (isNaN(ss) ? 0 : ss);
             }
             return 9999;

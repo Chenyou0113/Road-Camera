@@ -625,19 +625,68 @@ body.light-mode .sched-list-item{background:#ffffff;}
                 document.getElementById('stat-trains').textContent=cleanFormatted.length;
                 this.renderLive(cleanFormatted,crowdData); this.startLocalTicker();
             },
-            parseTime(s){ if(!s||s.includes('進站'))return 0; const p=s.split(':'); if(p.length===2){ const m=parseInt(p[0],10); if(!isNaN(m)&&m>=60)return -1; return (!isNaN(m)?m*60:0)+(parseInt(p[1],10)||0); } return 0; },
+            isWeekendOrHoliday(dateObj) {
+                const day = dateObj.getDay();
+                const currentMins = dateObj.getHours() * 60 + dateObj.getMinutes();
+                if (day === 0 || day === 6) return true; // 週日、週六
+                if (day === 5 && currentMins >= 23 * 60) return true; // 週五夜
+                const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                const date = String(dateObj.getDate()).padStart(2, '0');
+                const md = `${month}-${date}`;
+                const holidays = ['01-01', '02-28', '04-04', '04-05', '05-01', '10-10', '12-31'];
+                return holidays.includes(md);
+            },
+            parseTime(s) {
+                if (!s) return -1;
+                const str = String(s).trim();
+                if (str === '列車進站' || str.includes('進站')) return 0;
+                if (str === '資料擷取中' || str.includes('未發車') || str.includes('結束') || str.includes('駛離') || str === '---') return -1;
+                const p = str.split(':');
+                if (p.length === 2) {
+                    const m = parseInt(p[0], 10);
+                    if (isNaN(m)) return -1;
+
+                    const now = new Date();
+                    const currentMins = now.getHours() * 60 + now.getMinutes();
+                    const isWeekendHoliday = this.isWeekendOrHoliday(now);
+
+                    // 🚫 平日半夜 12:30 (00:30) 過後至清晨 05:15，通通自動判定為末班已過 (除非正在進站 m <= 5)
+                    if (!isWeekendHoliday && currentMins >= 0 * 60 + 30 && currentMins < 5 * 60 + 15) {
+                        if (m > 5) return -1;
+                    }
+
+                    // 🚫 節假日或 23:00~05:15 一般夜間：若下一班倒數超過 20 分鐘，或資料大於等於 60 分鐘，自動判定為末班已過！
+                    const isLateNight = (currentMins >= 23 * 60 || currentMins < 5 * 60 + 15);
+                    if (isLateNight && m > 20) return -1;
+                    if (m >= 60) return -1;
+
+                    return (!isNaN(m) ? m * 60 : 0) + (parseInt(p[1], 10) || 0);
+                }
+                return -1;
+            },
             startLocalTicker() {
-                if(AppState.localTicker)clearInterval(AppState.localTicker);
-                AppState.localTicker=setInterval(()=>{
-                    const el=Math.floor((Date.now()-AppState.lastFetchTime)/1000);
-                    document.querySelectorAll('.arrival-time').forEach(e=>{
-                        const orig=parseInt(e.dataset.sec); const raw=e.dataset.raw||'';
-                        if(isNaN(orig)||orig<0){e.innerHTML=`<span class="time-number" style="color:var(--text-3)">--:--</span>`;return;}
-                        const cur=Math.max(0,orig-el);
-                        if(cur<=40||raw.includes('進站')){e.innerHTML=`<span class="arriving-badge"><i class="fas fa-circle" style="font-size:0.5rem"></i>進站中</span>`;}
-                        else{const m=String(Math.floor(cur/60)).padStart(2,'0');const s=String(cur%60).padStart(2,'0');e.innerHTML=`<span class="time-number">${m}:${s}</span>`;}
+                if (AppState.localTicker) clearInterval(AppState.localTicker);
+                AppState.localTicker = setInterval(() => {
+                    const el = Math.floor((Date.now() - AppState.lastFetchTime) / 1000);
+                    document.querySelectorAll('.arrival-time').forEach(e => {
+                        const orig = parseInt(e.dataset.sec, 10);
+                        const raw = e.dataset.raw || '';
+                        if (isNaN(orig) || orig < 0) {
+                            e.innerHTML = `<span class="time-number" style="color:var(--text-3)">--:--</span>`;
+                            return;
+                        }
+                        const cur = Math.max(0, orig - el);
+                        if (raw.includes('進站') || (orig === 0 && raw === '列車進站')) {
+                            e.innerHTML = `<span class="arriving-badge"><i class="fas fa-circle" style="font-size:0.5rem"></i>進站中</span>`;
+                        } else if (cur <= 40 && orig > 0) {
+                            e.innerHTML = `<span class="arriving-badge"><i class="fas fa-circle" style="font-size:0.5rem"></i>進站中</span>`;
+                        } else {
+                            const m = String(Math.floor(cur / 60)).padStart(2, '0');
+                            const s = String(cur % 60).padStart(2, '0');
+                            e.innerHTML = `<span class="time-number">${m}:${s}</span>`;
+                        }
                     });
-                },1000);
+                }, 1000);
             },
             generateCongestionHTML(train, crowdData, lp) {
                 const isTRTCTrain = AppState.sys === 'TRTC' || train.sys === 'TRTC' || train.isTRTC === true;
