@@ -281,9 +281,43 @@ body.light-mode .sched-list-item{background:#ffffff;}
 <script>
         const WORKER_URL_TDX = 'https://metro-api-worker.weacamm.org/api';
         const WORKER_URL_TRTC = 'https://trtc-metro-api.weacamm.org';
+        const CROSS_TRANSFER_MAP = {
+            'TYMC_A3':  [{ sys: 'TYMC', sid: 'A3' }, { sys: 'TRTC', sid: 'Y20', trtcName: '新北產業園區' }],
+            'NTMC_Y20': [{ sys: 'TYMC', sid: 'A3' }, { sys: 'TRTC', sid: 'Y20', trtcName: '新北產業園區' }],
+
+            'TYMC_A2':  [{ sys: 'TYMC', sid: 'A2' }, { sys: 'TRTC', sid: 'O15', trtcName: '三重' }],
+            'TRTC_O15': [{ sys: 'TYMC', sid: 'A2' }, { sys: 'TRTC', sid: 'O15', trtcName: '三重' }],
+
+            'TYMC_A1':  [
+                { sys: 'TYMC', sid: 'A1' },
+                { sys: 'TRTC', sid: 'G13', trtcName: '北門' },
+                { sys: 'TRTC', sid: 'R10', trtcName: '台北車站' }
+            ],
+
+            'KRTC_R13': [{ sys: 'KRTC', sid: 'R13' }, { sys: 'KLRT', sid: 'C24' }],
+            'KLRT_C24': [{ sys: 'KRTC', sid: 'R13' }, { sys: 'KLRT', sid: 'C24' }],
+
+            'KRTC_R10': [{ sys: 'KRTC', sid: 'R10' }, { sys: 'KRTC', sid: 'O5' }],
+            'KRTC_O5':  [{ sys: 'KRTC', sid: 'R10' }, { sys: 'KRTC', sid: 'O5' }],
+
+            'KRTC_R6':  [{ sys: 'KRTC', sid: 'R6' }, { sys: 'KLRT', sid: 'C3' }],
+            'KLRT_C3':  [{ sys: 'KRTC', sid: 'R6' }, { sys: 'KLRT', sid: 'C3' }],
+
+            'KRTC_O1':  [{ sys: 'KRTC', sid: 'O1' }, { sys: 'KLRT', sid: 'C14' }],
+            'KLRT_C14': [{ sys: 'KRTC', sid: 'O1' }, { sys: 'KLRT', sid: 'C14' }],
+
+            'NTMC_V01':   [{ sys: 'NTMC', sid: 'V01' }, { sys: 'TRTC', sid: 'R27', trtcName: '紅樹林' }],
+            'NTDLRT_V01': [{ sys: 'NTMC', sid: 'V01' }, { sys: 'TRTC', sid: 'R27', trtcName: '紅樹林' }],
+            'TRTC_R27':   [{ sys: 'NTMC', sid: 'V01' }, { sys: 'TRTC', sid: 'R27', trtcName: '紅樹林' }],
+
+            'NTMC_K09':   [{ sys: 'NTMC', sid: 'K09' }, { sys: 'TRTC', sid: 'Y08', trtcName: '十四張' }],
+            'NTALRT_K09': [{ sys: 'NTMC', sid: 'K09' }, { sys: 'TRTC', sid: 'Y08', trtcName: '十四張' }],
+            'TRTC_Y08':   [{ sys: 'NTMC', sid: 'K09' }, { sys: 'TRTC', sid: 'Y08', trtcName: '十四張' }],
+            'NTMC_Y08':   [{ sys: 'NTMC', sid: 'K09' }, { sys: 'TRTC', sid: 'Y08', trtcName: '十四張' }]
+        };
         const UPDATE_INTERVAL_MS = 20000;
         let METRO_STATIONS_LOCAL = null;
-        const AppState = { sys: '', sid: '', stations: [], mode: 'live', timer: null, localTicker: null, lastFetchTime: 0 };
+        const AppState = { sys: '', sid: '', stations: [], mode: 'live', timer: null, localTicker: null, lastFetchTime: 0, pendingMarqueeText: null, marqueeRunning: false };
         const UI = {
             toggleTheme() {
                 const isLight = document.body.classList.toggle('light-mode');
@@ -383,6 +417,15 @@ body.light-mode .sched-list-item{background:#ffffff;}
             },
             async fetchData() {
                 try {
+                    if (AppState.mode === 'live') {
+                        const transferKey = `${AppState.sys}_${AppState.sid}`;
+                        const targets = CROSS_TRANSFER_MAP[transferKey];
+                        if (targets && targets.length > 0) {
+                            await this.fetchTransferStationData(targets);
+                            return;
+                        }
+                    }
+
                     const isTrtcLive=(AppState.sys==='TRTC'||AppState.sid.startsWith('Y'))&&AppState.mode==='live';
                     if (isTrtcLive) { await this.fetchTRTCData(); return; }
                     const ep=AppState.mode==='live'?'liveboard':'schedule';
@@ -395,6 +438,98 @@ body.light-mode .sched-list-item{background:#ffffff;}
                         this.renderLive(fa,[]); if(AppState.mode==='live')this.startLocalTicker();
                     }
                 } catch(e){ console.error("Fetch error:",e); document.getElementById('board').innerHTML=`<div class="no-data"><i class="fas fa-wifi"></i><p>資料載入失敗，請稍後再試</p></div>`; }
+            },
+            async fetchTransferStationData(targets) {
+                let combinedTrains = [];
+                let combinedCrowdData = [];
+
+                const hasTrtc = targets.some(t => t.sys === 'TRTC');
+                let trtcRawData = [];
+                if (hasTrtc) {
+                    try {
+                        const [resArr, h, w] = await Promise.all([
+                            fetch(`${WORKER_URL_TRTC}/arrival`).then(r => r.json()),
+                            fetch(`${WORKER_URL_TRTC}/crowdedness/high-capacity`).then(r => r.json()).catch(() => []),
+                            fetch(`${WORKER_URL_TRTC}/crowdedness/wenhu`).then(r => r.json()).catch(() => [])
+                        ]);
+                        trtcRawData = resArr;
+                        combinedCrowdData = [...(h || []), ...(w || [])];
+                    } catch(e) {}
+                }
+
+                await Promise.all(targets.map(async t => {
+                    if (t.sys === 'TRTC') {
+                        const cs = AppState.stations.find(s => s.id === t.sid);
+                        const tn = t.trtcName || cs?.name.replace('站','').trim() || '';
+                        const clp = t.sid.replace(/[0-9]/g,'');
+                        const formatted = trtcRawData.filter(item => item.StationName.replace('站','').trim() === tn).map(item => {
+                            let prefix = null;
+                            const dest = item.DestinationName || '';
+                            const stId = (item.StationID||'').toUpperCase();
+                            const destId = (item.DestinationID||'').toUpperCase();
+
+                            if (destId.startsWith('BR')||stId.startsWith('BR')) prefix='BR';
+                            else if (destId.startsWith('BL')||stId.startsWith('BL')) prefix='BL';
+                            else if (destId.startsWith('GA')||stId.startsWith('GA')) prefix='GA';
+                            else if (destId.startsWith('RA')||stId.startsWith('RA')) prefix='RA';
+                            else if (destId.startsWith('R')||stId.startsWith('R')) prefix='R';
+                            else if (destId.startsWith('G')||stId.startsWith('G')) prefix='G';
+                            else if (destId.startsWith('O')||stId.startsWith('O')) prefix='O';
+                            else if (destId.startsWith('Y')||stId.startsWith('Y')) prefix='Y';
+
+                            if (!prefix) {
+                                if (dest.includes('動物園')) prefix='BR';
+                                else if (dest.includes('頂埔')||dest.includes('亞東醫院')||dest.includes('昆陽')||dest.includes('永寧')) prefix='BL';
+                                else if (dest.includes('淡水')||dest.includes('象山')||dest.includes('北投')||dest.includes('大安')) prefix='R';
+                                else if (dest.includes('新店')||dest.includes('松山')||dest.includes('台電大樓')) prefix='G';
+                                else if (dest.includes('南勢角')||dest.includes('迴龍')||dest.includes('蘆洲')) prefix='O';
+                                else if (dest.includes('大坪林')||dest.includes('新北產業園區')||dest.includes('中和')||dest.includes('板橋')||dest.includes('十四張')) prefix='Y';
+                                else if (dest.includes('南港展覽館')) {
+                                    const blOnly=['頂埔','永寧','土城','海山','亞東醫院','府中','板橋','新埔','江子翠','龍山寺','西門','台北車站','善導寺','忠孝新生','忠孝敦化','國父紀念館','市政府','永春','後山埤','昆陽','南港'];
+                                    const brOnly=['動物園','木柵','萬芳社區','萬芳醫院','辛亥','麟光','六張犁','科技大樓','大安','中山國中','松山機場','大直','劍南路','西湖','港墘','文德','內湖','大湖公園','葫洲','東湖','南港軟體園區'];
+                                    if (blOnly.includes(tn)) prefix='BL';
+                                    else if (brOnly.includes(tn)) prefix='BR';
+                                    else prefix = (item.TrainNumber && String(item.TrainNumber).trim() !== '') ? 'BL' : 'BR';
+                                }
+                            }
+                            if (!prefix) prefix = clp;
+                            return {
+                                LinePrefix: prefix,
+                                LineID: prefix,
+                                DestinationStationName: { Zh_tw: item.DestinationName },
+                                EstimateTime: this.parseTime(item.CountDown),
+                                TrainNumber: item.TrainNumber,
+                                RawCountDown: item.CountDown
+                            };
+                        });
+                        combinedTrains.push(...formatted);
+                    } else {
+                        try {
+                            const res = await fetch(`${WORKER_URL_TDX}/liveboard?sys=${t.sys}&sid=${t.sid}`);
+                            const data = await res.json();
+                            if (Array.isArray(data)) {
+                                const formatted = data.map(item => {
+                                    let prefix = item.LinePrefix || item.LineID || t.sid.replace(/[0-9]/g, '');
+                                    if (t.sys === 'TYMC' && (!prefix || prefix === 'TYMC')) prefix = 'A';
+                                    if (t.sys === 'KLRT' && (!prefix || prefix === 'KLRT')) prefix = 'C';
+                                    if (t.sys === 'NTMC' && t.sid.startsWith('V')) prefix = 'V';
+                                    if (t.sys === 'NTMC' && (t.sid.startsWith('K') || t.sid.startsWith('K0'))) prefix = 'K';
+                                    return {
+                                        ...item,
+                                        LinePrefix: prefix,
+                                        LineID: prefix
+                                    };
+                                });
+                                combinedTrains.push(...formatted);
+                            }
+                        } catch(e) {}
+                    }
+                }));
+
+                AppState.lastFetchTime = Date.now();
+                document.getElementById('stat-trains').textContent = combinedTrains.length;
+                this.renderLive(combinedTrains, combinedCrowdData);
+                this.startLocalTicker();
             },
             async fetchTRTCData() {
                 const res=await fetch(`${WORKER_URL_TRTC}/arrival`); const data=await res.json();
@@ -754,8 +889,14 @@ body.light-mode .sched-list-item{background:#ffffff;}
                 let cm='祝您旅途愉快！';
                 try{const r=await fetch('https://wang-weather.weacamm.org/api/metro/marquee');if(r.ok){const d=await r.json();if(d.text)cm=d.text.replace(/[\r\n]+/g,'　　');}}catch(e){}
                 const me=document.getElementById('ui-marquee');
-                me.innerText=`${ni.join('　·　')}${ni.length?'　·　':''}${cm}`;
-                this.runMarqueeLoop('ui-marquee');
+                const nextText = `${ni.join('　·　')}${ni.length?'　·　':''}${cm}`;
+                if (!me.innerText || !AppState.marqueeRunning) {
+                    me.innerText = nextText;
+                    AppState.pendingMarqueeText = null;
+                    this.runMarqueeLoop('ui-marquee');
+                } else {
+                    AppState.pendingMarqueeText = nextText;
+                }
             },
             updateSystemAlerts(alerts){
                 const sysList = [
@@ -815,9 +956,23 @@ body.light-mode .sched-list-item{background:#ffffff;}
                 }
             },
             runMarqueeLoop(id){
-                const el=document.getElementById(id); const cw=el.parentElement.offsetWidth;
+                const el=document.getElementById(id);
+                if(!el) return;
+                AppState.marqueeRunning = true;
+                const cw=el.parentElement.offsetWidth;
                 el.style.transition='none'; el.style.left=cw+'px';
-                setTimeout(()=>{ const d=(el.offsetWidth+cw)*0.008; el.style.transition=`left ${d}s linear`; el.style.left=`-${el.offsetWidth}px`; el.ontransitionend=()=>this.runMarqueeLoop(id); },50);
+                setTimeout(()=>{
+                    const d=(el.offsetWidth+cw)*0.008;
+                    el.style.transition=`left ${d}s linear`;
+                    el.style.left=`-${el.offsetWidth}px`;
+                    el.ontransitionend = () => {
+                        if (AppState.pendingMarqueeText) {
+                            el.innerText = AppState.pendingMarqueeText;
+                            AppState.pendingMarqueeText = null;
+                        }
+                        this.runMarqueeLoop(id);
+                    };
+                },50);
             },
             openPIDS(){window.open(`metro-pids.html?sys=${AppState.sys}&sid=${AppState.sid}`,'_blank');}
         };

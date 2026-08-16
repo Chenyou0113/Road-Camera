@@ -1909,6 +1909,9 @@
             } catch (e) { }
         }
 
+        let pendingPidsMarqueeText = null;
+        const activeMarqueesRunning = {};
+
         // 📢 全台捷運通阻 + 各系統營運狀態 + 新聞 + 後台自訂宣導邏輯
         async function updateMarquee() {
             try {
@@ -1979,17 +1982,17 @@
                 const alertPrefix = newsItems.length ? (newsItems.join('　　') + '　　') : '';
                 const finalMarqueeText = `${alertPrefix}${customMsg}`;
 
-                const marqueeEl = document.getElementById('ui-marquee');
-                if (marqueeEl) {
-                    marqueeEl.innerText = finalMarqueeText;
-                    setTimeout(() => runMarqueeLoop('ui-marquee'), 60);
-                }
-                
-                const marqueeDesktopEl = document.getElementById('ui-marquee-desktop');
-                if (marqueeDesktopEl) {
-                    marqueeDesktopEl.innerText = finalMarqueeText;
-                    setTimeout(() => runMarqueeLoop('ui-marquee-desktop'), 60);
-                }
+                pendingPidsMarqueeText = finalMarqueeText;
+
+                ['ui-marquee', 'ui-marquee-desktop'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) {
+                        if (!el.innerText || !activeMarqueesRunning[id]) {
+                            el.innerText = finalMarqueeText;
+                            setTimeout(() => runMarqueeLoop(id), 60);
+                        }
+                    }
+                });
 
             } catch (e) { console.error("Marquee error:", e); }
         }
@@ -2026,6 +2029,7 @@
         function runMarqueeLoop(id) {
             const el = document.getElementById(id);
             if (!el) return;
+            activeMarqueesRunning[id] = true;
             const container = el.parentElement;
 
             // 重置狀態
@@ -2052,7 +2056,12 @@
                 void el.offsetWidth;
                 el.style.left = `-${textWidth}px`;
 
-                const onEnd = () => runMarqueeLoop(id);
+                const onEnd = () => {
+                    if (pendingPidsMarqueeText) {
+                        el.innerText = pendingPidsMarqueeText;
+                    }
+                    runMarqueeLoop(id);
+                };
                 el.addEventListener('transitionend', onEnd, { once: true });
             }, 50);
         }
