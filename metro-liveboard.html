@@ -81,7 +81,7 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
 .card:hover{transform:translateY(-4px);box-shadow:0 1px 0 rgba(255,255,255,0.08) inset,0 32px 64px rgba(0,0,0,0.5);}
 .card-inner{border-radius:calc(var(--radius-xl) - 4px);overflow:hidden;background:var(--bg-1);}
 .card-header{padding:14px 20px;color:white;font-weight:900;font-size:1.15rem;display:flex;align-items:center;white-space:nowrap;overflow:hidden;}
-.sys-tag{background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.1);padding:3px 8px;border-radius:6px;font-size:0.85rem;margin-right:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1);}
+.sys-tag{background:rgba(255,255,255,0.25);border:1px solid rgba(255,255,255,0.15);padding:3px 9px;border-radius:6px;font-size:0.9rem;font-weight:800;font-family:'JetBrains Mono',sans-serif;margin-right:8px;box-shadow:0 2px 4px rgba(0,0,0,0.12);letter-spacing:0.5px;}
 .card-header span{overflow:hidden;text-overflow:ellipsis;min-width:0;}
 .arrival-row{display:flex;justify-content:space-between;align-items:center;padding:18px 20px;border-top:1px solid var(--border);transition:background 0.2s;}
 .arrival-row:hover{background:var(--surface);}
@@ -343,20 +343,44 @@ body.light-mode .sys-tag{color:#fff; background:rgba(0,0,0,0.25); border-color:r
                     const dn=t.DestinationStationName?.Zh_tw||t.DestinationName||'未知終點';
                     let lp=t.LinePrefix||t.LineID||AppState.sid.replace(/[0-9]/g,'');
                     if(AppState.sys==='KRTC'&&lp==='RA')lp='R';
-                    const key=`[${lp}] 往 ${dn}`;
-                    if(!groups[key])groups[key]={trains:[],lp:lp};
+
+                    let dirTag = '';
+                    if (AppState.sys === 'KLRT' || lp === 'KLRT' || lp === 'C') {
+                        if (t.Direction === 0 || t.Direction === '0' || dn.includes('順')) dirTag = '順行';
+                        else if (t.Direction === 1 || t.Direction === '1' || dn.includes('逆')) dirTag = '逆行';
+                    }
+
+                    const key=`${lp}_${dirTag}_${dn}`;
+                    if(!groups[key])groups[key]={trains:[],lp:lp,dn:dn,dirTag:dirTag};
                     groups[key].trains.push(t);
                 });
                 const hour=new Date().getHours(); const isLN=(hour>=0&&hour<6);
-                const lc={'BL':'#0a59ae','BR':'#b57a25','G':'#107547','O':'#f5a818','R':'#d90023','GA':'#8fc31f','RA':'#fd92a3','Y':'#c9a800','LB':'#7bb1cc'};
+                const lc={'BL':'#0a59ae','BR':'#b57a25','G':'#107547','O':'#f5a818','R':'#d90023','GA':'#8fc31f','RA':'#fd92a3','Y':'#fedb00','LB':'#7bb1cc','KLRT':'#2e7d32','C':'#2e7d32'};
                 
-                // 取得系統名稱供標籤使用
-                const sysMap = {TRTC:'台北捷運',KRTC:'高雄捷運',TYMC:'桃園捷運',TMRT:'台中捷運',NTMC:'新北捷運',KLRT:'高雄輕軌'};
-                const sysName = sysMap[AppState.sys] || '';
+                const getDestId = (dn, lp) => {
+                    if (!dn) return lp;
+                    const cleanDn = dn.replace('站', '').trim();
+                    const match = AppState.stations.find(s => {
+                        const cleanName = s.name.replace('站', '').trim();
+                        const sameLine = s.id.startsWith(lp) || (lp === 'R' && (s.id.startsWith('R') || s.id.startsWith('RK')));
+                        return sameLine && (cleanName === cleanDn || cleanName.includes(cleanDn) || cleanDn.includes(cleanName));
+                    });
+                    if (match) return match.id;
+                    const matchGlobal = AppState.stations.find(s => {
+                        const cleanName = s.name.replace('站', '').trim();
+                        return cleanName === cleanDn || cleanName.includes(cleanDn) || cleanDn.includes(cleanName);
+                    });
+                    return matchGlobal ? matchGlobal.id : lp;
+                };
 
-                grid.innerHTML=Object.entries(groups).map(([title,g])=>{
+                grid.innerHTML=Object.entries(groups).map(([k,g])=>{
                     const sorted=g.trains.sort((a,b)=>AppState.mode==='schedule'?(a.DepartureTime||'').localeCompare(b.DepartureTime||''):(a.EstimateTime||0)-(b.EstimateTime||0));
                     const color=lc[g.lp]||AppState.stations.find(s=>s.id.startsWith(g.lp))?.line.color||'#3b82f6';
+                    const destId = getDestId(g.dn, g.lp);
+                    const dirPrefix = g.dirTag ? `[${g.dirTag}] ` : '';
+                    const cleanName = g.dn.endsWith('站') ? g.dn : g.dn + '站';
+                    const titleText = `${dirPrefix}往 ${cleanName}`;
+
                     let ch=sorted.slice(0,AppState.mode==='schedule'?10:2).map((t,i)=>{
                         let td='';
                         if(AppState.mode==='live'){td=`<div class="arrival-row"><div><div class="destination">${t.DestinationStationName?.Zh_tw||t.DestinationName||'未知'}</div><div class="meta">車次 ${t.TrainNo||t.TrainNumber||'--'}</div></div><div class="arrival-time" data-sec="${t.EstimateTime}" data-raw="${t.RawCountDown}"><span class="time-number" style="color:var(--text-3)">--:--</span></div></div>`;}
@@ -364,7 +388,7 @@ body.light-mode .sys-tag{color:#fff; background:rgba(0,0,0,0.25); border-color:r
                         return td + ((i===0&&AppState.sys==='TRTC'&&AppState.mode==='live')?this.generateCongestionHTML(t,crowdData,g.lp):'');
                     }).join('');
                     if(isLN&&sorted.length===0){ch=`<div class="arrival-row" style="justify-content:center;padding:48px 20px;"><div style="text-align:center"><i class="fas fa-moon" style="font-size:2.2rem;color:var(--text-3);display:block;margin-bottom:12px"></i><div class="destination" style="color:var(--text-2)">營運時間已結束</div><div class="meta" style="margin-top:6px">末班車已駛離</div></div></div>`;}
-                    return`<div class="card"><div class="card-inner"><div class="card-header" style="background:${color}"><span class="sys-tag">${sysName}</span><span>${title}</span></div>${ch}</div></div>`;
+                    return`<div class="card"><div class="card-inner"><div class="card-header" style="background:${color}"><span class="sys-tag">${destId}</span><span>${titleText}</span></div>${ch}</div></div>`;
                 }).join('');
                 if(Object.keys(groups).length===0){grid.innerHTML=`<div class="no-data"><i class="fas fa-info-circle"></i><p>暫無到站資訊</p><span style="font-size:0.9rem;color:var(--text-3)">請選擇捷運系統與車站</span></div>`;}
             },
