@@ -1508,10 +1508,12 @@
         }
 
         function parseTRTCTime(timeStr) {
-            if (!timeStr || timeStr === '列車進站' || timeStr === '資料擷取中') return 0;
+            if (!timeStr || timeStr === '列車進站' || timeStr.includes('進站') || timeStr === '資料擷取中') return 0;
             if (timeStr.includes(':')) {
                 const [mm, ss] = timeStr.split(':').map(Number);
-                return (mm * 60) + ss;
+                // 🚫 核心修復：如果倒數分鐘大於等於 60（如北捷深夜常見的 167 分鐘跨日數據），代表今晚列車已收班，傳回 9999 trigger 離線狀態！
+                if (isNaN(mm) || mm >= 60) return 9999;
+                return (mm * 60) + (isNaN(ss) ? 0 : ss);
             }
             return 9999;
         }
@@ -1523,20 +1525,8 @@
             const countdownLabel = document.getElementById(`countdown-${idx}`);
             const lineBadge = document.getElementById(`ui-line-tag-${idx + 1}`);
 
-            if (!item) {
-                const status = getOfflineStatus();
-                destZh.innerText = status.destZh;
-                destEn.innerText = status.destEn;
-                if (timeBox) {
-                    timeBox.innerText = status.timeText;
-                    timeBox.className = status.timeClass;
-                }
-                if (countdownLabel) {
-                    // 🔥 修正手機版：讓手機版也能正確顯示營運結束
-                    countdownLabel.innerText = status.timeText;
-                    countdownLabel.className = `countdown-label ${status.timeClass && status.timeClass.includes('end') ? 'end-service' : ''}`;
-                }
-                lineBadge.style.opacity = '0';
+            if (!item || item.EstimateTime >= 9999) {
+                setOfflineUI(idx);
                 return;
             }
 
