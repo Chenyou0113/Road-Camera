@@ -1324,7 +1324,7 @@
             const updateInterval = (system === 'TRTC' || station.toUpperCase().startsWith('Y')) ? 15000 : 60000;
             setInterval(updateData, updateInterval);
             setInterval(updateWeather, 600000);
-            setInterval(updateMarquee, 300000);
+            setInterval(updateMarquee, 60000); // 每 1 分鐘 (60秒) 更新一次通阻告警與跑馬燈
             setInterval(updateVideo, 300000); // 每5分鐘檢查一次影片有無更換
             updateClock();
             setInterval(updateClock, 1000);
@@ -1909,7 +1909,7 @@
             } catch (e) { }
         }
 
-        // 📢 專業通阻 + 新聞 + 後台自訂宣導邏輯
+        // 📢 全台捷運通阻 + 各系統營運狀態 + 新聞 + 後台自訂宣導邏輯
         async function updateMarquee() {
             try {
                 const sysMap = { 'TRTC': '台北捷運', 'KRTC': '高雄捷運', 'TYMC': '桃園捷運', 'TMRT': '台中捷運', 'NTMC': '新北捷運', 'KLRT': '高雄輕軌' };
@@ -1918,32 +1918,50 @@
 
                 try {
                     const [resAlert, resNews] = await Promise.all([
-                        fetch(`${METRO_API_TDX}/alert?sys=${system}`),
+                        fetch(`${METRO_API_TDX}/alert?sys=ALL`),
                         fetch(`${METRO_API_TDX}/news?sys=${system}`)
                     ]);
 
+                    let alertData = [];
                     if (resAlert && resAlert.ok) {
-                        const alertData = await resAlert.json();
-                        if (Array.isArray(alertData)) {
-                            alertData.forEach(a => {
-                                if (a.Status === 0 || a.Status === 2) {
-                                    // 🔥 強制移除換行符號
-                                    const title = (a.Title || '營運異常').replace(/[\r\n]+/g, '　');
-                                    const desc = a.Description ? `：${a.Description.replace(/[\r\n]+/g, '　')}` : '';
-                                    newsItems.push(`🚨【${sysName} 營運通報】${title}${desc}`);
-                                }
-                            });
-                        }
+                        const ad = await resAlert.json();
+                        if (Array.isArray(ad)) alertData = ad;
                     }
 
+                    // 1. 各捷運系統通阻與營運狀態
+                    const activeAlerts = alertData.filter(a => a.Status === 0 || a.Status === 2 || a.Status === undefined);
+                    const sysAlertsMap = {};
+                    activeAlerts.forEach(a => {
+                        const sysCode = (a.SysCode || 'TRTC').toUpperCase();
+                        if (!sysAlertsMap[sysCode]) sysAlertsMap[sysCode] = [];
+                        sysAlertsMap[sysCode].push(a);
+                    });
+
+                    if (activeAlerts.length > 0) {
+                        Object.keys(sysMap).forEach(code => {
+                            const name = sysMap[code];
+                            if (sysAlertsMap[code] && sysAlertsMap[code].length > 0) {
+                                sysAlertsMap[code].forEach(a => {
+                                    const title = (a.Title || '營運異常').replace(/[\r\n]+/g, '　');
+                                    const desc = a.Description ? `：${a.Description.replace(/[\r\n]+/g, '　')}` : '';
+                                    newsItems.push(`🚨【${name} 營運通報】${title}${desc}`);
+                                });
+                            } else {
+                                newsItems.push(`🟢 ${name}：全線營運正常`);
+                            }
+                        });
+                    } else {
+                        newsItems.push(`🟢 全台捷運系統（台北捷運、高雄捷運、桃園捷運、台中捷運、高雄輕軌、新北捷運）目前全線營運正常`);
+                    }
+
+                    // 2. 本系統最新消息
                     if (resNews && resNews.ok) {
                         const newsData = await resNews.json();
                         if (Array.isArray(newsData)) {
                             newsData.slice(0, 2).forEach(n => {
                                 const txt = n?.NewsTitle?.Zh_tw || n?.Title?.Zh_tw || n?.Title || n?.Description || '';
-                                // 🔥 強制移除換行符號
                                 const clean = txt.toString().replace(/[\r\n]+/g, '　').trim();
-                                if (clean) newsItems.push(`【${sysName}】${clean}`);
+                                if (clean) newsItems.push(`📢【${sysName}】${clean}`);
                             });
                         }
                     }
@@ -1954,7 +1972,6 @@
                     const resMsg = await fetch('https://wang-weather.weacamm.org/api/metro/marquee');
                     if (resMsg.ok) {
                         const dataMsg = await resMsg.json();
-                        // 🔥 強制將後台可能輸入的換行轉為空白
                         if (dataMsg.text) customMsg = dataMsg.text.replace(/[\r\n]+/g, '　　');
                     }
                 } catch (e) { console.log('Custom marquee fetch failed', e); }
