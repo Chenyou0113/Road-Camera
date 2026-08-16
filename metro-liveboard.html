@@ -672,7 +672,7 @@ body.light-mode .sched-list-item{background:#ffffff;}
                         const orig = parseInt(e.dataset.sec, 10);
                         const raw = e.dataset.raw || '';
                         if (isNaN(orig) || orig < 0) {
-                            e.innerHTML = `<span class="time-number" style="color:var(--text-3)">--:--</span>`;
+                            e.innerHTML = `<span class="time-number" style="color:var(--text-3);font-size:0.92rem;font-weight:600;">末班已過</span>`;
                             return;
                         }
                         const cur = Math.max(0, orig - el);
@@ -793,16 +793,34 @@ body.light-mode .sched-list-item{background:#ffffff;}
                     const cleanName = g.dn.endsWith('站') ? g.dn : g.dn + '站';
                     const titleText = `${dirPrefix}往 ${cleanName}`;
 
-                    let ch=sorted.slice(0,AppState.mode==='schedule'?10:2).map((t,i)=>{
-                        let td='';
-                        if(AppState.mode==='live'){td=`<div class="arrival-row"><div><div class="destination">${t.DestinationStationName?.Zh_tw||t.DestinationName||'未知'}${this.getTrainTypeBadgeHTML(t)}</div><div class="meta">車次 ${t.TrainNo||t.TrainNumber||'--'}</div></div><div class="arrival-time" data-sec="${t.EstimateTime}" data-raw="${t.RawCountDown}"><span class="time-number" style="color:var(--text-3)">--:--</span></div></div>`;}
-                        else{const ts=t.DepartureTime||t.ArrivalTime||'--:--';td=`<div class="arrival-row"><div><div class="destination">${t.DestinationStationName?.Zh_tw||t.DestinationName||'未知'}${this.getTrainTypeBadgeHTML(t)}</div><div class="meta">車次 ${t.TrainNo||t.TrainNumber||'--'}</div></div><div class="time-number">${ts.substring(0,5)}</div></div>`;}
-                        return td + ((i===0&&AppState.mode==='live')?this.generateCongestionHTML(t,crowdData,g.lp):'');
-                    }).join('');
-                    if(isLN&&sorted.length===0){ch=`<div class="arrival-row" style="justify-content:center;padding:48px 20px;"><div style="text-align:center"><i class="fas fa-moon" style="font-size:2.2rem;color:var(--text-3);display:block;margin-bottom:12px"></i><div class="destination" style="color:var(--text-2)">營運時間已結束</div><div class="meta" style="margin-top:6px">末班車已駛離</div></div></div>`;}
+                    const isAllNegative = sorted.length > 0 && sorted.every(t => (t.EstimateTime !== undefined && t.EstimateTime < 0));
+                    let ch = '';
+                    if (isAllNegative || (isLN && sorted.length === 0)) {
+                        ch = `<div class="arrival-row" style="justify-content:center;padding:32px 20px;"><div style="text-align:center"><i class="fas fa-moon" style="font-size:2rem;color:var(--text-3);display:block;margin-bottom:8px"></i><div class="destination" style="color:var(--text-2);font-size:1.05rem;">末班車已駛離</div><div class="meta" style="margin-top:4px">本日方向列車已結束營運</div></div></div>`;
+                    } else {
+                        ch = sorted.slice(0,AppState.mode==='schedule'?10:2).map((t,i)=>{
+                            let td='';
+                            if(AppState.mode==='live'){
+                                const defaultSecText = (t.EstimateTime !== undefined && t.EstimateTime < 0) 
+                                    ? `<span class="time-number" style="color:var(--text-3);font-size:0.92rem;font-weight:600;">末班已過</span>`
+                                    : `<span class="time-number" style="color:var(--text-3)">--:--</span>`;
+                                td=`<div class="arrival-row"><div><div class="destination">${t.DestinationStationName?.Zh_tw||t.DestinationName||'未知'}${this.getTrainTypeBadgeHTML(t)}</div><div class="meta">車次 ${t.TrainNo||t.TrainNumber||'--'}</div></div><div class="arrival-time" data-sec="${t.EstimateTime}" data-raw="${t.RawCountDown}">${defaultSecText}</div></div>`;
+                            }
+                            else{const ts=t.DepartureTime||t.ArrivalTime||'--:--';td=`<div class="arrival-row"><div><div class="destination">${t.DestinationStationName?.Zh_tw||t.DestinationName||'未知'}${this.getTrainTypeBadgeHTML(t)}</div><div class="meta">車次 ${t.TrainNo||t.TrainNumber||'--'}</div></div><div class="time-number">${ts.substring(0,5)}</div></div>`;}
+                            return td + ((i===0&&AppState.mode==='live')?this.generateCongestionHTML(t,crowdData,g.lp):'');
+                        }).join('');
+                    }
                     return`<div class="card"><div class="card-inner"><div class="card-header" style="background:${color}"><span class="sys-tag">${destId}</span><span>${titleText}</span></div>${ch}</div></div>`;
                 }).join('');
-                if(Object.keys(groups).length===0){grid.innerHTML=`<div class="no-data"><i class="fas fa-info-circle"></i><p>暫無到站資訊</p><span style="font-size:0.9rem;color:var(--text-3)">請選擇捷運系統與車站</span></div>`;}
+                if(Object.keys(groups).length===0){
+                    const currentHour = new Date().getHours();
+                    const isLateNightTime = (currentHour >= 23 || currentHour < 6);
+                    if (isLateNightTime) {
+                        grid.innerHTML=`<div class="no-data"><i class="fas fa-moon" style="font-size:2.8rem;color:var(--text-3);margin-bottom:12px;"></i><p style="font-size:1.2rem;font-weight:700;margin-bottom:4px;">末班車已駛離</p><span style="font-size:0.9rem;color:var(--text-3)">目前為非營運時段，請切換至時刻表模式查看發車時間</span></div>`;
+                    } else {
+                        grid.innerHTML=`<div class="no-data"><i class="fas fa-info-circle"></i><p>暫無到站資訊</p><span style="font-size:0.9rem;color:var(--text-3)">請選擇捷運系統與車站</span></div>`;
+                    }
+                }
             },
             generateFallbackTimetables(sid) {
                 const cs = AppState.stations.find(s => s.id === sid);
