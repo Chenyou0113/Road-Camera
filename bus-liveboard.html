@@ -909,7 +909,10 @@
                                 </optgroup>
                                 <optgroup label="需求反應式公車 (DRTS)">
                                     <option value="DRTS:Taipei">臺北市 (預約公車)</option>
+                                    <option value="DRTS:NewTaipei">新北市 (預約公車)</option>
                                     <option value="DRTS:Taichung">臺中市 (預約公車)</option>
+                                    <option value="DRTS:Tainan">臺南市 (預約公車)</option>
+                                    <option value="DRTS:HualienCounty">花蓮縣 (預約公車)</option>
                                 </optgroup>
                                 <optgroup label="科學園區接駁車">
                                     <option value="SciencePark:HSP">新竹科學園區</option>
@@ -958,6 +961,10 @@
                                 </div>
                                 <div class="option-item" onclick="showFareModal()">
                                     <div class="label-box"><i class="fas fa-dollar-sign"></i> <span>票價資訊查詢</span></div>
+                                    <i class="fas fa-chevron-right" style="font-size: 0.7rem;"></i>
+                                </div>
+                                <div class="option-item" id="booking-rule-option" onclick="showBookingRuleModal()" style="display: none;">
+                                    <div class="label-box"><i class="fas fa-calendar-check"></i> <span>預約條件查詢</span></div>
                                     <i class="fas fa-chevron-right" style="font-size: 0.7rem;"></i>
                                 </div>
                                 <div class="option-item" onclick="event.stopPropagation()">
@@ -1422,6 +1429,21 @@
             
             currentData.shapes = Array.isArray(shapeRes) ? shapeRes : [];
 
+            // 🌟 預約選項按鈕顯隱控制
+            const bookingOpt = document.getElementById('booking-rule-option');
+            if (bookingOpt) {
+                bookingOpt.style.display = (currentData.type === 'DRTS') ? 'flex' : 'none';
+            }
+
+            // 🌟 獲取該縣市 DRTS 乘車位置集合點 (僅臺中與花蓮提供)
+            currentData.locations = [];
+            if (currentData.type === 'DRTS' && (currentData.city === 'Taichung' || currentData.city === 'HualienCounty')) {
+                try {
+                    const locRes = await throttledFetch(`${WORKER_URL}/?action=location&city=${currentData.city}`);
+                    currentData.locations = await locRes.json();
+                } catch(e) { console.warn('無法載入 DRTS Location', e); }
+            }
+
             switchDirection(dir0 ? 0 : 1);
         } catch (e) {
             console.error(e);
@@ -1466,12 +1488,20 @@
         }
 
         let bufferStops = renderFareInfo(dir);
+        const locations = currentData.locations || [];
 
         container.innerHTML = stops.map((s, idx) => {
             const stopName = s.StopName?.Zh_tw || s.StopName || '未命名站牌';
             const isBufferStart = bufferStops.start === stopName;
             const isBufferEnd = bufferStops.end === stopName;
             const bufferHtml = isBufferStart ? '<span class="buffer-tag">緩衝區起點</span>' : (isBufferEnd ? '<span class="buffer-tag">緩衝區終點</span>' : '');
+            
+            // 比對是否有乘車集合位置
+            const hasLocation = locations.find(loc => loc.name === stopName);
+            const locationHtml = hasLocation 
+                ? `<span class="location-tag" style="background:#10b981; color:white; font-size:0.7rem; font-weight:800; padding:2px 6px; border-radius:4px; margin-left:6px; cursor:pointer;" onclick="focusLocationPoint('${stopName}', event)"><i class="fas fa-map-marker-alt"></i> 乘車集合點</span>` 
+                : '';
+            
             const uid = s.StopUID || `stop-${idx}`;
             
             return `
@@ -1479,7 +1509,7 @@
                     <div class="col-time"><span class="badge-time none">--</span></div>
                     <div class="col-line"><div class="line-bar"></div><div class="line-dot">${idx + 1}</div></div>
                     <div class="col-info">
-                        <div class="stop-name">${stopName}${bufferHtml}</div>
+                        <div class="stop-name">${stopName}${bufferHtml}${locationHtml}</div>
                         <div id="bus-${uid}"></div>
                     </div>
                 </div>
@@ -1622,25 +1652,46 @@
                 const cityRegistry = vehicleMap[`${currentData.type}_${currentData.city}`] || {};
                 const vReg = cityRegistry[plate] || {};
                 const year = vReg.year && vReg.year !== '不詳' ? `${vReg.year}年車` : '年份不詳';
-                // 判斷是否為電動公車：後端 TDX 標示為 true，或是車牌符合 FV 結尾 / EA 開頭
+                
+                const vehicleClass = vReg.vehicleClass || 1;
+                let busIcon = 'fa-bus';
+                let classText = '巴士';
+                if (vehicleClass === 6) {
+                    busIcon = 'fa-taxi';
+                    classText = '幸福小黃 (計程車)';
+                } else if (vehicleClass === 3) {
+                    classText = '小型巴士';
+                } else if (vehicleClass === 2) {
+                    classText = '中型巴士';
+                } else if (vehicleClass === 4) {
+                    classText = '雙層巴士';
+                } else if (vehicleClass === 5) {
+                    classText = '雙節巴士';
+                } else if (vehicleClass === 1) {
+                    classText = '大型巴士';
+                }
+
+                // 判斷車輛種類屬性
                 const isElectric = vReg.isElectric || plate.endsWith('FV') || /^E[A-Z]{2}-/.test(plate); 
+                const isHybrid = vReg.isHybrid || false;
                 const isLowFloor = vReg.isLowFloor || false;
                 const hasWifi = vReg.hasWifi || false;
-                const hasLift = vReg.hasLift || false;
+                const hasLift = vReg.hasLift || vReg.isBarrierFreeTaxi || false;
                 const lastSeen = (targetBus.time && est.status !== 1) ? new Date(targetBus.time).toLocaleTimeString('zh-TW', { hour12: false }) : '--:--:--';
 
                 busEl.innerHTML = `
-                    <div class="bus-badge">
-                        <i class="fas fa-bus"></i><span>${plate}</span>
+                    <div class="bus-badge" style="${vehicleClass === 6 ? 'background:#eab308; color:#1e293b;' : ''}">
+                        <i class="fas ${busIcon}"></i><span>${plate}</span>
                     </div>
                     <div class="bus-details-card">
                         <div class="bus-header">
-                            <span class="bus-operator">${operator}</span>
+                            <span class="bus-operator">${operator} (${classText})</span>
                             <span class="bus-year">${year}</span>
                         </div>
                         <div class="bus-equipments">
-                            <i class="fas fa-bolt ${isElectric ? 'active' : ''}" title="電動公車"></i>
-                            <i class="fas fa-wheelchair ${isLowFloor || hasLift ? 'active' : ''}" title="低底盤/斜道"></i>
+                            ${isElectric ? '<i class="fas fa-bolt active" title="電動公車"></i>' : ''}
+                            ${isHybrid ? '<i class="fas fa-leaf active" style="color:#10b981;" title="油電混合車"></i>' : ''}
+                            <i class="fas fa-wheelchair ${isLowFloor || hasLift ? 'active' : ''}" title="低底盤/斜道/無障礙計程車"></i>
                             <i class="fas fa-wifi ${hasWifi ? 'active' : ''}" title="WiFi"></i>
                             <span style="font-size:0.65rem; color:#94a3b8; margin-left:auto;">
                                 <i class="far fa-clock"></i> ${lastSeen}
@@ -1780,6 +1831,136 @@
             console.error("Timetable Error:", e);
             body.innerHTML = '<p style="text-align:center; color:red; padding:20px;">資料載入失敗</p>';
         }
+    }
+
+    // 🌟 DRTS 預約條件彈窗 (專為預約公車/幸福小黃設計)
+    async function showBookingRuleModal() {
+        document.getElementById('options-dropdown').style.display = 'none';
+
+        currentModalSession++; 
+        const session = currentModalSession;
+
+        const modal = document.getElementById('modal-overlay');
+        const title = document.getElementById('modal-title');
+        const body = document.getElementById('modal-body');
+
+        title.innerHTML = `<i class="fas fa-calendar-check"></i> <span>${currentData.route} 預約條件</span>`;
+        body.innerHTML = `<div style="text-align:center; padding:40px;"><i class="fas fa-spinner fa-spin fa-2x" style="color:var(--primary)"></i><br><br>正在查詢預約規定...</div>`;
+        modal.style.display = 'flex';
+
+        try {
+            const url = `${WORKER_URL}/?action=booking_rule&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
+            const res = await throttledFetch(url);
+            const data = await res.json();
+            
+            if (currentModalSession !== session) return;
+
+            const rules = data?.rules || [];
+            if (!rules.length) {
+                body.innerHTML = `
+                    <div style="text-align:center; color:#64748b; padding:40px;">
+                        <i class="fas fa-info-circle fa-2x" style="color:#94a3b8; margin-bottom:12px;"></i><br>
+                        此預約公車暫無特定的預約條件資料。<br>
+                        <span style="font-size:0.85rem; color:#94a3b8;">請逕洽各營運客運業者或縣市政府預約專線。</span>
+                    </div>`;
+                return;
+            }
+
+            let html = '<div style="display:flex; flex-direction:column; gap:16px; font-family:\'Noto Sans TC\',sans-serif;">';
+            rules.forEach((rule, idx) => {
+                html += `
+                    <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px; padding:16px; box-shadow:0 1px 3px rgba(0,0,0,0.02);">
+                        <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px; border-bottom:1px solid #e2e8f0; padding-bottom:8px;">
+                            <span style="background:var(--primary); color:white; font-size:0.75rem; font-weight:800; padding:2px 6px; border-radius:4px;">規則 ${idx+1}</span>
+                            <span style="color:#334155; font-size:0.85rem; font-weight:700;">ID: ${rule.rule_id || '無'}</span>
+                        </div>
+                        
+                        ${rule.phone ? `
+                        <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; background:#eff6ff; border:1px solid #bfdbfe; padding:10px 14px; border-radius:8px;">
+                            <i class="fas fa-phone-alt" style="color:#2563eb; font-size:1.1rem;"></i>
+                            <div style="flex:1;">
+                                <div style="font-size:0.75rem; color:#60a5fa; font-weight:bold; line-height:1;">預約電話</div>
+                                <a href="tel:${rule.phone}" style="font-size:1.1rem; color:#1d4ed8; font-weight:900; text-decoration:none; display:inline-block; margin-top:2px;">
+                                    ${rule.phone} <i class="fas fa-external-link-alt" style="font-size:0.7rem; margin-left:3px;"></i>
+                                </a>
+                            </div>
+                        </div>
+                        ` : ''}
+
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;">
+                            <div style="background:#f1f5f9; padding:8px 12px; border-radius:8px; border:1px solid #e2e8f0;">
+                                <div style="font-size:0.7rem; color:#64748b; font-weight:bold;">提前預約天數</div>
+                                <div style="font-size:0.95rem; color:#1e293b; font-weight:900; margin-top:2px;">
+                                    ${rule.advance_booking_days !== undefined && rule.advance_booking_days !== null ? `${rule.advance_booking_days} 天` : '未載明'}
+                                </div>
+                            </div>
+                            <div style="background:#f1f5f9; padding:8px 12px; border-radius:8px; border:1px solid #e2e8f0;">
+                                <div style="font-size:0.7rem; color:#64748b; font-weight:bold;">最少發車人數</div>
+                                <div style="font-size:0.95rem; color:#1e293b; font-weight:900; margin-top:2px;">
+                                    ${rule.min_headcount !== undefined && rule.min_headcount !== null ? `${rule.min_headcount} 人` : '未載明'}
+                                </div>
+                            </div>
+                        </div>
+
+                        ${rule.time_limit ? `
+                        <div style="margin-bottom:12px;">
+                            <div style="font-size:0.75rem; color:#64748b; font-weight:bold;"><i class="far fa-clock"></i> 預約截止時間限制</div>
+                            <div style="font-size:0.9rem; color:#334155; font-weight:600; background:#fdf2f8; border:1px solid #fbcfe8; padding:8px 12px; border-radius:8px; margin-top:4px; line-height:1.4;">
+                                ${rule.time_limit}
+                            </div>
+                        </div>
+                        ` : ''}
+
+                        ${rule.desc ? `
+                        <div>
+                            <div style="font-size:0.75rem; color:#64748b; font-weight:bold;"><i class="fas fa-align-left"></i> 預約條件描述</div>
+                            <div style="font-size:0.9rem; color:#334155; line-height:1.5; background:white; border:1px solid #e2e8f0; padding:10px 12px; border-radius:8px; margin-top:4px; white-space:pre-wrap; word-break:break-all;">${rule.desc}</div>
+                        </div>
+                        ` : ''}
+                    </div>
+                `;
+            });
+            html += '</div>';
+            body.innerHTML = html;
+        } catch (e) {
+            if (currentModalSession !== session) return;
+            body.innerHTML = `<div style="text-align:center; color:#ef4444; padding:20px;">預約條件資料載入失敗</div>`;
+        }
+    }
+
+    // 🌟 DRTS 乘車位置定位與氣泡提示
+    function focusLocationPoint(stopName, event) {
+        if (event) event.stopPropagation();
+        if (!map) return;
+        
+        const locations = currentData.locations || [];
+        const loc = locations.find(l => l.name === stopName);
+        if (!loc) return;
+        
+        const coords = parsePointGeometry(loc.geometry);
+        if (!coords) return;
+        
+        map.flyTo({ center: coords, zoom: 17 });
+        
+        new maplibregl.Popup({ offset: 15 })
+            .setLngLat(coords)
+            .setHTML(`
+                <div style="padding:10px; font-family:'Noto Sans TC',sans-serif; max-width:220px;">
+                    <div style="font-weight:bold; color:#10b981; font-size:1rem; margin-bottom:6px;">
+                        <i class="fas fa-map-marker-alt"></i> ${loc.name} 集合點
+                    </div>
+                    <div style="font-size:0.85rem; color:#4b5563; line-height:1.4; background:#f1f5f9; padding:8px; border-radius:6px; border:1px solid #e2e8f0; white-space:pre-wrap; word-break:break-all;">
+                        ${loc.desc || '無特定描述，請在標記處等候。'}
+                    </div>
+                </div>
+            `)
+            .addTo(map);
+    }
+
+    function parsePointGeometry(wkt) {
+        if (!wkt) return null;
+        const match = wkt.match(/POINT\s*\(\s*(-?\d+\.\d+)\s+(-?\d+\.\d+)\s*\)/i);
+        return match ? [parseFloat(match[1]), parseFloat(match[2])] : null;
     }
 
     // 🌟 票價資訊彈窗 (加入起訖站互動試算功能)
@@ -2146,20 +2327,44 @@
                 const cityRegistry = vehicleMap[`${currentData.type}_${currentData.city}`] || {};
                 const vReg = cityRegistry[plate] || {};
                 const year = vReg.year && vReg.year !== '不詳' ? `${vReg.year}年` : '年份未知';
+                
+                const vehicleClass = vReg.vehicleClass || 1;
+                let busIcon = 'fa-bus';
+                let classText = '巴士';
+                if (vehicleClass === 6) {
+                    busIcon = 'fa-taxi';
+                    classText = '幸福小黃 (計程車)';
+                } else if (vehicleClass === 3) {
+                    classText = '小型巴士';
+                } else if (vehicleClass === 2) {
+                    classText = '中型巴士';
+                } else if (vehicleClass === 4) {
+                    classText = '雙層巴士';
+                } else if (vehicleClass === 5) {
+                    classText = '雙節巴士';
+                } else if (vehicleClass === 1) {
+                    classText = '大型巴士';
+                }
+
                 const isElectric = vReg.isElectric || plate.endsWith('FV') || /^E[A-Z]{2}-/.test(plate); 
+                const isHybrid = vReg.isHybrid || false;
+                const isLowFloor = vReg.isLowFloor || false;
+                const hasLift = vReg.hasLift || vReg.isBarrierFreeTaxi || false;
 
                 new maplibregl.Popup({ offset: 25 })
                     .setLngLat([bus.lon, bus.lat])
                     .setHTML(`
                         <div style="padding:10px; font-family:'Noto Sans TC',sans-serif;">
-                            <div style="font-size:1.1rem; font-weight:900; color:#2563eb; margin-bottom:8px;">
-                                <i class="fas fa-bus"></i> ${plate}
+                            <div style="font-size:1.1rem; font-weight:900; color:#2563eb; display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+                                <i class="fas ${busIcon}"></i> <span>${plate}</span>
                             </div>
-                            <div style="font-size:0.9rem; color:#4b5563;">
+                            <div style="font-size:0.9rem; color:#4b5563; line-height:1.4;">
+                                <div>車輛類型：${classText}</div>
                                 <div>出廠年份：${year}</div>
-                                <div style="margin-top:6px; color:#10b981; font-weight:bold;">
-                                    ${isElectric ? '<i class="fas fa-bolt"></i> 電動公車' : ''}
-                                    ${vReg.isLowFloor ? '<i class="fas fa-wheelchair"></i> 低底盤' : ''}
+                                <div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; font-weight:bold;">
+                                    ${isElectric ? '<span style="color:#3b82f6;"><i class="fas fa-bolt"></i> 電動車</span>' : ''}
+                                    ${isHybrid ? '<span style="color:#10b981;"><i class="fas fa-leaf"></i> 油電混合</span>' : ''}
+                                    ${isLowFloor || hasLift ? '<span style="color:#d97706;"><i class="fas fa-wheelchair"></i> 無障礙設備</span>' : ''}
                                 </div>
                             </div>
                         </div>
@@ -2274,10 +2479,13 @@
         const city = targetCity || browser.city || 'Taipei';
         
         let type = 'CityBus';
+        const drtsCities = ['DRTS_Taipei', 'DRTS_NewTaipei', 'DRTS_Taichung', 'DRTS_Tainan', 'DRTS_HualienCounty'];
         if (city === 'InterCity') {
             type = 'InterCity';
         } else if (city === 'HSP' || city === 'CTSP') {
             type = 'SciencePark';
+        } else if (drtsCities.includes(city)) {
+            type = 'DRTS';
         } else if (targetCity === null) {
             type = currentData.type || browser.type || 'CityBus';
         }
@@ -2293,7 +2501,12 @@
             'PenghuCounty': '澎湖縣', 'KinmenCounty': '金門縣', 'LienchiangCounty': '連江縣',
             'InterCity': '公路客運',
             'HSP': '新竹科學園區接駁車',
-            'CTSP': '中部科學園區接駁車'
+            'CTSP': '中部科學園區接駁車',
+            'DRTS_Taipei': '臺北市 (需求反應式公車)',
+            'DRTS_NewTaipei': '新北市 (需求反應式公車)',
+            'DRTS_Taichung': '臺中市 (需求反應式公車)',
+            'DRTS_Tainan': '臺南市 (需求反應式公車)',
+            'DRTS_HualienCounty': '花蓮縣 (需求反應式公車)'
         };
 
         title.innerHTML = `<i class="fas fa-bullhorn"></i> <span>營運公告</span>`;
@@ -2312,6 +2525,19 @@
         selectHtml += `<option value="InterCity" ${isInterSelected}>公路客運</option>`;
         selectHtml += `</optgroup>`;
 
+        selectHtml += `<optgroup label="需求反應式公車 (DRTS)">`;
+        const isDrtsTaipeiSelected = (city === 'DRTS_Taipei') ? 'selected' : '';
+        const isDrtsNewTaipeiSelected = (city === 'DRTS_NewTaipei') ? 'selected' : '';
+        const isDrtsTaichungSelected = (city === 'DRTS_Taichung') ? 'selected' : '';
+        const isDrtsTainanSelected = (city === 'DRTS_Tainan') ? 'selected' : '';
+        const isDrtsHualienSelected = (city === 'DRTS_HualienCounty') ? 'selected' : '';
+        selectHtml += `<option value="DRTS_Taipei" ${isDrtsTaipeiSelected}>臺北市 (預約公車)</option>`;
+        selectHtml += `<option value="DRTS_NewTaipei" ${isDrtsNewTaipeiSelected}>新北市 (預約公車)</option>`;
+        selectHtml += `<option value="DRTS_Taichung" ${isDrtsTaichungSelected}>臺中市 (預約公車)</option>`;
+        selectHtml += `<option value="DRTS_Tainan" ${isDrtsTainanSelected}>臺南市 (預約公車)</option>`;
+        selectHtml += `<option value="DRTS_HualienCounty" ${isDrtsHualienSelected}>花蓮縣 (預約公車)</option>`;
+        selectHtml += `</optgroup>`;
+
         selectHtml += `<optgroup label="科學園區">`;
         const isHspSelected = (city === 'HSP') ? 'selected' : '';
         const isCtspSelected = (city === 'CTSP') ? 'selected' : '';
@@ -2321,7 +2547,7 @@
 
         selectHtml += `<optgroup label="市區公車">`;
         for (const [code, name] of Object.entries(cityNameMap)) {
-            if (code === 'InterCity' || code === 'HSP' || code === 'CTSP') continue;
+            if (code === 'InterCity' || code === 'HSP' || code === 'CTSP' || drtsCities.includes(code)) continue;
             const isSelected = (code === city) ? 'selected' : '';
             selectHtml += `<option value="${code}" ${isSelected}>${name}</option>`;
         }
@@ -2337,17 +2563,36 @@
         `;
         modal.style.display = 'flex';
 
+        const actualCity = city.replace('DRTS_', '');
+
         try {
             const [newsRes, alertRes] = await Promise.all([
-                throttledFetch(`${WORKER_URL}/?action=news&category=${type}&city=${city}`).then(r => r.json()),
-                throttledFetch(`${WORKER_URL}/?action=alert&category=${type}&city=${city}`).then(r => r.json())
+                throttledFetch(`${WORKER_URL}/?action=news&category=${type}&city=${actualCity}`).then(r => r.json()),
+                throttledFetch(`${WORKER_URL}/?action=alert&category=${type}&city=${actualCity}`).then(r => r.json())
             ]);
 
             if (currentModalSession !== session) return; // 🌟 核心防護斷
 
-            const allItems = [...(Array.isArray(alertRes) ? alertRes : []).map(a => ({ title: a.Title, desc: a.Description, date: a.StartTime, tag: '通阻', cls: 'tag-alert' })),
-                              ...(Array.isArray(newsRes) ? newsRes : []).map(n => ({ title: n.Title, desc: n.Description, date: n.PublishTime, tag: '消息', cls: 'tag-news' }))]
-                              .sort((a, b) => new Date(b.date) - new Date(a.date));
+            const allItems = [
+                ...(Array.isArray(alertRes) ? alertRes : []).map(a => ({ 
+                    title: a.Title, 
+                    desc: a.Description, 
+                    date: a.StartTime || a.PublishTime, 
+                    tag: '通阻', 
+                    cls: 'tag-alert',
+                    status: a.Status,
+                    cause: a.Cause,
+                    effect: a.Effect,
+                    scope: a.Scope
+                })),
+                ...(Array.isArray(newsRes) ? newsRes : []).map(n => ({ 
+                    title: n.Title, 
+                    desc: n.Description, 
+                    date: n.PublishTime, 
+                    tag: '消息', 
+                    cls: 'tag-news' 
+                }))
+            ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
             const contentArea = document.getElementById('news-content-area');
 
@@ -2356,19 +2601,69 @@
                 return;
             }
 
-            contentArea.innerHTML = '<div style="display:flex; flex-direction:column; gap:12px;">' + 
+            const causeMap = {
+                1: "事故", 2: "維護檢修", 3: "技術問題", 4: "施工", 5: "醫療緊急狀況",
+                6: "氣候", 7: "示威遊行", 8: "政治活動", 9: "假日/節慶",
+                10: "罷工", 11: "活動", 12: "未達發車門檻", 254: "其他原因", 255: "未知原因"
+            };
+            const effectMap = {
+                1: "改道/不停靠", 2: "班次增加", 3: "班次減少", 4: "停止服務",
+                5: "班次變更", 6: "站點異動", 7: "重大延遲", 254: "其他影響", 255: "未知影響"
+            };
+
+            contentArea.innerHTML = '<div style="display:flex; flex-direction:column; gap:16px;">' + 
                 allItems.map(i => {
                     let descHtml = decodeHtmlEntities(i.desc);
                     descHtml = descHtml.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
                     if (!/<[a-z][\s\S]*>/i.test(descHtml)) {
                         descHtml = descHtml.replace(/\n/g, '<br>');
                     }
+
+                    // 營運狀況狀態標籤
+                    let statusHtml = '';
+                    if (i.tag === '通阻' && i.status !== undefined) {
+                        if (i.status === 0) statusHtml = `<span style="background:#fef2f2; color:#ef4444; border:1px solid #fee2e2; font-size:0.75rem; font-weight:800; padding:2px 6px; border-radius:4px; margin-right:6px;"><i class="fas fa-exclamation-triangle"></i> 營運終止</span>`;
+                        else if (i.status === 2) statusHtml = `<span style="background:#fffbeb; color:#d97706; border:1px solid #fef3c7; font-size:0.75rem; font-weight:800; padding:2px 6px; border-radius:4px; margin-right:6px;"><i class="fas fa-info-circle"></i> 營運異常</span>`;
+                        else if (i.status === 1) statusHtml = `<span style="background:#f0fdf4; color:#16a34a; border:1px solid #dcfce7; font-size:0.75rem; font-weight:800; padding:2px 6px; border-radius:4px; margin-right:6px;"><i class="fas fa-check-circle"></i> 營運正常</span>`;
+                    }
+
+                    // 原因與影響標籤
+                    let detailsHtml = '';
+                    if (i.tag === '通阻') {
+                        const causeText = i.cause !== undefined ? causeMap[i.cause] : null;
+                        const effectText = i.effect !== undefined ? effectMap[i.effect] : null;
+                        if (causeText || effectText) {
+                            detailsHtml += `<div style="display:flex; gap:6px; margin:6px 0; flex-wrap:wrap;">`;
+                            if (causeText) detailsHtml += `<span style="background:#f1f5f9; color:#475569; font-size:0.7rem; font-weight:700; padding:1px 6px; border-radius:4px; border:1px solid #e2e8f0;"><i class="fas fa-question-circle"></i> 原因: ${causeText}</span>`;
+                            if (effectText) detailsHtml += `<span style="background:#f1f5f9; color:#475569; font-size:0.7rem; font-weight:700; padding:1px 6px; border-radius:4px; border:1px solid #e2e8f0;"><i class="fas fa-tools"></i> 影響: ${effectText}</span>`;
+                            detailsHtml += `</div>`;
+                        }
+                    }
+
+                    // 影響範圍 (Scope)
+                    let scopeHtml = '';
+                    if (i.tag === '通阻' && i.scope) {
+                        const scope = i.scope;
+                        const affectedRoutes = scope.Routes ? scope.Routes.map(r => r.RouteName?.Zh_tw || r.RouteName || r.RouteID).filter(Boolean) : [];
+                        const affectedStops = scope.Stops ? scope.Stops.map(s => s.StopName?.Zh_tw || s.StopName || s.StopID).filter(Boolean) : [];
+                        
+                        if (affectedRoutes.length > 0 || affectedStops.length > 0) {
+                            scopeHtml += `<div style="margin-top:8px; padding:8px 10px; background:#f8fafc; border-radius:8px; border:1px solid #e2e8f0; font-size:0.8rem; color:#64748b; line-height:1.4;">`;
+                            if (affectedRoutes.length > 0) scopeHtml += `<div style="margin-bottom:4px;"><i class="fas fa-route"></i> <strong>受影響路線：</strong>${affectedRoutes.join(', ')}</div>`;
+                            if (affectedStops.length > 0) scopeHtml += `<div><i class="fas fa-map-marker-alt"></i> <strong>受影響站點：</strong>${affectedStops.join(', ')}</div>`;
+                            scopeHtml += `</div>`;
+                        }
+                    }
                     
                     return `
-                    <div style="border-bottom:1px solid #eee; padding-bottom:12px;">
+                    <div style="border-bottom:1px solid #eee; padding-bottom:16px; margin-bottom:4px;">
                         <div style="font-size:0.8rem; color:#9ca3af; margin-bottom:4px;">${i.date ? i.date.substring(0, 10) : ''}</div>
-                        <div style="font-weight:700; font-size:1rem; margin-bottom:6px;"><span class="${i.cls}">${i.tag}</span> ${i.title}</div>
-                        <div class="news-desc-content">${descHtml}</div>
+                        <div style="font-weight:700; font-size:1.05rem; margin-bottom:6px; display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
+                            <span class="${i.cls}">${i.tag}</span> ${statusHtml} ${i.title}
+                        </div>
+                        ${detailsHtml}
+                        <div class="news-desc-content" style="line-height:1.5; color:#475569;">${descHtml}</div>
+                        ${scopeHtml}
                     </div>`;
                 }).join('') + '</div>';
         } catch (e) {

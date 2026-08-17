@@ -157,13 +157,19 @@ async function fetchRouteData(baseUrl, routePrefix, token) {
 }
 
 async function autoSyncCity(city, cat, token, env) {
-    let apiVer = "v2", apiPath = `City/${city}`;
-    if (cat === "InterCity") { apiVer = "v2"; apiPath = "InterCity"; } 
-    else if (cat === "DRTS") { apiVer = "v3"; apiPath = `DRTS/City/${city}`; } 
-    else if (cat === "SciencePark") { apiVer = "v2"; apiPath = `SciencePark/${city}`; } 
-    else { apiVer = city === "Tainan" ? "v3" : "v2"; apiPath = `City/${city}`; }
+    let fetchUrl = "";
+    if (cat === "DRTS") {
+        fetchUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/StopOfRoute/City/${city}?$format=JSON`;
+    } else if (cat === "InterCity") {
+        fetchUrl = `${CONFIG.BASE_API}/v2/Bus/StopOfRoute/InterCity?$format=JSON`;
+    } else if (cat === "SciencePark") {
+        fetchUrl = `${CONFIG.BASE_API}/v2/Bus/StopOfRoute/SciencePark/${city}?$format=JSON`;
+    } else {
+        const apiVer = city === "Tainan" ? "v3" : "v2";
+        fetchUrl = `${CONFIG.BASE_API}/${apiVer}/Bus/StopOfRoute/City/${city}?$format=JSON`;
+    }
     
-    const result = await safeTdxFetch(`${CONFIG.BASE_API}/${apiVer}/Bus/StopOfRoute/${apiPath}?$format=JSON`, token);
+    const result = await safeTdxFetch(fetchUrl, token);
     if (!result.ok) throw new Error(`TDX 路線同步失敗: ${result.errorText}`);
     
     const data = extractArray(result.data);
@@ -248,13 +254,15 @@ export default {
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_shapes (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_fares (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_timetables_v8 (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
+                await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_booking_rules (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, data TEXT, updated_at INTEGER)`).run();
+                await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_locations (city TEXT PRIMARY KEY, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS bus_news (cache_key TEXT PRIMARY KEY, city TEXT, type TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS bus_alerts (cache_key TEXT PRIMARY KEY, city TEXT, type TEXT, data TEXT, updated_at INTEGER)`).run();
                 return send({ status: "D1 Tables Initialized" });
             }
 
             if (action === "clear_cache") {
-                const tables = ["routes_v2", "route_stops", "route_shapes", "route_fares", "route_timetables_v8", "sys_config"];
+                const tables = ["routes_v2", "route_stops", "route_shapes", "route_fares", "route_timetables_v8", "route_booking_rules", "route_locations", "sys_config"];
                 for (const t of tables) {
                     try { await env.DB.prepare(`DELETE FROM ${t}`).run(); } catch(e) {}
                 }
@@ -290,6 +298,23 @@ export default {
                 return send({ routes: safeJsonParse(row.routes, []) });
             }
 
+            if (action === "location") {
+                const cached = await getCachedJson(env, "route_locations", "city = ?", [city], null);
+                if (cached) return send(cached);
+
+                const result = await safeTdxFetch(`${CONFIG.BASE_API}/v3/Bus/DRTS/Location/City/${city}?$format=JSON`, token);
+                if (!result.ok) return send([]);
+                const data = extractArray(result.data).map(loc => ({
+                    id: loc.LocationID,
+                    name: loc.LocationName?.Zh_tw || loc.LocationName || "",
+                    desc: loc.LocationDescription || "",
+                    geometry: loc.Geometry || ""
+                }));
+
+                await upsertJson(env, "route_locations", ["city", "data", "updated_at"], [city, JSON.stringify(data), Date.now()]);
+                return send(data);
+            }
+
             if (action === "news" || action === "alert") {
                 const cacheKey = `${cat}:${city}`;
                 const table = action === "news" ? "bus_news" : "bus_alerts";
@@ -297,7 +322,7 @@ export default {
                 const cached = await getCachedJson(env, table, "cache_key = ?", [cacheKey], ttlMs);
                 if (cached) return send(cached);
 
-                const fresh = await fetchBusNewsOrAlert(action, city, token);
+                const fresh = await fetchBusNewsOrAlert(action, city, token, cat);
                 await upsertJson(env, table, ["cache_key", "city", "type", "data", "updated_at"], [cacheKey, city, cat, JSON.stringify(fresh), Date.now()]);
                 return send(fresh);
             }
@@ -310,7 +335,7 @@ export default {
                 if (cat === "InterCity" || city === "InterCity") { 
                     vehicleUrl = `${CONFIG.BASE_API}/v2/Bus/Vehicle/InterCity?$format=JSON`; 
                 } else if (cat === "DRTS") { 
-                    vehicleUrl = `${CONFIG.BASE_API}/v3/Bus/Vehicle/DRTS/City/${city}?$format=JSON`; 
+                    vehicleUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/Vehicle/City/${city}?$format=JSON`; 
                 } else if (cat === "SciencePark") { 
                     vehicleUrl = `${CONFIG.BASE_API}/v2/Bus/Vehicle/SciencePark/${city}?$format=JSON`; 
                 } else if (sixCities.includes(city)) { 
@@ -339,7 +364,10 @@ export default {
                         isElectric: v.IsElectric === 1 || v.IsElectric === true, 
                         hasLift: v.HasLiftOrRamp === 1,
                         vehicleClass: v.VehicleClass,
-                        vehicleType: v.VehicleType
+                        vehicleType: v.VehicleType,
+                        isDiversifiedTaxi: v.IsDiversifiedTaxi === 1,
+                        isBarrierFreeTaxi: v.IsBarrierFreeTaxi === 1,
+                        isHybrid: v.IsHybrid === 1
                     };
                 });
                 return send(dict);
@@ -369,7 +397,9 @@ export default {
                     const cached = await getCachedJson(env, "route_stops", "route_key = ?", [routeKey], null);
                     if (cached) return send(cached);
                     
-                    const data = await fetchRouteData(`${CONFIG.BASE_API}/${stopVer}/Bus/StopOfRoute/${apiPath}`, routePrefix, token);
+                    let stopUrl = `${CONFIG.BASE_API}/${stopVer}/Bus/StopOfRoute/${apiPath}`;
+                    if (cat === "DRTS") stopUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/StopOfRoute/City/${city}`;
+                    const data = await fetchRouteData(stopUrl, routePrefix, token);
                     const items = data.filter(match).map(r => ({ RouteName: r.RouteName, SubRouteName: r.SubRouteName, Direction: r.Direction, Stops: r.Stops, Operators: r.Operators || [] }));
                     if (items.length === 0) throw new Error(`查無站牌清單資料，可能是路線名稱不符: ${route}`);
                     
@@ -381,7 +411,9 @@ export default {
                     const cached = await getCachedJson(env, "route_shapes", "route_key = ?", [routeKey], null);
                     if (cached) return send(cached);
                     
-                    const data = await fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/Shape/${apiPath}`, routePrefix, token);
+                    let shapeUrl = `${CONFIG.BASE_API}/${staticVer}/Bus/Shape/${apiPath}`;
+                    if (cat === "DRTS") shapeUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/Shape/City/${city}`;
+                    const data = await fetchRouteData(shapeUrl, routePrefix, token);
                     const shapes = data.filter(match);
                     
                     await upsertJson(env, "route_shapes", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(shapes), Date.now()]);
@@ -392,11 +424,23 @@ export default {
                     const cached = await getCachedJson(env, "route_timetables_v8", "route_key = ?", [routeKey], null);
                     if (cached) return send({ route, timetables: cached });
 
+                    let schedUrl = `${CONFIG.BASE_API}/${staticVer}/Bus/Schedule/${path}`;
+                    let dailyUrl = `${CONFIG.BASE_API}/${staticVer}/Bus/DailyTimeTable/${path}`;
+                    let genStopUrl = `${CONFIG.BASE_API}/${staticVer}/Bus/GeneralStopTimeTable/${path}`;
+                    let dailyStopUrl = `${CONFIG.BASE_API}/${staticVer}/Bus/DailyStopTimeTable/${path}`;
+
+                    if (cat === "DRTS") {
+                        schedUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/Schedule/City/${city}`;
+                        dailyUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/DailyTimeTable/City/${city}`;
+                        genStopUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/GeneralStopTimeTable/City/${city}`;
+                        dailyStopUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/DailyStopTimeTable/City/${city}`;
+                    }
+
                     const [schedData, dailyData, genStopData, dailyStopData] = await Promise.all([
-                        fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/Schedule/${path}`, routePrefix, token).catch(()=>[]),
-                        fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/DailyTimeTable/${path}`, routePrefix, token).catch(()=>[]),
-                        fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/GeneralStopTimeTable/${path}`, routePrefix, token).catch(()=>[]),
-                        fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/DailyStopTimeTable/${path}`, routePrefix, token).catch(()=>[])
+                        fetchRouteData(schedUrl, routePrefix, token).catch(()=>[]),
+                        fetchRouteData(dailyUrl, routePrefix, token).catch(()=>[]),
+                        fetchRouteData(genStopUrl, routePrefix, token).catch(()=>[]),
+                        fetchRouteData(dailyStopUrl, routePrefix, token).catch(()=>[])
                     ]);
 
                     const dirMap = {};
@@ -451,7 +495,9 @@ export default {
                 if (action === "fare") {
                     const cached = await getCachedJson(env, "route_fares", "route_key = ?", [routeKey], null);
                     if (cached) return send({ route, fares: cached });
-                    const data = await fetchRouteData(`${CONFIG.BASE_API}/${staticVer}/Bus/RouteFare/${apiPath}`, routePrefix, token);
+                    let fareUrl = `${CONFIG.BASE_API}/${staticVer}/Bus/RouteFare/${apiPath}`;
+                    if (cat === "DRTS") fareUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/RouteFare/City/${city}`;
+                    const data = await fetchRouteData(fareUrl, routePrefix, token);
                     const fares = data.filter(match).map(r => {
                         const mapFares = (arr) => (arr || []).map(f => ({ type: DICT.TICKET_TYPE[f.TicketType], class: DICT.FARE_CLASS[f.FareClass], price: f.Price }));
                         return {
@@ -474,9 +520,32 @@ export default {
                     return send({ route, fares });
                 }
 
+                if (action === "booking_rule") {
+                    const cached = await getCachedJson(env, "route_booking_rules", "route_key = ?", [routeKey], null);
+                    if (cached) return send({ route, rules: cached });
+                    const data = await fetchRouteData(`${CONFIG.BASE_API}/v3/Bus/DRTS/BookingRule/City/${city}`, routePrefix, token);
+                    const rules = data.filter(match).map(r => ({
+                        rule_id: r.BookingRuleID,
+                        desc: getZh(r.BookingRuleDescription),
+                        phone: r.BookingContactNumber || r.BookingPhoneNumber || "",
+                        min_headcount: r.MinHeadcount,
+                        advance_booking_days: r.AdvanceBookingDays,
+                        time_limit: getZh(r.BookingTimeLimit)
+                    }));
+                    await upsertJson(env, "route_booking_rules", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(rules), Date.now()]);
+                    return send({ route, rules });
+                }
+
+                let rtfUrl = `${CONFIG.BASE_API}/${dynVer}/Bus/RealTimeByFrequency/${apiPath}`;
+                let etaUrl = `${CONFIG.BASE_API}/${dynVer}/Bus/EstimatedTimeOfArrival/${apiPath}`;
+                if (cat === "DRTS") {
+                    rtfUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/RealTimeByFrequency/City/${city}`;
+                    etaUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/EstimatedTimeOfArrival/City/${city}`;
+                }
+
                 const [resPos, resEst] = await Promise.all([
-                    fetchRouteData(`${CONFIG.BASE_API}/${dynVer}/Bus/RealTimeByFrequency/${apiPath}`, routePrefix, token).catch(()=>[]),
-                    fetchRouteData(`${CONFIG.BASE_API}/${dynVer}/Bus/EstimatedTimeOfArrival/${apiPath}`, routePrefix, token).catch(()=>[])
+                    fetchRouteData(rtfUrl, routePrefix, token).catch(()=>[]),
+                    fetchRouteData(etaUrl, routePrefix, token).catch(()=>[])
                 ]);
                 const buses = (Array.isArray(resPos) ? resPos : []).filter(b => b.BusStatus === 0 && match(b));
                 const ests = (Array.isArray(resEst) ? resEst : []).filter(e => match(e));
@@ -540,7 +609,16 @@ async function getAuthToken(env) {
     } catch (e) { throw new Error(`TDX 授權失敗 (Token 申請遭拒)！回應內容：${text.substring(0, 150)}`); }
 }
 
-async function fetchBusNewsOrAlert(type, city, token) {
+async function fetchBusNewsOrAlert(type, city, token, cat = "CityBus") {
+    if (cat === "DRTS") {
+        if (type === "news") return []; // DRTS 沒有 News API
+        try {
+            const result = await safeTdxFetch(`${CONFIG.BASE_API}/v3/Bus/DRTS/Alert/City/${city}?$format=JSON`, token);
+            if (!result.ok) return [];
+            return extractArray(result.data);
+        } catch (e) { return []; }
+    }
+
     const target = type === "news" ? "News" : "Alert";
     const path = city === "InterCity" ? "InterCity" : `City/${city}`;
     
