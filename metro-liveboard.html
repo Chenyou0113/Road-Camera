@@ -787,13 +787,62 @@ body.light-mode .sched-list-item{background:#ffffff;}
                     return matchGlobal ? matchGlobal.id : lp;
                 };
 
-                grid.innerHTML=Object.entries(groups).map(([k,g])=>{
+                const currentLp = (AppState.sid || '').replace(/[0-9]/g, '');
+                const isCurrentLineGroup = (lp, cLp) => {
+                    if (!lp || !cLp) return false;
+                    if (lp === cLp) return true;
+                    if (cLp === 'R' && (lp === 'RA' || lp === 'R')) return true;
+                    if (cLp === 'G' && (lp === 'GA' || lp === 'G')) return true;
+                    if (cLp === 'C' && (lp === 'KLRT' || lp === 'C')) return true;
+                    if (cLp === 'KLRT' && (lp === 'C' || lp === 'KLRT')) return true;
+                    return false;
+                };
+
+                const sortedEntries = Object.entries(groups).sort(([kA, gA], [kB, gB]) => {
+                    const isA = isCurrentLineGroup(gA.lp, currentLp);
+                    const isB = isCurrentLineGroup(gB.lp, currentLp);
+                    if (isA && !isB) return -1;
+                    if (!isA && isB) return 1;
+                    return 0;
+                });
+
+                const getLineTag = (lp) => {
+                    const lineNameMap = {
+                        'BL': '板南線 BL',
+                        'BR': '文湖線 BR',
+                        'R':  '淡水信義線 R',
+                        'RA': '新北投支線 RA',
+                        'G':  '松山新店線 G',
+                        'GA': '小碧潭支線 GA',
+                        'O':  '中和新蘆線 O',
+                        'Y':  '環狀線 Y',
+                        'A':  '機場捷運 A',
+                        'TYMC': '機場捷運 A',
+                        'V':  '淡海輕軌 V',
+                        'K':  '安坑輕軌 K',
+                        'LB': '三鶯線 LB',
+                        'C':  '高雄輕軌 C',
+                        'KLRT': '高雄輕軌 C',
+                        '1':  '台中捷運 1'
+                    };
+                    if (lineNameMap[lp]) return lineNameMap[lp];
+                    const match = (AppState.stations || []).find(s => s.id && s.id.startsWith(lp));
+                    if (match && match.line && match.line.name) {
+                        const cleanLineName = match.line.name.replace(/\s*\([^)]*\)/g, '').trim();
+                        return `${cleanLineName} ${lp}`;
+                    }
+                    return lp;
+                };
+
+                grid.innerHTML=sortedEntries.map(([k,g])=>{
                     const sorted=g.trains.sort((a,b)=>AppState.mode==='schedule'?(a.DepartureTime||'').localeCompare(b.DepartureTime||''):(a.EstimateTime||0)-(b.EstimateTime||0));
                     const color=lc[g.lp]||AppState.stations.find(s=>s.id.startsWith(g.lp))?.line.color||'#3b82f6';
+                    const lineTag = getLineTag(g.lp);
                     const destId = getDestId(g.dn, g.lp);
                     const dirPrefix = g.dirTag ? `[${g.dirTag}] ` : '';
-                    const cleanName = g.dn.endsWith('站') ? g.dn : g.dn + '站';
-                    const titleText = `${dirPrefix}往 ${cleanName}`;
+                    const cleanName = (g.dn === '順時針' || g.dn === '逆時針') ? g.dn : (g.dn.endsWith('站') ? g.dn : g.dn + '站');
+                    const destIdTag = (destId && destId !== g.lp) ? `${destId} ` : '';
+                    const titleText = `${dirPrefix}往 ${destIdTag}${cleanName}`;
 
                     const isAllNegative = sorted.length > 0 && sorted.every(t => (t.EstimateTime !== undefined && t.EstimateTime < 0));
                     let ch = '';
@@ -812,7 +861,7 @@ body.light-mode .sched-list-item{background:#ffffff;}
                             return td + ((i===0&&AppState.mode==='live')?this.generateCongestionHTML(t,crowdData,g.lp):'');
                         }).join('');
                     }
-                    return`<div class="card"><div class="card-inner"><div class="card-header" style="background:${color}"><span class="sys-tag">${destId}</span><span>${titleText}</span></div>${ch}</div></div>`;
+                    return`<div class="card"><div class="card-inner"><div class="card-header" style="background:${color}"><span class="sys-tag">${lineTag}</span><span>${titleText}</span></div>${ch}</div></div>`;
                 }).join('');
                 if(Object.keys(groups).length===0){
                     const currentHour = new Date().getHours();
