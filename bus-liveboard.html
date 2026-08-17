@@ -12,8 +12,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
-    <script data-cfasync="false" src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script data-cfasync="false" src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <style>
         :root {
@@ -1107,12 +1107,9 @@
         if (refreshInterval) clearInterval(refreshInterval);
         if (countdownInterval) clearInterval(countdownInterval);
         
-        mapMarkers.stops.forEach(m => m.remove());
-        mapMarkers.buses.forEach(m => m.remove());
-        if (map && map.getSource('route-line')) {
-            if (map.getLayer('route-line-layer')) map.removeLayer('route-line-layer');
-            map.removeSource('route-line');
-        }
+        mapMarkers.stops.forEach(m => map.removeLayer(m));
+        mapMarkers.buses.forEach(m => map.removeLayer(m));
+        if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
         mapMarkers = { stops: [], buses: [] };
         
         const searchInput = document.getElementById('search-input');
@@ -1138,40 +1135,29 @@
     }
 
     window.initMap = function() {
-        map = new maplibregl.Map({
-            container: 'map',
-            style: {
-                version: 8,
-                sources: {
-                    'osm': {
-                        type: 'raster',
-                        tiles: [
-                            'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                            'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                            'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png'
-                        ],
-                        tileSize: 256,
-                        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                    }
-                },
-                layers: [{
-                    id: 'osm-tiles',
-                    type: 'raster',
-                    source: 'osm',
-                    minzoom: 0,
-                    maxzoom: 19
-                }]
-            },
-            center: [121.5170, 25.0478],
-            zoom: 12
+        map = L.map('map', {
+            center: [25.0478, 121.5170],
+            zoom: 12,
+            zoomControl: false
         });
-        
-        map.on('idle', () => {
-            const center = map.getCenter();
-            const detectedCity = getCityByMapCenter(center.lat, center.lng);
-            if (detectedCity && detectedCity !== browser.city && browser.type !== 'InterCity') {
-                selectCity(detectedCity); 
-            }
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19
+        }).addTo(map);
+
+        L.control.zoom({ position: 'bottomleft' }).addTo(map);
+
+        let idleTimer = null;
+        map.on('moveend', () => {
+            if (idleTimer) clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+                const center = map.getCenter();
+                const detectedCity = getCityByMapCenter(center.lat, center.lng);
+                if (detectedCity && detectedCity !== browser.city && browser.type !== 'InterCity') {
+                    selectCity(detectedCity);
+                }
+            }, 800);
         });
 
         updateMarqueeSection('marquee-city-text', 'Taipei', 'CityBus');
@@ -1180,7 +1166,7 @@
 
     window.addEventListener('DOMContentLoaded', () => {
         function checkAndInit() {
-            if (typeof maplibregl !== 'undefined') {
+            if (typeof L !== 'undefined') {
                 if (typeof initMap === 'function') initMap();
             } else {
                 setTimeout(checkAndInit, 100);
@@ -1946,11 +1932,12 @@
         const coords = parsePointGeometry(loc.geometry);
         if (!coords) return;
         
-        map.flyTo({ center: coords, zoom: 17 });
+        // coords 是 [lng, lat]，Leaflet 需要 [lat, lng]
+        map.flyTo([coords[1], coords[0]], 17);
         
-        new maplibregl.Popup({ offset: 15 })
-            .setLngLat(coords)
-            .setHTML(`
+        L.popup({ offset: [0, -5] })
+            .setLatLng([coords[1], coords[0]])
+            .setContent(`
                 <div style="padding:10px; font-family:'Noto Sans TC',sans-serif; max-width:220px;">
                     <div style="font-weight:bold; color:#10b981; font-size:1rem; margin-bottom:6px;">
                         <i class="fas fa-map-marker-alt"></i> ${loc.name} 集合點
@@ -1960,7 +1947,7 @@
                     </div>
                 </div>
             `)
-            .addTo(map);
+            .openOn(map);
     }
 
     function parsePointGeometry(wkt) {
@@ -2147,21 +2134,10 @@
     function drawStaticMap(dir) {
         if(!map) return;
         
-        // 🌟 異步加載防護：如果底圖 Style 尚未載入完成，操作 Source/Layer 會丟出致命錯誤，需註冊一次性監聽在 style 載入後執行
-        if (!map.isStyleLoaded()) {
-            map.once('style.load', () => {
-                drawStaticMap(dir);
-            });
-            return;
-        }
-        
-        mapMarkers.stops.forEach(m => m.remove());
+        mapMarkers.stops.forEach(m => map.removeLayer(m));
         mapMarkers.stops = [];
         
-        if (map.getSource('route-line')) {
-            if (map.getLayer('route-line-layer')) map.removeLayer('route-line-layer');
-            map.removeSource('route-line');
-        }
+        if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
 
         let path = [];
         if (currentData.shapes && currentData.shapes.length > 0) {
@@ -2172,114 +2148,81 @@
         }
 
         if (path.length > 0) {
-            map.addSource('route-line', {
-                type: 'geojson',
-                data: {
-                    type: 'Feature',
-                    geometry: {
-                        type: 'LineString',
-                        coordinates: path
-                    }
-                }
-            });
-
-            map.addLayer({
-                id: 'route-line-layer',
-                type: 'line',
-                source: 'route-line',
-                paint: {
-                    'line-color': '#2563eb',
-                    'line-width': 5,
-                    'line-opacity': 0.8
-                }
-            });
+            // parseWKT 回傳 [lng, lat]，Leaflet 需要 [lat, lng]
+            const latLngs = path.map(p => [p[1], p[0]]);
+            routeLine = L.polyline(latLngs, {
+                color: '#2563eb',
+                weight: 5,
+                opacity: 0.8
+            }).addTo(map);
             
-            const bounds = new maplibregl.LngLatBounds();
-            path.forEach(p => bounds.extend(p));
-            map.fitBounds(bounds, { padding: 40 });
+            map.fitBounds(routeLine.getBounds(), { padding: [40, 40] });
         }
 
         const stops = currentData.stops[dir] || [];
+        const currentZoom = map.getZoom();
+
         stops.forEach((s, idx) => {
-            const dotEl = document.createElement('div');
-            dotEl.style.width = '8px';
-            dotEl.style.height = '8px';
-            dotEl.style.backgroundColor = '#2563eb'; 
-            dotEl.style.borderRadius = '50%';
-            dotEl.style.border = '1px solid white';
-            dotEl.style.boxShadow = '0 1px 2px rgba(0,0,0,0.3)';
-            dotEl.style.cursor = 'pointer';
-            
-            const pinEl = document.createElement('div');
-            pinEl.style.background = '#2563eb';
-            pinEl.style.color = 'white';
-            pinEl.style.borderRadius = '50%';
-            pinEl.style.width = '24px';
-            pinEl.style.height = '24px';
-            pinEl.style.border = '2px solid white';
-            pinEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
-            pinEl.style.display = 'flex';
-            pinEl.style.alignItems = 'center';
-            pinEl.style.justifyContent = 'center';
-            pinEl.style.fontSize = '0.75rem';
-            pinEl.style.fontWeight = '800';
-            pinEl.innerText = idx + 1;
-            pinEl.style.cursor = 'pointer';
+            if (!s.StopPosition) return;
+            const lat = s.StopPosition.PositionLat;
+            const lng = s.StopPosition.PositionLon;
 
-            const markerContainer = document.createElement('div');
-            markerContainer.appendChild(dotEl);
+            const makeDotIcon = () => L.divIcon({
+                className: '',
+                html: `<div style="width:8px;height:8px;background:#2563eb;border-radius:50%;border:1px solid white;box-shadow:0 1px 2px rgba(0,0,0,0.3);cursor:pointer;"></div>`,
+                iconSize: [8, 8],
+                iconAnchor: [4, 4]
+            });
 
-            const marker = new maplibregl.Marker({ element: markerContainer })
-                .setLngLat([s.StopPosition.PositionLon, s.StopPosition.PositionLat])
-                .addTo(map);
+            const makePinIcon = () => L.divIcon({
+                className: '',
+                html: `<div style="background:#2563eb;color:white;border-radius:50%;width:24px;height:24px;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font-size:0.75rem;font-weight:800;cursor:pointer;">${idx + 1}</div>`,
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            });
 
-            markerContainer.addEventListener('click', () => {
+            const icon = currentZoom >= 15 ? makePinIcon() : makeDotIcon();
+            const marker = L.marker([lat, lng], { icon: icon }).addTo(map);
+
+            // 儲存 icon 工廠函式供縮放時切換
+            marker._makeDotIcon = makeDotIcon;
+            marker._makePinIcon = makePinIcon;
+
+            marker.on('click', () => {
                 const stopName = s.StopName?.Zh_tw || s.StopName;
-                
-                const popup = new maplibregl.Popup({ offset: 15 })
-                    .setLngLat([s.StopPosition.PositionLon, s.StopPosition.PositionLat])
-                    .setHTML(`
+                const popup = L.popup({ offset: [0, -5], maxWidth: 300 })
+                    .setLatLng([lat, lng])
+                    .setContent(`
                         <div style="padding:10px; text-align:center; font-family:'Noto Sans TC',sans-serif;">
                             <div style="font-weight:bold; margin-bottom:5px; color:#1e40af;">${stopName}</div>
                             <i class="fas fa-spinner fa-spin" style="color:#2563eb;"></i> 查詢行經路線...
                         </div>
                     `)
-                    .addTo(map);
+                    .openOn(map);
                     
-                fetchRealStopRoutesMapbox(stopName, popup);
+                fetchRealStopRoutes(stopName, popup);
             });
-
-            marker.dotContent = dotEl;
-            marker.pinContent = pinEl;
-            marker.container = markerContainer;
 
             mapMarkers.stops.push(marker);
         });
 
-        if (window.zoomListener) map.off('zoom', window.zoomListener);
+        if (window.zoomListener) map.off('zoomend', window.zoomListener);
         
         window.zoomListener = () => {
-            const currentZoom = map.getZoom();
-            const threshold = 15; 
+            const z = map.getZoom();
+            const threshold = 15;
             mapMarkers.stops.forEach(marker => {
-                const container = marker.container;
-                if (currentZoom >= threshold) {
-                    if (container.firstChild === marker.dotContent) {
-                        container.removeChild(marker.dotContent);
-                        container.appendChild(marker.pinContent);
-                    }
+                if (z >= threshold) {
+                    marker.setIcon(marker._makePinIcon());
                 } else {
-                    if (container.firstChild === marker.pinContent) {
-                        container.removeChild(marker.pinContent);
-                        container.appendChild(marker.dotContent);
-                    }
+                    marker.setIcon(marker._makeDotIcon());
                 }
             });
         };
-        map.on('zoom', window.zoomListener);
+        map.on('zoomend', window.zoomListener);
     }
 
-    async function fetchRealStopRoutesMapbox(stopName, popup) {
+    async function fetchRealStopRoutes(stopName, popup) {
         try {
             const url = `${WORKER_URL}/?action=stop_info&city=${currentData.city}&name=${encodeURIComponent(stopName)}`;
             const res = await throttledFetch(url);
@@ -2287,7 +2230,7 @@
             const routes = data.routes || [];
             
             if (routes.length === 0) {
-                popup.setHTML(`<div style="padding:10px; color:#999; font-family:'Noto Sans TC',sans-serif;">查無其他路線</div>`);
+                popup.setContent(`<div style="padding:10px; color:#999; font-family:'Noto Sans TC',sans-serif;">查無其他路線</div>`);
                 return;
             }
             
@@ -2306,9 +2249,9 @@
                     </div>
                 </div>
             `;
-            popup.setHTML(content);
+            popup.setContent(content);
         } catch (e) {
-            popup.setHTML(`<div style="padding:10px; color:red;">查詢失敗</div>`);
+            popup.setContent(`<div style="padding:10px; color:red;">查詢失敗</div>`);
         }
     }
 
@@ -2316,37 +2259,37 @@
     function updateBusesMap(buses) {
         if(!map) return;
         
-        mapMarkers.buses.forEach(m => m.remove());
+        mapMarkers.buses.forEach(m => map.removeLayer(m));
         mapMarkers.buses = [];
 
         buses.forEach(bus => {
             if(!bus.lat || !bus.lon) return;
             const plate = bus.plate || bus.PlateNumb || '';
+            const azi = bus.azi || 0;
 
-            const busEl = document.createElement('div');
-            busEl.innerHTML = `
-                <svg width="24" height="40" viewBox="-12 -22 24 40" style="display:block; overflow:visible;">
-                    <path d="M -10,-14 L 10,-14 L 10,14 L -10,14 Z M 0,-20 L 8,-14 L -8,-14 Z" fill="#ef4444" stroke="white" stroke-width="2" />
-                </svg>
-            `;
-            busEl.style.transform = `rotate(${bus.azi || 0}deg)`;
-            busEl.style.transformOrigin = 'center center';
-            busEl.style.cursor = 'pointer';
+            const busIcon = L.divIcon({
+                className: '',
+                html: `<div style="transform:rotate(${azi}deg);transform-origin:center center;cursor:pointer;">
+                    <svg width="24" height="40" viewBox="-12 -22 24 40" style="display:block; overflow:visible;">
+                        <path d="M -10,-14 L 10,-14 L 10,14 L -10,14 Z M 0,-20 L 8,-14 L -8,-14 Z" fill="#ef4444" stroke="white" stroke-width="2" />
+                    </svg>
+                </div>`,
+                iconSize: [24, 40],
+                iconAnchor: [12, 20]
+            });
 
-            const marker = new maplibregl.Marker({ element: busEl })
-                .setLngLat([bus.lon, bus.lat])
-                .addTo(map);
+            const marker = L.marker([bus.lat, bus.lon], { icon: busIcon }).addTo(map);
 
-            busEl.addEventListener('click', () => {
+            marker.on('click', () => {
                 const cityRegistry = vehicleMap[`${currentData.type}_${currentData.city}`] || {};
                 const vReg = cityRegistry[plate] || {};
                 const year = vReg.year && vReg.year !== '不詳' ? `${vReg.year}年` : '年份未知';
                 
                 const vehicleClass = vReg.vehicleClass || 1;
-                let busIcon = 'fa-bus';
+                let bIcon = 'fa-bus';
                 let classText = '巴士';
                 if (vehicleClass === 6) {
-                    busIcon = 'fa-taxi';
+                    bIcon = 'fa-taxi';
                     classText = '幸福小黃 (計程車)';
                 } else if (vehicleClass === 3) {
                     classText = '小型巴士';
@@ -2365,12 +2308,12 @@
                 const isLowFloor = vReg.isLowFloor || false;
                 const hasLift = vReg.hasLift || vReg.isBarrierFreeTaxi || false;
 
-                new maplibregl.Popup({ offset: 25 })
-                    .setLngLat([bus.lon, bus.lat])
-                    .setHTML(`
+                L.popup({ offset: [0, -20], maxWidth: 280 })
+                    .setLatLng([bus.lat, bus.lon])
+                    .setContent(`
                         <div style="padding:10px; font-family:'Noto Sans TC',sans-serif;">
                             <div style="font-size:1.1rem; font-weight:900; color:#2563eb; display:flex; align-items:center; gap:6px; margin-bottom:8px;">
-                                <i class="fas ${busIcon}"></i> <span>${plate}</span>
+                                <i class="fas ${bIcon}"></i> <span>${plate}</span>
                             </div>
                             <div style="font-size:0.9rem; color:#4b5563; line-height:1.4;">
                                 <div>車輛類型：${classText}</div>
@@ -2383,7 +2326,7 @@
                             </div>
                         </div>
                     `)
-                    .addTo(map);
+                    .openOn(map);
             });
 
             mapMarkers.buses.push(marker);
@@ -2392,7 +2335,7 @@
 
     function focusMap(lat, lng) {
         if (!map) return;
-        map.flyTo({ center: [lng, lat], zoom: 17 });
+        map.flyTo([lat, lng], 17);
     }
 
     let userLocationMarker = null;
@@ -2414,22 +2357,18 @@
 
                 if (!map) return;
                 
-                map.flyTo({ center: [lng, lat], zoom: 16 });
+                map.flyTo([lat, lng], 16);
 
                 if (userLocationMarker) {
-                    userLocationMarker.setLngLat([lng, lat]);
+                    userLocationMarker.setLatLng([lat, lng]);
                 } else {
-                    const dot = document.createElement('div');
-                    dot.style.width = '16px';
-                    dot.style.height = '16px';
-                    dot.style.backgroundColor = '#3b82f6';
-                    dot.style.border = '3px solid white';
-                    dot.style.borderRadius = '50%';
-                    dot.style.boxShadow = '0 0 10px rgba(59, 130, 246, 0.5)';
-                    
-                    userLocationMarker = new maplibregl.Marker({ element: dot })
-                        .setLngLat([lng, lat])
-                        .addTo(map);
+                    const locIcon = L.divIcon({
+                        className: '',
+                        html: `<div style="width:16px;height:16px;background:#3b82f6;border:3px solid white;border-radius:50%;box-shadow:0 0 10px rgba(59,130,246,0.5);"></div>`,
+                        iconSize: [16, 16],
+                        iconAnchor: [8, 8]
+                    });
+                    userLocationMarker = L.marker([lat, lng], { icon: locIcon }).addTo(map);
                 }
 
                 if (currentData.route && currentData.stops[currentData.direction]) {
