@@ -14,6 +14,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
     <script data-cfasync="false" src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script data-cfasync="false" src="https://cdn.jsdelivr.net/npm/pmtiles@3.2.0/dist/pmtiles.js"></script>
+    <script data-cfasync="false" src="https://cdn.jsdelivr.net/npm/protomaps-leaflet@5.1.0/dist/protomaps-leaflet.js"></script>
     
     <style>
         :root {
@@ -1144,17 +1146,8 @@
             zoomControl: false
         });
 
-        const tiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            subdomains: 'abcd',
-            maxZoom: 20
-        });
-        
-        tiles.on('tileerror', (e) => {
-            console.error('地圖圖磚載入失敗：', e);
-        });
-        
-        tiles.addTo(map);
+        // 🌟 優先使用 PMTiles 底圖，並在載入失敗時無縫切換到 CARTO Light 備援
+        addBaseLayer();
 
         L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
@@ -1185,6 +1178,36 @@
 
         updateMarqueeSection('marquee-city-text', 'InterCity', 'InterCity');
     };
+
+    // 🌟 PMTiles 向量底圖加載與備援管線 (優先自架 Protomaps 向量圖磚，失敗時使用 CARTO Light)
+    function addBaseLayer() {
+        if (!map) return;
+
+        const addCartoFallback = () => {
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                subdomains: 'abcd',
+                maxZoom: 20
+            }).addTo(map);
+        };
+
+        try {
+            if (typeof protomapsL === 'undefined') throw new Error('protomaps-leaflet 未載入');
+
+            protomapsL.leafletLayer({
+                url: 'https://maps.weacamm.org/taiwan_full.pmtiles',
+                theme: 'light',
+                maxDataZoom: 15,
+                maxNativeZoom: 15,
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
+            }).addTo(map);
+
+            console.log('使用自架 PMTiles 向量底圖');
+        } catch (e) {
+            console.warn('PMTiles 載入失敗，切換 CARTO 備援：', e);
+            addCartoFallback();
+        }
+    }
 
     function initRouteBrowser() {
         const citySelect = document.getElementById('city-select');
