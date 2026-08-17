@@ -2403,15 +2403,32 @@
 
     function parseWKT(wkt) {
         if (!wkt) return [];
-        const points = [];
-        const matches = wkt.match(/-?\d+\.\d+\s+-?\d+\.\d+/g);
+        // MULTILINESTRING((...),(...),(...)) → 每對內層括號是一條獨立線段
+        // LINESTRING(...) → 單一線段
+        const segments = [];
+        const segMatches = wkt.match(/\(\s*\([^)]*\)\s*\)/g);  // 偵測 MULTILINESTRING 的雙層括號
+        if (segMatches) {
+            segMatches.forEach(seg => {
+                const inner = seg.replace(/^\(\s*\(/, '').replace(/\)\s*\)$/, '');
+                segments.push(parseCoordList(inner));
+            });
+        } else {
+            const inner = wkt.replace(/^[A-Z]+\s*\(\s*/i, '').replace(/\s*\)\s*$/, '');
+            segments.push(parseCoordList(inner));
+        }
+        return segments.filter(s => s.length > 1);
+    }
+
+    function parseCoordList(str) {
+        const pts = [];
+        const matches = str.match(/-?\d+\.?\d*\s+-?\d+\.?\d*/g);
         if (matches) {
-            matches.forEach(match => {
-                const [lng, lat] = match.split(/\s+/);
-                points.push([parseFloat(lng), parseFloat(lat)]);
+            matches.forEach(m => {
+                const [lng, lat] = m.trim().split(/\s+/);
+                pts.push([parseFloat(lng), parseFloat(lat)]);
             });
         }
-        return points;
+        return pts;
     }
 
     function drawStaticMap(dir) {
@@ -2431,8 +2448,8 @@
         }
 
         if (path.length > 0) {
-            // parseWKT 回傳 [lng, lat]，Leaflet 需要 [lat, lng]
-            const latLngs = path.map(p => [p[1], p[0]]);
+            // path 現在是 [[ [lng,lat],... ], [ ... ]] 的結構，每段獨立
+            const latLngs = path.map(seg => seg.map(([lng, lat]) => [lat, lng]));
             routeLine = L.polyline(latLngs, {
                 color: '#2563eb',
                 weight: 5,
