@@ -2402,33 +2402,27 @@
     }
 
     function parseWKT(wkt) {
-        if (!wkt) return [];
-        // MULTILINESTRING((...),(...),(...)) → 每對內層括號是一條獨立線段
-        // LINESTRING(...) → 單一線段
-        const segments = [];
-        const segMatches = wkt.match(/\(\s*\([^)]*\)\s*\)/g);  // 偵測 MULTILINESTRING 的雙層括號
-        if (segMatches) {
-            segMatches.forEach(seg => {
-                const inner = seg.replace(/^\(\s*\(/, '').replace(/\)\s*\)$/, '');
-                segments.push(parseCoordList(inner));
-            });
-        } else {
-            const inner = wkt.replace(/^[A-Z]+\s*\(\s*/i, '').replace(/\s*\)\s*$/, '');
-            segments.push(parseCoordList(inner));
-        }
-        return segments.filter(s => s.length > 1);
-    }
+        if (!wkt || typeof wkt !== 'string') return [];
 
-    function parseCoordList(str) {
-        const pts = [];
-        const matches = str.match(/-?\d+\.?\d*\s+-?\d+\.?\d*/g);
-        if (matches) {
-            matches.forEach(m => {
-                const [lng, lat] = m.trim().split(/\s+/);
-                pts.push([parseFloat(lng), parseFloat(lat)]);
-            });
-        }
-        return pts;
+        const isMulti = /^\s*MULTILINESTRING/i.test(wkt);
+        const inner = wkt
+            .replace(/^\s*MULTILINESTRING\s*\(\s*/i, '')
+            .replace(/^\s*LINESTRING\s*\(\s*/i, '')
+            .replace(/\s*\)\s*$/, '');
+
+        const segmentTexts = isMulti
+            ? inner.split(/\)\s*,\s*\(/)
+            : [inner];
+
+        return segmentTexts
+            .map(text => text
+                .replace(/^\s*\(/, '')
+                .replace(/\)\s*$/, '')
+                .split(',')
+                .map(pair => pair.trim().split(/\s+/).map(Number))
+                .filter(([lng, lat]) => Number.isFinite(lng) && Number.isFinite(lat))
+            )
+            .filter(segment => segment.length >= 2);
     }
 
     function drawStaticMap(dir) {
@@ -2439,24 +2433,63 @@
         
         if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
 
-        let path = [];
-        if (currentData.shapes && currentData.shapes.length > 0) {
-            const shapeObj = currentData.shapes.find(s => s.Direction == dir) || currentData.shapes[0];
-            if (shapeObj && shapeObj.Geometry) {
-                path = parseWKT(shapeObj.Geometry);
+        let segments = [];
+
+        if (Array.isArray(currentData.shapes) && currentData.shapes.length) {
+            const shapeObj = currentData.shapes.find(s => Number(s.Direction) === Number(dir)) || currentData.shapes[0];
+            if (shapeObj?.Geometry) {
+                segments = parseWKT(shapeObj.Geometry);
             }
         }
 
-        if (path.length > 0) {
-            // path 現在是 [[ [lng,lat],... ], [ ... ]] 的結構，每段獨立
-            const latLngs = path.map(seg => seg.map(([lng, lat]) => [lat, lng]));
+        if (segments.length) {
+            const latLngs = segments.map(segment => segment.map(([lng, lat]) => [lat, lng]));
             routeLine = L.polyline(latLngs, {
                 color: '#2563eb',
                 weight: 5,
-                opacity: 0.8
+                opacity: 0.85,
+                lineJoin: 'round',
+                lineCap: 'round'
             }).addTo(map);
             
-            map.fitBounds(routeLine.getBounds(), { padding: [40, 40] });
+            const bounds = routeLine.getBounds();
+            if (bounds.isValid()) {
+                map.fitBounds(bounds, { padding: [40, 40] });
+            }
+        } else {
+            console.warn('此路線沒有可繪製的 Shape，嘗試以站牌順序繪製備援虛線...', {
+                route: currentData.route,
+                direction: dir,
+                shapes: currentData.shapes
+            });
+
+            const stops = currentData.stops[dir] || [];
+            const stopLatLngs = stops
+                .filter(s =>
+                    s.StopPosition &&
+                    Number.isFinite(Number(s.StopPosition.PositionLat)) &&
+                    Number.isFinite(Number(s.StopPosition.PositionLon))
+                )
+                .map(s => [
+                    Number(s.StopPosition.PositionLat),
+                    Number(s.StopPosition.PositionLon)
+                ]);
+
+            if (stopLatLngs.length >= 2) {
+                routeLine = L.polyline(stopLatLngs, {
+                    color: '#2563eb',
+                    weight: 4,
+                    opacity: 0.72,
+                    dashArray: '7 8',
+                    lineJoin: 'round',
+                    lineCap: 'round'
+                }).addTo(map);
+
+                const bounds = routeLine.getBounds();
+                if (bounds.isValid()) {
+                    map.fitBounds(bounds, { padding: [40, 40] });
+                }
+            }
         }
 
         const stops = currentData.stops[dir] || [];
