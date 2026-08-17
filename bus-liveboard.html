@@ -13,7 +13,7 @@
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
-    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+    <script data-cfasync="false" src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
     
     <style>
         :root {
@@ -1138,31 +1138,9 @@
     }
 
     window.initMap = function() {
-        const osmStyle = {
-            version: 8,
-            sources: {
-                'osm-tiles': {
-                    type: 'raster',
-                    tiles: [
-                        'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png'
-                    ],
-                    tileSize: 256,
-                    attribution: '© OpenStreetMap contributors'
-                }
-            },
-            layers: [{
-                id: 'osm-tiles-layer',
-                type: 'raster',
-                source: 'osm-tiles',
-                minzoom: 0,
-                maxzoom: 19
-            }]
-        };
-
         map = new maplibregl.Map({
             container: 'map',
-            style: osmStyle,
+            style: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
             center: [121.5170, 25.0478],
             zoom: 12
         });
@@ -1180,7 +1158,14 @@
     };
 
     window.addEventListener('DOMContentLoaded', () => {
-        if (typeof initMap === 'function') initMap();
+        function checkAndInit() {
+            if (typeof maplibregl !== 'undefined') {
+                if (typeof initMap === 'function') initMap();
+            } else {
+                setTimeout(checkAndInit, 100);
+            }
+        }
+        checkAndInit();
     });
 
     let browser = { type: 'CityBus', city: 'Taipei', cache: {} };
@@ -2141,6 +2126,14 @@
     function drawStaticMap(dir) {
         if(!map) return;
         
+        // 🌟 異步加載防護：如果底圖 Style 尚未載入完成，操作 Source/Layer 會丟出致命錯誤，需註冊一次性監聽在 style 載入後執行
+        if (!map.isStyleLoaded()) {
+            map.once('style.load', () => {
+                drawStaticMap(dir);
+            });
+            return;
+        }
+        
         mapMarkers.stops.forEach(m => m.remove());
         mapMarkers.stops = [];
         
@@ -2590,7 +2583,11 @@
                     desc: n.Description, 
                     date: n.PublishTime, 
                     tag: '消息', 
-                    cls: 'tag-news' 
+                    cls: 'tag-news',
+                    category: n.NewsCategory,
+                    phone: n.ContactPhone,
+                    newsUrl: n.NewsURL,
+                    attachmentUrl: n.AttachmentURL
                 }))
             ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
@@ -2627,6 +2624,16 @@
                         else if (i.status === 1) statusHtml = `<span style="background:#f0fdf4; color:#16a34a; border:1px solid #dcfce7; font-size:0.75rem; font-weight:800; padding:2px 6px; border-radius:4px; margin-right:6px;"><i class="fas fa-check-circle"></i> 營運正常</span>`;
                     }
 
+                    // 消息類別標籤 (最新消息/營運公告)
+                    let catHtml = '';
+                    if (i.tag === '消息' && i.category !== undefined) {
+                        const catMap = { 1: '最新消息', 2: '新聞稿', 3: '營運資訊', 4: '轉乘資訊', 5: '活動訊息', 6: '系統公告', 7: '通阻資訊', 99: '其他' };
+                        const catText = catMap[i.category] || '';
+                        if (catText) {
+                            catHtml = `<span style="background:#f1f5f9; color:#475569; border:1px solid #e2e8f0; font-size:0.75rem; font-weight:800; padding:2px 6px; border-radius:4px; margin-right:6px;"><i class="fas fa-tag"></i> ${catText}</span>`;
+                        }
+                    }
+
                     // 原因與影響標籤
                     let detailsHtml = '';
                     if (i.tag === '通阻') {
@@ -2638,6 +2645,22 @@
                             if (effectText) detailsHtml += `<span style="background:#f1f5f9; color:#475569; font-size:0.7rem; font-weight:700; padding:1px 6px; border-radius:4px; border:1px solid #e2e8f0;"><i class="fas fa-tools"></i> 影響: ${effectText}</span>`;
                             detailsHtml += `</div>`;
                         }
+                    }
+
+                    // 聯絡電話與網頁連結 (最新消息)
+                    let newsMetaHtml = '';
+                    if (i.tag === '消息' && (i.phone || i.newsUrl || i.attachmentUrl)) {
+                        newsMetaHtml += `<div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">`;
+                        if (i.phone) {
+                            newsMetaHtml += `<a href="tel:${i.phone}" style="color:#2563eb; text-decoration:none; font-weight:bold; font-size:0.75rem; background:#eff6ff; padding:4px 8px; border-radius:6px; border:1px solid #bfdbfe;"><i class="fas fa-phone-alt"></i> 聯絡: ${i.phone}</a>`;
+                        }
+                        if (i.newsUrl) {
+                            newsMetaHtml += `<a href="${i.newsUrl}" target="_blank" style="color:#4b5563; text-decoration:none; font-weight:bold; font-size:0.75rem; background:#f3f4f6; padding:4px 8px; border-radius:6px; border:1px solid #e5e7eb;"><i class="fas fa-external-link-alt"></i> 官方網站</a>`;
+                        }
+                        if (i.attachmentUrl) {
+                            newsMetaHtml += `<a href="${i.attachmentUrl}" target="_blank" style="color:#4b5563; text-decoration:none; font-weight:bold; font-size:0.75rem; background:#f3f4f6; padding:4px 8px; border-radius:6px; border:1px solid #e5e7eb;"><i class="fas fa-paperclip"></i> 附件網址</a>`;
+                        }
+                        newsMetaHtml += `</div>`;
                     }
 
                     // 影響範圍 (Scope)
@@ -2659,10 +2682,11 @@
                     <div style="border-bottom:1px solid #eee; padding-bottom:16px; margin-bottom:4px;">
                         <div style="font-size:0.8rem; color:#9ca3af; margin-bottom:4px;">${i.date ? i.date.substring(0, 10) : ''}</div>
                         <div style="font-weight:700; font-size:1.05rem; margin-bottom:6px; display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
-                            <span class="${i.cls}">${i.tag}</span> ${statusHtml} ${i.title}
+                            <span class="${i.cls}">${i.tag}</span> ${statusHtml} ${catHtml} ${i.title}
                         </div>
                         ${detailsHtml}
                         <div class="news-desc-content" style="line-height:1.5; color:#475569;">${descHtml}</div>
+                        ${newsMetaHtml}
                         ${scopeHtml}
                     </div>`;
                 }).join('') + '</div>';
