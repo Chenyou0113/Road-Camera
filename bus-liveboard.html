@@ -355,7 +355,7 @@
         .stop-row.active { background: #eff6ff; }
 
         .col-time {
-            width: 55px;
+            width: 65px;
             padding: 12px 0;
             display: flex;
             justify-content: center;
@@ -851,12 +851,42 @@
                 margin-top: -16px;
                 display: flex;
                 flex-direction: column;
+                transition: all 0.2s ease-out;
             }
             #map-container { 
                 height: 40%; 
                 flex: 0 0 40%;
                 order: 1; 
+                transition: all 0.2s ease-out;
             }
+            #toggle-map-btn {
+                display: inline-flex;
+            }
+        }
+
+        #toggle-map-btn {
+            display: none;
+            position: absolute;
+            bottom: 12px;
+            left: 12px;
+            z-index: 1000;
+            background: white;
+            border: 1px solid var(--border);
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.72rem;
+            font-weight: 800;
+            color: var(--text-main);
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+        #toggle-map-btn:hover {
+            background: #eff6ff;
+            color: var(--primary);
+            border-color: var(--primary);
         }
 
         /* 跑馬燈動畫 */
@@ -997,6 +1027,13 @@
                     <div class="tab active" id="tab-0" onclick="switchDirection(0)">往 <span id="dest-0">...</span></div>
                     <div class="tab" id="tab-1" onclick="switchDirection(1)">往 <span id="dest-1">...</span></div>
                 </div>
+                
+                <!-- 🌟 最近一班公車摘要列 -->
+                <div id="route-summary-bar" style="display:none; align-items:center; justify-content:space-between; padding:8px 12px; background:#eff6ff; border-radius:8px; margin:6px 16px 2px; border:1px solid #bfdbfe; font-size:0.75rem; font-weight:700; color:#1d4ed8;">
+                    <span><i class="fas fa-clock"></i> 最近一班：<strong id="summary-next-time" style="font-size:0.8rem; color:#ef4444;">--</strong></span>
+                    <span id="summary-next-stops" style="font-weight:600; color:#64748b;">距離：-- 站</span>
+                </div>
+
                 <div style="padding: 4px 4px 2px; font-size: 0.7rem; color: #9ca3af;">
                     <div id="refresh-progress-wrap"><div id="refresh-progress-bar"></div></div>
                     <div style="text-align:right;">資料來源: TDX API · <span id="update-time">--:--</span> · <span id="refresh-countdown">--</span></div>
@@ -1012,6 +1049,9 @@
     </div>
 
     <div id="map-container" style="position:relative;">
+        <button id="toggle-map-btn" onclick="toggleMapHeight(event)" title="切換地圖大小">
+            <i class="fas fa-map"></i> <span>收合地圖</span>
+        </button>
         <div id="marquee-wrapper" style="position:absolute; top:10px; left:10px; right:60px; z-index:5; border-radius:8px; overflow:hidden; box-shadow:0 2px 6px rgba(0,0,0,0.2); background:rgba(255,255,255,0.95);">
             <div id="marquee-city" onclick="openCityNewsModal(browser.city)" style="background:rgba(255,251,235,0.95); padding:8px 12px; display:flex; align-items:center; gap:8px; border-bottom:1px solid rgba(252,211,77,0.5); height:36px; cursor:pointer;" title="點擊查看詳細公告">
                 <div style="font-size:0.75rem; font-weight:800; color:#d97706; background:#fef3c7; padding:2px 6px; border-radius:4px; white-space:nowrap; flex-shrink:0;" id="marquee-city-label">本區公告</div>
@@ -1030,6 +1070,8 @@
 
 <script>
     // 🌟 WebView 可視視窗高度修復變數，避免經典的 100vh 遭導航列截斷問題
+    let mapCollapsed = false;
+    
     function setAppHeight() {
         document.documentElement.style.setProperty('--app-height', `${window.innerHeight}px`);
         if (typeof map !== 'undefined' && map) {
@@ -1037,6 +1079,45 @@
             map.invalidateSize();
         }
     }
+    
+    function toggleMapHeight(event) {
+        if (event) event.stopPropagation();
+        mapCollapsed = !mapCollapsed;
+        const mapContainer = document.getElementById('map-container');
+        const panel = document.getElementById('panel');
+        const btn = document.getElementById('toggle-map-btn');
+        
+        if (!mapContainer || !panel || !btn) return;
+
+        if (mapCollapsed) {
+            mapContainer.style.height = '15%';
+            mapContainer.style.flex = '0 0 15%';
+            panel.style.height = '85%';
+            panel.style.flex = '0 0 85%';
+            btn.innerHTML = '<i class="fas fa-map"></i> <span>展開地圖</span>';
+        } else {
+            mapContainer.style.height = '40%';
+            mapContainer.style.flex = '0 0 40%';
+            panel.style.height = '60%';
+            panel.style.flex = '0 0 60%';
+            btn.innerHTML = '<i class="fas fa-map"></i> <span>收合地圖</span>';
+        }
+        
+        // 🌟 註冊一次性 transitionend 監聽，在動畫結束的瞬間立刻重整地圖尺寸
+        const onTransitionEnd = () => {
+            setAppHeight();
+            if (map) map.invalidateSize(true);
+            mapContainer.removeEventListener('transitionend', onTransitionEnd);
+        };
+        mapContainer.addEventListener('transitionend', onTransitionEnd);
+        
+        // 🌟 350ms 雙保險延遲 (略長於 200ms 的 transition 補間時間)，防止 transitionend 在某些 WebView 中漏發
+        setTimeout(() => {
+            setAppHeight();
+            if (map) map.invalidateSize(true);
+        }, 350);
+    }
+
     window.addEventListener('resize', setAppHeight);
     window.addEventListener('orientationchange', setAppHeight);
     setAppHeight(); // 立即呼叫
@@ -1607,6 +1688,10 @@
         const tabDir = document.getElementById(`tab-${dir}`);
         if(tabDir) tabDir.classList.add('active');
 
+        // 🌟 切換去回程時，第一時間隱藏最近一班摘要列，防止舊資料殘留
+        const summaryBar = document.getElementById('route-summary-bar');
+        if (summaryBar) summaryBar.style.display = 'none';
+
         const stops = currentData.stops[dir] || [];
         const container = document.getElementById('stops-container');
         
@@ -1831,6 +1916,65 @@
                 rowEl.classList.add('has-bus');
             }
         });
+
+        // 🌟 最近一班公車摘要計算與渲染 (進階 Progressive Disclosure 模式)
+        let nextSec = Infinity;
+        let nextStopName = '';
+        let matchedIndex = -1;
+        let busStatusText = ''; // 用於無即時預估時的備援顯示 (如末班已過)
+        
+        stops.forEach((stop, idx) => {
+            const uid = stop.StopUID;
+            const est = estimates[`${currentData.direction}_${uid}`];
+            if (est) {
+                if (est.sec != null && est.sec >= 0) {
+                    if (est.sec < nextSec) {
+                        nextSec = est.sec;
+                        nextStopName = stop.StopName?.Zh_tw || stop.StopName || '';
+                        matchedIndex = idx;
+                    }
+                } else if (idx === 0 && est.status !== undefined) {
+                    // 若首站未發車，可取其狀態
+                    if (est.status === 1) busStatusText = '尚未發車';
+                    else if (est.status === 2) busStatusText = '交管不停';
+                    else if (est.status === 3) busStatusText = '末班已過';
+                    else if (est.status === 4) busStatusText = '今日停駛';
+                }
+            }
+        });
+
+        const summaryBar = document.getElementById('route-summary-bar');
+        if (summaryBar) {
+            if (nextSec !== Infinity) {
+                summaryBar.style.display = 'flex';
+                const min = Math.floor(nextSec / 60);
+                const timeText = min < 1 ? '即將進站' : `${min} 分鐘`;
+                document.getElementById('summary-next-time').innerText = `${timeText} (${nextStopName})`;
+                
+                // 估算還有幾站
+                let closestBusIndex = -1;
+                stops.forEach((stop, idx) => {
+                    const uid = stop.StopUID;
+                    const row = document.getElementById(`stop-${uid}`);
+                    if (row && row.classList.contains('has-bus') && idx <= matchedIndex) {
+                        closestBusIndex = idx;
+                    }
+                });
+                
+                if (closestBusIndex !== -1) {
+                    const remainingStops = matchedIndex - closestBusIndex;
+                    document.getElementById('summary-next-stops').innerText = remainingStops === 0 ? `即將抵達` : `距離 ${remainingStops} 站`;
+                } else {
+                    document.getElementById('summary-next-stops').innerText = `暫無即時車輛定位`;
+                }
+            } else if (busStatusText !== '') {
+                summaryBar.style.display = 'flex';
+                document.getElementById('summary-next-time').innerText = busStatusText;
+                document.getElementById('summary-next-stops').innerText = '今日已無班車';
+            } else {
+                summaryBar.style.display = 'none';
+            }
+        }
     }
 
     // 🌟 時刻表彈窗 (接軌 Worker 新 API 結構)
