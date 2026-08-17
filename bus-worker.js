@@ -6,7 +6,7 @@
  */
 
 const CONFIG = {
-    VERSION: "v30.8",
+    VERSION: "v30.9",
     CITIES: ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung", "Keelung", "InterCity"],
     TOKEN_URL: "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
     BASE_API: "https://tdx.transportdata.tw/api/basic",
@@ -251,7 +251,37 @@ export default {
             const city = params.get("city") || "Taipei";
             const cat = params.get("category") || "CityBus";
 
-            if (action === "db_init") {
+            if (action === "version") {
+                return send({ version: CONFIG.VERSION, deployed: true });
+            }
+
+            if (action === "debug") {
+                return send({
+                    version: CONFIG.VERSION,
+                    receivedAction: action,
+                    url: request.url,
+                    pathname: url.pathname,
+                    params: Object.fromEntries(params.entries())
+                });
+            }
+
+            if (action === "ping") {
+                return send({
+                    ok: true,
+                    version: CONFIG.VERSION,
+                    action
+                });
+            }
+
+            if (action === "dbtest") {
+                return send({
+                    ok: true,
+                    reached: "dbtest",
+                    version: CONFIG.VERSION
+                });
+            }
+
+            if (action === "db_init" || action === "dbinit") {
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS routes_v2 (uid TEXT PRIMARY KEY, city TEXT, name TEXT, departure TEXT, destination TEXT, type TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS route_stops (route_key TEXT PRIMARY KEY, city TEXT, route_name TEXT, type TEXT, data TEXT, updated_at INTEGER)`).run();
                 await env.DB.prepare(`CREATE TABLE IF NOT EXISTS stop_routes (city TEXT, stop_name TEXT, routes TEXT, updated_at INTEGER, PRIMARY KEY (city, stop_name))`).run();
@@ -290,7 +320,7 @@ export default {
                 return send(results || []);
             }
 
-            if (action === "stop_info") {
+            if (action === "stop_info" || action === "stopinfo") {
                 const stopName = params.get("name") || "";
                 if (!stopName) throw new Error("缺少站牌名稱參數");
                 let row = await env.DB.prepare("SELECT routes FROM stop_routes WHERE city = ? AND stop_name = ?").bind(city, stopName).first();
@@ -581,7 +611,12 @@ export default {
                 });
             }
 
-            return send({ status: "Error", message: "未知的 action" }, 400);
+            return send({
+                status: "Error",
+                message: "未知的 action",
+                receivedAction: action,
+                version: CONFIG.VERSION
+            }, 400);
 
         } catch (e) {
             return send({ 
