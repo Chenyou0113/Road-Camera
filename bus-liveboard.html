@@ -991,7 +991,7 @@
 
     <div id="map-container" style="position:relative;">
         <div id="marquee-wrapper" style="position:absolute; top:10px; left:10px; right:60px; z-index:5; border-radius:8px; overflow:hidden; box-shadow:0 2px 6px rgba(0,0,0,0.2); background:rgba(255,255,255,0.95);">
-            <div id="marquee-city" style="background:rgba(255,251,235,0.95); padding:8px 12px; display:flex; align-items:center; gap:8px; border-bottom:1px solid rgba(252,211,77,0.5); height:36px;">
+            <div id="marquee-city" onclick="openCityNewsModal(browser.city)" style="background:rgba(255,251,235,0.95); padding:8px 12px; display:flex; align-items:center; gap:8px; border-bottom:1px solid rgba(252,211,77,0.5); height:36px; cursor:pointer;" title="點擊查看詳細公告">
                 <div style="font-size:0.75rem; font-weight:800; color:#d97706; background:#fef3c7; padding:2px 6px; border-radius:4px; white-space:nowrap; flex-shrink:0;" id="marquee-city-label">本區公告</div>
                 <div style="flex:1; overflow:hidden; position:relative; height:20px;">
                     <div id="marquee-city-text" class="marquee-content" style="display:inline-block; font-size:0.85rem; color:#92400e; font-weight:600; white-space:nowrap; line-height:20px;">載入中...</div>
@@ -2245,38 +2245,6 @@
         );
     }
 
-                if (currentData.route && currentData.stops[currentData.direction]) {
-                    let minDistance = Infinity;
-                    let nearestStopId = null;
-
-                    currentData.stops[currentData.direction].forEach(s => {
-                        if(s.StopPosition) {
-                            const d = getDistance(lat, lng, s.StopPosition.PositionLat, s.StopPosition.PositionLon);
-                            if (d < minDistance) {
-                                minDistance = d;
-                                nearestStopId = s.StopUID;
-                            }
-                        }
-                    });
-
-                    if (nearestStopId) {
-                        const stopEl = document.getElementById(`stop-${nearestStopId}`);
-                        if (stopEl) {
-                            stopEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            stopEl.style.backgroundColor = '#ecfdf5';
-                            setTimeout(() => stopEl.style.backgroundColor = '', 2000);
-                        }
-                    }
-                }
-            },
-            () => {
-                btn.classList.remove('locating');
-                alert("無法獲取您的位置，請確認是否開啟定位權限。");
-            },
-            { enableHighAccuracy: true, timeout: 5000 }
-        );
-    }
-
     async function handleSearchPlate(plate) {
         if (!plate || plate === '---') return false;
         let bus = lastBuses.find(b => (b.PlateNumb === plate || b.plate === plate));
@@ -2303,8 +2271,16 @@
         const title = document.getElementById('modal-title');
         const body = document.getElementById('modal-body');
         
-        const city = targetCity || (currentData.city ? currentData.city : 'Taipei');
-        const type = (city === 'InterCity') ? 'InterCity' : 'CityBus';
+        const city = targetCity || browser.city || 'Taipei';
+        
+        let type = 'CityBus';
+        if (city === 'InterCity') {
+            type = 'InterCity';
+        } else if (city === 'HSP' || city === 'CTSP') {
+            type = 'SciencePark';
+        } else if (targetCity === null) {
+            type = currentData.type || browser.type || 'CityBus';
+        }
 
         const cityNameMap = {
             'Taipei': '臺北市', 'NewTaipei': '新北市', 'Keelung': '基隆市',
@@ -2315,7 +2291,9 @@
             'Kaohsiung': '高雄市', 'PingtungCounty': '屏東縣',
             'HualienCounty': '花蓮縣', 'TaitungCounty': '臺東縣',
             'PenghuCounty': '澎湖縣', 'KinmenCounty': '金門縣', 'LienchiangCounty': '連江縣',
-            'InterCity': '公路客運'
+            'InterCity': '公路客運',
+            'HSP': '新竹科學園區接駁車',
+            'CTSP': '中部科學園區接駁車'
         };
 
         title.innerHTML = `<i class="fas fa-bullhorn"></i> <span>營運公告</span>`;
@@ -2334,9 +2312,16 @@
         selectHtml += `<option value="InterCity" ${isInterSelected}>公路客運</option>`;
         selectHtml += `</optgroup>`;
 
+        selectHtml += `<optgroup label="科學園區">`;
+        const isHspSelected = (city === 'HSP') ? 'selected' : '';
+        const isCtspSelected = (city === 'CTSP') ? 'selected' : '';
+        selectHtml += `<option value="HSP" ${isHspSelected}>新竹科學園區接駁車</option>`;
+        selectHtml += `<option value="CTSP" ${isCtspSelected}>中部科學園區接駁車</option>`;
+        selectHtml += `</optgroup>`;
+
         selectHtml += `<optgroup label="市區公車">`;
         for (const [code, name] of Object.entries(cityNameMap)) {
-            if (code === 'InterCity') continue;
+            if (code === 'InterCity' || code === 'HSP' || code === 'CTSP') continue;
             const isSelected = (code === city) ? 'selected' : '';
             selectHtml += `<option value="${code}" ${isSelected}>${name}</option>`;
         }
