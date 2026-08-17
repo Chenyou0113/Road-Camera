@@ -12,8 +12,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script data-cfasync="false" src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+    <script data-cfasync="false" src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
     
     <style>
         :root {
@@ -1144,15 +1144,27 @@
             zoomControl: false
         });
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-            maxZoom: 19
-        }).addTo(map);
+        const tiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd',
+            maxZoom: 20
+        });
+        
+        tiles.on('tileerror', (e) => {
+            console.error('地圖圖磚載入失敗：', e);
+        });
+        
+        tiles.addTo(map);
 
         L.control.zoom({ position: 'bottomleft' }).addTo(map);
 
-        // 🌟 初始化後延遲重算容器尺寸，避免 Flexbox 尚未 layout 完成導致灰色區塊
-        setTimeout(() => map.invalidateSize(), 200);
+        // 🌟 初始化後使用 requestAnimationFrame + setTimeout 雙重確保容器尺寸重算，防止 flex 佈局不完整導致灰色區塊
+        requestAnimationFrame(() => {
+            if (map) map.invalidateSize();
+        });
+        setTimeout(() => {
+            if (map) map.invalidateSize();
+        }, 300);
 
         // 🌟 視窗大小改變時也必須重算
         window.addEventListener('resize', () => {
@@ -1172,14 +1184,27 @@
         });
 
         updateMarqueeSection('marquee-city-text', 'Taipei', 'CityBus');
-        selectCity('Taipei');
+        // 🌟 延遲 50ms 執行 selectCity，把地圖 tiles 載入與首頁 API 抓取錯開，地圖顯示更流暢
+        setTimeout(() => {
+            selectCity('Taipei');
+        }, 50);
     };
 
     window.addEventListener('DOMContentLoaded', () => {
+        let attempts = 0;
         function checkAndInit() {
             if (typeof L !== 'undefined') {
                 if (typeof initMap === 'function') initMap();
             } else {
+                attempts++;
+                if (attempts > 50) { // 5秒
+                    console.error('Leaflet 載入失敗');
+                    const mapEl = document.getElementById('map');
+                    if (mapEl) {
+                        mapEl.innerHTML = '<div style="padding:20px;text-align:center;color:#6b7280;font-weight:700;"><i class="fas fa-exclamation-triangle" style="color:#ef4444;font-size:2rem;margin-bottom:10px;"></i><br>地圖元件載入失敗，請檢查網路連線或重新整理頁面。</div>';
+                    }
+                    return;
+                }
                 setTimeout(checkAndInit, 100);
             }
         }
@@ -1393,16 +1418,14 @@
         currentData.city = city || browser.city;
         currentData.type = type || browser.type;
         currentData.fare = null;
+        currentData.shapes = []; // 重設
 
         // 🌟 正確帶入類別（type）以支援跨種類公車車籍載入
         loadVehicleData(currentData.city, currentData.type);
 
         try {
-            const [infoRes, shapeRes, fareRes] = await Promise.all([
-                throttledFetch(`${WORKER_URL}/?action=info&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`).then(r => r.json()),
-                throttledFetch(`${WORKER_URL}/?action=shape&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`).then(r => r.json()),
-                throttledFetch(`${WORKER_URL}/?action=fare&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`).then(r => r.json()).catch(() => null)
-            ]);
+            // 🌟 核心優化：第一步只等最輕量的 info (站牌資料)，以最快速度渲染 UI
+            const infoRes = await throttledFetch(`${WORKER_URL}/?action=info&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`).then(r => r.json());
 
             const infoList = Array.isArray(infoRes) ? infoRes : [];
             const dir0 = infoList.find(d => d.Direction == 0) || infoList[0];
@@ -1410,7 +1433,6 @@
             
             currentData.stops = { 0: dir0 ? dir0.Stops : [], 1: dir1 ? dir1.Stops : [] };
             currentData.info = { 0: dir0, 1: dir1 };
-            currentData.fare = fareRes ? fareRes.fares : null;
 
             document.getElementById('route-title').innerText = name;
             
@@ -1432,8 +1454,6 @@
             
             const tab1 = document.getElementById('tab-1');
             if(tab1) tab1.style.display = dir1 ? 'block' : 'none';
-            
-            currentData.shapes = Array.isArray(shapeRes) ? shapeRes : [];
 
             // 🌟 預約選項按鈕顯隱控制
             const bookingOpt = document.getElementById('booking-rule-option');
@@ -1441,20 +1461,65 @@
                 bookingOpt.style.display = (currentData.type === 'DRTS') ? 'flex' : 'none';
             }
 
-            // 🌟 獲取該縣市 DRTS 乘車位置集合點 (僅臺中與花蓮提供)
-            currentData.locations = [];
+            // 立刻渲染站牌列表，此時地圖底圖已知，且使用者能立刻看到站牌！
+            switchDirection(dir0 ? 0 : 1);
+            document.getElementById('loading').style.display = 'none';
+
+            // 🌟 背景並行獲取 Shape (地圖線段) 與 Fare (票價資訊)，利用 Promise.allSettled 保障不互相阻塞
+            Promise.allSettled([
+                throttledFetch(`${WORKER_URL}/?action=shape&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`).then(r => r.json()),
+                throttledFetch(`${WORKER_URL}/?action=fare&category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(name)}`).then(r => r.json())
+            ]).then(([shapeResult, fareResult]) => {
+                // 1. 處理地圖路線繪製
+                if (shapeResult.status === 'fulfilled' && currentData.route === name) {
+                    currentData.shapes = shapeResult.value || [];
+                    drawStaticMap(currentData.direction);
+                }
+
+                // 2. 處理票價與緩衝區渲染
+                if (fareResult.status === 'fulfilled' && currentData.route === name) {
+                    currentData.fare = fareResult.value?.fares || null;
+                    const currentDir = currentData.direction;
+                    const stops = currentData.stops[currentDir] || [];
+                    const bufferStops = renderFareInfo(currentDir);
+                    stops.forEach((s, idx) => {
+                        const stopName = s.StopName?.Zh_tw || s.StopName || '未命名站牌';
+                        const isBufferStart = bufferStops.start === stopName;
+                        const isBufferEnd = bufferStops.end === stopName;
+                        const rowEl = document.getElementById(`stop-${s.StopUID || `stop-${idx}`}`);
+                        if (rowEl) {
+                            if (isBufferStart) rowEl.classList.add('buffer-start');
+                            if (isBufferEnd) rowEl.classList.add('buffer-end');
+                            const nameEl = rowEl.querySelector('.stop-name');
+                            if (nameEl) {
+                                const bufferHtml = isBufferStart ? '<span class="buffer-tag">緩衝區起點</span>' : (isBufferEnd ? '<span class="buffer-tag">緩衝區終點</span>' : '');
+                                const hasLocation = (currentData.locations || []).find(loc => loc.name === stopName);
+                                const locationHtml = hasLocation 
+                                    ? `<span class="location-tag" style="background:#10b981; color:white; font-size:0.7rem; font-weight:800; padding:2px 6px; border-radius:4px; margin-left:6px; cursor:pointer;" onclick="focusLocationPoint('${stopName}', event)"><i class="fas fa-map-marker-alt"></i> 乘車集合點</span>` 
+                                    : '';
+                                nameEl.innerHTML = `${stopName}${bufferHtml}${locationHtml}`;
+                            }
+                        }
+                    });
+                }
+            }).catch(e => console.warn('背景 Shape/Fare 載入錯誤:', e));
+
+            // 🌟 背景非同步獲取該縣市 DRTS 乘車位置集合點 (僅臺中與花蓮提供)
             if (currentData.type === 'DRTS' && (currentData.city === 'Taichung' || currentData.city === 'HualienCounty')) {
-                try {
-                    const locRes = await throttledFetch(`${WORKER_URL}/?action=location&city=${currentData.city}`);
-                    currentData.locations = await locRes.json();
-                } catch(e) { console.warn('無法載入 DRTS Location', e); }
+                throttledFetch(`${WORKER_URL}/?action=location&city=${currentData.city}`)
+                    .then(r => r.json())
+                    .then(locRes => {
+                        currentData.locations = locRes || [];
+                        if (currentData.route === name) {
+                            switchDirection(currentData.direction);
+                        }
+                    })
+                    .catch(() => {});
             }
 
-            switchDirection(dir0 ? 0 : 1);
         } catch (e) {
             console.error(e);
             alert('載入路線失敗，請重試');
-        } finally {
             document.getElementById('loading').style.display = 'none';
         }
     }
