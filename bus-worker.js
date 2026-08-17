@@ -6,7 +6,7 @@
  */
 
 const CONFIG = {
-    VERSION: "v30.9",
+    VERSION: "v30.13",
     CITIES: ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung", "Keelung", "InterCity"],
     TOKEN_URL: "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
     BASE_API: "https://tdx.transportdata.tw/api/basic",
@@ -17,10 +17,10 @@ const CONFIG = {
     TIMETABLE_CACHE_TTL_MS: 3 * 24 * 60 * 60 * 1000,
     NEWS_CACHE_TTL_MS: 15 * 60 * 1000,
     ALERT_CACHE_TTL_MS: 5 * 60 * 1000,
-    CORS: { 
-        "Access-Control-Allow-Origin": "*", 
-        "Access-Control-Allow-Methods": "GET, OPTIONS", 
-        "Access-Control-Allow-Headers": "Content-Type, Authorization" 
+    CORS: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization"
     }
 };
 
@@ -30,14 +30,27 @@ const DICT = {
     PRICING_TYPE: { "SectionFare": "段次計費", "ODFares": "起迄站間計費", "StageFares": "計費站區間收費" }
 };
 
-const getZh = (obj) => (typeof obj === 'object' ? (obj?.Zh_tw || "") : (obj || "")).toString().trim();
+const getZh = (obj) => {
+    if (obj == null) return '';
+    if (typeof obj === 'object') {
+        return String(
+            obj.Zh_tw ??
+            obj.Zhtw ??
+            obj.ZhTW ??
+            obj['zh-TW'] ??
+            obj.Name ??
+            ''
+        ).trim();
+    }
+    return String(obj).trim();
+};
 
 const norm = (n) => {
     if (!n) return "";
     return n.replace(/[\(（].*?([\)）]|$)/g, "")
-            .replace(/(去程半|返程半|去程|返程|狗狗公車|動物園專車|夜間公車|區間車|區|繞駛|繞|延駛|延|調度站發車|發車|往[^\s]+|經[^\s]+)/g, "")
-            .replace(/\s+/g, "")
-            .trim();
+        .replace(/(去程半|返程半|去程|返程|狗狗公車|動物園專車|夜間公車|區間車|區|繞駛|繞|延駛|延|調度站發車|發車|往[^\s]+|經[^\s]+)/g, "")
+        .replace(/\s+/g, "")
+        .trim();
 };
 
 const formatDisplayName = (rName, sName) => {
@@ -74,7 +87,7 @@ const extractArray = (d) => {
     if (!d) return [];
     if (Array.isArray(d)) return d;
     if (Array.isArray(d.value)) return d.value;
-    
+
     let bestArr = [];
     for (let k in d) {
         if (Array.isArray(d[k]) && d[k].length > bestArr.length) {
@@ -88,10 +101,10 @@ async function safeTdxFetch(url, token, retries = 3) {
     for (let i = 0; i < retries; i++) {
         const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         const text = await res.text();
-        
+
         if (res.status === 429 || text.includes("API rate limit exceeded")) {
             await sleep((i + 1) * 500 + Math.random() * 200);
-            continue; 
+            continue;
         }
 
         if (!res.ok) return { ok: false, errorText: text };
@@ -151,7 +164,7 @@ async function fetchRouteData(baseUrl, routePrefix, token) {
         }
         const result = await safeTdxFetch(buildUrl(filter), token);
         if (result.ok) {
-            let arr = extractArray(result.data); 
+            let arr = extractArray(result.data);
             if (arr.length > 0) return arr;
         } else {
             lastError = result.errorText;
@@ -172,10 +185,10 @@ async function autoSyncCity(city, cat, token, env) {
         const apiVer = city === "Tainan" ? "v3" : "v2";
         fetchUrl = `${CONFIG.BASE_API}/${apiVer}/Bus/StopOfRoute/City/${city}?$format=JSON`;
     }
-    
+
     const result = await safeTdxFetch(fetchUrl, token);
     if (!result.ok) throw new Error(`TDX 路線同步失敗: ${result.errorText}`);
-    
+
     const data = extractArray(result.data);
     if (data.length === 0) {
         throw new Error(`TDX 回傳了空的路線資料 (Raw: ${JSON.stringify(result.data).substring(0, 150)})`);
@@ -186,7 +199,7 @@ async function autoSyncCity(city, cat, token, env) {
     let batch = [], seen = new Set(), results = [];
     const routeStopsMap = new Map(), stopRoutesMap = new Map();
     const stmt = env.DB.prepare("INSERT OR REPLACE INTO routes_v2 (uid, city, name, departure, destination, type, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)");
-    
+
     data.forEach(r => {
         if (!r.Stops || r.Stops.length < 2) return;
         let finalName = getZh(r.RouteName).trim();
@@ -196,7 +209,7 @@ async function autoSyncCity(city, cat, token, env) {
         if (!seen.has(uniqKey)) {
             seen.add(uniqKey);
             const dep = getZh(r.Stops[0].StopName);
-            const dest = getZh(r.Stops[r.Stops.length-1].StopName);
+            const dest = getZh(r.Stops[r.Stops.length - 1].StopName);
             batch.push(stmt.bind(r.RouteUID || r.RouteID || r.SubRouteUID, city, finalName, dep, dest, type, startTime));
             results.push({ name: finalName, departure: dep, destination: dest, city: city, type: type });
         }
@@ -213,7 +226,7 @@ async function autoSyncCity(city, cat, token, env) {
             stopRoutesMap.get(stopName).add(finalName);
         });
     });
-    
+
     for (let i = 0; i < batch.length; i += 100) await env.DB.batch(batch.slice(i, i + 100));
 
     const stopBatch = [];
@@ -230,7 +243,7 @@ async function autoSyncCity(city, cat, token, env) {
         stopRouteBatch.push(stopRouteStmt.bind(city, stopName, JSON.stringify(Array.from(routeSet).sort()), startTime));
     }
     for (let i = 0; i < stopRouteBatch.length; i += 100) await env.DB.batch(stopRouteBatch.slice(i, i + 100));
-    
+
     return results.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
 }
 
@@ -273,6 +286,63 @@ export default {
                 });
             }
 
+            if (action === "realtimedebug") {
+                const endpoint = `${CONFIG.BASE_API}/v2/Bus/EstimatedTimeOfArrival/City/${city}?$format=JSON`;
+                const result = await safeTdxFetch(endpoint, token);
+                if (!result.ok) {
+                    return send({ ok: false, error: result.errorText }, 502);
+                }
+                const all = extractArray(result.data);
+                const likely222 = all.filter(item => {
+                    const text = [
+                        getZh(item.RouteName),
+                        getZh(item.SubRouteName)
+                    ].join(' ');
+                    return text.includes(route || '222');
+                });
+                return send({
+                    total: all.length,
+                    matched: likely222.length,
+                    samples: likely222.slice(0, 5)
+                });
+            }
+
+            if (action === "livecheck") {
+                const routeVal = params.get("route") || "";
+                const cityVal = params.get("city") || "Taipei";
+
+                const etaUrl = `${CONFIG.BASE_API}/v2/Bus/EstimatedTimeOfArrival/City/${cityVal}?$format=JSON`;
+                const etaResult = await safeTdxFetch(etaUrl, token);
+
+                if (!etaResult.ok) {
+                    return send({
+                        ok: false,
+                        step: "TDX ETA fetch failed",
+                        error: etaResult.errorText
+                    }, 502);
+                }
+
+                const allEta = extractArray(etaResult.data);
+                const matches = allEta.filter(item => {
+                    const rawName = item?.RouteName;
+                    const routeName = String(
+                        rawName?.Zh_tw ??
+                        rawName?.Zhtw ??
+                        rawName ??
+                        ''
+                    ).trim();
+                    return routeName === routeVal;
+                });
+
+                return send({
+                    ok: true,
+                    targetRoute: routeVal,
+                    totalEta: allEta.length,
+                    matchedEta: matches.length,
+                    firstMatched: matches[0] || null
+                });
+            }
+
             if (action === "dbtest") {
                 return send({
                     ok: true,
@@ -298,7 +368,7 @@ export default {
             if (action === "clear_cache") {
                 const tables = ["routes_v2", "route_stops", "route_shapes", "route_fares", "route_timetables_v8", "route_booking_rules", "route_locations", "sys_config"];
                 for (const t of tables) {
-                    try { await env.DB.prepare(`DELETE FROM ${t}`).run(); } catch(e) {}
+                    try { await env.DB.prepare(`DELETE FROM ${t}`).run(); } catch (e) { }
                 }
                 return send({ status: "Cache Cleared! 路線與舊 Token 已徹底清空！" });
             }
@@ -309,7 +379,7 @@ export default {
                 let binds = [];
                 if (search) { sql += " AND (name LIKE ? OR departure LIKE ? OR destination LIKE ?)"; binds.push(`%${search}%`, `%${search}%`, `%${search}%`); }
                 if (city && !search) { sql += " AND city = ?"; binds.push(city); }
-                
+
                 const { results } = await env.DB.prepare(sql + " ORDER BY name ASC LIMIT 1000").bind(...binds).all();
 
                 if (results.length === 0 && city && !search) {
@@ -366,36 +436,36 @@ export default {
                 const sixCities = ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung"];
                 let vehicleUrl = "";
 
-                if (cat === "InterCity" || city === "InterCity") { 
-                    vehicleUrl = `${CONFIG.BASE_API}/v2/Bus/Vehicle/InterCity?$format=JSON`; 
-                } else if (cat === "DRTS") { 
-                    vehicleUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/Vehicle/City/${city}?$format=JSON`; 
-                } else if (cat === "SciencePark") { 
-                    vehicleUrl = `${CONFIG.BASE_API}/v2/Bus/Vehicle/SciencePark/${city}?$format=JSON`; 
-                } else if (sixCities.includes(city)) { 
+                if (cat === "InterCity" || city === "InterCity") {
+                    vehicleUrl = `${CONFIG.BASE_API}/v2/Bus/Vehicle/InterCity?$format=JSON`;
+                } else if (cat === "DRTS") {
+                    vehicleUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/Vehicle/City/${city}?$format=JSON`;
+                } else if (cat === "SciencePark") {
+                    vehicleUrl = `${CONFIG.BASE_API}/v2/Bus/Vehicle/SciencePark/${city}?$format=JSON`;
+                } else if (sixCities.includes(city)) {
                     // 六都才有專屬的 City 參數
                     const apiVer = city === "Tainan" ? "v3" : "v2";
-                    vehicleUrl = `${CONFIG.BASE_API}/${apiVer}/Bus/Vehicle/City/${city}?$format=JSON`; 
-                } else { 
+                    vehicleUrl = `${CONFIG.BASE_API}/${apiVer}/Bus/Vehicle/City/${city}?$format=JSON`;
+                } else {
                     // 其他「公路局代管縣市」(如 YilanCounty, Keelung 等)，直接打總表
-                    vehicleUrl = `${CONFIG.BASE_API}/v2/Bus/Vehicle?$format=JSON`; 
+                    vehicleUrl = `${CONFIG.BASE_API}/v2/Bus/Vehicle?$format=JSON`;
                 }
 
                 const result = await safeTdxFetch(vehicleUrl, token);
-                
+
                 if (!result.ok) {
                     console.warn(`[TDX 車籍警告] ${city} 抓取失敗:`, result.errorText);
                     return send({}); // 若依然失敗則靜默處理保護前端
                 }
-                
+
                 const dict = {};
                 const arr = extractArray(result.data);
                 arr.forEach(v => {
-                    dict[v.PlateNumb] = { 
-                        year: v.ManufactureYear || (v.PurchaseTime ? v.PurchaseTime.substring(0, 4) : '不詳'), 
-                        isLowFloor: v.IsLowFloor === 1 || v.HasLiftOrRamp === 1 || v.VehicleType === 2, 
-                        hasWifi: v.HasWifi === 1, 
-                        isElectric: v.IsElectric === 1 || v.IsElectric === true, 
+                    dict[v.PlateNumb] = {
+                        year: v.ManufactureYear || (v.PurchaseTime ? v.PurchaseTime.substring(0, 4) : '不詳'),
+                        isLowFloor: v.IsLowFloor === 1 || v.HasLiftOrRamp === 1 || v.VehicleType === 2,
+                        hasWifi: v.HasWifi === 1,
+                        isElectric: v.IsElectric === 1 || v.IsElectric === true,
                         hasLift: v.HasLiftOrRamp === 1,
                         vehicleClass: v.VehicleClass,
                         vehicleType: v.VehicleType,
@@ -409,34 +479,44 @@ export default {
 
             if (route) {
                 let apiVer = "v2", apiPath = `City/${city}`;
-                if (cat === "InterCity" || city === "InterCity") { apiVer = "v2"; apiPath = "InterCity"; } 
-                else if (cat === "DRTS") { apiVer = "v3"; apiPath = `DRTS/City/${city}`; } 
-                else if (cat === "SciencePark") { apiVer = "v2"; apiPath = `SciencePark/${city}`; } 
+                if (cat === "InterCity" || city === "InterCity") { apiVer = "v2"; apiPath = "InterCity"; }
+                else if (cat === "DRTS") { apiVer = "v3"; apiPath = `DRTS/City/${city}`; }
+                else if (cat === "SciencePark") { apiVer = "v2"; apiPath = `SciencePark/${city}`; }
                 else { apiVer = city === "Tainan" ? "v3" : "v2"; apiPath = `City/${city}`; }
 
                 const dynVer = apiVer, staticVer = apiVer, stopVer = apiVer, path = apiPath;
-                let routePrefix = route.split(/[ (（_-]/)[0]; 
+                let routePrefix = String(route || '').trim().split(/[ (（_-]/)[0];
 
                 const targetNorm = norm(route);
+                const prefixNorm = norm(routePrefix);
                 const routeKey = getRouteKey(city, cat, route);
 
-                const match = (i) => {
-                    const rn = norm(getZh(i.RouteName));
-                    const srn = norm(getZh(i.SubRouteName));
-                    const generatedName = formatDisplayName(i.RouteName, i.SubRouteName);
-                    return rn === targetNorm || srn === targetNorm || norm(generatedName) === targetNorm;
+                const match = (item) => {
+                    const routeName = getZh(item?.RouteName);
+                    const subRouteName = getZh(item?.SubRouteName);
+                    const routeID = String(item?.RouteID ?? '').trim();
+
+                    const wanted = String(route ?? '').trim();
+                    const wantedPrefix = wanted.split(/[ (（_-]/)[0].trim();
+
+                    return routeName === wanted ||
+                        subRouteName === wanted ||
+                        routeName === wantedPrefix ||
+                        subRouteName === wantedPrefix ||
+                        routeID === wanted ||
+                        routeID === wantedPrefix;
                 };
 
                 if (action === "info") {
                     const cached = await getCachedJson(env, "route_stops", "route_key = ?", [routeKey], null);
                     if (cached) return send(cached);
-                    
+
                     let stopUrl = `${CONFIG.BASE_API}/${stopVer}/Bus/StopOfRoute/${apiPath}`;
                     if (cat === "DRTS") stopUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/StopOfRoute/City/${city}`;
                     const data = await fetchRouteData(stopUrl, routePrefix, token);
                     const items = data.filter(match).map(r => ({ RouteName: r.RouteName, SubRouteName: r.SubRouteName, Direction: r.Direction, Stops: r.Stops, Operators: r.Operators || [] }));
                     if (items.length === 0) throw new Error(`查無站牌清單資料，可能是路線名稱不符: ${route}`);
-                    
+
                     await upsertJson(env, "route_stops", ["route_key", "city", "route_name", "type", "data", "updated_at"], [routeKey, city, route, cat, JSON.stringify(items), Date.now()]);
                     return send(items);
                 }
@@ -444,12 +524,12 @@ export default {
                 if (action === "shape") {
                     const cached = await getCachedJson(env, "route_shapes", "route_key = ?", [routeKey], null);
                     if (cached) return send(cached);
-                    
+
                     let shapeUrl = `${CONFIG.BASE_API}/${staticVer}/Bus/Shape/${apiPath}`;
                     if (cat === "DRTS") shapeUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/Shape/City/${city}`;
                     const data = await fetchRouteData(shapeUrl, routePrefix, token);
                     const shapes = data.filter(match);
-                    
+
                     await upsertJson(env, "route_shapes", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(shapes), Date.now()]);
                     return send(shapes);
                 }
@@ -471,10 +551,10 @@ export default {
                     }
 
                     const [schedData, dailyData, genStopData, dailyStopData] = await Promise.all([
-                        fetchRouteData(schedUrl, routePrefix, token).catch(()=>[]),
-                        fetchRouteData(dailyUrl, routePrefix, token).catch(()=>[]),
-                        fetchRouteData(genStopUrl, routePrefix, token).catch(()=>[]),
-                        fetchRouteData(dailyStopUrl, routePrefix, token).catch(()=>[])
+                        fetchRouteData(schedUrl, routePrefix, token).catch(() => []),
+                        fetchRouteData(dailyUrl, routePrefix, token).catch(() => []),
+                        fetchRouteData(genStopUrl, routePrefix, token).catch(() => []),
+                        fetchRouteData(dailyStopUrl, routePrefix, token).catch(() => [])
                     ]);
 
                     const dirMap = {};
@@ -484,32 +564,32 @@ export default {
                         return dirMap[dirLabel];
                     };
 
-                    [ { data: schedData, type: 'basic', isDaily: false }, { data: dailyData, type: 'basic', isDaily: true }, { data: genStopData, type: 'stop', isDaily: false }, { data: dailyStopData, type: 'stop', isDaily: true } ]
-                    .forEach(dataset => {
-                        (Array.isArray(dataset.data) ? dataset.data : []).filter(match).forEach(r => {
-                            const target = initDir(r);
-                            (r.Frequencies || r.Frequencys || []).forEach(f => {
-                                const day = formatServiceDay(f.ServiceDay);
-                                target.frequencies.push({ service_day: day, ranges: [{ time_range: `${(f.StartTime||"").substring(0,5)} - ${(f.EndTime||"").substring(0,5)}`, min: f.MinHeadwayMins, max: f.MaxHeadwayMins }] });
-                            });
-                            if (dataset.type === 'basic') {
-                                (r.TimeTables || r.Timetables || []).forEach(t => {
-                                    const day = dataset.isDaily ? "今日時刻表" : formatServiceDay(t.ServiceDay);
-                                    let depTime = t.DepartureTime || (t.StopTimes && t.StopTimes.length > 0 ? t.StopTimes[0].DepartureTime || t.StopTimes[0].ArrivalTime : null);
-                                    if (depTime) target.schedules.push({ service_day: day, is_low_floor: t.IsLowFloor === 1, departure_times: [depTime] });
+                    [{ data: schedData, type: 'basic', isDaily: false }, { data: dailyData, type: 'basic', isDaily: true }, { data: genStopData, type: 'stop', isDaily: false }, { data: dailyStopData, type: 'stop', isDaily: true }]
+                        .forEach(dataset => {
+                            (Array.isArray(dataset.data) ? dataset.data : []).filter(match).forEach(r => {
+                                const target = initDir(r);
+                                (r.Frequencies || r.Frequencys || []).forEach(f => {
+                                    const day = formatServiceDay(f.ServiceDay);
+                                    target.frequencies.push({ service_day: day, ranges: [{ time_range: `${(f.StartTime || "").substring(0, 5)} - ${(f.EndTime || "").substring(0, 5)}`, min: f.MinHeadwayMins, max: f.MaxHeadwayMins }] });
                                 });
-                            } else {
-                                if (r.Stops && r.Stops.length > 0) {
-                                    r.Stops.forEach(st => {
-                                        const day = dataset.isDaily ? "今日時刻表" : formatServiceDay(st.ServiceDay);
-                                        (st.TimeTables || st.Timetables || []).forEach(t => {
-                                            if (t.DepartureTime || t.ArrivalTime) target.schedules.push({ service_day: day, is_low_floor: t.IsLowFloor === 1, departure_times: [t.DepartureTime || t.ArrivalTime] });
-                                        });
+                                if (dataset.type === 'basic') {
+                                    (r.TimeTables || r.Timetables || []).forEach(t => {
+                                        const day = dataset.isDaily ? "今日時刻表" : formatServiceDay(t.ServiceDay);
+                                        let depTime = t.DepartureTime || (t.StopTimes && t.StopTimes.length > 0 ? t.StopTimes[0].DepartureTime || t.StopTimes[0].ArrivalTime : null);
+                                        if (depTime) target.schedules.push({ service_day: day, is_low_floor: t.IsLowFloor === 1, departure_times: [depTime] });
                                     });
+                                } else {
+                                    if (r.Stops && r.Stops.length > 0) {
+                                        r.Stops.forEach(st => {
+                                            const day = dataset.isDaily ? "今日時刻表" : formatServiceDay(st.ServiceDay);
+                                            (st.TimeTables || st.Timetables || []).forEach(t => {
+                                                if (t.DepartureTime || t.ArrivalTime) target.schedules.push({ service_day: day, is_low_floor: t.IsLowFloor === 1, departure_times: [t.DepartureTime || t.ArrivalTime] });
+                                            });
+                                        });
+                                    }
                                 }
-                            }
+                            });
                         });
-                    });
 
                     Object.values(dirMap).forEach(target => {
                         const mergedSm = {};
@@ -518,8 +598,8 @@ export default {
                             if (!mergedSm[key]) mergedSm[key] = { ...s, departure_times: new Set(s.departure_times) };
                             else s.departure_times.forEach(t => mergedSm[key].departure_times.add(t));
                         });
-                        target.schedules = Object.values(mergedSm).map(s => ({ ...s, departure_times: [...s.departure_times].sort((a,b)=>a.localeCompare(b)) }));
-                        target.frequencies = target.frequencies.filter((v,i,a) => a.findIndex(t => t.service_day === v.service_day) === i);
+                        target.schedules = Object.values(mergedSm).map(s => ({ ...s, departure_times: [...s.departure_times].sort((a, b) => a.localeCompare(b)) }));
+                        target.frequencies = target.frequencies.filter((v, i, a) => a.findIndex(t => t.service_day === v.service_day) === i);
                     });
 
                     await upsertJson(env, "route_timetables_v8", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(Object.values(dirMap)), Date.now()]);
@@ -538,12 +618,12 @@ export default {
                             route_name: getZh(r.SubRouteName) || getZh(r.RouteName),
                             pricing_type: DICT.PRICING_TYPE[r.FarePricingType] || r.FarePricingType,
                             is_free: r.IsFreeBus === 1,
-                            section_fares: (Array.isArray(r.SectionFares||r.SectionFare) ? (r.SectionFares||r.SectionFare) : [r.SectionFares||r.SectionFare]).filter(Boolean).map(sf => ({
+                            section_fares: (Array.isArray(r.SectionFares || r.SectionFare) ? (r.SectionFares || r.SectionFare) : [r.SectionFares || r.SectionFare]).filter(Boolean).map(sf => ({
                                 direction: sf.Direction === 0 ? "去程" : (sf.Direction === 1 ? "返程" : "迴圈"),
                                 buffer_zones: (sf.BufferZones || []).map(bz => ({ origin: getZh(bz.FareBufferZoneOrigin?.StopName), destination: getZh(bz.FareBufferZoneDestination?.StopName) })),
                                 fares: mapFares(sf.Fares)
                             })),
-                            od_fares: (Array.isArray(r.ODFares||r.StageFares) ? (r.ODFares||r.StageFares) : [r.ODFares||r.StageFares]).filter(Boolean).map(od => ({
+                            od_fares: (Array.isArray(r.ODFares || r.StageFares) ? (r.ODFares || r.StageFares) : [r.ODFares || r.StageFares]).filter(Boolean).map(od => ({
                                 direction: od.Direction === 0 ? "去程" : (od.Direction === 1 ? "返程" : "迴圈"),
                                 origin: getZh(od.OriginStop?.StopName || od.OriginStage?.StopName), destination: getZh(od.DestinationStop?.StopName || od.DestinationStage?.StopName),
                                 fares: mapFares(od.Fares)
@@ -555,55 +635,57 @@ export default {
                 }
 
                 if (action === "booking_rule") {
-                    const cached = await getCachedJson(env, "route_booking_rules", "route_key = ?", [routeKey], null);
-                    if (cached) return send({ route, rules: cached });
-                    const data = await fetchRouteData(`${CONFIG.BASE_API}/v3/Bus/DRTS/BookingRule/City/${city}`, routePrefix, token);
-                    const rules = data.filter(match).map(r => ({
-                        rule_id: r.BookingRuleID,
-                        desc: getZh(r.BookingRuleDescription),
-                        phone: r.BookingContactNumber || r.BookingPhoneNumber || "",
-                        min_headcount: r.MinHeadcount,
-                        advance_booking_days: r.AdvanceBookingDays,
-                        time_limit: getZh(r.BookingTimeLimit)
-                    }));
-                    await upsertJson(env, "route_booking_rules", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(rules), Date.now()]);
-                    return send({ route, rules });
-                }
-
-                let rtfUrl = `${CONFIG.BASE_API}/${dynVer}/Bus/RealTimeByFrequency/${apiPath}`;
+                     let rtfUrl = `${CONFIG.BASE_API}/${dynVer}/Bus/RealTimeByFrequency/${apiPath}`;
                 let etaUrl = `${CONFIG.BASE_API}/${dynVer}/Bus/EstimatedTimeOfArrival/${apiPath}`;
-                if (cat === "DRTS") {
+
+                if (cat === 'DRTS') {
                     rtfUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/RealTimeByFrequency/City/${city}`;
                     etaUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/EstimatedTimeOfArrival/City/${city}`;
                 }
 
-                const [resPos, resEst] = await Promise.all([
-                    fetchRouteData(rtfUrl, routePrefix, token).catch(()=>[]),
-                    fetchRouteData(etaUrl, routePrefix, token).catch(()=>[])
+                const [posResult, etaResult] = await Promise.all([
+                    safeTdxFetch(`${rtfUrl}?$format=JSON`, token).catch(() => ({ ok: false })),
+                    safeTdxFetch(`${etaUrl}?$format=JSON`, token).catch(() => ({ ok: false }))
                 ]);
-                const buses = (Array.isArray(resPos) ? resPos : []).filter(b => b.BusStatus === 0 && match(b));
-                const ests = (Array.isArray(resEst) ? resEst : []).filter(e => match(e));
+
+                const resPos = posResult.ok ? extractArray(posResult.data) : [];
+                const resEst = etaResult.ok ? extractArray(etaResult.data) : [];
+
+                const buses = resPos.filter(b => b.BusStatus === 0 && match(b));
+                const ests = resEst.filter(e => match(e));
 
                 return send({
-                    buses: buses.map(b => ({ plate: b.PlateNumb, lat: b.BusPosition?.PositionLat, lon: b.BusPosition?.PositionLon, azi: b.Azimuth, dir: b.Direction, time: b.DataTime || b.SrcUpdateTime })),
+                    buses: buses.map(b => ({
+                        plate: b.PlateNumb,
+                        lat: b.BusPosition?.PositionLat,
+                        lon: b.BusPosition?.PositionLon,
+                        azi: b.Azimuth,
+                        dir: b.Direction,
+                        time: b.DataTime || b.SrcUpdateTime
+                    })),
                     estimates: ests.reduce((acc, e) => {
                         const key = `${e.Direction}_${e.StopUID}`;
                         const sec = e.EstimateTime ?? null;
-                        if (!acc[key] || (sec !== null && (acc[key].sec === null || sec < acc[key].sec))) {
+
+                        if (acc[key] && sec !== null && acc[key].sec !== null) {
+                            acc[key].sec = Math.min(acc[key].sec, sec);
+                        } else {
                             acc[key] = {
-                                sec: sec,
-                                status: e.StopStatus,
+                                sec,
+                                status: e.StopStatus ?? null,
                                 plate: e.PlateNumb && e.PlateNumb !== '-1' ? e.PlateNumb : null,
                                 isLastBus: e.IsLastBus === true,
                                 stopCountDown: e.StopCountDown ?? null,
                                 nextBusTime: e.NextBusTime ?? null,
                                 scheduledTime: e.ScheduledTime ?? null,
-                                subsequent: (e.Estimates || []).map(sub => ({
-                                    plate: sub.PlateNumb,
-                                    sec: sub.EstimateTime,
-                                    isLastBus: sub.IsLastBus === true,
-                                    stopStatus: sub.VehicleStopStatus
-                                }))
+                                subsequent: Array.isArray(e.Estimates)
+                                    ? e.Estimates.map(sub => ({
+                                        plate: sub.PlateNumb,
+                                        sec: sub.EstimateTime,
+                                        isLastBus: sub.IsLastBus === true,
+                                        stopStatus: sub.VehicleStopStatus
+                                    }))
+                                    : []
                             };
                         }
                         return acc;
@@ -619,17 +701,17 @@ export default {
             }, 400);
 
         } catch (e) {
-            return send({ 
-                error: "系統異常或 TDX 連線失敗", 
-                details: e.message, 
-                hint: "此錯誤代表後端有捕捉到異常，請參考 details 說明。" 
+            return send({
+                error: "系統異常或 TDX 連線失敗",
+                details: e.message,
+                hint: "此錯誤代表後端有捕捉到異常，請參考 details 說明。"
             }, 500);
         }
     }
 };
 
 async function getAuthToken(env) {
-    try { await env.DB.prepare(`CREATE TABLE IF NOT EXISTS sys_config (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER)`).run(); } catch(e){}
+    try { await env.DB.prepare(`CREATE TABLE IF NOT EXISTS sys_config (key TEXT PRIMARY KEY, value TEXT, updated_at INTEGER)`).run(); } catch (e) { }
     const cached = await env.DB.prepare(`SELECT value, updated_at FROM sys_config WHERE key = 'tdx_token'`).first();
     if (cached && cached.value && (Date.now() - cached.updated_at < 20 * 60 * 60 * 1000)) return cached.value;
 
@@ -641,7 +723,7 @@ async function getAuthToken(env) {
     try {
         const data = JSON.parse(text);
         if (data.access_token) {
-            try { await env.DB.prepare(`INSERT OR REPLACE INTO sys_config (key, value, updated_at) VALUES ('tdx_token', ?, ?)`).bind(data.access_token, Date.now()).run(); } catch (e) {}
+            try { await env.DB.prepare(`INSERT OR REPLACE INTO sys_config (key, value, updated_at) VALUES ('tdx_token', ?, ?)`).bind(data.access_token, Date.now()).run(); } catch (e) { }
             return data.access_token;
         }
         throw new Error();
@@ -660,15 +742,15 @@ async function fetchBusNewsOrAlert(type, city, token, cat = "CityBus") {
 
     const target = type === "news" ? "News" : "Alert";
     const path = city === "InterCity" ? "InterCity" : `City/${city}`;
-    
+
     try {
         const result = await safeTdxFetch(`${CONFIG.BASE_API}/v2/Bus/${target}/${path}?$format=JSON`, token);
-        
+
         if (!result.ok) {
             console.warn(`[TDX 公告警告] ${city} 抓取失敗:`, result.errorText);
-            return []; 
+            return [];
         }
-        
+
         return extractArray(result.data);
     } catch (e) {
         console.warn(`[TDX 公告異常]`, e);
