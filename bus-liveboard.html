@@ -12,6 +12,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" />
+    <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
     
     <style>
         :root {
@@ -1068,13 +1070,7 @@
     }
 
     function toggleTrafficLayer(enabled) {
-        if (!map) return;
-        if (enabled) {
-            if (!trafficLayer) trafficLayer = new google.maps.TrafficLayer();
-            trafficLayer.setMap(map);
-        } else {
-            if (trafficLayer) trafficLayer.setMap(null);
-        }
+        // MapLibre GL 不支援原生 Google Maps TrafficLayer，此處設為空操作
     }
 
     function toggleOptionsMenu(event) {
@@ -1104,9 +1100,12 @@
         if (refreshInterval) clearInterval(refreshInterval);
         if (countdownInterval) clearInterval(countdownInterval);
         
-        mapMarkers.stops.forEach(m => m.setMap(null));
-        mapMarkers.buses.forEach(m => m.setMap(null));
-        if (routeLine) routeLine.setMap(null);
+        mapMarkers.stops.forEach(m => m.remove());
+        mapMarkers.buses.forEach(m => m.remove());
+        if (map && map.getSource('route-line')) {
+            if (map.getLayer('route-line-layer')) map.removeLayer('route-line-layer');
+            map.removeSource('route-line');
+        }
         mapMarkers = { stops: [], buses: [] };
         
         const searchInput = document.getElementById('search-input');
@@ -1132,16 +1131,38 @@
     }
 
     window.initMap = function() {
-        map = new google.maps.Map(document.getElementById('map'), {
-            center: { lat: 25.0478, lng: 121.5170 },
-            zoom: 13,
-            mapId: "DEMO_MAP_ID",
-            disableDefaultUI: true
+        const osmStyle = {
+            version: 8,
+            sources: {
+                'osm-tiles': {
+                    type: 'raster',
+                    tiles: [
+                        'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png'
+                    ],
+                    tileSize: 256,
+                    attribution: '© OpenStreetMap contributors'
+                }
+            },
+            layers: [{
+                id: 'osm-tiles-layer',
+                type: 'raster',
+                source: 'osm-tiles',
+                minzoom: 0,
+                maxzoom: 19
+            }]
+        };
+
+        map = new maplibregl.Map({
+            container: 'map',
+            style: osmStyle,
+            center: [121.5170, 25.0478],
+            zoom: 12
         });
         
-        map.addListener('idle', () => {
+        map.on('idle', () => {
             const center = map.getCenter();
-            const detectedCity = getCityByMapCenter(center.lat(), center.lng());
+            const detectedCity = getCityByMapCenter(center.lat, center.lng);
             if (detectedCity && detectedCity !== browser.city && browser.type !== 'InterCity') {
                 selectCity(detectedCity); 
             }
@@ -1150,6 +1171,10 @@
         updateMarqueeSection('marquee-city-text', 'Taipei', 'CityBus');
         selectCity('Taipei');
     };
+
+    window.addEventListener('DOMContentLoaded', () => {
+        if (typeof initMap === 'function') initMap();
+    });
 
     let browser = { type: 'CityBus', city: 'Taipei', cache: {} };
 
@@ -1926,7 +1951,7 @@
         if (matches) {
             matches.forEach(match => {
                 const [lng, lat] = match.split(/\s+/);
-                points.push({ lat: parseFloat(lat), lng: parseFloat(lng) });
+                points.push([parseFloat(lng), parseFloat(lat)]);
             });
         }
         return points;
@@ -1935,10 +1960,13 @@
     function drawStaticMap(dir) {
         if(!map) return;
         
-        mapMarkers.stops.forEach(m => m.setMap(null));
+        mapMarkers.stops.forEach(m => m.remove());
         mapMarkers.stops = [];
         
-        if (routeLine) routeLine.setMap(null); 
+        if (map.getSource('route-line')) {
+            if (map.getLayer('route-line-layer')) map.removeLayer('route-line-layer');
+            map.removeSource('route-line');
+        }
 
         let path = [];
         if (currentData.shapes && currentData.shapes.length > 0) {
@@ -1949,18 +1977,31 @@
         }
 
         if (path.length > 0) {
-            routeLine = new google.maps.Polyline({
-                path: path,
-                geodesic: true,
-                strokeColor: '#2563eb', 
-                strokeOpacity: 0.8,
-                strokeWeight: 5,
-                map: map
+            map.addSource('route-line', {
+                type: 'geojson',
+                data: {
+                    type: 'Feature',
+                    geometry: {
+                        type: 'LineString',
+                        coordinates: path
+                    }
+                }
+            });
+
+            map.addLayer({
+                id: 'route-line-layer',
+                type: 'line',
+                source: 'route-line',
+                paint: {
+                    'line-color': '#2563eb',
+                    'line-width': 5,
+                    'line-opacity': 0.8
+                }
             });
             
-            const bounds = new google.maps.LatLngBounds();
+            const bounds = new maplibregl.LngLatBounds();
             path.forEach(p => bounds.extend(p));
-            map.fitBounds(bounds);
+            map.fitBounds(bounds, { padding: 40 });
         }
 
         const stops = currentData.stops[dir] || [];
@@ -1972,61 +2013,78 @@
             dotEl.style.borderRadius = '50%';
             dotEl.style.border = '1px solid white';
             dotEl.style.boxShadow = '0 1px 2px rgba(0,0,0,0.3)';
+            dotEl.style.cursor = 'pointer';
             
-            const pinEl = new google.maps.marker.PinElement({
-                glyphText: (idx + 1).toString(),
-                glyphColor: 'white',
-                background: '#2563eb', 
-                borderColor: 'white',
-                scale: 0.8
-            });
+            const pinEl = document.createElement('div');
+            pinEl.style.background = '#2563eb';
+            pinEl.style.color = 'white';
+            pinEl.style.borderRadius = '50%';
+            pinEl.style.width = '24px';
+            pinEl.style.height = '24px';
+            pinEl.style.border = '2px solid white';
+            pinEl.style.boxShadow = '0 2px 4px rgba(0,0,0,0.3)';
+            pinEl.style.display = 'flex';
+            pinEl.style.alignItems = 'center';
+            pinEl.style.justifyContent = 'center';
+            pinEl.style.fontSize = '0.75rem';
+            pinEl.style.fontWeight = '800';
+            pinEl.innerText = idx + 1;
+            pinEl.style.cursor = 'pointer';
 
-            const marker = new google.maps.marker.AdvancedMarkerElement({
-                position: { lat: s.StopPosition.PositionLat, lng: s.StopPosition.PositionLon },
-                map: map,
-                content: dotEl, 
-                title: s.StopName?.Zh_tw || s.StopName,
-                zIndex: 10 
+            const markerContainer = document.createElement('div');
+            markerContainer.appendChild(dotEl);
+
+            const marker = new maplibregl.Marker({ element: markerContainer })
+                .setLngLat([s.StopPosition.PositionLon, s.StopPosition.PositionLat])
+                .addTo(map);
+
+            markerContainer.addEventListener('click', () => {
+                const stopName = s.StopName?.Zh_tw || s.StopName;
+                
+                const popup = new maplibregl.Popup({ offset: 15 })
+                    .setLngLat([s.StopPosition.PositionLon, s.StopPosition.PositionLat])
+                    .setHTML(`
+                        <div style="padding:10px; text-align:center; font-family:'Noto Sans TC',sans-serif;">
+                            <div style="font-weight:bold; margin-bottom:5px; color:#1e40af;">${stopName}</div>
+                            <i class="fas fa-spinner fa-spin" style="color:#2563eb;"></i> 查詢行經路線...
+                        </div>
+                    `)
+                    .addTo(map);
+                    
+                fetchRealStopRoutesMapbox(stopName, popup);
             });
 
             marker.dotContent = dotEl;
-            marker.pinContent = pinEl.element;
-
-            marker.addListener('gmp-click', () => {
-                if (activeInfoWindow) activeInfoWindow.close();
-                const infoWindow = new google.maps.InfoWindow();
-                const stopName = s.StopName?.Zh_tw || s.StopName;
-                infoWindow.setContent(`
-                    <div style="padding:10px; text-align:center;">
-                        <div style="font-weight:bold; margin-bottom:5px; color:#1e40af;">${stopName}</div>
-                        <i class="fas fa-spinner fa-spin" style="color:#2563eb;"></i> 查詢行經路線...
-                    </div>
-                `);
-                activeInfoWindow = infoWindow;
-                infoWindow.open(map, marker);
-                fetchRealStopRoutes(stopName, infoWindow);
-            });
+            marker.pinContent = pinEl;
+            marker.container = markerContainer;
 
             mapMarkers.stops.push(marker);
         });
 
-        if (window.zoomListener) google.maps.event.removeListener(window.zoomListener);
+        if (window.zoomListener) map.off('zoom', window.zoomListener);
         
-        window.zoomListener = map.addListener('zoom_changed', () => {
+        window.zoomListener = () => {
             const currentZoom = map.getZoom();
             const threshold = 15; 
             mapMarkers.stops.forEach(marker => {
+                const container = marker.container;
                 if (currentZoom >= threshold) {
-                    if (marker.content !== marker.pinContent) marker.content = marker.pinContent;
+                    if (container.firstChild === marker.dotContent) {
+                        container.removeChild(marker.dotContent);
+                        container.appendChild(marker.pinContent);
+                    }
                 } else {
-                    if (marker.content !== marker.dotContent) marker.content = marker.dotContent;
+                    if (container.firstChild === marker.pinContent) {
+                        container.removeChild(marker.pinContent);
+                        container.appendChild(marker.dotContent);
+                    }
                 }
             });
-        });
-        google.maps.event.trigger(map, 'zoom_changed');
+        };
+        map.on('zoom', window.zoomListener);
     }
 
-    async function fetchRealStopRoutes(stopName, infoWindow) {
+    async function fetchRealStopRoutesMapbox(stopName, popup) {
         try {
             const url = `${WORKER_URL}/?action=stop_info&city=${currentData.city}&name=${encodeURIComponent(stopName)}`;
             const res = await throttledFetch(url);
@@ -2034,87 +2092,66 @@
             const routes = data.routes || [];
             
             if (routes.length === 0) {
-                infoWindow.setContent(`<div style="padding:10px; color:#999;">查無其他路線</div>`);
+                popup.setHTML(`<div style="padding:10px; color:#999; font-family:'Noto Sans TC',sans-serif;">查無其他路線</div>`);
                 return;
             }
             
             let content = `
-                <div class="stop-popup">
-                    <div class="stop-popup-header">
-                        <i class="fas fa-map-marker-alt"></i><h3>${stopName}</h3>
+                <div class="stop-popup" style="font-family:'Noto Sans TC',sans-serif; min-width:180px;">
+                    <div class="stop-popup-header" style="font-weight:bold; color:#1e40af; margin-bottom:6px;">
+                        <i class="fas fa-map-marker-alt"></i> ${stopName}
                     </div>
-                    <div class="stop-popup-section-title">
-                        <i class="fas fa-bus"></i> 經過的路線 (${routes.length})
+                    <div class="stop-popup-section-title" style="font-size:0.75rem; color:#6b7280; margin-bottom:6px;">
+                        行經此站路線 (${routes.length})
                     </div>
-                    <div class="stop-popup-grid">
+                    <div class="stop-popup-grid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; max-height:100px; overflow-y:auto; padding-right:4px;">
                         ${routes.map(r => `
-                            <button class="stop-popup-btn" onclick="event.stopPropagation(); loadRoute('${r}', '${currentData.city}', '${currentData.type}')">${r}</button>
+                            <button class="stop-popup-btn" style="padding:3px; border:1px solid #e5e7eb; border-radius:4px; background:white; font-size:0.8rem; font-weight:800; cursor:pointer;" onclick="loadRoute('${r}', '${currentData.city}', '${currentData.type}')">${r}</button>
                         `).join('')}
                     </div>
                 </div>
             `;
-            infoWindow.setContent(content);
+            popup.setHTML(content);
         } catch (e) {
-            infoWindow.setContent(`<div style="padding:10px; color:red;">查詢失敗</div>`);
+            popup.setHTML(`<div style="padding:10px; color:red;">查詢失敗</div>`);
         }
     }
+
 
     function updateBusesMap(buses) {
         if(!map) return;
         
-        const currentPlates = new Set(buses.filter(b => b.lat && b.lon).map(b => b.plate));
-
-        mapMarkers.buses = mapMarkers.buses.filter(marker => {
-            if (!currentPlates.has(marker.title)) {
-                marker.setMap(null);
-                return false;
-            }
-            return true;
-        });
+        mapMarkers.buses.forEach(m => m.remove());
+        mapMarkers.buses = [];
 
         buses.forEach(bus => {
             if(!bus.lat || !bus.lon) return;
             const plate = bus.plate || bus.PlateNumb || '';
 
-            let existingMarker = mapMarkers.buses.find(m => m.title === plate);
+            const busEl = document.createElement('div');
+            busEl.innerHTML = `
+                <svg width="24" height="40" viewBox="-12 -22 24 40" style="display:block; overflow:visible;">
+                    <path d="M -10,-14 L 10,-14 L 10,14 L -10,14 Z M 0,-20 L 8,-14 L -8,-14 Z" fill="#ef4444" stroke="white" stroke-width="2" />
+                </svg>
+            `;
+            busEl.style.transform = `rotate(${bus.azi || 0}deg)`;
+            busEl.style.transformOrigin = 'center center';
+            busEl.style.cursor = 'pointer';
 
-            if (existingMarker) {
-                existingMarker.position = { lat: bus.lat, lng: bus.lon };
-                const svgContainer = existingMarker.content;
-                if(svgContainer) {
-                    svgContainer.style.transform = `rotate(${bus.azi || 0}deg)`;
-                }
-            } else {
-                const busEl = document.createElement('div');
-                busEl.innerHTML = `
-                    <svg width="24" height="40" viewBox="-12 -22 24 40" style="display:block; overflow:visible;">
-                        <path d="M -10,-14 L 10,-14 L 10,14 L -10,14 Z M 0,-20 L 8,-14 L -8,-14 Z" fill="#ef4444" stroke="white" stroke-width="2" />
-                    </svg>
-                `;
-                busEl.style.transform = `rotate(${bus.azi || 0}deg)`;
-                busEl.style.transformOrigin = 'center center';
-                busEl.style.transition = 'transform 0.5s ease-out'; 
+            const marker = new maplibregl.Marker({ element: busEl })
+                .setLngLat([bus.lon, bus.lat])
+                .addTo(map);
 
-                const marker = new google.maps.marker.AdvancedMarkerElement({
-                    position: { lat: bus.lat, lng: bus.lon },
-                    map: map,
-                    content: busEl,
-                    title: plate,
-                    zIndex: 100 
-                });
+            busEl.addEventListener('click', () => {
+                const cityRegistry = vehicleMap[`${currentData.type}_${currentData.city}`] || {};
+                const vReg = cityRegistry[plate] || {};
+                const year = vReg.year && vReg.year !== '不詳' ? `${vReg.year}年` : '年份未知';
+                const isElectric = vReg.isElectric || plate.endsWith('FV') || /^E[A-Z]{2}-/.test(plate); 
 
-                marker.addListener('gmp-click', () => {
-                    if (activeInfoWindow) activeInfoWindow.close();
-                    // 🌟 同樣改用獨立複合鍵抓取對應字典
-                    const cityRegistry = vehicleMap[`${currentData.type}_${currentData.city}`] || {};
-                    const vReg = cityRegistry[plate] || {};
-                    const year = vReg.year && vReg.year !== '不詳' ? `${vReg.year}年` : '年份未知';
-                    // 判斷是否為電動公車：後端 TDX 標示為 true，或是車牌符合 FV 結尾 / EA 開頭
-                    const isElectric = vReg.isElectric || plate.endsWith('FV') || /^E[A-Z]{2}-/.test(plate); 
-
-                    const infoWindow = new google.maps.InfoWindow();
-                    infoWindow.setContent(`
-                        <div style="padding:10px; font-family: 'Noto Sans TC', sans-serif;">
+                new maplibregl.Popup({ offset: 25 })
+                    .setLngLat([bus.lon, bus.lat])
+                    .setHTML(`
+                        <div style="padding:10px; font-family:'Noto Sans TC',sans-serif;">
                             <div style="font-size:1.1rem; font-weight:900; color:#2563eb; margin-bottom:8px;">
                                 <i class="fas fa-bus"></i> ${plate}
                             </div>
@@ -2126,20 +2163,17 @@
                                 </div>
                             </div>
                         </div>
-                    `);
-                    activeInfoWindow = infoWindow;
-                    infoWindow.open(map, marker);
-                });
-                
-                mapMarkers.buses.push(marker);
-            }
+                    `)
+                    .addTo(map);
+            });
+
+            mapMarkers.buses.push(marker);
         });
     }
 
     function focusMap(lat, lng) {
         if (!map) return;
-        map.panTo({ lat, lng });
-        map.setZoom(17);
+        map.flyTo({ center: [lng, lat], zoom: 17 });
     }
 
     let userLocationMarker = null;
@@ -2161,10 +2195,11 @@
 
                 if (!map) return;
                 
-                map.panTo({ lat, lng });
-                map.setZoom(16);
+                map.flyTo({ center: [lng, lat], zoom: 16 });
 
-                if (!userLocationMarker) {
+                if (userLocationMarker) {
+                    userLocationMarker.setLngLat([lng, lat]);
+                } else {
                     const dot = document.createElement('div');
                     dot.style.width = '16px';
                     dot.style.height = '16px';
@@ -2173,16 +2208,42 @@
                     dot.style.borderRadius = '50%';
                     dot.style.boxShadow = '0 0 10px rgba(59, 130, 246, 0.5)';
                     
-                    userLocationMarker = new google.maps.marker.AdvancedMarkerElement({
-                        position: { lat, lng },
-                        map: map,
-                        content: dot,
-                        title: "您的位置",
-                        zIndex: 200
-                    });
-                } else {
-                    userLocationMarker.position = { lat, lng };
+                    userLocationMarker = new maplibregl.Marker({ element: dot })
+                        .setLngLat([lng, lat])
+                        .addTo(map);
                 }
+
+                if (currentData.route && currentData.stops[currentData.direction]) {
+                    let minDistance = Infinity;
+                    let nearestStopId = null;
+
+                    currentData.stops[currentData.direction].forEach(s => {
+                        if(s.StopPosition) {
+                            const d = getDistance(lat, lng, s.StopPosition.PositionLat, s.StopPosition.PositionLon);
+                            if (d < minDistance) {
+                                minDistance = d;
+                                nearestStopId = s.StopUID;
+                            }
+                        }
+                    });
+
+                    if (nearestStopId) {
+                        const stopEl = document.getElementById(`stop-${nearestStopId}`);
+                        if (stopEl) {
+                            stopEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            stopEl.style.backgroundColor = '#ecfdf5';
+                            setTimeout(() => stopEl.style.backgroundColor = '', 2000);
+                        }
+                    }
+                }
+            },
+            () => {
+                btn.classList.remove('locating');
+                alert("無法獲取您的位置，請確認是否開啟定位權限。");
+            },
+            { enableHighAccuracy: true, timeout: 5000 }
+        );
+    }
 
                 if (currentData.route && currentData.stops[currentData.direction]) {
                     let minDistance = Infinity;
@@ -2351,7 +2412,7 @@
     }
 </script>
 
-<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBvpcEA4hfvIg9ddt0UadRLibxwsORPVe4&libraries=geometry,marker&language=zh-TW&callback=initMap" async defer></script>
+
 
 <div id="modal-overlay" class="modal-overlay" onclick="closeModal()">
     <div class="modal" onclick="event.stopPropagation()">
