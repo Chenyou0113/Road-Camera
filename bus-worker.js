@@ -145,6 +145,10 @@ async function fetchRouteData(baseUrl, routePrefix, token) {
 
     let lastError = "Unknown error";
     for (const filter of candidates) {
+        // 🌟 如果有具體的路線名稱，不要回退到抓取全部 (filter=null)，否則會去抓取整個縣市的所有資料，耗時數秒並極易超載！
+        if (filter === null && safeValue !== "") {
+            continue;
+        }
         const result = await safeTdxFetch(buildUrl(filter), token);
         if (result.ok) {
             let arr = extractArray(result.data); 
