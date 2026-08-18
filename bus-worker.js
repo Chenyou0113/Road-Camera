@@ -25,8 +25,8 @@ const CONFIG = {
 };
 
 const DICT = {
-    TICKET_TYPE: { 1: "一般票", 2: "來回票", 3: "電子票證", 4: "回數票", 5: "定期票(30天)", 6: "定期票(60天)", 7: "早鳥票" },
-    FARE_CLASS: { 1: "成人", 2: "學生", 3: "孩童", 4: "敬老", 5: "愛心", 6: "愛心孩童", 7: "愛心陪伴", 8: "團體", 9: "軍警" },
+    TICKET_TYPE: { 1: "一般票", 2: "來回票", 3: "電子票證", 4: "回數票", 5: "定期票(30天)", 6: "定期票(60天)", 7: "早鳥票", 8: "定期票(90天)" },
+    FARE_CLASS: { 1: "成人", 2: "學生", 3: "孩童", 4: "敬老", 5: "愛心", 6: "愛心孩童", 7: "愛心陪伴", 8: "團體", 9: "軍警", 10: "半票" },
     PRICING_TYPE: { "SectionFare": "段次計費", "ODFares": "起迄站間計費", "StageFares": "計費站區間收費" }
 };
 
@@ -623,7 +623,11 @@ export default {
                     }
 
                     const fares = data.filter(match).map(r => {
-                        const mapFares = (arr) => (arr || []).map(f => ({ type: DICT.TICKET_TYPE[f.TicketType], class: DICT.FARE_CLASS[f.FareClass], price: f.Price }));
+                        const mapFares = (arr) => (arr || []).map(f => ({
+                            type: DICT.TICKET_TYPE[f.TicketType] || f.FareName || '其他',
+                            class: DICT.FARE_CLASS[f.FareClass] || (f.FareName ? f.FareName.split('_')[0] : '其他'),
+                            price: f.Price
+                        })).filter(f => f.price >= 0);
                         const engPricingType = ["SectionFare", "ODFares", "StageFares"][r.FarePricingType] ?? r.FarePricingType;
                         const pricingTypeVal = DICT.PRICING_TYPE[engPricingType] || engPricingType;
 
