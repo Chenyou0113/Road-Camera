@@ -607,16 +607,30 @@ export default {
                 }
 
                 if (action === "fare") {
-                    const cached = await getCachedJson(env, "route_fares", "route_key = ?", [routeKey], null);
+                    const cached = await getCachedJson(env, "route_fares", "route_key = ?", [routeKey], CONFIG.FARE_CACHE_TTL_MS);
                     if (cached) return send({ route, fares: cached });
-                    let fareUrl = `${CONFIG.BASE_API}/${staticVer}/Bus/RouteFare/${apiPath}`;
-                    if (cat === "DRTS") fareUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/RouteFare/City/${city}`;
-                    const data = await fetchRouteData(fareUrl, routePrefix, token);
+
+                    let data = [];
+                    if (cat === "DRTS") {
+                        const r = await safeTdxFetch(`${CONFIG.BASE_API}/v3/Bus/DRTS/RouteFare/City/${city}?$format=JSON`, token);
+                        if (r.ok) data = extractArray(r.data);
+                    } else {
+                        const farePath = (cat === 'InterCity' || city === 'InterCity')
+                            ? `InterCity/${encodeURIComponent(route)}`
+                            : `City/${city}/${encodeURIComponent(route)}`;
+                        const r = await safeTdxFetch(`${CONFIG.BASE_API}/${staticVer}/Bus/RouteFare/${farePath}?$format=JSON`, token);
+                        if (r.ok) data = extractArray(r.data);
+                    }
+
                     const fares = data.filter(match).map(r => {
                         const mapFares = (arr) => (arr || []).map(f => ({ type: DICT.TICKET_TYPE[f.TicketType], class: DICT.FARE_CLASS[f.FareClass], price: f.Price }));
+                        const engPricingType = ["SectionFare", "ODFares", "StageFares"][r.FarePricingType] ?? r.FarePricingType;
+                        const pricingTypeVal = DICT.PRICING_TYPE[engPricingType] || engPricingType;
+
                         return {
+                            // 🌟 同時提供 snake_case 與 flatcase 以相容不同版本的前端
                             route_name: getZh(r.SubRouteName) || getZh(r.RouteName),
-                            pricing_type: DICT.PRICING_TYPE[r.FarePricingType] || r.FarePricingType,
+                            pricing_type: pricingTypeVal,
                             is_free: r.IsFreeBus === 1,
                             section_fares: (Array.isArray(r.SectionFares || r.SectionFare) ? (r.SectionFares || r.SectionFare) : [r.SectionFares || r.SectionFare]).filter(Boolean).map(sf => ({
                                 direction: sf.Direction === 0 ? "去程" : (sf.Direction === 1 ? "返程" : "迴圈"),
@@ -627,10 +641,27 @@ export default {
                                 direction: od.Direction === 0 ? "去程" : (od.Direction === 1 ? "返程" : "迴圈"),
                                 origin: getZh(od.OriginStop?.StopName || od.OriginStage?.StopName), destination: getZh(od.DestinationStop?.StopName || od.DestinationStage?.StopName),
                                 fares: mapFares(od.Fares)
+                            })),
+
+                            routename: getZh(r.SubRouteName) || getZh(r.RouteName),
+                            pricingtype: pricingTypeVal,
+                            isfree: r.IsFreeBus === 1,
+                            sectionfares: (Array.isArray(r.SectionFares || r.SectionFare) ? (r.SectionFares || r.SectionFare) : [r.SectionFares || r.SectionFare]).filter(Boolean).map(sf => ({
+                                direction: sf.Direction === 0 ? "去程" : (sf.Direction === 1 ? "返程" : "迴圈"),
+                                bufferzones: (sf.BufferZones || []).map(bz => ({ origin: getZh(bz.FareBufferZoneOrigin?.StopName), destination: getZh(bz.FareBufferZoneDestination?.StopName) })),
+                                fares: mapFares(sf.Fares)
+                            })),
+                            odfares: (Array.isArray(r.ODFares || r.StageFares) ? (r.ODFares || r.StageFares) : [r.ODFares || r.StageFares]).filter(Boolean).map(od => ({
+                                direction: od.Direction === 0 ? "去程" : (od.Direction === 1 ? "返程" : "迴圈"),
+                                origin: getZh(od.OriginStop?.StopName || od.OriginStage?.StopName), destination: getZh(od.DestinationStop?.StopName || od.DestinationStage?.StopName),
+                                fares: mapFares(od.Fares)
                             }))
                         };
                     });
-                    await upsertJson(env, "route_fares", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(fares), Date.now()]);
+
+                    if (fares.length > 0) {
+                        await upsertJson(env, "route_fares", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(fares), Date.now()]);
+                    }
                     return send({ route, fares });
                 }
 
