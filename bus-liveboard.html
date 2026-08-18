@@ -1778,7 +1778,61 @@
         if (!stops) return;
         
         let assignedBuses = new Set();
+        let stopToBusMap = {};
 
+        // --- 第一階段：精確車牌配對 (Plate-based Matching) ---
+        stops.forEach(stop => {
+            const uid = stop.StopUID;
+            const est = estimates[`${currentData.direction}_${uid}`];
+            if (est && est.plate && est.plate !== '-1' && !assignedBuses.has(est.plate)) {
+                const targetBus = buses.find(b => b.plate === est.plate);
+                if (targetBus) {
+                    stopToBusMap[uid] = targetBus;
+                    assignedBuses.add(targetBus.plate);
+                }
+            }
+        });
+
+        // --- 第二階段：距離為基礎的 Fallback 配對 (Fallback Distance Matching) ---
+        // 篩選出未分配且有 GPS 位置的車輛
+        const unassignedBuses = buses.filter(b => b.lat && b.lon && !assignedBuses.has(b.plate));
+        
+        // 對於每一台未分配的車輛，尋找距離最近的符合條件站牌
+        unassignedBuses.forEach(bus => {
+            let closestStopUid = null;
+            let minDistance = Infinity;
+
+            stops.forEach(stop => {
+                const uid = stop.StopUID;
+                // 若該站已經配對了車輛，則跳過
+                if (stopToBusMap[uid]) return;
+
+                const est = estimates[`${currentData.direction}_${uid}`];
+                if (!est) return;
+
+                const isActive = est.sec != null;
+                if (!isActive) return;
+
+                // 只有在即將到站 (例如 sec < 300 秒，約 5 分鐘) 或無車牌預估 (plate === '-1') 且距離合理時才啟用 fallback
+                const isSoon = est.sec < 300;
+                const isNoPlate = est.plate === '-1' && est.sec < 600; // 無車牌時放寬到 10 分鐘，避免遠處車輛誤判
+                if (!isSoon && !isNoPlate) return;
+
+                const dist = getDistance(bus.lat, bus.lon, stop.StopPosition?.PositionLat, stop.StopPosition?.PositionLon);
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    closestStopUid = uid;
+                }
+            });
+
+            // 如果找到符合條件的最近站牌，且距離在 0.004° (約 400m) 以內
+            if (closestStopUid && minDistance < 0.004) {
+                stopToBusMap[closestStopUid] = bus;
+                assignedBuses.add(bus.plate);
+            }
+        });
+
+        // --- 第三階段：渲染 UI ---
         stops.forEach(stop => {
             const uid = stop.StopUID;
             const est = estimates[`${currentData.direction}_${uid}`];
@@ -1792,8 +1846,6 @@
             timeEl.className = 'badge-time';
             rowEl.classList.remove('coming', 'has-bus');
             busEl.innerHTML = ''; 
-
-            let isActive = false;
 
             if (!est) {
                 timeEl.innerText = '--';
@@ -1827,7 +1879,6 @@
                 timeEl.innerText = '不停靠';
                 timeEl.classList.add('none');
             } else if (est.sec != null) {
-                isActive = true; 
                 const min = Math.floor(est.sec / 60);
                 if (min < 1) {
                     timeEl.innerText = '進站中';
@@ -1842,21 +1893,10 @@
                 }
             }
 
-            let targetBus = null;
-            if (est && est.plate && est.plate !== '-1' && !assignedBuses.has(est.plate)) {
-                targetBus = buses.find(b => b.plate === est.plate);
-            }
-            
-            if (!targetBus && isActive) {
-                targetBus = buses.find(b => {
-                    if (!b.lat || assignedBuses.has(b.plate)) return false;
-                    return getDistance(b.lat, b.lon, stop.StopPosition?.PositionLat, stop.StopPosition?.PositionLon) < 0.02; 
-                });
-            }
+            const targetBus = stopToBusMap[uid];
 
             if (targetBus) {
                 const plate = targetBus.plate || '---';
-                assignedBuses.add(plate);
 
                 let operator = '客運公司';
                 if (currentData.info && currentData.info[currentData.direction]?.Operators) {
@@ -1895,7 +1935,7 @@
                 const isLowFloor = vReg.isLowFloor || false;
                 const hasWifi = vReg.hasWifi || false;
                 const hasLift = vReg.hasLift || vReg.isBarrierFreeTaxi || false;
-                const lastSeen = (targetBus.time && est.status !== 1) ? new Date(targetBus.time).toLocaleTimeString('zh-TW', { hour12: false }) : '--:--:--';
+                const lastSeen = (targetBus.time && est && est.status !== 1) ? new Date(targetBus.time).toLocaleTimeString('zh-TW', { hour12: false }) : '--:--:--';
 
                 busEl.innerHTML = `
                     <div class="bus-badge" style="${vehicleClass === 6 ? 'background:#eab308; color:#1e293b;' : ''}">
