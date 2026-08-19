@@ -1,12 +1,12 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║  TDX 公車 Cloudflare Worker — 最終救贖旗艦版 (v30.8)           ║
- * ║  修正：精準對接 TDX 車籍 API 規範 (區分六都與公路局代管縣市)       ║
+ * ║  TDX 公車 Cloudflare Worker — 最終救贖旗艦版 (v30.14)          ║
+ * ║  修正：修復語法括號不匹配與 action 路由邏輯錯誤               ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
 const CONFIG = {
-    VERSION: "v30.13",
+    VERSION: "v30.14",
     CITIES: ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung", "Keelung", "InterCity"],
     TOKEN_URL: "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
     BASE_API: "https://tdx.transportdata.tw/api/basic",
@@ -158,7 +158,6 @@ async function fetchRouteData(baseUrl, routePrefix, token) {
 
     let lastError = "Unknown error";
     for (const filter of candidates) {
-        // 🌟 如果有具體的路線名稱，不要回退到抓取全部 (filter=null)，否則會去抓取整個縣市的所有資料，耗時數秒並極易超載！
         if (filter === null && safeValue !== "") {
             continue;
         }
@@ -432,7 +431,6 @@ export default {
             }
 
             if (action === "vehicle") {
-                // 🌟 TDX 車籍資料 API 區分邏輯 (v30.8 升級)
                 const sixCities = ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung"];
                 let vehicleUrl = "";
 
@@ -443,11 +441,9 @@ export default {
                 } else if (cat === "SciencePark") {
                     vehicleUrl = `${CONFIG.BASE_API}/v2/Bus/Vehicle/SciencePark/${city}?$format=JSON`;
                 } else if (sixCities.includes(city)) {
-                    // 六都才有專屬的 City 參數
                     const apiVer = city === "Tainan" ? "v3" : "v2";
                     vehicleUrl = `${CONFIG.BASE_API}/${apiVer}/Bus/Vehicle/City/${city}?$format=JSON`;
                 } else {
-                    // 其他「公路局代管縣市」(如 YilanCounty, Keelung 等)，直接打總表
                     vehicleUrl = `${CONFIG.BASE_API}/v2/Bus/Vehicle?$format=JSON`;
                 }
 
@@ -455,7 +451,7 @@ export default {
 
                 if (!result.ok) {
                     console.warn(`[TDX 車籍警告] ${city} 抓取失敗:`, result.errorText);
-                    return send({}); // 若依然失敗則靜默處理保護前端
+                    return send({});
                 }
 
                 const dict = {};
@@ -487,8 +483,6 @@ export default {
                 const dynVer = apiVer, staticVer = apiVer, stopVer = apiVer, path = apiPath;
                 let routePrefix = String(route || '').trim().split(/[ (（_-]/)[0];
 
-                const targetNorm = norm(route);
-                const prefixNorm = norm(routePrefix);
                 const routeKey = getRouteKey(city, cat, route);
 
                 const match = (item) => {
@@ -632,7 +626,6 @@ export default {
                         const pricingTypeVal = DICT.PRICING_TYPE[engPricingType] || engPricingType;
 
                         return {
-                            // 🌟 同時提供 snake_case 與 flatcase 以相容不同版本的前端
                             route_name: getZh(r.SubRouteName) || getZh(r.RouteName),
                             pricing_type: pricingTypeVal,
                             is_free: r.IsFreeBus === 1,
@@ -669,63 +662,65 @@ export default {
                     return send({ route, fares });
                 }
 
-                if (action === "booking_rule") {
-                     let rtfUrl = `${CONFIG.BASE_API}/${dynVer}/Bus/RealTimeByFrequency/${apiPath}`;
-                let etaUrl = `${CONFIG.BASE_API}/${dynVer}/Bus/EstimatedTimeOfArrival/${apiPath}`;
+                // 預設或即時動態查詢 (realtime / eta / 未指定 action 時)
+                if (action === "realtime" || action === "eta" || !action) {
+                    let rtfUrl = `${CONFIG.BASE_API}/${dynVer}/Bus/RealTimeByFrequency/${apiPath}`;
+                    let etaUrl = `${CONFIG.BASE_API}/${dynVer}/Bus/EstimatedTimeOfArrival/${apiPath}`;
 
-                if (cat === 'DRTS') {
-                    rtfUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/RealTimeByFrequency/City/${city}`;
-                    etaUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/EstimatedTimeOfArrival/City/${city}`;
+                    if (cat === 'DRTS') {
+                        rtfUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/RealTimeByFrequency/City/${city}`;
+                        etaUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/EstimatedTimeOfArrival/City/${city}`;
+                    }
+
+                    const [posResult, etaResult] = await Promise.all([
+                        safeTdxFetch(`${rtfUrl}?$format=JSON`, token).catch(() => ({ ok: false })),
+                        safeTdxFetch(`${etaUrl}?$format=JSON`, token).catch(() => ({ ok: false }))
+                    ]);
+
+                    const resPos = posResult.ok ? extractArray(posResult.data) : [];
+                    const resEst = etaResult.ok ? extractArray(etaResult.data) : [];
+
+                    const buses = resPos.filter(b => b.BusStatus === 0 && match(b));
+                    const ests = resEst.filter(e => match(e));
+
+                    return send({
+                        buses: buses.map(b => ({
+                            plate: b.PlateNumb,
+                            lat: b.BusPosition?.PositionLat,
+                            lon: b.BusPosition?.PositionLon,
+                            azi: b.Azimuth,
+                            dir: b.Direction,
+                            time: b.DataTime || b.SrcUpdateTime
+                        })),
+                        estimates: ests.reduce((acc, e) => {
+                            const key = `${e.Direction}_${e.StopUID}`;
+                            const sec = e.EstimateTime ?? null;
+
+                            if (acc[key] && sec !== null && acc[key].sec !== null) {
+                                acc[key].sec = Math.min(acc[key].sec, sec);
+                            } else {
+                                acc[key] = {
+                                    sec,
+                                    status: e.StopStatus ?? null,
+                                    plate: e.PlateNumb && e.PlateNumb !== '-1' ? e.PlateNumb : null,
+                                    isLastBus: e.IsLastBus === true,
+                                    stopCountDown: e.StopCountDown ?? null,
+                                    nextBusTime: e.NextBusTime ?? null,
+                                    scheduledTime: e.ScheduledTime ?? null,
+                                    subsequent: Array.isArray(e.Estimates)
+                                        ? e.Estimates.map(sub => ({
+                                            plate: sub.PlateNumb,
+                                            sec: sub.EstimateTime,
+                                            isLastBus: sub.IsLastBus === true,
+                                            stopStatus: sub.VehicleStopStatus
+                                        }))
+                                        : []
+                                };
+                            }
+                            return acc;
+                        }, {})
+                    });
                 }
-
-                const [posResult, etaResult] = await Promise.all([
-                    safeTdxFetch(`${rtfUrl}?$format=JSON`, token).catch(() => ({ ok: false })),
-                    safeTdxFetch(`${etaUrl}?$format=JSON`, token).catch(() => ({ ok: false }))
-                ]);
-
-                const resPos = posResult.ok ? extractArray(posResult.data) : [];
-                const resEst = etaResult.ok ? extractArray(etaResult.data) : [];
-
-                const buses = resPos.filter(b => b.BusStatus === 0 && match(b));
-                const ests = resEst.filter(e => match(e));
-
-                return send({
-                    buses: buses.map(b => ({
-                        plate: b.PlateNumb,
-                        lat: b.BusPosition?.PositionLat,
-                        lon: b.BusPosition?.PositionLon,
-                        azi: b.Azimuth,
-                        dir: b.Direction,
-                        time: b.DataTime || b.SrcUpdateTime
-                    })),
-                    estimates: ests.reduce((acc, e) => {
-                        const key = `${e.Direction}_${e.StopUID}`;
-                        const sec = e.EstimateTime ?? null;
-
-                        if (acc[key] && sec !== null && acc[key].sec !== null) {
-                            acc[key].sec = Math.min(acc[key].sec, sec);
-                        } else {
-                            acc[key] = {
-                                sec,
-                                status: e.StopStatus ?? null,
-                                plate: e.PlateNumb && e.PlateNumb !== '-1' ? e.PlateNumb : null,
-                                isLastBus: e.IsLastBus === true,
-                                stopCountDown: e.StopCountDown ?? null,
-                                nextBusTime: e.NextBusTime ?? null,
-                                scheduledTime: e.ScheduledTime ?? null,
-                                subsequent: Array.isArray(e.Estimates)
-                                    ? e.Estimates.map(sub => ({
-                                        plate: sub.PlateNumb,
-                                        sec: sub.EstimateTime,
-                                        isLastBus: sub.IsLastBus === true,
-                                        stopStatus: sub.VehicleStopStatus
-                                    }))
-                                    : []
-                            };
-                        }
-                        return acc;
-                    }, {})
-                });
             }
 
             return send({
@@ -767,7 +762,7 @@ async function getAuthToken(env) {
 
 async function fetchBusNewsOrAlert(type, city, token, cat = "CityBus") {
     if (cat === "DRTS") {
-        if (type === "news") return []; // DRTS 沒有 News API
+        if (type === "news") return [];
         try {
             const result = await safeTdxFetch(`${CONFIG.BASE_API}/v3/Bus/DRTS/Alert/City/${city}?$format=JSON`, token);
             if (!result.ok) return [];
