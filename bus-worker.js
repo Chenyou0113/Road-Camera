@@ -1,19 +1,18 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
- * ║  TDX 公車 Cloudflare Worker — 最終救贖旗艦版 (v30.14)          ║
- * ║  修正：修復語法括號不匹配與 action 路由邏輯錯誤               ║
+ * ║  TDX 公車 Cloudflare Worker — 旗艦相容升級版 (v30.16)           ║
+ * ║  修復：完整解析 TDX SubRoutes 結構與 ABCD 支線過濾問題        ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
 const CONFIG = {
-    VERSION: "v30.14",
+    VERSION: "v30.16",
     CITIES: ["Taipei", "NewTaipei", "Taoyuan", "Taichung", "Tainan", "Kaohsiung", "Keelung", "InterCity"],
     TOKEN_URL: "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
     BASE_API: "https://tdx.transportdata.tw/api/basic",
-    FARE_CACHE_TTL: 600,
+    FARE_CACHE_TTL_MS: 7 * 24 * 60 * 60 * 1000,
     INFO_CACHE_TTL_MS: 7 * 24 * 60 * 60 * 1000,
     SHAPE_CACHE_TTL_MS: 30 * 24 * 60 * 60 * 1000,
-    FARE_CACHE_TTL_MS: 7 * 24 * 60 * 60 * 1000,
     TIMETABLE_CACHE_TTL_MS: 3 * 24 * 60 * 60 * 1000,
     NEWS_CACHE_TTL_MS: 15 * 60 * 1000,
     ALERT_CACHE_TTL_MS: 5 * 60 * 1000,
@@ -45,24 +44,18 @@ const getZh = (obj) => {
     return String(obj).trim();
 };
 
+// 溫和正規化：保留支線字母 (ABCD)、括號、副線、區間，僅轉大寫並去除全半形空白
 const norm = (n) => {
     if (!n) return "";
-    return n.replace(/[\(（].*?([\)）]|$)/g, "")
-        .replace(/(去程半|返程半|去程|返程|狗狗公車|動物園專車|夜間公車|區間車|區|繞駛|繞|延駛|延|調度站發車|發車|往[^\s]+|經[^\s]+)/g, "")
-        .replace(/\s+/g, "")
-        .trim();
+    return String(n).trim().toUpperCase().replace(/\s+/g, "");
 };
 
-const formatDisplayName = (rName, sName) => {
-    let main = getZh(rName).trim();
-    let sub = getZh(sName).trim();
-    if (!sub || main === sub) return main;
-    if (sub.startsWith(main)) sub = sub.substring(main.length).trim();
-    else if (sub.includes(main)) sub = sub.replace(main, '').trim();
-    sub = sub.replace(/^[-\/_(（]/, '').replace(/[)）]$/, '').trim();
-    if (!sub) return main;
-    if (sub.length > 10) sub = sub.substring(0, 10) + "...";
-    return `${main} ${sub}`;
+// 提取基礎前綴（例如 300A -> 300，紅56區 -> 紅56）用於 TDX API 兩階段 fallback 查詢
+const getBasePrefix = (n) => {
+    if (!n) return "";
+    const clean = String(n).trim();
+    const m = clean.match(/^([\u4e00-\u9fa5A-Za-z0-9]+?)(?:[A-Za-z]|區|副|繞|延|支|\s|$)/);
+    return (m && m[1]) ? m[1] : clean;
 };
 
 const formatServiceDay = (sd) => {
@@ -142,8 +135,10 @@ async function upsertJson(env, table, columns, values) {
     await env.DB.prepare(`INSERT OR REPLACE INTO ${table} (${cols}) VALUES (${placeholders})`).bind(...values).run();
 }
 
-async function fetchRouteData(baseUrl, routePrefix, token) {
-    const safeValue = (routePrefix || "").replace(/'/g, "''");
+async function fetchRouteData(baseUrl, routeQuery, token) {
+    const rawVal = String(routeQuery || "").trim().replace(/'/g, "''");
+    const prefixVal = getBasePrefix(routeQuery).replace(/'/g, "''");
+
     const buildUrl = (filter) => {
         const params = new URLSearchParams();
         if (filter) params.set("$filter", filter);
@@ -151,22 +146,20 @@ async function fetchRouteData(baseUrl, routePrefix, token) {
         return `${baseUrl}?${params.toString()}`;
     };
 
-    const candidates = [
-        `contains(RouteName/Zh_tw,'${safeValue}') or contains(SubRouteName/Zh_tw,'${safeValue}')`,
-        null
+    // 1. 優先精準搜尋 (傳入完整名稱/支線名/ID)
+    // 2. 若傳入 ABCD 支線未命中，Fallback 回退主路線前綴搜尋 (例如 300A -> 300)
+    const candidateFilters = [
+        `contains(RouteName/Zh_tw,'${rawVal}') or contains(SubRouteName/Zh_tw,'${rawVal}') or contains(RouteID,'${rawVal}') or contains(SubRouteID,'${rawVal}')`
     ];
+    if (prefixVal && prefixVal !== rawVal) {
+        candidateFilters.push(`contains(RouteName/Zh_tw,'${prefixVal}') or contains(SubRouteName/Zh_tw,'${prefixVal}') or contains(RouteID,'${prefixVal}')`);
+    }
 
-    let lastError = "Unknown error";
-    for (const filter of candidates) {
-        if (filter === null && safeValue !== "") {
-            continue;
-        }
+    for (const filter of candidateFilters) {
         const result = await safeTdxFetch(buildUrl(filter), token);
         if (result.ok) {
             let arr = extractArray(result.data);
             if (arr.length > 0) return arr;
-        } else {
-            lastError = result.errorText;
         }
     }
     return [];
@@ -190,7 +183,7 @@ async function autoSyncCity(city, cat, token, env) {
 
     const data = extractArray(result.data);
     if (data.length === 0) {
-        throw new Error(`TDX 回傳了空的路線資料 (Raw: ${JSON.stringify(result.data).substring(0, 150)})`);
+        throw new Error(`TDX 回傳了空的路線資料`);
     }
 
     const type = cat;
@@ -201,29 +194,43 @@ async function autoSyncCity(city, cat, token, env) {
 
     data.forEach(r => {
         if (!r.Stops || r.Stops.length < 2) return;
-        let finalName = getZh(r.RouteName).trim();
-        finalName = finalName.replace(/^[-\/_(（]/, '').replace(/[)）]$/, '').trim();
+        
+        const mainRouteName = getZh(r.RouteName).trim();
+        const subRouteName = getZh(r.SubRouteName).trim();
+        const subRouteShort = subRouteName.split(/\s+/)[0].trim();
 
-        const uniqKey = `${city}_${finalName}`;
-        if (!seen.has(uniqKey)) {
-            seen.add(uniqKey);
-            const dep = getZh(r.Stops[0].StopName);
-            const dest = getZh(r.Stops[r.Stops.length - 1].StopName);
-            batch.push(stmt.bind(r.RouteUID || r.RouteID || r.SubRouteUID, city, finalName, dep, dest, type, startTime));
-            results.push({ name: finalName, departure: dep, destination: dest, city: city, type: type });
+        // 同時記錄主路線、完整附屬路線與縮寫名稱 (確保搜尋 300A, 300B, 藍1區 等支線均能查到)
+        const candidateNames = new Set();
+        if (mainRouteName) candidateNames.add(mainRouteName);
+        if (subRouteName) candidateNames.add(subRouteName);
+        if (subRouteShort) candidateNames.add(subRouteShort);
+
+        const dep = getZh(r.Stops[0].StopName);
+        const dest = getZh(r.Stops[r.Stops.length - 1].StopName);
+        const baseUid = r.SubRouteUID || r.RouteUID || r.RouteID || `${city}_${mainRouteName}`;
+
+        for (const name of candidateNames) {
+            if (!name) continue;
+            const uniqKey = `${city}_${norm(name)}_${r.Direction ?? 0}`;
+            if (!seen.has(uniqKey)) {
+                seen.add(uniqKey);
+                const uid = `${baseUid}_${norm(name)}_${r.Direction ?? 0}`;
+                batch.push(stmt.bind(uid, city, name, dep, dest, type, startTime));
+                results.push({ name, departure: dep, destination: dest, city, type });
+            }
+
+            const routeKey = getRouteKey(city, type, name);
+            const slimItem = { RouteName: r.RouteName, SubRouteName: r.SubRouteName, Direction: r.Direction, Stops: r.Stops, Operators: r.Operators || [] };
+            if (!routeStopsMap.has(routeKey)) routeStopsMap.set(routeKey, []);
+            routeStopsMap.get(routeKey).push(slimItem);
+
+            r.Stops.forEach(s => {
+                const stopName = getZh(s.StopName);
+                if (!stopName) return;
+                if (!stopRoutesMap.has(stopName)) stopRoutesMap.set(stopName, new Set());
+                stopRoutesMap.get(stopName).add(name);
+            });
         }
-
-        const routeKey = getRouteKey(city, type, finalName);
-        const slimItem = { RouteName: r.RouteName, SubRouteName: r.SubRouteName, Direction: r.Direction, Stops: r.Stops, Operators: r.Operators || [] };
-        if (!routeStopsMap.has(routeKey)) routeStopsMap.set(routeKey, []);
-        routeStopsMap.get(routeKey).push(slimItem);
-
-        r.Stops.forEach(s => {
-            const stopName = getZh(s.StopName);
-            if (!stopName) return;
-            if (!stopRoutesMap.has(stopName)) stopRoutesMap.set(stopName, new Set());
-            stopRoutesMap.get(stopName).add(finalName);
-        });
     });
 
     for (let i = 0; i < batch.length; i += 100) await env.DB.batch(batch.slice(i, i + 100));
@@ -267,87 +274,8 @@ export default {
                 return send({ version: CONFIG.VERSION, deployed: true });
             }
 
-            if (action === "debug") {
-                return send({
-                    version: CONFIG.VERSION,
-                    receivedAction: action,
-                    url: request.url,
-                    pathname: url.pathname,
-                    params: Object.fromEntries(params.entries())
-                });
-            }
-
             if (action === "ping") {
-                return send({
-                    ok: true,
-                    version: CONFIG.VERSION,
-                    action
-                });
-            }
-
-            if (action === "realtimedebug") {
-                const endpoint = `${CONFIG.BASE_API}/v2/Bus/EstimatedTimeOfArrival/City/${city}?$format=JSON`;
-                const result = await safeTdxFetch(endpoint, token);
-                if (!result.ok) {
-                    return send({ ok: false, error: result.errorText }, 502);
-                }
-                const all = extractArray(result.data);
-                const likely222 = all.filter(item => {
-                    const text = [
-                        getZh(item.RouteName),
-                        getZh(item.SubRouteName)
-                    ].join(' ');
-                    return text.includes(route || '222');
-                });
-                return send({
-                    total: all.length,
-                    matched: likely222.length,
-                    samples: likely222.slice(0, 5)
-                });
-            }
-
-            if (action === "livecheck") {
-                const routeVal = params.get("route") || "";
-                const cityVal = params.get("city") || "Taipei";
-
-                const etaUrl = `${CONFIG.BASE_API}/v2/Bus/EstimatedTimeOfArrival/City/${cityVal}?$format=JSON`;
-                const etaResult = await safeTdxFetch(etaUrl, token);
-
-                if (!etaResult.ok) {
-                    return send({
-                        ok: false,
-                        step: "TDX ETA fetch failed",
-                        error: etaResult.errorText
-                    }, 502);
-                }
-
-                const allEta = extractArray(etaResult.data);
-                const matches = allEta.filter(item => {
-                    const rawName = item?.RouteName;
-                    const routeName = String(
-                        rawName?.Zh_tw ??
-                        rawName?.Zhtw ??
-                        rawName ??
-                        ''
-                    ).trim();
-                    return routeName === routeVal;
-                });
-
-                return send({
-                    ok: true,
-                    targetRoute: routeVal,
-                    totalEta: allEta.length,
-                    matchedEta: matches.length,
-                    firstMatched: matches[0] || null
-                });
-            }
-
-            if (action === "dbtest") {
-                return send({
-                    ok: true,
-                    reached: "dbtest",
-                    version: CONFIG.VERSION
-                });
+                return send({ ok: true, version: CONFIG.VERSION, action });
             }
 
             if (action === "db_init" || action === "dbinit") {
@@ -369,22 +297,27 @@ export default {
                 for (const t of tables) {
                     try { await env.DB.prepare(`DELETE FROM ${t}`).run(); } catch (e) { }
                 }
-                return send({ status: "Cache Cleared! 路線與舊 Token 已徹底清空！" });
+                return send({ status: "Cache Cleared! 路線與舊快取已清空！" });
             }
 
             if (action === "list_all") {
                 const search = params.get("search");
                 let sql = "SELECT name, departure, destination, city, type FROM routes_v2 WHERE 1=1";
                 let binds = [];
-                if (search) { sql += " AND (name LIKE ? OR departure LIKE ? OR destination LIKE ?)"; binds.push(`%${search}%`, `%${search}%`, `%${search}%`); }
-                if (city && !search) { sql += " AND city = ?"; binds.push(city); }
+                if (search) { 
+                    sql += " AND (name LIKE ? OR departure LIKE ? OR destination LIKE ?)"; 
+                    binds.push(`%${search}%`, `%${search}%`, `%${search}%`); 
+                }
+                if (city && !search) { 
+                    sql += " AND city = ?"; 
+                    binds.push(city); 
+                }
 
-                const { results } = await env.DB.prepare(sql + " ORDER BY name ASC LIMIT 1000").bind(...binds).all();
+                const { results } = await env.DB.prepare(sql + " ORDER BY name ASC LIMIT 2000").bind(...binds).all();
 
-                if (results.length === 0 && city && !search) {
+                if ((!results || results.length === 0) && city && !search) {
                     const syncedData = await autoSyncCity(city, cat, token, env);
-                    if (!syncedData || syncedData.length === 0) throw new Error("TDX 雖然連線成功，但該縣市回傳了 0 筆路線資料！");
-                    return send(syncedData);
+                    return send(syncedData || []);
                 }
                 return send(results || []);
             }
@@ -448,7 +381,6 @@ export default {
                 }
 
                 const result = await safeTdxFetch(vehicleUrl, token);
-
                 if (!result.ok) {
                     console.warn(`[TDX 車籍警告] ${city} 抓取失敗:`, result.errorText);
                     return send({});
@@ -464,10 +396,7 @@ export default {
                         isElectric: v.IsElectric === 1 || v.IsElectric === true,
                         hasLift: v.HasLiftOrRamp === 1,
                         vehicleClass: v.VehicleClass,
-                        vehicleType: v.VehicleType,
-                        isDiversifiedTaxi: v.IsDiversifiedTaxi === 1,
-                        isBarrierFreeTaxi: v.IsBarrierFreeTaxi === 1,
-                        isHybrid: v.IsHybrid === 1
+                        vehicleType: v.VehicleType
                     };
                 });
                 return send(dict);
@@ -481,24 +410,36 @@ export default {
                 else { apiVer = city === "Tainan" ? "v3" : "v2"; apiPath = `City/${city}`; }
 
                 const dynVer = apiVer, staticVer = apiVer, stopVer = apiVer, path = apiPath;
-                let routePrefix = String(route || '').trim().split(/[ (（_-]/)[0];
-
                 const routeKey = getRouteKey(city, cat, route);
+                const targetNorm = norm(route);
 
+                // 🌟 寬鬆且精準的比對器：完美支援 300A, 300B, 藍1區 等附屬支線
                 const match = (item) => {
-                    const routeName = getZh(item?.RouteName);
-                    const subRouteName = getZh(item?.SubRouteName);
-                    const routeID = String(item?.RouteID ?? '').trim();
+                    const rName = norm(getZh(item?.RouteName));
+                    const sName = norm(getZh(item?.SubRouteName));
+                    const rID = norm(item?.RouteID);
+                    const sID = norm(item?.SubRouteID);
+                    const rUID = norm(item?.RouteUID);
+                    const sUID = norm(item?.SubRouteUID);
 
-                    const wanted = String(route ?? '').trim();
-                    const wantedPrefix = wanted.split(/[ (（_-]/)[0].trim();
+                    if (!targetNorm) return true;
 
-                    return routeName === wanted ||
-                        subRouteName === wanted ||
-                        routeName === wantedPrefix ||
-                        subRouteName === wantedPrefix ||
-                        routeID === wanted ||
-                        routeID === wantedPrefix;
+                    // 1. 完全相等比對 (名稱、支線名、UID、ID)
+                    if (rName === targetNorm || sName === targetNorm || rID === targetNorm || sID === targetNorm || rUID === targetNorm || sUID === targetNorm) {
+                        return true;
+                    }
+
+                    // 2. 支線比對 (例如查詢 "300A"，比對包含 300A 的記錄)
+                    if (sName && (sName.startsWith(targetNorm) || targetNorm.startsWith(sName) || sName.includes(targetNorm))) {
+                        return true;
+                    }
+
+                    // 3. 主路線比對 (例如查詢 "300"，比對屬於 300 主路線的附屬路線紀錄)
+                    if (rName && (rName === targetNorm || targetNorm.startsWith(rName))) {
+                        return true;
+                    }
+
+                    return false;
                 };
 
                 if (action === "info") {
@@ -507,10 +448,16 @@ export default {
 
                     let stopUrl = `${CONFIG.BASE_API}/${stopVer}/Bus/StopOfRoute/${apiPath}`;
                     if (cat === "DRTS") stopUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/StopOfRoute/City/${city}`;
-                    const data = await fetchRouteData(stopUrl, routePrefix, token);
-                    const items = data.filter(match).map(r => ({ RouteName: r.RouteName, SubRouteName: r.SubRouteName, Direction: r.Direction, Stops: r.Stops, Operators: r.Operators || [] }));
-                    if (items.length === 0) throw new Error(`查無站牌清單資料，可能是路線名稱不符: ${route}`);
+                    const data = await fetchRouteData(stopUrl, route, token);
+                    const items = data.filter(match).map(r => ({
+                        RouteName: r.RouteName,
+                        SubRouteName: r.SubRouteName,
+                        Direction: r.Direction,
+                        Stops: r.Stops,
+                        Operators: r.Operators || []
+                    }));
 
+                    if (items.length === 0) throw new Error(`查無站牌清單資料: ${route}`);
                     await upsertJson(env, "route_stops", ["route_key", "city", "route_name", "type", "data", "updated_at"], [routeKey, city, route, cat, JSON.stringify(items), Date.now()]);
                     return send(items);
                 }
@@ -521,7 +468,7 @@ export default {
 
                     let shapeUrl = `${CONFIG.BASE_API}/${staticVer}/Bus/Shape/${apiPath}`;
                     if (cat === "DRTS") shapeUrl = `${CONFIG.BASE_API}/v3/Bus/DRTS/Shape/City/${city}`;
-                    const data = await fetchRouteData(shapeUrl, routePrefix, token);
+                    const data = await fetchRouteData(shapeUrl, route, token);
                     const shapes = data.filter(match);
 
                     await upsertJson(env, "route_shapes", ["route_key", "city", "route_name", "data", "updated_at"], [routeKey, city, route, JSON.stringify(shapes), Date.now()]);
@@ -545,10 +492,10 @@ export default {
                     }
 
                     const [schedData, dailyData, genStopData, dailyStopData] = await Promise.all([
-                        fetchRouteData(schedUrl, routePrefix, token).catch(() => []),
-                        fetchRouteData(dailyUrl, routePrefix, token).catch(() => []),
-                        fetchRouteData(genStopUrl, routePrefix, token).catch(() => []),
-                        fetchRouteData(dailyStopUrl, routePrefix, token).catch(() => [])
+                        fetchRouteData(schedUrl, route, token).catch(() => []),
+                        fetchRouteData(dailyUrl, route, token).catch(() => []),
+                        fetchRouteData(genStopUrl, route, token).catch(() => []),
+                        fetchRouteData(dailyStopUrl, route, token).catch(() => [])
                     ]);
 
                     const dirMap = {};
@@ -635,20 +582,6 @@ export default {
                                 fares: mapFares(sf.Fares)
                             })),
                             od_fares: (Array.isArray(r.ODFares || r.StageFares) ? (r.ODFares || r.StageFares) : [r.ODFares || r.StageFares]).filter(Boolean).map(od => ({
-                                direction: od.Direction === 0 ? "去程" : (od.Direction === 1 ? "返程" : "迴圈"),
-                                origin: getZh(od.OriginStop?.StopName || od.OriginStage?.StopName), destination: getZh(od.DestinationStop?.StopName || od.DestinationStage?.StopName),
-                                fares: mapFares(od.Fares)
-                            })),
-
-                            routename: getZh(r.SubRouteName) || getZh(r.RouteName),
-                            pricingtype: pricingTypeVal,
-                            isfree: r.IsFreeBus === 1,
-                            sectionfares: (Array.isArray(r.SectionFares || r.SectionFare) ? (r.SectionFares || r.SectionFare) : [r.SectionFares || r.SectionFare]).filter(Boolean).map(sf => ({
-                                direction: sf.Direction === 0 ? "去程" : (sf.Direction === 1 ? "返程" : "迴圈"),
-                                bufferzones: (sf.BufferZones || []).map(bz => ({ origin: getZh(bz.FareBufferZoneOrigin?.StopName), destination: getZh(bz.FareBufferZoneDestination?.StopName) })),
-                                fares: mapFares(sf.Fares)
-                            })),
-                            odfares: (Array.isArray(r.ODFares || r.StageFares) ? (r.ODFares || r.StageFares) : [r.ODFares || r.StageFares]).filter(Boolean).map(od => ({
                                 direction: od.Direction === 0 ? "去程" : (od.Direction === 1 ? "返程" : "迴圈"),
                                 origin: getZh(od.OriginStop?.StopName || od.OriginStage?.StopName), destination: getZh(od.DestinationStop?.StopName || od.DestinationStage?.StopName),
                                 fares: mapFares(od.Fares)
