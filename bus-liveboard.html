@@ -1806,7 +1806,40 @@
             if (updateTimeEl) updateTimeEl.innerText = new Date().toTimeString().substring(0, 5);
 
             const estimates = data.estimates || {};
-            const buses = (data.buses || []).filter(b => b.dir == currentData.direction);
+            const rawBuses = (data.buses || []).filter(b => b.dir == currentData.direction);
+            
+            // 雙重過濾機制：
+            // 1. 收集線上營運中 (有預估到站資料) 的車牌
+            const dir = currentData.direction;
+            const activePlates = new Set();
+            Object.keys(estimates).forEach(key => {
+                if (key.startsWith(`${dir}_`)) {
+                    const est = estimates[key];
+                    if (est && est.plate && est.plate !== '-1') activePlates.add(est.plate);
+                    if (est && Array.isArray(est.subsequent)) {
+                        est.subsequent.forEach(s => {
+                            if (s && s.plate && s.plate !== '-1') activePlates.add(s.plate);
+                        });
+                    }
+                }
+            });
+
+            // 2. 取得路線上所有有效站牌的經緯度
+            const currentStops = (currentData.stops && currentData.stops[dir]) || [];
+            const stopPts = currentStops
+                .filter(s => s.StopPosition && s.StopPosition.PositionLat && s.StopPosition.PositionLon)
+                .map(s => [Number(s.StopPosition.PositionLat), Number(s.StopPosition.PositionLon)]);
+
+            // 3. 過濾車輛：必須在 activePlates 中，或與路線站牌距離 < 800 米 (0.008 度)
+            const buses = rawBuses.filter(b => {
+                if (!b.lat || !b.lon) return false;
+                if (b.plate && activePlates.has(b.plate)) return true;
+                if (stopPts.length > 0) {
+                    return stopPts.some(([la, lo]) => getDistance(b.lat, b.lon, la, lo) < 0.008);
+                }
+                return true;
+            });
+
             lastBuses = buses; 
             
             updateStopsUI(estimates, buses);
@@ -2709,17 +2742,38 @@
         buses.forEach(bus => {
             if(!bus.lat || !bus.lon) return;
             const plate = bus.plate || bus.PlateNumb || '';
-            const azi = bus.azi || 0;
+            const hasAzi = typeof bus.azi === 'number' && bus.azi > 0;
+            const azi = hasAzi ? bus.azi : 0;
+
+            let iconHtml = '';
+            let iconSize = [26, 36];
+            let iconAnchor = [13, 18];
+
+            if (!hasAzi) {
+                // 無方位角時，顯示帶圓點標示的精緻紅色標籤，避免誤指正北
+                iconHtml = `<div style="cursor:pointer;" title="${plate}">
+                    <svg width="22" height="22" viewBox="-11 -11 22 22" style="display:block; overflow:visible; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.3));">
+                        <circle cx="0" cy="0" r="9" fill="#ef4444" stroke="white" stroke-width="2"/>
+                        <circle cx="0" cy="0" r="3.5" fill="white"/>
+                    </svg>
+                </div>`;
+                iconSize = [22, 22];
+                iconAnchor = [11, 11];
+            } else {
+                // 箭頭造型 (頂端尖角，細長軀幹，旋轉方位角)
+                iconHtml = `<div style="transform:rotate(${azi}deg);transform-origin:center center;cursor:pointer;" title="${plate}">
+                    <svg width="26" height="36" viewBox="-13 -18 26 36" style="display:block; overflow:visible; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.3));">
+                        <path d="M 0,-16 L 11,1 L 5,1 L 5,14 L -5,14 L -5,1 L -11,1 Z"
+                              fill="#ef4444" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+                    </svg>
+                </div>`;
+            }
 
             const busIcon = L.divIcon({
                 className: '',
-                html: `<div style="transform:rotate(${azi}deg);transform-origin:center center;cursor:pointer;">
-                    <svg width="24" height="40" viewBox="-12 -22 24 40" style="display:block; overflow:visible;">
-                        <path d="M -10,-14 L 10,-14 L 10,14 L -10,14 Z M 0,-20 L 8,-14 L -8,-14 Z" fill="#ef4444" stroke="white" stroke-width="2" />
-                    </svg>
-                </div>`,
-                iconSize: [24, 40],
-                iconAnchor: [12, 20]
+                html: iconHtml,
+                iconSize: iconSize,
+                iconAnchor: iconAnchor
             });
 
             const marker = L.marker([bus.lat, bus.lon], { icon: busIcon }).addTo(map);
