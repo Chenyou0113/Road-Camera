@@ -613,7 +613,22 @@ export default {
                     const resPos = posResult.ok ? extractArray(posResult.data) : [];
                     const resEst = etaResult.ok ? extractArray(etaResult.data) : [];
 
-                    const buses = resPos.filter(b => b.BusStatus === 0 && match(b));
+                    const buses = resPos.filter(b => {
+                        if (!match(b)) return false;
+                        // 1. BusStatus 必須為 0 (0: 正常)
+                        if (b.BusStatus !== 0) return false;
+                        // 2. DutyStatus 不得為 2 (2: 結束勤務/下班)
+                        if (b.DutyStatus === 2) return false;
+                        // 3. 點位更新時間過濾：若點位時間戳記超過 10 分鐘則捨棄
+                        const posTimeStr = b.GPSTime || b.SrcUpdateTime || b.DataTime;
+                        if (posTimeStr) {
+                            const posTime = new Date(posTimeStr).getTime();
+                            if (!isNaN(posTime) && (Date.now() - posTime > 10 * 60 * 1000)) {
+                                return false;
+                            }
+                        }
+                        return true;
+                    });
                     const ests = resEst.filter(e => match(e));
 
                     return send({
