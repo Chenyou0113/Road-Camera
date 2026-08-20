@@ -1141,7 +1141,7 @@
                                         <td style="font-weight:900; color:${rankColor}; font-family:Consolas;">No.${idx + 1}</td>
                                         <td><span style="background:rgba(56,189,248,0.15); color:#38bdf8; font-size:0.78rem; padding:3px 8px; border-radius:6px; font-weight:bold; border:1px solid rgba(56,189,248,0.25);">${typeLabel}</span></td>
                                         <td style="font-weight:bold; color:white; font-family:Consolas;">${t.TrainNo} 次</td>
-                                        <td style="color:#a7f3d0; font-weight:bold;"><i class="fas fa-arrow-circle-right" style="font-size:0.75rem; margin-right:4px; opacity:0.8;"></i>${destName || '全線'}</td>
+                                        <td style="color:#a7f3d0; font-weight:bold;">${destName || '全線'}</td>
                                         <td style="color:rgba(255,255,255,0.85);">${currentLoc}</td>
                                         <td class="${badgeClass}" style="font-family:Consolas; font-weight:bold; font-size:0.95rem;">+ ${delayMins} 分鐘</td>
                                         <td><span class="status-dot ${delayMins > 15 ? 'bg-err' : 'bg-warn'}"></span>${delayMins > 15 ? '嚴重延遲' : '誤點'}</td>
@@ -1178,52 +1178,77 @@
                             `;
                         } else {
                             suspendedBody.innerHTML = suspendedTrains.map(t => {
-                                const normName = s => String(s || "").replace(/站$/g, "").trim();
-                                const startSt = normName(t.StartingStationName?.Zh_tw || t.StartStationName || t.StartStation || t.startStation || '');
-                                const destSt = normName(t.EndingStationName?.Zh_tw || t.EndStationName || t.EndStation || t.destStation || '');
-                                const suspStart = normName(t.SuspendedStartStation || t.SuspStartStation || '');
-                                const suspEnd = normName(t.SuspendedEndStation || t.SuspEndStation || '');
+                                const normName = s => {
+                                    if (!s) return '';
+                                    if (typeof s === 'string') return s.replace(/站$/g, "").trim();
+                                    if (typeof s === 'object') return (s.Zh_tw || s.Name || s.Zh || '').replace(/站$/g, "").trim();
+                                    return String(s).replace(/站$/g, "").trim();
+                                };
+
+                                const typeLabel = t.TrainTypeName?.Zh_tw || t.TrainType || t.Type || (typeof t.TrainTypeName === 'string' ? t.TrainTypeName : '');
+                                const typeBadge = typeLabel ? `<span style="background:rgba(239,68,68,0.15); color:#fca5a5; font-size:0.75rem; padding:2px 6px; border-radius:4px; margin-right:6px; border:1px solid rgba(239,68,68,0.3);">${typeLabel}</span>` : '';
+
+                                const startSt = normName(t.StartingStationName || t.StartStationName || t.StartStation || t.startStation);
+                                const destSt = normName(t.EndingStationName || t.EndStationName || t.EndStation || t.destStation || t.Dest || t.dest);
+                                const suspStart = normName(t.SuspendedStartStation || t.SuspStartStation);
+                                const suspEnd = normName(t.SuspendedEndStation || t.SuspEndStation);
                                 const noteText = String(t.Note || t.Remark || t.Reason || '').trim();
 
+                                let statusText = '停駛';
+                                let statusClass = 'text-err';
+                                let dotClass = 'bg-err';
                                 let segText = '';
 
-                                // 解析各停靠站 (Stops)
                                 const stops = t.Stops || t.stops || t.Stations || [];
                                 if (Array.isArray(stops) && stops.length > 0) {
-                                    const suspendedStops = stops.filter(s => Number(s.SuspendedFlag || s.Susp || 0) === 1).map(s => normName(s.Name || s.StationName?.Zh_tw));
-                                    const normalStops = stops.filter(s => Number(s.SuspendedFlag || s.Susp || 0) !== 1).map(s => normName(s.Name || s.StationName?.Zh_tw));
+                                    const suspendedStops = stops.filter(s => Number(s.SuspendedFlag || s.Susp || 0) === 1).map(s => normName(s.Name || s.StationName));
+                                    const normalStops = stops.filter(s => Number(s.SuspendedFlag || s.Susp || 0) !== 1).map(s => normName(s.Name || s.StationName));
 
                                     if (normalStops.length === 0) {
-                                        const firstSt = normName(stops[0].Name || stops[0].StationName?.Zh_tw);
-                                        const lastSt = normName(stops[stops.length - 1].Name || stops[stops.length - 1].StationName?.Zh_tw);
-                                        segText = firstSt && lastSt ? `${firstSt} ➔ ${lastSt} 全線停駛` : '全線停駛';
+                                        statusText = '停駛';
+                                        const firstSt = normName(stops[0].Name || stops[0].StationName);
+                                        const lastSt = normName(stops[stops.length - 1].Name || stops[stops.length - 1].StationName);
+                                        segText = firstSt && lastSt ? `${firstSt} 到 ${lastSt} 全線停駛` : '全線停駛';
                                     } else if (suspendedStops.length > 0) {
+                                        statusText = '區段停駛';
+                                        statusClass = 'text-warn';
+                                        dotClass = 'bg-warn';
                                         const firstSusp = suspendedStops[0];
                                         const lastSusp = suspendedStops[suspendedStops.length - 1];
-                                        segText = firstSusp === lastSusp ? `${firstSusp} 站停駛` : `${firstSusp} ➔ ${lastSusp} 區間停駛`;
+                                        segText = firstSusp === lastSusp ? `${firstSusp} 停駛` : `${firstSusp} 到 ${lastSusp} 停駛`;
                                     }
                                 }
 
                                 if (!segText) {
                                     if (suspStart && suspEnd) {
-                                        segText = `${suspStart} ➔ ${suspEnd} 區間停駛`;
+                                        statusText = '區段停駛';
+                                        statusClass = 'text-warn';
+                                        dotClass = 'bg-warn';
+                                        segText = `${suspStart} 到 ${suspEnd} 停駛`;
                                     } else if (startSt && destSt) {
-                                        segText = `${startSt} ➔ ${destSt} 全線停駛`;
+                                        statusText = '停駛';
+                                        segText = `${startSt} 到 ${destSt} 全線停駛`;
                                     } else {
-                                        const stationName = normName(t.StationName?.Zh_tw || t.station || '全區段');
-                                        segText = `${stationName} 區段停駛`;
+                                        const stationName = normName(t.StationName || t.station || '');
+                                        if (stationName) {
+                                            statusText = '區段停駛';
+                                            statusClass = 'text-warn';
+                                            dotClass = 'bg-warn';
+                                            segText = `${stationName} 停駛`;
+                                        } else {
+                                            statusText = '取消';
+                                            segText = '取消';
+                                        }
                                     }
                                 }
 
-                                const typeLabel = t.TrainTypeName?.Zh_tw || t.TrainType || t.Type || '';
-                                const typeBadge = typeLabel ? `<span style="background:rgba(239,68,68,0.15); color:#fca5a5; font-size:0.75rem; padding:2px 6px; border-radius:4px; margin-right:6px; border:1px solid rgba(239,68,68,0.3);">${typeLabel}</span>` : '';
-                                const detailNote = noteText ? ` <span style="color:rgba(255,255,255,0.45); font-size:0.8rem;">(${noteText})</span>` : '';
+                                const detailNote = noteText ? ` <span style="color:rgba(255,255,255,0.45); font-size:0.8rem; font-weight:normal;">(${noteText})</span>` : '';
 
                                 return `
                                     <tr>
                                         <td style="font-weight:bold; color:#f87171; font-family:Consolas;">${typeBadge}${t.TrainNo} 次</td>
-                                        <td><span class="status-dot bg-err"></span><span class="text-err">${t.TrainStatus === 2 || t.status === 2 ? '🚫 車次停駛' : '⚠️ 部分區段停駛'}</span></td>
-                                        <td style="color:#ffcc80; font-weight:bold; font-size:0.9rem;">🚫 ${segText}${detailNote}</td>
+                                        <td><span class="status-dot ${dotClass}"></span><span class="${statusClass}" style="font-weight:bold;">${statusText}</span></td>
+                                        <td style="color:#ffcc80; font-weight:bold; font-size:0.9rem;">${segText}${detailNote}</td>
                                     </tr>
                                 `;
                             }).join('');
