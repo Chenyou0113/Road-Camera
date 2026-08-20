@@ -22,25 +22,53 @@ function generateRandomCode() {
     return code;
 }
 
-// 工具：Cloudflare Turnstile siteverify 服務端雙向驗證
-async function verifyTurnstile(token, secretKey, remoteIp) {
-    if (!token || typeof token !== 'string' || token.length > 2048) {
-        return { success: false, error: "Turnstile Token 格式錯誤" };
-    }
-    try {
-        const formData = new URLSearchParams();
-        formData.append('secret', secretKey);
-        formData.append('response', token);
-        if (remoteIp) formData.append('remoteip', remoteIp);
+// 🛡️ Cloudflare Turnstile Canonical Siteverify 服務端校驗 (Spin Standard)
+async function verifyTurnstile(token, secretKey, clientIp, expectedAction = "login") {
+    const expectedHostnames = new Set(
+        ("weacamm.org,wang-weather.weacamm.org,tra-schedule-worker.weacamm.org,localhost,127.0.0.1")
+            .split(",")
+            .map(h => h.trim().toLowerCase())
+            .filter(Boolean)
+    );
 
-        const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: formData
+    if (typeof token !== "string" || token.length === 0 || token.length > 2048) {
+        return { success: false, error: "invalid-token" };
+    }
+
+    try {
+        const params = new URLSearchParams({
+            secret: secretKey,
+            response: token,
         });
-        return await res.json();
-    } catch (e) {
-        return { success: false, error: "Siteverify 連線失敗" };
+        if (clientIp) params.append("remoteip", clientIp);
+
+        const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            signal: AbortSignal.timeout(10000),
+            body: params,
+        });
+
+        if (!res.ok) throw new Error(`siteverify HTTP ${res.status}`);
+        const result = await res.json();
+
+        if (!result.success) {
+            return { success: false, error: "verification-failed", result };
+        }
+
+        // 校驗 Action (若指定)
+        if (expectedAction && result.action && result.action !== expectedAction) {
+            return { success: false, error: "action-mismatch", result };
+        }
+
+        // 校驗 Hostname 允許清單 (非空時)
+        if (result.hostname && expectedHostnames.size > 0 && !expectedHostnames.has(result.hostname.toLowerCase())) {
+            return { success: false, error: "hostname-disallowed", result };
+        }
+
+        return { success: true, result };
+    } catch (err) {
+        return { success: false, error: err.message || "network-error" };
     }
 }
 
@@ -74,10 +102,10 @@ export default {
         
         // 若帶有 Turnstile Token 則進行 Cloudflare siteverify 雙向驗證
         if (turnstileToken && TURNSTILE_SECRET) {
-            const clientIp = request.headers.get('CF-Connecting-IP') || '';
-            const tsResult = await verifyTurnstile(turnstileToken, TURNSTILE_SECRET, clientIp);
+            const clientIp = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || '';
+            const tsResult = await verifyTurnstile(turnstileToken, TURNSTILE_SECRET, clientIp, "login");
             if (!tsResult.success) {
-                return { success: false, error: "🛡️ 人類驗證失效，請重試 (Turnstile Failed)" };
+                return { success: false, error: `🛡️ 人類驗證失敗 (${tsResult.error || "Turnstile Failed"})` };
             }
         }
 
