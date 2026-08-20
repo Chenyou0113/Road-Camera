@@ -24,7 +24,7 @@ const patchTrainType = (no, originalType, note = "", start = "", dest = "") => {
     if (String(no).startsWith("661") && isYiLanTaipei) return "慧燈專車";
     
     if (n === 6652 || n === 6655) return "海風號";
-    if (n === 6631 || n === 6632 || n === 6633) return "山嵐號";
+    if (n === 6631 || n === 6632 || n === 6633 || n === 6676 || n === 6677) return "山嵐號";
 
     if (noteStr.includes("莒光(專車)") || (String(originalType).includes("莒光") && noteStr.includes("專車"))) return "莒光(專車)";
     if ((n >= 6001 && n <= 6099) || (n >= 6701 && n <= 6799)) return "鳴日號";
