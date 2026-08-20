@@ -2,7 +2,10 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0b0c10">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>臺鐵即時列車運行圖 (Marey Chart)</title>
     <!-- 引入 Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
@@ -34,7 +37,7 @@
 
         * { box-sizing: border-box; }
 
-        body { 
+        html, body { 
             margin: 0; padding: 0; 
             background-color: var(--bg-main); 
             color: var(--text-main); 
@@ -43,6 +46,8 @@
             display: flex;
             flex-direction: column;
             height: 100vh;
+            height: 100dvh;
+            touch-action: manipulation;
         }
 
         /* Header */
@@ -352,12 +357,61 @@
             min-height: 0;
             display: flex;
             flex-direction: column;
-            width: 100vw;
+            width: 100%;
         }
 
         #echarts-container {
             width: 100%;
             flex: 1;
+        }
+
+        /* 浮動控制鈕 */
+        .zoom-controls {
+            position: absolute;
+            right: 16px;
+            bottom: calc(20px + env(safe-area-inset-bottom));
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .zoom-controls button {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(24, 27, 34, 0.9);
+            backdrop-filter: blur(8px);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            transition: all 0.2s ease;
+        }
+
+        #jump-now-btn {
+            width: auto;
+            padding: 0 14px;
+            border-radius: 20px;
+            background: rgba(79, 172, 254, 0.2);
+            border-color: rgba(79, 172, 254, 0.4);
+            color: var(--accent);
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        @media (hover: hover) {
+            .zoom-controls button:hover {
+                background: rgba(79, 172, 254, 0.25);
+                color: #fff;
+                border-color: var(--accent);
+                transform: scale(1.05);
+            }
         }
 
         /* Error Overlay */
@@ -408,7 +462,7 @@
             box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3);
         }
 
-        /* Side Panel */
+        /* Side Panel (Bottom Sheet on Mobile) */
         #side-panel {
             position: fixed;
             inset: auto 0 0 0;
@@ -423,6 +477,8 @@
             transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
             box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
             border-radius: 20px 20px 0 0;
+            padding-bottom: env(safe-area-inset-bottom);
+            touch-action: pan-y;
         }
 
         #side-panel.active { transform: translateY(0); }
@@ -430,13 +486,14 @@
         .sp-handle {
             width: 40px;
             height: 4px;
-            background: rgba(255, 255, 255, 0.2);
+            background: rgba(255, 255, 255, 0.3);
             border-radius: 2px;
-            margin: 12px auto 0 auto;
+            margin: 12px auto 4px auto;
+            cursor: grab;
         }
 
         .sp-header {
-            padding: 20px;
+            padding: 16px 20px;
             background: rgba(255, 255, 255, 0.02);
             border-bottom: 1px solid var(--border);
             position: relative;
@@ -444,7 +501,7 @@
 
         .sp-close {
             position: absolute;
-            top: 20px;
+            top: 16px;
             right: 20px;
             background: rgba(255,255,255,0.05);
             border: 1px solid var(--border);
@@ -470,6 +527,7 @@
             flex: 1;
             overflow-y: auto;
             padding: 20px;
+            overscroll-behavior: contain;
         }
         .sp-body::-webkit-scrollbar { width: 6px; }
         .sp-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
@@ -679,11 +737,28 @@
 
     <!-- 運行圖包裹器 -->
     <div id="chart-wrapper">
-        <div style="position: absolute; top: 60px; right: 20px; z-index: 4; color: rgba(255,255,255,0.4); font-size: 11px; pointer-events: none;">
+        <div style="position: absolute; top: 12px; right: 16px; z-index: 4; color: rgba(255,255,255,0.4); font-size: 11px; pointer-events: none;">
             ※ 註：部分跨線列車之接點時間為系統插值估算，非實際時刻
         </div>
 
         <div id="echarts-container"></div>
+
+        <!-- 行動端與圖表浮動控制鈕 -->
+        <div class="zoom-controls">
+            <button id="jump-now-btn" title="回到現在時間焦點" aria-label="回到現在時間">
+                <i class="fas fa-location-crosshairs"></i> <span>現在</span>
+            </button>
+            <button id="zoom-in-btn" title="放大時間軸" aria-label="放大">
+                <i class="fas fa-plus"></i>
+            </button>
+            <button id="zoom-out-btn" title="縮小時間軸" aria-label="縮小">
+                <i class="fas fa-minus"></i>
+            </button>
+            <button id="zoom-reset-btn" title="重置視圖" aria-label="重置">
+                <i class="fas fa-compress-arrows-alt"></i>
+            </button>
+        </div>
+
         <div id="error-overlay" class="error-overlay" style="display: none;">
             <i class="fas fa-exclamation-triangle"></i>
             <div class="error-msg" id="error-msg">載入失敗</div>
@@ -931,8 +1006,11 @@
             els.retryBtn = document.querySelector('#error-overlay .retry-btn');
             els.alertsModalOverlay = document.getElementById('alerts-modal-overlay');
             els.alertsModalBox = document.getElementById('alerts-modal-box');
-            els.alertsModalBody = document.getElementById('alerts-modal-body');
-            els.alertsModalClose = document.querySelector('#alerts-modal-overlay .alerts-modal-close');
+            els.echartsContainer = document.getElementById('echarts-container');
+            els.jumpNowBtn = document.getElementById('jump-now-btn');
+            els.zoomInBtn = document.getElementById('zoom-in-btn');
+            els.zoomOutBtn = document.getElementById('zoom-out-btn');
+            els.zoomResetBtn = document.getElementById('zoom-reset-btn');
         };
 
         // 全域狀態與快取
@@ -949,7 +1027,12 @@
         const timetableCache = new Map(); // Map<dateStr, timetableData>
         const segmentsCache = new Map();  // Map<`${lineKey}:${trainNo}`, segmentsArray>
 
-        const myChart = echarts.init(document.getElementById('echarts-container'), 'dark');
+        // 針對高 dpr 螢幕進行 Canvas 記憶體優化 (封頂 dpr <= 2) 並開啟髒矩形優化
+        const myChart = echarts.init(
+            document.getElementById('echarts-container'),
+            'dark',
+            { devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2), useDirtyRect: true }
+        );
 
         const getDelayLevel = (delayMins) => {
             if (delayMins <= 0) return 'on-time';
@@ -1248,6 +1331,15 @@
                     segmentsCache.set(cacheKey, pathSegments);
                 }
 
+                const isCoarseTouch = window.matchMedia('(pointer: coarse)').matches;
+
+                // 搜尋高亮與 ShadowBlur Canvas 渲染效能優化 (非高亮車不繪製 shadowBlur)
+                let opacity = 0.85;
+                let lineWidth = isCoarseTouch ? 2.5 : 1.5;
+                let zIndex = 1;
+                let shadowBlur = 0;
+                let shadowColor = 'transparent';
+
                 const isDelayed = globalLiveMap[train.No] && globalLiveMap[train.No].DelayTime > 0;
                 const delayMins = isDelayed ? globalLiveMap[train.No].DelayTime : 0;
                 const baseColor = getTrainColor(train.Type, train.No);
@@ -1255,31 +1347,24 @@
 
                 if (delayOnly && delayMins === 0) return;
 
-                // 搜尋高亮與 ShadowBlur Canvas 渲染效能優化 (非高亮車不繪製 shadowBlur)
-                let opacity = 0.85;
-                let lineWidth = 1.5;
-                let zIndex = 1;
-                let shadowBlur = 0;
-                let shadowColor = 'transparent';
-
                 if (trainStatus === 'delay') {
-                    lineWidth = 2.5;
+                    lineWidth = isCoarseTouch ? 3.5 : 2.5;
                     zIndex = 3;
                 } else if (trainStatus === 'major-delay') {
-                    lineWidth = 3.5;
+                    lineWidth = isCoarseTouch ? 4.5 : 3.5;
                     zIndex = 5;
                 }
 
                 if (searchVal !== "") {
                     if (String(train.No) === searchVal) {
                         opacity = 1;
-                        lineWidth = 5;
+                        lineWidth = isCoarseTouch ? 6 : 5;
                         zIndex = 10;
-                        shadowBlur = 12;
+                        shadowBlur = isCoarseTouch ? 0 : 12; // 觸控裝置停用高昂 shadowBlur
                         shadowColor = trainStatus === 'major-delay' ? THEME.danger : baseColor;
                     } else {
                         opacity = 0.12;
-                        lineWidth = 1;
+                        lineWidth = isCoarseTouch ? 1.5 : 1;
                         zIndex = 0;
                         shadowBlur = 0;
                     }
@@ -1347,37 +1432,32 @@
                                 triggerLineEvent: true,
                                 data: pastStops,
                                 symbol: isSuspendedSegment ? 'rect' : 'circle',
-                                symbolSize: searchVal === String(train.No) ? 8 : (isSuspendedSegment ? 4 : 5), 
-                                showSymbol: isSuspendedSegment || searchVal === String(train.No), 
-                                emphasis: { focus: 'series', lineStyle: { width: 6 } },
-                                endLabel: { show: searchVal === String(train.No), formatter: String(train.No), color: 'inherit', fontSize: 14, fontWeight: 'bold', distance: 6 },
+                                symbolSize: searchVal === String(train.No) ? 8 : (isSuspendedSegment ? 4 : (isCoarseTouch ? 6 : 5)), 
                                 z: zIndex,
-                                lineStyle: { color: finalColor, width: finalWidth, type: finalType, opacity: finalOpacity, shadowBlur: shadowBlur, shadowColor: shadowColor },
-                                itemStyle: { color: finalColor, opacity: finalOpacity },
-                                tooltip: { formatter: createTooltipFormatter(train, delayMins, isSuspendedSegment, finalColor, '', '') }
+                                lineStyle: { color: finalColor, width: finalWidth, type: finalType, opacity: finalOpacity, shadowBlur, shadowColor },
+                                itemStyle: { color: finalColor },
+                                tooltip: { formatter: createTooltipFormatter(train, delayMins, isSuspendedSegment, finalColor, ' (已行駛)', '🟢 已行駛') }
                             });
                         }
 
                         if (futureStops.length > 1) {
                             const shortType = getShortTrainType(train.Type, train.No);
-                            const finalColor = isSuspendedSegment ? '#444444' : baseColor;
-                            const finalWidth = isSuspendedSegment ? 1.5 : lineWidth;
+                            const finalColor = isSuspendedSegment ? '#444444' : (delayMins > 0 ? THEME.danger : baseColor);
+                            const finalWidth = isSuspendedSegment ? 1.5 : (delayMins > 0 ? (isCoarseTouch ? 3.5 : 2.5) : lineWidth);
+                            const finalType = isSuspendedSegment ? 'dashed' : 'solid';
                             const finalOpacity = isSuspendedSegment ? 0.4 : opacity;
 
                             seriesData.push({
-                                name: `${shortType} ${train.No}次 (預估延遲)${pathSegments.length > 1 ? ` - 段${segmentIndex+1}` : ''}`,
+                                name: `${shortType} ${train.No}次 (未行駛)${pathSegments.length > 1 ? ` - 段${segmentIndex+1}` : ''}`,
                                 type: 'line',
                                 triggerLineEvent: true,
                                 data: futureStops,
                                 symbol: isSuspendedSegment ? 'rect' : 'circle',
-                                symbolSize: searchVal === String(train.No) ? 8 : (isSuspendedSegment ? 4 : 5), 
-                                showSymbol: isSuspendedSegment || searchVal === String(train.No), 
-                                emphasis: { focus: 'series', lineStyle: { width: 6 } },
-                                endLabel: { show: searchVal === String(train.No), formatter: String(train.No), color: 'inherit', fontSize: 14, fontWeight: 'bold', distance: 6 },
-                                z: zIndex + 1, 
-                                lineStyle: { color: finalColor, width: finalWidth, type: 'dashed', opacity: finalOpacity, shadowBlur: shadowBlur, shadowColor: shadowColor },
-                                itemStyle: { color: finalColor, opacity: finalOpacity },
-                                tooltip: { formatter: createTooltipFormatter(train, delayMins, isSuspendedSegment, finalColor, '(未來路段)', '預計') }
+                                symbolSize: searchVal === String(train.No) ? 8 : (isSuspendedSegment ? 4 : (isCoarseTouch ? 6 : 5)), 
+                                z: zIndex + 1,
+                                lineStyle: { color: finalColor, width: finalWidth, type: finalType, opacity: finalOpacity, shadowBlur, shadowColor },
+                                itemStyle: { color: finalColor },
+                                tooltip: { formatter: createTooltipFormatter(train, delayMins, isSuspendedSegment, finalColor, ' (預估)', delayMins > 0 ? `🔴 預估延誤 ${delayMins} 分` : '🟢 預估準點') }
                             });
                         }
                     } else {
@@ -1393,14 +1473,11 @@
                             triggerLineEvent: true,
                             data: activePathData,
                             symbol: isSuspendedSegment ? 'rect' : 'circle',
-                            symbolSize: searchVal === String(train.No) ? 8 : (isSuspendedSegment ? 4 : 5), 
-                            showSymbol: isSuspendedSegment || searchVal === String(train.No), 
-                            emphasis: { focus: 'series', lineStyle: { width: 6 } },
-                            endLabel: { show: searchVal === String(train.No), formatter: String(train.No), color: 'inherit', fontSize: 14, fontWeight: 'bold', distance: 6 },
+                            symbolSize: searchVal === String(train.No) ? 8 : (isSuspendedSegment ? 4 : (isCoarseTouch ? 6 : 5)), 
                             z: zIndex,
-                            lineStyle: { color: finalColor, width: finalWidth, type: finalType, opacity: finalOpacity, shadowBlur: shadowBlur, shadowColor: shadowColor },
-                            itemStyle: { color: finalColor, opacity: finalOpacity },
-                            tooltip: { formatter: createTooltipFormatter(train, delayMins, isSuspendedSegment, finalColor, '', '') }
+                            lineStyle: { color: finalColor, width: finalWidth, type: finalType, opacity: finalOpacity, shadowBlur, shadowColor },
+                            itemStyle: { color: finalColor },
+                            tooltip: { formatter: createTooltipFormatter(train, delayMins, isSuspendedSegment, finalColor, '', '⚪ 表訂行程') }
                         });
                     }
                 });
@@ -2021,6 +2098,34 @@
             });
         };
 
+        const jumpToNow = () => {
+            if (!myChart) return;
+            const now = Date.now();
+            const twoHours = 2 * 3600 * 1000;
+            const newMin = now - twoHours;
+            const newMax = now + twoHours;
+
+            myChart.dispatchAction({
+                type: 'dataZoom',
+                dataZoomId: 'x-inside',
+                startValue: newMin,
+                endValue: newMax
+            });
+
+            if (yAxisData && yAxisData.length > 0) {
+                const mid = Math.floor(yAxisData.length / 2);
+                const halfRange = 7;
+                const yMin = Math.max(0, mid - halfRange);
+                const yMax = Math.min(yAxisData.length - 1, mid + halfRange);
+                myChart.dispatchAction({
+                    type: 'dataZoom',
+                    dataZoomId: 'y-inside',
+                    startValue: yMin,
+                    endValue: yMax
+                });
+            }
+        };
+
         const resetZoom = () => {
             if (!myChart) return;
             myChart.dispatchAction({
@@ -2059,8 +2164,33 @@
             restoreStateFromUrl();
             
             // 載入資料
-            loadData(els.datePicker.value);
+            loadData(els.datePicker.value).then(() => {
+                if (els.datePicker.value === todayStr) {
+                    jumpToNow();
+                }
+            });
             startTimers();
+
+            // 浮動縮放與定位按鈕綁定
+            if (els.jumpNowBtn) els.jumpNowBtn.addEventListener('click', jumpToNow);
+            if (els.zoomInBtn) els.zoomInBtn.addEventListener('click', () => handleZoom('in'));
+            if (els.zoomOutBtn) els.zoomOutBtn.addEventListener('click', () => handleZoom('out'));
+            if (els.zoomResetBtn) els.zoomResetBtn.addEventListener('click', resetZoom);
+
+            // Side Panel (Bottom Sheet) 拖曳手勢關閉
+            let touchStartY = 0;
+            if (els.sidePanel) {
+                els.sidePanel.addEventListener('touchstart', (e) => {
+                    touchStartY = e.touches[0].clientY;
+                }, { passive: true });
+
+                els.sidePanel.addEventListener('touchend', (e) => {
+                    const touchEndY = e.changedTouches[0].clientY;
+                    if (touchEndY - touchStartY > 80) { // 向下滑動超過 80px 時自動關閉
+                        closeSidePanel();
+                    }
+                }, { passive: true });
+            }
 
             // 事件監聽綁定
             els.datePicker.addEventListener('change', (e) => {
@@ -2130,10 +2260,17 @@
                 }
             });
 
-            // 防抖 150ms Resize 監聽
-            window.addEventListener('resize', debounce(() => {
-                if (myChart) myChart.resize();
-            }, 150));
+            // ResizeObserver 替代舊 window.onresize（防範鍵盤彈出導致的圖表扭曲）
+            if (window.ResizeObserver && els.echartsContainer) {
+                const ro = new ResizeObserver(debounce(() => {
+                    if (myChart) myChart.resize();
+                }, 150));
+                ro.observe(els.echartsContainer);
+            } else {
+                window.addEventListener('resize', debounce(() => {
+                    if (myChart) myChart.resize();
+                }, 150));
+            }
         });
 
         // Esc 鍵與 Keyboard Accessibility
