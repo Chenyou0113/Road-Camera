@@ -642,7 +642,7 @@
                     <div style="display:flex; align-items:center; gap:8px;">
                         <span id="traDelayedBadge" style="font-size:0.8rem; background:rgba(239,68,68,0.2); color:#f87171; padding:2px 8px; border-radius:10px; font-weight:700;">載入中...</span>
                         <span id="traDelayedCountdown" style="font-size:0.8rem; background:rgba(56,189,248,0.15); color:#38bdf8; padding:3px 10px; border-radius:12px; font-weight:bold; border:1px solid rgba(56,189,248,0.25);">
-                            <i class="fas fa-sync-alt fa-spin"></i> 倒數 30s 更新
+                            <i class="fas fa-clock"></i> :00 準點更新
                         </span>
                     </div>
                 </div>
@@ -1034,11 +1034,38 @@
             }
         }
 
-        function extractTrainTypeName(t) {
+        let traTimetableMap = new Map();
+
+        async function loadTraTimetableCache() {
+            if (traTimetableMap.size > 0) return;
+            try {
+                const res = await fetch('https://tra-schedule-worker.weacamm.org/api/timetable/daily');
+                if (res.ok) {
+                    const list = await res.json();
+                    if (Array.isArray(list)) {
+                        list.forEach(t => {
+                            const no = String(t.No || t.TrainNo || '').trim();
+                            if (no) {
+                                traTimetableMap.set(no, {
+                                    type: t.Type || t.TrainTypeName?.Zh_tw || t.TrainTypeName || '',
+                                    start: t.Start || t.StartingStationName?.Zh_tw || t.StartingStationName || '',
+                                    dest: t.Dest || t.EndingStationName?.Zh_tw || t.EndingStationName || '',
+                                    note: t.Note || ''
+                                });
+                            }
+                        });
+                    }
+                }
+            } catch (e) {
+                console.error("載入臺鐵全日時刻表快取失敗:", e);
+            }
+        }
+
+        function extractTrainTypeName(t, cachedInfo = {}) {
             if (!t) return '區間車';
-            let rawType = '';
+            let rawType = cachedInfo.type || '';
             
-            if (t.TrainTypeName) {
+            if (!rawType && t.TrainTypeName) {
                 if (typeof t.TrainTypeName === 'string') rawType = t.TrainTypeName;
                 else if (typeof t.TrainTypeName === 'object' && t.TrainTypeName.Zh_tw) rawType = t.TrainTypeName.Zh_tw;
             }
@@ -1059,7 +1086,7 @@
                 rawType = codeMap[String(t.TrainTypeCode)] || '';
             }
 
-            const note = String(t.Note || t.Remark || '').trim();
+            const note = String(t.Note || t.Remark || cachedInfo.note || '').trim();
             const trainNo = String(t.TrainNo || t.No || '');
             const merged = `${rawType} ${note}`;
             const no = Number(trainNo) || 0;
@@ -1096,6 +1123,8 @@
 
         async function updateTRALiveStats() {
             try {
+                await loadTraTimetableCache();
+
                 const countEl = document.getElementById('traRunningCount');
                 const rateEl = document.getElementById('traOnTimeRate');
                 const delayedEl = document.getElementById('traDelayedCount');
@@ -1171,6 +1200,9 @@
                             `;
                         } else {
                             topDelayedBody.innerHTML = sortedDelayed.map((t, idx) => {
+                                const trainNo = String(t.TrainNo || t.No || '').trim();
+                                const cachedInfo = traTimetableMap.get(trainNo) || {};
+
                                 const normName = s => {
                                     if (!s) return '';
                                     if (typeof s === 'string') return s.replace(/站$/g, "").trim();
@@ -1178,10 +1210,10 @@
                                     return String(s).replace(/站$/g, "").trim();
                                 };
 
-                                const typeLabel = extractTrainTypeName(t);
+                                const typeLabel = extractTrainTypeName(t, cachedInfo);
                                 
-                                // 萬能終點站站名提取 (支援物件、字串與 Stops 陣列)
-                                const rawDest = t.EndingStationName || t.Dest || t.dest || t.EndStationName || t.EndStation || t.destStation;
+                                // 萬能終點站站名提取 (支援物件、字串、Stops 陣列與每日時刻表對照 Blob)
+                                const rawDest = t.EndingStationName || t.Dest || t.dest || t.EndStationName || t.EndStation || t.destStation || cachedInfo.dest;
                                 let destName = normName(rawDest);
                                 if (!destName) {
                                     const stops = t.Stops || t.stops || t.Stations || [];
@@ -1202,7 +1234,7 @@
                                         <td style="font-weight:900; color:${rankColor}; font-family:Consolas;">No.${idx + 1}</td>
                                         <td><span style="background:rgba(56,189,248,0.15); color:#38bdf8; font-size:0.78rem; padding:3px 8px; border-radius:6px; font-weight:bold; border:1px solid rgba(56,189,248,0.25);">${typeLabel}</span></td>
                                         <td style="font-weight:bold; color:white; font-family:Consolas;">${t.TrainNo} 次</td>
-                                        <td style="color:#a7f3d0; font-weight:bold;">${destName || '全線'}</td>
+                                        <td style="color:#a7f3d0; font-weight:bold;">${destName || '終點站'}</td>
                                         <td style="color:rgba(255,255,255,0.85);">${currentLoc}</td>
                                         <td class="${badgeClass}" style="font-family:Consolas; font-weight:bold; font-size:0.95rem;">+ ${delayMins} 分鐘</td>
                                         <td><span class="status-dot ${delayMins > 15 ? 'bg-err' : 'bg-warn'}"></span>${delayMins > 15 ? '嚴重延遲' : '誤點'}</td>
@@ -1239,6 +1271,9 @@
                             `;
                         } else {
                             suspendedBody.innerHTML = suspendedTrains.map(t => {
+                                const trainNo = String(t.TrainNo || t.No || '').trim();
+                                const cachedInfo = traTimetableMap.get(trainNo) || {};
+
                                 const normName = s => {
                                     if (!s) return '';
                                     if (typeof s === 'string') return s.replace(/站$/g, "").trim();
@@ -1246,17 +1281,16 @@
                                     return String(s).replace(/站$/g, "").trim();
                                 };
 
-                                const typeLabel = extractTrainTypeName(t);
+                                const typeLabel = extractTrainTypeName(t, cachedInfo);
 
-                                const startSt = normName(t.StartingStationName || t.StartStationName || t.StartStation || t.startStation);
-                                const destSt = normName(t.EndingStationName || t.EndStationName || t.EndStation || t.destStation || t.Dest || t.dest);
+                                const startSt = normName(t.StartingStationName || t.StartStationName || t.StartStation || t.startStation || cachedInfo.start);
+                                const destSt = normName(t.EndingStationName || t.EndStationName || t.EndStation || t.destStation || t.Dest || t.dest || cachedInfo.dest);
                                 const suspStart = normName(t.SuspendedStartStation || t.SuspStartStation);
                                 const suspEnd = normName(t.SuspendedEndStation || t.SuspEndStation);
                                 const noteText = String(t.Note || t.Remark || t.Reason || '').trim();
 
                                 let statusText = '停駛';
                                 let statusClass = 'text-err';
-                                let dotClass = 'bg-err';
                                 let segText = '';
 
                                 const stops = t.Stops || t.stops || t.Stations || [];
@@ -1266,35 +1300,48 @@
 
                                     if (normalStops.length === 0) {
                                         statusText = '停駛';
-                                        const firstSt = normName(stops[0].Name || stops[0].StationName);
-                                        const lastSt = normName(stops[stops.length - 1].Name || stops[stops.length - 1].StationName);
-                                        segText = firstSt && lastSt ? `${firstSt} 到 ${lastSt} 全線停駛` : '全線停駛';
+                                        const firstSt = normName(stops[0].Name || stops[0].StationName) || startSt;
+                                        const lastSt = normName(stops[stops.length - 1].Name || stops[stops.length - 1].StationName) || destSt;
+                                        segText = (firstSt && lastSt && firstSt !== lastSt) ? `${firstSt} 到 ${lastSt} 停駛` : '全線停駛';
                                     } else if (suspendedStops.length > 0) {
                                         statusText = '區段停駛';
                                         statusClass = 'text-warn';
-                                        dotClass = 'bg-warn';
                                         const firstSusp = suspendedStops[0];
                                         const lastSusp = suspendedStops[suspendedStops.length - 1];
-                                        segText = firstSusp === lastSusp ? `${firstSusp} 停駛` : `${firstSusp} 到 ${lastSusp} 停駛`;
+                                        if (firstSusp !== lastSusp) {
+                                            segText = `${firstSusp} 到 ${lastSusp} 停駛`;
+                                        } else {
+                                            if (destSt && firstSusp !== destSt) {
+                                                segText = `${firstSusp} 到 ${destSt} 停駛`;
+                                            } else if (startSt && firstSusp !== startSt) {
+                                                segText = `${startSt} 到 ${firstSusp} 停駛`;
+                                            } else {
+                                                segText = `${firstSusp} 區段停駛`;
+                                            }
+                                        }
                                     }
                                 }
 
                                 if (!segText) {
-                                    if (suspStart && suspEnd) {
+                                    if (suspStart && suspEnd && suspStart !== suspEnd) {
                                         statusText = '區段停駛';
                                         statusClass = 'text-warn';
-                                        dotClass = 'bg-warn';
                                         segText = `${suspStart} 到 ${suspEnd} 停駛`;
-                                    } else if (startSt && destSt) {
+                                    } else if (startSt && destSt && startSt !== destSt) {
                                         statusText = '停駛';
-                                        segText = `${startSt} 到 ${destSt} 全線停駛`;
+                                        segText = `${startSt} 到 ${destSt} 停駛`;
                                     } else {
-                                        const stationName = normName(t.StationName || t.station || '');
+                                        const stationName = normName(t.StationName || t.station || suspStart || suspEnd || '');
                                         if (stationName) {
                                             statusText = '區段停駛';
                                             statusClass = 'text-warn';
-                                            dotClass = 'bg-warn';
-                                            segText = `${stationName} 停駛`;
+                                            if (destSt && stationName !== destSt) {
+                                                segText = `${stationName} 到 ${destSt} 停駛`;
+                                            } else if (startSt && stationName !== startSt) {
+                                                segText = `${startSt} 到 ${stationName} 停駛`;
+                                            } else {
+                                                segText = `${stationName} 區段停駛`;
+                                            }
                                         } else {
                                             statusText = '取消';
                                             segText = '取消';
@@ -1308,7 +1355,7 @@
                                     <tr>
                                         <td><span style="background:rgba(56,189,248,0.15); color:#38bdf8; font-size:0.78rem; padding:3px 8px; border-radius:6px; font-weight:bold; border:1px solid rgba(56,189,248,0.25);">${typeLabel}</span></td>
                                         <td style="font-weight:bold; color:white; font-family:Consolas;">${t.TrainNo} 次</td>
-                                        <td><span class="status-dot ${dotClass}"></span><span class="${statusClass}" style="font-weight:bold;">${statusText}</span></td>
+                                        <td><span class="${statusClass}" style="font-weight:bold;">${statusText}</span></td>
                                         <td style="color:#ffcc80; font-weight:bold; font-size:0.9rem;">${segText}${detailNote}</td>
                                     </tr>
                                 `;
@@ -1323,26 +1370,39 @@
             }
         }
 
-        let traCountdownSec = 30;
-        let traCountdownInterval = null;
+        let traClockInterval = null;
+        let lastTriggeredMinute = -1;
 
         function startTraCountdownTimer() {
             const countdownEl = document.getElementById('traDelayedCountdown');
             if (!countdownEl) return;
             
-            if (!traCountdownInterval) {
-                traCountdownInterval = setInterval(() => {
-                    traCountdownSec--;
-                    if (traCountdownSec <= 0) {
-                        traCountdownSec = 30;
-                        updateTRALiveStats();
-                    }
-                    const el = document.getElementById('traDelayedCountdown');
-                    if (el) {
-                        el.innerHTML = `<i class="fas fa-sync-alt fa-spin"></i> 倒數 ${traCountdownSec}s 更新`;
-                    }
+            if (!traClockInterval) {
+                updateMinuteClockUI();
+                traClockInterval = setInterval(() => {
+                    updateMinuteClockUI();
                 }, 1000);
             }
+        }
+
+        function updateMinuteClockUI() {
+            const countdownEl = document.getElementById('traDelayedCountdown');
+            if (!countdownEl) return;
+
+            const now = new Date();
+            const currentSec = now.getSeconds();
+            const currentMin = now.getMinutes();
+
+            const secondsUntilNextMinute = currentSec === 0 ? 60 : (60 - currentSec);
+
+            if (currentSec === 0 && lastTriggeredMinute !== currentMin) {
+                lastTriggeredMinute = currentMin;
+                countdownEl.innerHTML = `<i class="fas fa-sync-alt fa-spin"></i> :00 數據更新中...`;
+                updateTRALiveStats();
+                return;
+            }
+
+            countdownEl.innerHTML = `<i class="fas fa-clock"></i> :00 準點更新 (倒數 ${secondsUntilNextMinute}s)`;
         }
 
         async function updateAlertCount() {
