@@ -689,7 +689,7 @@
     <script src="assets/dark-mode.js"></script>
     <script>
         // 設定 Worker 網址
-        const MONITOR_API = "https://uptime-monitor-worker.xiaoyouwu5-fd3.workers.dev/api/monitor/history";
+        const MONITOR_API = "https://uptime-monitor-worker.weacamm.org/api/monitor/history";
 
         const SERVICE_MAP = {
             'TRA_Worker': '台鐵時刻表 API',
@@ -829,12 +829,57 @@
             try {
                 const levelEl = document.getElementById('waterLevel');
                 const detailEl = document.getElementById('waterDetail');
-                const mockLevel = Math.floor(Math.random() * 30) + 55;
                 
-                levelEl.textContent = `${mockLevel}%`;
-                detailEl.textContent = mockLevel > 70 ? '水情充沛' : '水情正常';
+                let percentage = null;
+                let isSuccess = false;
+                
+                try {
+                    const res = await fetch('https://reservoir-api.weacamm.org/');
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (Array.isArray(data) && data.length > 0) {
+                            let validCount = 0;
+                            let totalPercentage = 0;
+                            data.forEach(item => {
+                                const pct = parseFloat(item.percentage || item.Percentage || item.effectiveCapacityPercentage);
+                                if (!isNaN(pct) && pct >= 0 && pct <= 100) {
+                                    totalPercentage += pct;
+                                    validCount++;
+                                }
+                            });
+                            if (validCount > 0) {
+                                percentage = Math.round(totalPercentage / validCount);
+                                isSuccess = true;
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn("無法取得水庫數據，嘗試水情 API:", e);
+                }
+
+                if (!isSuccess) {
+                    try {
+                        const res = await fetch('https://river-monitor-aqi.weacamm.org/?dataset=river');
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (Array.isArray(data) && data.length > 0) {
+                                const normalCount = data.filter(d => d.status === 0 || d.status === '正常' || !d.status).length;
+                                percentage = Math.round((normalCount / data.length) * 100);
+                                isSuccess = true;
+                            }
+                        }
+                    } catch (e) {}
+                }
+
+                if (isSuccess && percentage !== null) {
+                    levelEl.textContent = `${percentage}%`;
+                    detailEl.textContent = percentage >= 70 ? '水情充沛 (即時)' : (percentage >= 50 ? '水情正常 (即時)' : '水情吃緊 (即時)');
+                } else {
+                    levelEl.textContent = '72%';
+                    detailEl.textContent = '水情正常 (備援視圖)';
+                }
             } catch (error) {
-                console.error("水庫水位載入失敗:", error);
+                console.error("水文數據載入失敗:", error);
             }
         }
 
@@ -842,11 +887,45 @@
             try {
                 const levelEl = document.getElementById('aqiLevel');
                 const detailEl = document.getElementById('aqiDetail');
-                const mockAQI = Math.floor(Math.random() * 40) + 30;
-                let aqiStatus = mockAQI <= 50 ? '良好' : '普通';
                 
-                levelEl.textContent = aqiStatus;
-                detailEl.textContent = `AQI 指數: ${mockAQI}`;
+                let avgAQI = null;
+                let isSuccess = false;
+
+                try {
+                    const res = await fetch('https://river-monitor-aqi.weacamm.org/?dataset=aqi');
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (Array.isArray(data) && data.length > 0) {
+                            let total = 0, count = 0;
+                            data.forEach(st => {
+                                const val = parseInt(st.aqi || st.AQI);
+                                if (!isNaN(val) && val > 0) {
+                                    total += val;
+                                    count++;
+                                }
+                            });
+                            if (count > 0) {
+                                avgAQI = Math.round(total / count);
+                                isSuccess = true;
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn("無法取得 AQI 資料:", e);
+                }
+
+                if (isSuccess && avgAQI !== null) {
+                    let statusText = '良好';
+                    if (avgAQI > 150) statusText = '不良';
+                    else if (avgAQI > 100) statusText = '對敏感族群不健康';
+                    else if (avgAQI > 50) statusText = '普通';
+                    
+                    levelEl.textContent = statusText;
+                    detailEl.textContent = `AQI 指數: ${avgAQI} (即時)`;
+                } else {
+                    levelEl.textContent = '良好';
+                    detailEl.textContent = 'AQI 指數: 38 (備援視圖)';
+                }
             } catch (error) {
                 console.error("AQI 載入失敗:", error);
             }
@@ -856,7 +935,7 @@
             try {
                 const usersEl = document.getElementById('onlineUsers');
                 const detailEl = document.getElementById('usersDetail');
-                const url = 'https://site-counter.xiaoyouwu5-fd3.workers.dev/?page=dashboard';
+                const url = 'https://site-counter.weacamm.org/?page=dashboard';
                 
                 try {
                     const res = await fetch(url);
@@ -880,7 +959,7 @@
             const marqueeContainer = document.getElementById('weatherMarquee');
 
             if (!alertEl || !forecastEl) return;
-            const WEATHER_WORKER_URL = 'https://cwa-weather-proxy.xiaoyouwu5-fd3.workers.dev';
+            const WEATHER_WORKER_URL = 'https://cwa-weather-proxy.weacamm.org';
             
             try {
                 const alertUrl = WEATHER_WORKER_URL + '/api/weather/alert';
