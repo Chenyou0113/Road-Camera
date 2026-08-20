@@ -22,15 +22,38 @@ function generateRandomCode() {
     return code;
 }
 
+// 工具：Cloudflare Turnstile siteverify 服務端雙向驗證
+async function verifyTurnstile(token, secretKey, remoteIp) {
+    if (!token || typeof token !== 'string' || token.length > 2048) {
+        return { success: false, error: "Turnstile Token 格式錯誤" };
+    }
+    try {
+        const formData = new URLSearchParams();
+        formData.append('secret', secretKey);
+        formData.append('response', token);
+        if (remoteIp) formData.append('remoteip', remoteIp);
+
+        const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: formData
+        });
+        return await res.json();
+    } catch (e) {
+        return { success: false, error: "Siteverify 連線失敗" };
+    }
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    const TURNSTILE_SECRET = env.TURNSTILE_SECRET || '0x4AAAAAAEWbYgADO-3qP3HBrymN74CZgQw';
     
     // 🔥 1. CORS 配置：必須與 tra-schedule-worker 保持一致
     const corsHeaders = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, X-Username, X-Password",
+      "Access-Control-Allow-Headers": "Content-Type, X-Username, X-Password, X-Turnstile-Token",
       "Access-Control-Max-Age": "86400", // 減少瀏覽器預檢請求次數
     };
 
@@ -45,8 +68,19 @@ export default {
     const authenticate = async () => {
         const username = request.headers.get('X-Username');
         const password = request.headers.get('X-Password');
+        const turnstileToken = request.headers.get('X-Turnstile-Token');
+        
         if (!username || !password) return { success: false, error: "請先登入" };
         
+        // 若帶有 Turnstile Token 則進行 Cloudflare siteverify 雙向驗證
+        if (turnstileToken && TURNSTILE_SECRET) {
+            const clientIp = request.headers.get('CF-Connecting-IP') || '';
+            const tsResult = await verifyTurnstile(turnstileToken, TURNSTILE_SECRET, clientIp);
+            if (!tsResult.success) {
+                return { success: false, error: "🛡️ 人類驗證失效，請重試 (Turnstile Failed)" };
+            }
+        }
+
         const userRecord = await env.DB.prepare("SELECT password FROM users WHERE username = ?").bind(username).first();
         if (!userRecord) return { success: false, error: "帳號不存在" };
         
