@@ -1110,11 +1110,29 @@
                             `;
                         } else {
                             topDelayedBody.innerHTML = sortedDelayed.map((t, idx) => {
-                                const normName = s => String(s || "").replace(/站$/g, "").trim();
-                                const typeLabel = t.TrainTypeName?.Zh_tw || t.TrainType || t.Type || '列車';
-                                const destName = normName(t.EndingStationName?.Zh_tw || t.EndStationName || t.EndStation || t.destStation || t.TripLine || '');
-                                const currentLoc = normName(t.StationName?.Zh_tw || t.station || '行駛中');
-                                const delayMins = Number(t.DelayTime) || 0;
+                                const normName = s => {
+                                    if (!s) return '';
+                                    if (typeof s === 'string') return s.replace(/站$/g, "").trim();
+                                    if (typeof s === 'object') return (s.Zh_tw || s.Name || s.Zh || '').replace(/站$/g, "").trim();
+                                    return String(s).replace(/站$/g, "").trim();
+                                };
+
+                                const typeLabel = t.TrainTypeName?.Zh_tw || t.TrainType || t.Type || (typeof t.TrainTypeName === 'string' ? t.TrainTypeName : '列車');
+                                
+                                // 萬能終點站站名提取 (支援物件、字串與 Stops 陣列)
+                                const rawDest = t.EndingStationName || t.Dest || t.dest || t.EndStationName || t.EndStation || t.destStation;
+                                let destName = normName(rawDest);
+                                if (!destName) {
+                                    const stops = t.Stops || t.stops || t.Stations || [];
+                                    if (Array.isArray(stops) && stops.length > 0) {
+                                        const last = stops[stops.length - 1];
+                                        destName = normName(last.StationName || last.Name || last);
+                                    }
+                                }
+                                if (!destName && t.TripLine) destName = normName(t.TripLine);
+
+                                const currentLoc = normName(t.StationName || t.station || t.CurrentStationName || '行駛中');
+                                const delayMins = Number(t.DelayTime || t.Delay || 0) || 0;
                                 const rankColor = idx === 0 ? '#ef4444' : (idx < 3 ? '#f59e0b' : '#38bdf8');
                                 const badgeClass = delayMins > 15 ? 'text-err' : 'text-warn';
 
@@ -1123,7 +1141,7 @@
                                         <td style="font-weight:900; color:${rankColor}; font-family:Consolas;">No.${idx + 1}</td>
                                         <td><span style="background:rgba(56,189,248,0.15); color:#38bdf8; font-size:0.78rem; padding:3px 8px; border-radius:6px; font-weight:bold; border:1px solid rgba(56,189,248,0.25);">${typeLabel}</span></td>
                                         <td style="font-weight:bold; color:white; font-family:Consolas;">${t.TrainNo} 次</td>
-                                        <td style="color:#a7f3d0; font-weight:bold;"><i class="fas fa-arrow-circle-right" style="font-size:0.75rem; margin-right:4px; opacity:0.8;"></i>${destName || '終點站'}</td>
+                                        <td style="color:#a7f3d0; font-weight:bold;"><i class="fas fa-arrow-circle-right" style="font-size:0.75rem; margin-right:4px; opacity:0.8;"></i>${destName || '全線'}</td>
                                         <td style="color:rgba(255,255,255,0.85);">${currentLoc}</td>
                                         <td class="${badgeClass}" style="font-family:Consolas; font-weight:bold; font-size:0.95rem;">+ ${delayMins} 分鐘</td>
                                         <td><span class="status-dot ${delayMins > 15 ? 'bg-err' : 'bg-warn'}"></span>${delayMins > 15 ? '嚴重延遲' : '誤點'}</td>
