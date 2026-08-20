@@ -679,6 +679,7 @@
                     <table class="status-table">
                         <thead style="position: sticky; top: 0; background: #0f172a; z-index: 2;">
                             <tr>
+                                <th>車種</th>
                                 <th>車次</th>
                                 <th>列車狀態</th>
                                 <th>停駛區間與備註</th>
@@ -686,7 +687,7 @@
                         </thead>
                         <tbody id="traSuspendedBody">
                             <tr>
-                                <td colspan="3" style="text-align:center; padding:20px; color:rgba(255,255,255,0.5);">
+                                <td colspan="4" style="text-align:center; padding:20px; color:rgba(255,255,255,0.5);">
                                     <i class="fas fa-spinner fa-spin"></i> 載入停駛清單中...
                                 </td>
                             </tr>
@@ -1033,6 +1034,66 @@
             }
         }
 
+        function extractTrainTypeName(t) {
+            if (!t) return '區間車';
+            let rawType = '';
+            
+            if (t.TrainTypeName) {
+                if (typeof t.TrainTypeName === 'string') rawType = t.TrainTypeName;
+                else if (typeof t.TrainTypeName === 'object' && t.TrainTypeName.Zh_tw) rawType = t.TrainTypeName.Zh_tw;
+            }
+            if (!rawType && t.TrainType) {
+                if (typeof t.TrainType === 'string') rawType = t.TrainType;
+                else if (typeof t.TrainType === 'object' && t.TrainType.Zh_tw) rawType = t.TrainType.Zh_tw;
+            }
+            if (!rawType && t.Type) {
+                if (typeof t.Type === 'string') rawType = t.Type;
+                else if (typeof t.Type === 'object' && t.Type.Zh_tw) rawType = t.Type.Zh_tw;
+            }
+            if (!rawType && t.TrainTypeCode) {
+                const codeMap = {
+                    '1100': '自強', '1101': '太魯閣', '1102': '普悠瑪', '1107': '新自強',
+                    '1108': '自強(3000)', '1110': '莒光', '1120': '復興', '1130': '電車',
+                    '1131': '區間車', '1132': '區間快', '1140': '普快車'
+                };
+                rawType = codeMap[String(t.TrainTypeCode)] || '';
+            }
+
+            const note = String(t.Note || t.Remark || '').trim();
+            const trainNo = String(t.TrainNo || t.No || '');
+            const merged = `${rawType} ${note}`;
+            const no = Number(trainNo) || 0;
+
+            if (no === 4666 || no === 4667) return '蒸汽火車';
+            if (no === 1 || no === 2) return '環島之星';
+            if ((no >= 6001 && no <= 6099) || (no >= 6701 && no <= 6799)) return '鳴日號';
+            if (no === 6652 || no === 6655) return '海風號';
+            if (no === 6631 || no === 6632 || no === 6633 || no === 6676 || no === 6677) return '山嵐號';
+
+            if (merged.includes('新自強') || merged.includes('3000')) return '新自強';
+            if (merged.includes('普悠瑪')) return '普悠瑪';
+            if (merged.includes('太魯閣')) return '太魯閣';
+            if (merged.includes('柴自強') || merged.includes('柴聯')) return '柴自強';
+            if (merged.includes('莒光')) return '莒光號';
+            if (merged.includes('區間快')) return '區間快';
+            if (merged.includes('區間')) return '區間車';
+            if (merged.includes('復興')) return '復興號';
+            if (merged.includes('普快')) return '普快車';
+            if (merged.includes('自強')) return '自強號';
+
+            if (rawType) return rawType.replace(/\(.*\)/g, '').trim();
+
+            if (no > 0) {
+                if ((no >= 100 && no <= 499) || (no >= 1000 && no <= 1499)) return '自強號';
+                if (no >= 500 && no <= 599) return '莒光號';
+                if (no >= 4000 && no <= 4999) return '區間車';
+                if (no >= 2000 && no <= 2999) return '區間快';
+                if (no >= 3000 && no <= 3999) return '區間車';
+            }
+
+            return '自強號';
+        }
+
         async function updateTRALiveStats() {
             try {
                 const countEl = document.getElementById('traRunningCount');
@@ -1117,7 +1178,7 @@
                                     return String(s).replace(/站$/g, "").trim();
                                 };
 
-                                const typeLabel = t.TrainTypeName?.Zh_tw || t.TrainType || t.Type || (typeof t.TrainTypeName === 'string' ? t.TrainTypeName : '列車');
+                                const typeLabel = extractTrainTypeName(t);
                                 
                                 // 萬能終點站站名提取 (支援物件、字串與 Stops 陣列)
                                 const rawDest = t.EndingStationName || t.Dest || t.dest || t.EndStationName || t.EndStation || t.destStation;
@@ -1171,7 +1232,7 @@
                         if (suspendedTrains.length === 0) {
                             suspendedBody.innerHTML = `
                                 <tr>
-                                    <td colspan="3" style="text-align:center; padding:20px; color:#34d399; font-weight:bold;">
+                                    <td colspan="4" style="text-align:center; padding:20px; color:#34d399; font-weight:bold;">
                                         <i class="fas fa-check-circle"></i> 目前全臺班次均正常開行，無停駛車次
                                     </td>
                                 </tr>
@@ -1185,8 +1246,7 @@
                                     return String(s).replace(/站$/g, "").trim();
                                 };
 
-                                const typeLabel = t.TrainTypeName?.Zh_tw || t.TrainType || t.Type || (typeof t.TrainTypeName === 'string' ? t.TrainTypeName : '');
-                                const typeBadge = typeLabel ? `<span style="background:rgba(239,68,68,0.15); color:#fca5a5; font-size:0.75rem; padding:2px 6px; border-radius:4px; margin-right:6px; border:1px solid rgba(239,68,68,0.3);">${typeLabel}</span>` : '';
+                                const typeLabel = extractTrainTypeName(t);
 
                                 const startSt = normName(t.StartingStationName || t.StartStationName || t.StartStation || t.startStation);
                                 const destSt = normName(t.EndingStationName || t.EndStationName || t.EndStation || t.destStation || t.Dest || t.dest);
@@ -1246,7 +1306,8 @@
 
                                 return `
                                     <tr>
-                                        <td style="font-weight:bold; color:#f87171; font-family:Consolas;">${typeBadge}${t.TrainNo} 次</td>
+                                        <td><span style="background:rgba(56,189,248,0.15); color:#38bdf8; font-size:0.78rem; padding:3px 8px; border-radius:6px; font-weight:bold; border:1px solid rgba(56,189,248,0.25);">${typeLabel}</span></td>
+                                        <td style="font-weight:bold; color:white; font-family:Consolas;">${t.TrainNo} 次</td>
                                         <td><span class="status-dot ${dotClass}"></span><span class="${statusClass}" style="font-weight:bold;">${statusText}</span></td>
                                         <td style="color:#ffcc80; font-weight:bold; font-size:0.9rem;">${segText}${detailNote}</td>
                                     </tr>
