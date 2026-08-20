@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>臺鐵未來 60 天特殊列車總覽專區</title>
+    
+    <!-- 🚀 防止深色模式閃爍的預載腳本 -->
+    <script>
+        if (localStorage.getItem('pids_theme') === 'dark') {
+            document.documentElement.setAttribute('data-theme', 'dark');
+        }
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&family=Roboto+Condensed:wght@700&family=Noto+Sans+TC:wght@400;500;700;900&family=Inter:wght@400;500;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="assets/config.js"></script>
+    <script src="assets/tdx-api.js"></script>
+    <script src="assets/train-line-classification.js"></script>
+    <script src="assets/station-code-mapping.js?v=20260424"></script>
+    
+    <style>
+        /* CSS 變數系統支援深淺色切換 */
+        :root {
+            --primary-color: #D84315; 
+            --klrt-color: #2e7d32; 
+            
+            /* 淺色模式變數 */
+            --bg-body: #f4f6f9;
+            --bg-panel: #ffffff;
+            --text-main: #1e293b;
+            --text-label: #64748b;
+            --border-color: #e2e8f0;
+            --input-bg: #f8fafc;
+            --tab-text: #64748b;
+            --tab-active: #0284c7;
+            --alert-bg: #fefce8;
+            --alert-border: #fef08a;
+            --card-hover: #f1f5f9;
+            --card-head-bg: #f8fafc;
+            --shadow: 0 4px 20px -2px rgba(0,0,0,0.06), 0 2px 6px -1px rgba(0,0,0,0.04);
+            --border-radius: 14px;
+        }
+
+        [data-theme="dark"] {
+            --bg-body: #0b0f19;
+            --bg-panel: #151c2c;
+            --text-main: #f1f5f9;
+            --text-label: #94a3b8;
+            --border-color: #243048;
+            --input-bg: #1e293b;
+            --tab-text: #94a3b8;
+            --tab-active: #38bdf8;
+            --alert-bg: #1c1917;
+            --alert-border: #44403c;
+            --card-hover: #1e293b;
+            --card-head-bg: #1e293b;
+            --shadow: 0 8px 30px rgba(0,0,0,0.45);
+        }
+
+        body { font-family: 'Roboto', 'Noto Sans TC', sans-serif; background-color: var(--bg-body); color: var(--text-main); margin: 0; padding: 0; transition: background-color 0.3s, color 0.3s; font-weight: 500; }
+        .container { max-width: 1100px; margin: 0 auto; padding: 0 15px; margin-top: 20px; }
+
+        .header { background: var(--bg-panel); padding: 16px 0; box-shadow: 0 2px 12px rgba(0,0,0,0.04); border-bottom: 1px solid var(--border-color); transition: background-color 0.3s; }
+        .header-bar { display: flex; align-items: center; gap: 12px; }
+        .back-btn { border: 1px solid var(--border-color); background: var(--input-bg); color: var(--text-main); width: 40px; height: 40px; border-radius: 999px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: 0.2s; flex: 0 0 auto; }
+        .back-btn:hover { background: var(--border-color); transform: translateY(-1px); }
+        .header h1 { color: var(--primary-color); margin: 0; font-size: 1.65rem; display: flex; align-items: center; justify-content: center; gap: 10px; flex: 1; text-align: center; font-weight: 900; letter-spacing: -0.5px; }
+        
+        .theme-toggle-btn { background: transparent; border: 1px solid var(--border-color); color: var(--text-main); width: 40px; height: 40px; border-radius: 999px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: 0.2s; flex: 0 0 auto; }
+        .theme-toggle-btn:hover { background: var(--input-bg); transform: translateY(-1px); }
+
+        .alert-bar { background: var(--bg-panel); padding: 16px 20px; border-radius: var(--border-radius); margin-bottom: 20px; border-left: 5px solid #4CAF50; box-shadow: var(--shadow); font-family: inherit; border: 1px solid var(--border-color); border-left-width: 5px; }
+        .alert-bar h3 { margin: 0 0 10px 0; font-size: 1.2rem; display: flex; align-items: center; gap: 8px; font-weight: 900; }
+        .alert-item { font-size: 1rem; margin-bottom: 8px; line-height: 1.6; color: var(--text-main); }
+
+        /* 統計面板與掃描進度條 */
+        .stats-banner { background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: var(--border-radius); padding: 18px 22px; margin-bottom: 20px; box-shadow: var(--shadow); }
+        .stats-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+        .stats-title { font-size: 1.25rem; font-weight: 900; color: var(--text-main); display: flex; align-items: center; gap: 8px; }
+        .stats-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+        .stat-pill { background: var(--input-bg); border: 1px solid var(--border-color); border-radius: 999px; padding: 6px 14px; font-size: 0.92rem; color: var(--text-main); display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+
+        .progress-box { margin-top: 10px; }
+        .progress-bar-bg { width: 100%; height: 8px; background: var(--border-color); border-radius: 4px; overflow: hidden; }
+        .progress-bar-fill { width: 0%; height: 100%; background: linear-gradient(90deg, #d84315, #f57f17); transition: width 0.2s ease; border-radius: 4px; }
+        .progress-text { font-size: 0.88rem; color: var(--text-label); margin-top: 6px; display: flex; justify-content: space-between; }
+
+        /* 分類頁籤與控制列 */
+        .control-panel { background: var(--bg-panel); padding: 22px; border-radius: var(--border-radius); box-shadow: var(--shadow); color: var(--text-main); margin-bottom: 20px; border: 1px solid var(--border-color); }
+        
+        .category-tabs { display: flex; gap: 8px; margin-bottom: 18px; border-bottom: 2px solid var(--border-color); padding-bottom: 0; overflow-x: auto; scroll-behavior: smooth; }
+        .category-tab { font-weight: 700; cursor: pointer; color: var(--tab-text); transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); padding: 10px 18px; border-radius: 8px 8px 0 0; font-size: 1.05rem; position: relative; white-space: nowrap; }
+        .category-tab:hover { color: var(--tab-active); background: rgba(2, 132, 199, 0.06); }
+        .category-tab.active { color: var(--tab-active); background: rgba(2, 132, 199, 0.1); }
+        .category-tab.active::after { content: ''; position: absolute; bottom: -2px; left: 0; right: 0; height: 3px; background: var(--tab-active); border-radius: 3px 3px 0 0; }
+
+        .filter-row { display: grid; grid-template-columns: 1fr 1fr 1.2fr auto; gap: 14px; align-items: center; }
+        @media (max-width: 850px) { .filter-row { grid-template-columns: 1fr 1fr; } }
+        @media (max-width: 550px) { .filter-row { grid-template-columns: 1fr; } }
+
+        .form-group { display: flex; flex-direction: column; width: 100%; }
+        .form-group label { font-size: 0.88rem; color: var(--text-label); font-weight: bold; margin-bottom: 4px; }
+        .form-group select, .form-group input { padding: 0 12px; height: 44px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--input-bg); color: var(--text-main); font-size: 1rem; outline: none; transition: 0.2s; }
+        .form-group select:focus, .form-group input:focus { border-color: var(--tab-active); box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.1); }
+
+        /* 特殊列車區塊與卡片 */
+        .group-section { margin-bottom: 28px; }
+        .group-header { font-size: 1.3rem; font-weight: 900; margin-bottom: 14px; display: flex; align-items: center; gap: 10px; color: var(--text-main); border-bottom: 2px solid var(--border-color); padding-bottom: 8px; }
+        
+        .special-cards-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+        .special-card { background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 12px; padding: 18px 22px; box-shadow: var(--shadow); transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer; position: relative; overflow: hidden; }
+        .special-card:hover { transform: translateY(-3px); box-shadow: 0 8px 25px rgba(0,0,0,0.08); background: var(--card-hover); }
+
+        .special-card-top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
+        .special-card-route { font-size: 1.25rem; font-weight: 900; display: flex; align-items: center; gap: 10px; color: var(--text-main); }
+        .special-card-time { font-family: 'Roboto Condensed', sans-serif; font-size: 1.25rem; font-weight: 700; color: var(--text-main); }
+        
+        .special-card-meta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; font-size: 0.95rem; color: var(--text-label); margin-top: 8px; }
+        .date-badge { background: rgba(2, 132, 199, 0.12); color: var(--tab-active); padding: 4px 10px; border-radius: 6px; font-weight: 700; font-family: 'Roboto Condensed', sans-serif; }
+
+        /* 車種專屬 Badge 樣式 */
+        .train-type-badge { padding: 4px 10px; border-radius: 6px; font-size: 1.05rem; font-weight: bold; display: inline-block; white-space: nowrap; line-height: 1.2; }
+        .type-new-tc { color: #888; background: rgba(136,136,136,0.1); }
+        .type-tc { color: #eb7405; background: rgba(235,116,5,0.1); }
+        .type-puyuma { color: #de3923; background: rgba(222,57,35,0.1); }
+        .type-taroko { color: #e6a822; background: rgba(230,168,34,0.1); }
+        .type-juguang { color: #9c612a; background: rgba(156,97,42,0.1); }
+        .type-local-fast { color: #6ac242; background: rgba(106,194,66,0.1); }
+        .type-local { color: #48c5db; background: rgba(72,197,219,0.1); }
+        .type-special { color: #a3175d; background: rgba(163,23,93,0.12); }
+        .type-ot { color: #5047d1; background: rgba(80,71,209,0.1); }
+        .type-minri { color: #d97706; background: rgba(217,119,6,0.15); border: 1px solid rgba(217,119,6,0.3); }
+        .type-shanlan { color: #84cc16; background: rgba(132,204,22,0.15); border: 1px solid rgba(132,204,22,0.3); }
+        .type-haifeng { color: #06b6d4; background: rgba(6,182,212,0.15); border: 1px solid rgba(6,182,212,0.3); }
+        .type-conscript { color: #16a34a; background: rgba(22,163,74,0.15); }
+        .type-islandstar { color: #ec4899; background: rgba(236,72,153,0.15); border: 1px solid rgba(236,72,153,0.3); }
+        .type-steam { color: #d97706; background: rgba(217,119,6,0.18); border: 1px solid rgba(217,119,6,0.4); }
+
+        .delay-warn { color: #dc2626; font-weight: bold; }
+        .delay-ok { color: #16a34a; font-weight: bold; }
+        [data-theme="dark"] .delay-warn { color: #ef4444; }
+        [data-theme="dark"] .delay-ok { color: #4ade80; }
+
+        /* 展開停靠站面板 */
+        .stops-expand-panel { margin-top: 15px; padding-top: 15px; border-top: 1px dashed var(--border-color); display: none; }
+        .stops-expand-panel.active { display: block; animation: fadeIn 0.3s ease; }
+        
+        .stops-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin-top: 10px; }
+        .stop-chip { background: var(--input-bg); border: 1px solid var(--border-color); border-radius: 6px; padding: 6px 10px; font-size: 0.9rem; text-align: center; }
+        .stop-chip-name { font-weight: bold; color: var(--text-main); }
+        .stop-chip-time { font-family: 'Roboto Condensed', sans-serif; font-size: 0.85rem; color: var(--text-label); }
+
+        .warning-footer { background: var(--bg-panel); border: 1px solid var(--border-color); border-left: 5px solid #ff9800; border-radius: var(--border-radius); padding: 16px 20px; margin: 30px 0; box-shadow: var(--shadow); font-size: 0.95rem; line-height: 1.6; color: var(--text-main); }
+        .warning-footer .important { color: #d32f2f; font-weight: 700; }
+        [data-theme="dark"] .warning-footer .important { color: #ff5252; }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="container" style="margin-top: 0;">
+            <div class="header-bar">
+                <button class="back-btn" type="button" onclick="location.href='tra_liveboard.html'" aria-label="返回台鐵即時看板">
+                    <i class="fas fa-arrow-left"></i>
+                </button>
+                <h1><i class="fas fa-sparkles" style="color:#ff9800;"></i> 臺鐵未來 60 天特殊列車總覽</h1>
+                <button class="theme-toggle-btn" onclick="toggleTheme()" aria-label="切換深淺色">
+                    <i class="fas fa-moon" id="themeIcon"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        
+        <!-- 營運通阻公告面板 (100% 保留) -->
+        <div class="alert-bar" id="traAlertPanel" style="display: block;">
+            <h3><i class="fas fa-bullhorn" style="color:#ff9800;"></i> 營運通阻公告</h3>
+            <div id="traAlertContent">
+                <div class="alert-item" style="color:var(--text-label);">
+                    <strong>【營運正常】</strong> 目前全線營運正常。
+                </div>
+            </div>
+        </div>
+
+        <!-- 60 天數據統計與掃描進度條 -->
+        <div class="stats-banner">
+            <div class="stats-header">
+                <div class="stats-title">
+                    <i class="fas fa-chart-pie" style="color:var(--tab-active);"></i> 
+                    未來 60 天特殊列車班次統計
+                </div>
+                <div id="statsCountText" style="font-size:0.95rem; color:var(--text-label); font-weight:bold;">
+                    資料掃描中...
+                </div>
+            </div>
+            <div class="stats-pills" id="statsPills">
+                <span class="stat-pill"><i class="fas fa-spinner fa-spin"></i> 載入數據中</span>
+            </div>
+            <div class="progress-box" id="scanProgressContainer">
+                <div class="progress-bar-bg"><div class="progress-bar-fill" id="scanProgressBar"></div></div>
+                <div class="progress-text">
+                    <span id="scanStatusText">準備向遠端 Worker 掃描未來 60 天時刻表...</span>
+                    <span id="scanPercentText">0%</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 分類控制面板 -->
+        <div class="control-panel">
+            <div class="category-tabs" id="categoryTabs">
+                <div class="category-tab active" data-cat="all">🌟 全部特殊列車</div>
+                <div class="category-tab" data-cat="minri">🖤 鳴日號</div>
+                <div class="category-tab" data-cat="shanlan">黃 山嵐號</div>
+                <div class="category-tab" data-cat="haifeng">🩵 海風號</div>
+                <div class="category-tab" data-cat="islandstar">🩷 環島之星</div>
+                <div class="category-tab" data-cat="steam">🚂 蒸汽火車 / 仲夏寶島號</div>
+                <div class="category-tab" data-cat="charter">🎫 專車/專列 (自強/莒光/區間專車/慧燈/入伍)</div>
+                <div class="category-tab" data-cat="extra">⚡ 臨開加班車 (5xxx / 6xxx)</div>
+            </div>
+
+            <div class="filter-row">
+                <div class="form-group">
+                    <label><i class="fas fa-calendar-alt"></i> 日期範圍</label>
+                    <select id="dateRangeSelect" onchange="applyFilters()">
+                        <option value="60" selected>未來 60 天 (全部)</option>
+                        <option value="7">未來 7 天</option>
+                        <option value="14">未來 14 天</option>
+                        <option value="30">未來 30 天</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label><i class="fas fa-layer-group"></i> 分群呈現模式</label>
+                    <select id="groupModeSelect" onchange="applyFilters()">
+                        <option value="by-type" selected>依「車種種類」分群</option>
+                        <option value="by-date">依「出發日期」時間軸</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label><i class="fas fa-search"></i> 關鍵字搜尋 (車次/站名)</label>
+                    <input type="text" id="searchInput" placeholder="輸入車次 (如 6001) 或站名" oninput="applyFilters()">
+                </div>
+
+                <div class="form-group" style="align-self:end;">
+                    <button class="back-btn" style="width:auto; height:44px; padding:0 16px; border-radius:8px; width:100%; background:var(--input-bg);" onclick="refresh60DayData(true)">
+                        <i class="fas fa-sync-alt"></i> 強制刷新
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 列車列表顯示區域 -->
+        <div id="specialTrainContainer">
+            <div style="padding:50px; text-align:center; font-size:1.15rem; color:var(--text-label);">
+                <i class="fas fa-spinner fa-spin fa-2x"></i><br><br>正在即時運算未來 60 天全台特殊列車資料...
+            </div>
+        </div>
+
+        <!-- 警語區塊 (100% 保留) -->
+        <div class="warning-footer" role="status" aria-live="polite">
+            <strong><i class="fas fa-exclamation-circle" style="color:#ff9800;"></i> 資料準確性與延遲提醒：</strong><br>
+            本專區資料來源為 TDX 平臺加值運算，與臺鐵官網一致但約有 <span class="important">1~3 分鐘延遲</span>。<br>
+            此資料非直接介接車站現場系統，<span class="important" style="text-decoration:underline;">請勿直接與月台 PIDS 看板比對</span>，若您已進入車站，請務必以現場設施與廣播資訊為主，以免延誤行程。
+        </div>
+
+    </div>
+
+    <script>
+        const API_BASE = "https://tra-schedule-worker.weacamm.org";
+        const CACHE_KEY_60D = 'tra_60d_special_trains_cache_v2';
+        const CACHE_TTL_MS = 6 * 3600000; // 6 小時快取
+
+        let allSpecialData = []; // 儲存全 60 天掃描出的特殊列車
+        let activeCategory = 'all';
+
+        function toggleTheme() {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            document.documentElement.setAttribute('data-theme', isDark ? 'light' : 'dark');
+            localStorage.setItem('pids_theme', isDark ? 'light' : 'dark');
+            document.getElementById('themeIcon').className = isDark ? 'fas fa-moon' : 'fas fa-sun';
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            if (document.documentElement.getAttribute('data-theme') === 'dark') {
+                document.getElementById('themeIcon').className = 'fas fa-sun';
+            }
+            
+            // 綁定種類頁籤
+            document.querySelectorAll('.category-tab').forEach(tab => {
+                tab.addEventListener('click', (e) => {
+                    document.querySelectorAll('.category-tab').forEach(t => t.classList.remove('active'));
+                    e.currentTarget.classList.add('active');
+                    activeCategory = e.currentTarget.dataset.cat;
+                    applyFilters();
+                });
+            });
+
+            loadTraAlerts();
+            init60DaySpecialData();
+        });
+
+        async function loadTraAlerts() {
+            const panel = document.getElementById('traAlertPanel');
+            const content = document.getElementById('traAlertContent');
+            const titleEl = panel ? panel.querySelector('h3') : null;
+            const h3Icon = titleEl ? titleEl.querySelector('i') : null;
+            try {
+                const res = await fetch(`${API_BASE}/api/alerts`);
+                if (!res.ok) throw new Error("API Error");
+                const data = await res.json();
+                if (Array.isArray(data) && data.length > 0) {
+                    const isNormal = data.every(a => String(a.Status) === '1');
+                    if (isNormal) {
+                        panel.style.borderLeftColor = '#4CAF50';
+                        if (titleEl) titleEl.style.color = '#2E7D32';
+                        if (h3Icon) { h3Icon.className = 'fas fa-info-circle'; h3Icon.style.color = '#4CAF50'; }
+                    } else {
+                        panel.style.borderLeftColor = '#ff5252';
+                        if (titleEl) titleEl.style.color = '#d32f2f';
+                        if (h3Icon) { h3Icon.className = 'fas fa-exclamation-triangle'; h3Icon.style.color = '#ff9800'; }
+                    }
+                    content.innerHTML = data.map(a => `<div class="alert-item"><strong>【${a.Title}】</strong> ${a.Description}</div>`).join('');
+                } else {
+                    panel.style.borderLeftColor = '#4CAF50';
+                    if (titleEl) titleEl.style.color = '#2E7D32';
+                    if (h3Icon) { h3Icon.className = 'fas fa-check-circle'; h3Icon.style.color = '#4CAF50'; }
+                    content.innerHTML = `<div class="alert-item" style="color:var(--text-label);"><strong>【營運正常】</strong> 目前全線營運正常，無任何通阻事件。</div>`;
+                }
+            } catch (e) {
+                panel.style.borderLeftColor = '#9e9e9e';
+                if (titleEl) titleEl.style.color = '#757575';
+                if (h3Icon) { h3Icon.className = 'fas fa-times-circle'; h3Icon.style.color = '#757575'; }
+                content.innerHTML = `<div class="alert-item" style="color:var(--text-label);">無法取得營運公告資訊。</div>`;
+            }
+        }
+
+        // --- 🤖 特殊列車分類演算法 (遵照 tra-pids 規則) ---
+        function classifySpecialTrain(t) {
+            const no = Number(t.TrainNo ?? t.No ?? 0);
+            const rawType = String(t.TrainTypeName ?? t.Type ?? '');
+            const note = String(t.Note ?? '').trim();
+            const start = String(t.StartingStationName ?? t.Start ?? '');
+            const dest = String(t.EndingStationName ?? t.Dest ?? '');
+            
+            // 判斷車次標籤名稱
+            let label = rawType.replace(/\(.*\)/g, '').trim();
+            if (no === 4666 || no === 4667) label = '蒸汽火車';
+            else if ((no >= 6001 && no <= 6099) || (no >= 6701 && no <= 6799)) label = '鳴日號';
+            else if (no === 6631 || no === 6632 || no === 6633) label = '山嵐號';
+            else if (no === 6652 || no === 6655) label = '海風號';
+            else if (no === 1 || no === 2) label = '環島之星';
+            else if (no >= 6801 && no <= 6899) label = '入伍專車';
+            else if (String(no).startsWith("661") && ((start.includes("宜蘭") && dest.includes("臺北")) || (start.includes("臺北") && dest.includes("宜蘭")))) label = '慧燈專車';
+            else if (note.includes("自強(專列)")) label = '自強專列';
+            else if (note.includes("莒光(專車)")) label = '莒光專車';
+            else if ((no >= 6501 && no <= 6599) || (no >= 6601 && no <= 6699)) label = '區間專車';
+            else if (note.includes('專車') || rawType.includes('專車') || rawType.includes('郵輪') || rawType.includes('包車')) label = '專車';
+
+            let isSpecial = false;
+            let categoryKey = 'extra';
+
+            if (no === 4666 || no === 4667 || label.includes('蒸汽火車') || note.includes('仲夏寶島號') || rawType.includes('蒸汽火車')) {
+                isSpecial = true; categoryKey = 'steam'; label = '蒸汽火車';
+            } else if ((no >= 6001 && no <= 6099) || (no >= 6701 && no <= 6799) || label.includes('鳴日號')) {
+                isSpecial = true; categoryKey = 'minri'; label = '鳴日號';
+            } else if (no === 6631 || no === 6632 || no === 6633 || label.includes('山嵐號')) {
+                isSpecial = true; categoryKey = 'shanlan'; label = '山嵐號';
+            } else if (no === 6652 || no === 6655 || label.includes('海風號')) {
+                isSpecial = true; categoryKey = 'haifeng'; label = '海風號';
+            } else if (no === 1 || no === 2 || label.includes('環島之星') || rawType.includes('觀光')) {
+                isSpecial = true; categoryKey = 'islandstar'; label = '環島之星';
+            } else if (
+                (String(no).startsWith("661") && ((start.includes("宜蘭") && dest.includes("臺北")) || (start.includes("臺北") && dest.includes("宜蘭")))) ||
+                (no >= 6801 && no <= 6899) ||
+                ((no >= 6501 && no <= 6599) || (no >= 6601 && no <= 6699)) ||
+                label.includes('專車') || label.includes('專列') || label.includes('包車') || label.includes('郵輪') ||
+                note.includes('專車') || note.includes('專列') || note.includes('包車') || note.includes('郵輪') ||
+                rawType.includes('專車') || rawType.includes('專列') || rawType.includes('包車') || rawType.includes('郵輪')
+            ) {
+                isSpecial = true; categoryKey = 'charter';
+            } else if ((no >= 5000 && no <= 6999) || note.includes('加班') || note.includes('臨開') || note.includes('迴送')) {
+                isSpecial = true; categoryKey = 'extra';
+            }
+
+            return { isSpecial, categoryKey, label };
+        }
+
+        // --- ⚡ 60 天漸進式數據掃描與快取機制 ---
+        async function init60DaySpecialData() {
+            // 嘗試從 LocalStorage 讀取快取
+            try {
+                const cached = localStorage.getItem(CACHE_KEY_60D);
+                if (cached) {
+                    const parsed = JSON.parse(cached);
+                    if (parsed.ts && (Date.now() - parsed.ts) < CACHE_TTL_MS && Array.isArray(parsed.data)) {
+                        console.log("⚡ 使用 LocalStorage 快取的 60 天特殊列車資料");
+                        allSpecialData = parsed.data;
+                        document.getElementById('scanProgressContainer').style.display = 'none';
+                        updateStatsDashboard();
+                        applyFilters();
+                        return;
+                    }
+                }
+            } catch (_) {}
+
+            await refresh60DayData(false);
+        }
+
+        async function refresh60DayData(force = false) {
+            document.getElementById('scanProgressContainer').style.display = 'block';
+            document.getElementById('scanStatusText').textContent = '準備掃描未來 60 天全台列車時刻表...';
+            document.getElementById('scanProgressBar').style.width = '0%';
+            document.getElementById('scanPercentText').textContent = '0%';
+
+            allSpecialData = [];
+            const dates = [];
+            const now = new Date(Date.now() + 8 * 3600000);
+            
+            for (let i = 0; i < 60; i++) {
+                const d = new Date(now.getTime() + i * 86400000);
+                dates.push(d.toISOString().split('T')[0]);
+            }
+
+            let loadedCount = 0;
+            const batchSize = 6; // 每次併行 6 天，防止發送過多 HTTP 請求
+            
+            for (let i = 0; i < dates.length; i += batchSize) {
+                const chunk = dates.slice(i, i + batchSize);
+                await Promise.all(chunk.map(async (dateStr) => {
+                    try {
+                        const res = await fetch(`${API_BASE}/api/timetable/daily?date=${dateStr}`);
+                        if (res.ok) {
+                            const list = await res.json();
+                            if (Array.isArray(list)) {
+                                list.forEach(t => {
+                                    const { isSpecial, categoryKey, label } = classifySpecialTrain(t);
+                                    if (isSpecial) {
+                                        allSpecialData.push({
+                                            ...t,
+                                            _date: dateStr,
+                                            _categoryKey: categoryKey,
+                                            _specialLabel: label
+                                        });
+                                    }
+                                });
+                            }
+                        }
+                    } catch (e) {
+                        console.warn(`載入 ${dateStr} 時刻表失敗`, e);
+                    } finally {
+                        loadedCount++;
+                        const percent = Math.round((loadedCount / 60) * 100);
+                        document.getElementById('scanProgressBar').style.width = `${percent}%`;
+                        document.getElementById('scanPercentText').textContent = `${percent}%`;
+                        document.getElementById('scanStatusText').textContent = `已完成 60 天中 ${loadedCount}/60 天時刻表處理 (${allSpecialData.length} 班特殊列車)...`;
+                    }
+                }));
+            }
+
+            document.getElementById('scanProgressContainer').style.display = 'none';
+
+            // 存入 LocalStorage 快取
+            try {
+                localStorage.setItem(CACHE_KEY_60D, JSON.stringify({
+                    ts: Date.now(),
+                    data: allSpecialData
+                }));
+            } catch (_) {}
+
+            updateStatsDashboard();
+            applyFilters();
+        }
+
+        // 更新頂部統計數據
+        function updateStatsDashboard() {
+            const counts = { minri: 0, shanlan: 0, haifeng: 0, islandstar: 0, steam: 0, charter: 0, extra: 0 };
+            allSpecialData.forEach(t => {
+                if (counts[t._categoryKey] !== undefined) counts[t._categoryKey]++;
+            });
+
+            document.getElementById('statsCountText').textContent = `未來 60 天共計 ${allSpecialData.length} 班次特殊列車`;
+            
+            document.getElementById('statsPills').innerHTML = `
+                <span class="stat-pill">🖤 鳴日號: <strong>${counts.minri}</strong> 班</span>
+                <span class="stat-pill">黃 山嵐號: <strong>${counts.shanlan}</strong> 班</span>
+                <span class="stat-pill">🩵 海風號: <strong>${counts.haifeng}</strong> 班</span>
+                <span class="stat-pill">🩷 環島之星: <strong>${counts.islandstar}</strong> 班</span>
+                <span class="stat-pill">🚂 蒸汽火車: <strong>${counts.steam}</strong> 班</span>
+                <span class="stat-pill">🎫 專車專列: <strong>${counts.charter}</strong> 班</span>
+                <span class="stat-pill">⚡ 臨開加班車: <strong>${counts.extra}</strong> 班</span>
+            `;
+        }
+
+        // --- 🎯 資料過濾與渲染邏輯 ---
+        function applyFilters() {
+            const rangeDays = parseInt(document.getElementById('dateRangeSelect').value) || 60;
+            const groupMode = document.getElementById('groupModeSelect').value;
+            const keyword = document.getElementById('searchInput').value.trim().toLowerCase();
+
+            const cutoffDate = new Date(Date.now() + 8 * 3600000 + rangeDays * 86400000).toISOString().split('T')[0];
+
+            let filtered = allSpecialData.filter(t => {
+                if (t._date > cutoffDate) return false;
+                if (activeCategory !== 'all' && t._categoryKey !== activeCategory) return false;
+                
+                if (keyword) {
+                    const noStr = String(t.TrainNo || t.No || '').toLowerCase();
+                    const startStr = String(t.StartingStationName || t.Start || '').toLowerCase();
+                    const destStr = String(t.EndingStationName || t.Dest || '').toLowerCase();
+                    const noteStr = String(t.Note || '').toLowerCase();
+                    if (!noStr.includes(keyword) && !startStr.includes(keyword) && !destStr.includes(keyword) && !noteStr.includes(keyword)) {
+                        return false;
+                    }
+                }
+                return true;
+            });
+
+            renderSpecialList(filtered, groupMode);
+        }
+
+        function renderSpecialList(list, groupMode) {
+            const container = document.getElementById('specialTrainContainer');
+            
+            if (!list || list.length === 0) {
+                container.innerHTML = `
+                    <div style="padding:60px 20px; text-align:center; background:var(--bg-panel); border-radius:14px; border:1px solid var(--border-color);">
+                        <i class="fas fa-info-circle fa-2x" style="color:#ff9800; margin-bottom:12px;"></i><br>
+                        <strong style="font-size:1.15rem; color:var(--text-main);">目前所選篩選條件下，無任何特殊列車班次。</strong><br>
+                        <span style="font-size:0.95rem; color:var(--text-label);">建議切換至「🌟 全部特殊列車」或調整日期範圍重新查詢。</span>
+                    </div>`;
+                return;
+            }
+
+            let html = '';
+
+            if (groupMode === 'by-type') {
+                // 依車種分類群組
+                const catNames = {
+                    minri: '🖤 鳴日號 (Future Express)',
+                    shanlan: '黃 山嵐號 (Shanlan)',
+                    haifeng: '🩵 海風號 (Haifeng)',
+                    islandstar: '🩷 環島之星 (Formosa Express)',
+                    steam: '🚂 蒸汽火車 / 仲夏寶島號',
+                    charter: '🎫 專車 / 專列 / 慧燈 / 入伍專車',
+                    extra: '⚡ 臨開加班車 / 專開列車'
+                };
+
+                const grouped = {};
+                list.forEach(t => {
+                    const key = t._categoryKey;
+                    if (!grouped[key]) grouped[key] = [];
+                    grouped[key].push(t);
+                });
+
+                Object.keys(grouped).forEach(catKey => {
+                    const groupList = grouped[catKey];
+                    // 依日期與出發時間排序
+                    groupList.sort((a, b) => {
+                        if (a._date !== b._date) return a._date.localeCompare(b._date);
+                        const stopsA = a.Stops || a.StopTimes || [];
+                        const stopsB = b.Stops || b.StopTimes || [];
+                        return (stopsA[0]?.Dep || '99:99').localeCompare(stopsB[0]?.Dep || '99:99');
+                    });
+
+                    html += `
+                    <div class="group-section">
+                        <div class="group-header">
+                            ${catNames[catKey] || catKey} 
+                            <span style="font-size:0.95rem; color:var(--text-label); font-weight:normal;">(共 ${groupList.length} 班次)</span>
+                        </div>
+                        <div class="special-cards-grid">
+                            ${groupList.map(t => renderTrainCardHtml(t)).join('')}
+                        </div>
+                    </div>`;
+                });
+
+            } else {
+                // 依日期時間軸群組
+                const groupedByDate = {};
+                list.forEach(t => {
+                    const d = t._date;
+                    if (!groupedByDate[d]) groupedByDate[d] = [];
+                    groupedByDate[d].push(t);
+                });
+
+                const sortedDates = Object.keys(groupedByDate).sort();
+
+                sortedDates.forEach(dateStr => {
+                    const groupList = groupedByDate[dateStr];
+                    groupList.sort((a, b) => {
+                        const stopsA = a.Stops || a.StopTimes || [];
+                        const stopsB = b.Stops || b.StopTimes || [];
+                        return (stopsA[0]?.Dep || '99:99').localeCompare(stopsB[0]?.Dep || '99:99');
+                    });
+
+                    const dObj = new Date(dateStr);
+                    const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
+                    const dayWeekStr = `週${weekDays[dObj.getDay()]}`;
+                    const todayStr = new Date(Date.now() + 8 * 3600000).toISOString().split('T')[0];
+                    const isToday = dateStr === todayStr;
+
+                    html += `
+                    <div class="group-section">
+                        <div class="group-header">
+                            <i class="far fa-calendar-alt" style="color:var(--tab-active);"></i> 
+                            ${dateStr} (${dayWeekStr})
+                            ${isToday ? '<span style="font-size:0.85rem; background:#16a34a; color:white; padding:2px 8px; border-radius:4px; margin-left:6px;">今日發車</span>' : ''}
+                            <span style="font-size:0.95rem; color:var(--text-label); font-weight:normal; margin-left:auto;">(${groupList.length} 班次)</span>
+                        </div>
+                        <div class="special-cards-grid">
+                            ${groupList.map(t => renderTrainCardHtml(t)).join('')}
+                        </div>
+                    </div>`;
+                });
+            }
+
+            container.innerHTML = html;
+        }
+
+        // 渲染單張特殊列車卡片 HTML
+        function renderTrainCardHtml(t) {
+            const trainNo = String(t.TrainNo || t.No || '').trim();
+            const rawType = String(t.TrainTypeName || t.Type || '').trim();
+            const note = String(t.Note || '').trim();
+            const dateStr = t._date || '';
+            const stops = t.Stops || t.StopTimes || [];
+            
+            const norm = name => String(name || '').replace(/站$/, '').replace(/台/g, '臺').trim();
+            const startSt = stops.length > 0 ? norm(stops[0].Name || stops[0].StationName?.Zh_tw || stops[0].StationName || t.Start || '') : norm(t.Start || t.StartingStationName || '');
+            const destSt = stops.length > 0 ? norm(stops[stops.length - 1].Name || stops[stops.length - 1].StationName?.Zh_tw || stops[stops.length - 1].StationName || t.Dest || '') : norm(t.Dest || t.EndingStationName || '');
+            
+            const depTime = stops.length > 0 ? (stops[0].Dep || stops[0].Arr || '--:--').slice(0, 5) : '--:--';
+            const arrTime = stops.length > 0 ? (stops[stops.length - 1].Arr || stops[stops.length - 1].Dep || '--:--').slice(0, 5) : '--:--';
+            
+            const typeLabel = t._specialLabel || rawType;
+            const badgeClass = getTrainTypeClass(`${rawType} ${typeLabel}`);
+            
+            const cardId = `special-card-${trainNo}-${dateStr}`;
+
+            return `
+            <div class="special-card" id="${cardId}" onclick="toggleStopsExpand('${cardId}')">
+                <div class="special-card-top">
+                    <div class="special-card-route">
+                        <span class="train-type-badge ${badgeClass}">${typeLabel}</span>
+                        <span>${trainNo} 次</span>
+                        <span style="font-size:1.05rem; color:var(--text-main); font-weight:700;">${startSt} ➔ ${destSt}</span>
+                    </div>
+                    <div class="special-card-time">
+                        <i class="far fa-clock" style="color:var(--text-label); font-size:1rem;"></i> ${depTime} ➔ ${arrTime}
+                    </div>
+                </div>
+                <div class="special-card-meta">
+                    <span class="date-badge"><i class="far fa-calendar"></i> ${dateStr}</span>
+                    ${note ? `<span><i class="fas fa-sticky-note" style="color:#ff9800;"></i> 備註：<strong>${note}</strong></span>` : '<span><i class="fas fa-info-circle"></i> 特殊觀光/專開班次</span>'}
+                    <span style="margin-left:auto; color:var(--tab-active); font-weight:bold; font-size:0.9rem;">
+                        <i class="fas fa-chevron-down"></i> 展開停靠站 (${stops.length} 站)
+                    </span>
+                </div>
+                
+                <div class="stops-expand-panel" id="panel-${cardId}">
+                    <div style="font-size:0.95rem; font-weight:bold; color:var(--text-main); margin-bottom:6px;">
+                        <i class="fas fa-list-ol"></i> 沿途停靠車站與時刻：
+                    </div>
+                    <div class="stops-grid">
+                        ${stops.map(s => `
+                            <div class="stop-chip">
+                                <div class="stop-chip-name">${norm(s.Name || s.StationName?.Zh_tw || s.StationName)}</div>
+                                <div class="stop-chip-time">${(s.Arr || s.Dep || '--:--').slice(0, 5)}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        function toggleStopsExpand(cardId) {
+            const panel = document.getElementById(`panel-${cardId}`);
+            if (panel) {
+                panel.classList.toggle('active');
+            }
+        }
+
+        function getTrainTypeClass(typeName) {
+            const t = String(typeName || '');
+            if (t.includes('鳴日號')) return 'type-minri';
+            if (t.includes('山嵐號')) return 'type-shanlan';
+            if (t.includes('海風號')) return 'type-haifeng';
+            if (t.includes('環島之星')) return 'type-islandstar';
+            if (t.includes('入伍專車')) return 'type-conscript';
+            if (t.includes('蒸汽火車') || t.includes('仲夏寶島號')) return 'type-steam';
+            if (t.includes('新自強') || t.includes('3000')) return 'type-new-tc';
+            if (t.includes('普悠瑪')) return 'type-puyuma';
+            if (t.includes('太魯閣')) return 'type-taroko';
+            if (t.includes('慧燈專車')) return 'type-special';
+            if (t.includes('自強專列')) return 'type-tc';
+            if (t.includes('區間專車')) return 'type-special';
+            if (t.includes('莒光專車')) return 'type-juguang';
+            if (t.includes('專車') || t.includes('郵輪') || t.includes('包車')) return 'type-special';
+            if (t.includes('莒光')) return 'type-juguang';
+            if (t.includes('普快')) return 'type-ot';
+            if (t.includes('區間快')) return 'type-local-fast';
+            if (t.includes('區間')) return 'type-local';
+            if (t.includes('自強')) return 'type-tc';
+            return 'type-ot';
+        }
+    </script>
+</body>
+</html>
