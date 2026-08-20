@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <title>臺灣天氣視界 Ｘ PIDS 旗艦控制台 - V9.8 Pro</title>
+    <title>臺灣天氣視界 Ｘ PIDS 旗艦控制台 - V9.9 Turnstile Pro</title>
     <!-- FontAwesome 6.4.0 -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <!-- Google Fonts -->
@@ -14,6 +14,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     
+    <!-- 🛡️ Cloudflare Turnstile 驗證元件 SDK -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+
     <style>
         :root {
             --bg-base: #090d16;
@@ -115,6 +118,14 @@
             color: var(--text-muted);
             margin-top: 6px;
             margin-bottom: 28px;
+        }
+
+        /* Turnstile 行動容器 */
+        .turnstile-box {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+            min-height: 65px;
         }
 
         /* === 後台框架佈局 (App Layout) === */
@@ -804,6 +815,16 @@
             <input type="text" id="loginUser" placeholder="管理員帳號" autocomplete="username">
             <input type="password" id="loginPass" placeholder="管理員密碼" autocomplete="current-password" onkeyup="if(event.key==='Enter') doLogin()">
             
+            <!-- 🛡️ Cloudflare Turnstile 人類驗證按鈕區塊 -->
+            <div class="turnstile-box">
+                <div class="cf-turnstile" 
+                     data-sitekey="0x4AAAAAAEWbYinTsISS_xec" 
+                     data-theme="dark" 
+                     data-action="login"
+                     data-callback="onTurnstileSuccess"
+                     data-expired-callback="onTurnstileExpired"></div>
+            </div>
+
             <button class="btn-cyan" onclick="doLogin()" style="padding: 14px;"><i class="fas fa-key"></i> 安全登入</button>
             <div class="status-msg" id="loginStatus"></div>
         </div>
@@ -1148,7 +1169,20 @@
         // ★ 配置：請確保網址正確
         const WEATHER_API = 'https://wang-weather.weacamm.org';
         const PIDS_API = 'https://tra-schedule-worker.weacamm.org';
-        const ADMIN_BUILD = '2026-08-20-flagship-v9.8';
+        const ADMIN_BUILD = '2026-08-20-turnstile-v9.9';
+
+        // 🛡️ Cloudflare Turnstile 驗證 Token 全域變數
+        let turnstileToken = '';
+
+        function onTurnstileSuccess(token) {
+            turnstileToken = token;
+            console.log("[Turnstile] 人類驗證成功");
+        }
+
+        function onTurnstileExpired() {
+            turnstileToken = '';
+            console.warn("[Turnstile] 驗證 Token 已過期");
+        }
 
         // 📱 行動端 Sidebar 開關控制
         function toggleMobileSidebar(open) {
@@ -1226,17 +1260,24 @@
             }
         }
 
-        // 登入邏輯
+        // 登入邏輯 (含 Turnstile 強制驗證)
         function doLogin() {
             const u = document.getElementById('loginUser').value.trim();
             const p = document.getElementById('loginPass').value.trim();
-            if (u && p) {
-                localStorage.setItem('wangwei_user', u);
-                localStorage.setItem('wangwei_pass', p);
-                checkAuth();
-            } else {
-                showToast("請輸入完整帳號與密碼", "error");
+
+            if (!u || !p) {
+                return showToast("請輸入完整帳號與密碼", "error");
             }
+
+            // 檢查是否取得 Cloudflare Turnstile 驗證 token
+            const turnstileEl = document.querySelector('.cf-turnstile');
+            if (turnstileEl && !turnstileToken) {
+                return showToast("🛡️ 請先完成 Cloudflare 人類驗證", "error");
+            }
+
+            localStorage.setItem('wangwei_user', u);
+            localStorage.setItem('wangwei_pass', p);
+            checkAuth();
         }
 
         function checkAuth() {
@@ -1267,6 +1308,9 @@
             if (withAuth) {
                 headers['X-Username'] = localStorage.getItem('wangwei_user') || '';
                 headers['X-Password'] = localStorage.getItem('wangwei_pass') || '';
+                if (turnstileToken) {
+                    headers['X-Turnstile-Token'] = turnstileToken;
+                }
             }
             if (body) {
                 headers['Content-Type'] = 'application/json';
