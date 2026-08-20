@@ -457,6 +457,7 @@
 
         .text-ok { color: #34d399; font-weight: 700; }
         .text-err { color: #f87171; font-weight: 700; }
+        .text-warn { color: #f59e0b; font-weight: 700; }
 
         body.dark-mode {
             background: linear-gradient(135deg, #090d16 0%, #0f172a 50%, #0a1120 100%);
@@ -595,6 +596,99 @@
             </div>
         </div>
 
+        <!-- 臺鐵即時軌道營運戰情 -->
+        <div style="margin-bottom: 30px;">
+            <h3 style="font-size: 1.25rem; font-weight: 800; color: #38bdf8; margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
+                <i class="fas fa-train"></i> 臺鐵全線即時軌道營運戰情 (TRA Live Rail Operations)
+            </h3>
+            <div class="cards-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom:0;">
+                <div class="info-card">
+                    <div class="card-icon"><i class="fas fa-subway" style="color:#38bdf8;"></i></div>
+                    <div class="card-value" id="traRunningCount">--</div>
+                    <div class="card-label">軌道在途列車 (未抵終點)</div>
+                </div>
+
+                <div class="info-card">
+                    <div class="card-icon"><i class="fas fa-clock-check" style="color:#10b981;"></i></div>
+                    <div class="card-value" id="traOnTimeRate" style="color:#10b981;">--%</div>
+                    <div class="card-label">在途列車準點率 (≤5分)</div>
+                </div>
+
+                <div class="info-card">
+                    <div class="card-icon"><i class="fas fa-hourglass-half" style="color:#f59e0b;"></i></div>
+                    <div class="card-value" id="traDelayedCount" style="color:#f59e0b;">--</div>
+                    <div class="card-label">當前在途誤點列車數</div>
+                </div>
+
+                <div class="info-card">
+                    <div class="card-icon"><i class="fas fa-stopwatch" style="color:#fb7185;"></i></div>
+                    <div class="card-value" id="traAvgDelay">--分</div>
+                    <div class="card-label">在途誤點列車平均延遲</div>
+                </div>
+
+                <div class="info-card">
+                    <div class="card-icon"><i class="fas fa-exclamation-circle" style="color:#ef4444;"></i></div>
+                    <div class="card-value" id="traMaxDelay" style="font-size:1.2rem; color:#ef4444; word-break:break-all;">--</div>
+                    <div class="card-label">在途列車最高誤點車次</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 臺鐵誤點 Top 10 與停駛車次即時列表 -->
+        <div class="dashboard-main-grid" style="margin-bottom: 30px;">
+            <div class="section-card">
+                <div class="section-header-title">
+                    <span><i class="fas fa-fire-alt" style="color:#ef4444;"></i> 臺鐵即時誤點前 10 名車次排行榜</span>
+                    <span style="font-size:0.8rem; opacity:0.7;">即時排序</span>
+                </div>
+                <div style="overflow-x: auto;">
+                    <table class="status-table">
+                        <thead>
+                            <tr>
+                                <th>排名</th>
+                                <th>車次</th>
+                                <th>當前位置 / 測站</th>
+                                <th>誤點時間</th>
+                                <th>列車狀態</th>
+                            </tr>
+                        </thead>
+                        <tbody id="traTopDelayedBody">
+                            <tr>
+                                <td colspan="5" style="text-align:center; padding:20px; color:rgba(255,255,255,0.5);">
+                                    <i class="fas fa-spinner fa-spin"></i> 載入車次動態中...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="section-card">
+                <div class="section-header-title">
+                    <span><i class="fas fa-ban" style="color:#f59e0b;"></i> 全線停駛 / 取消車次清單</span>
+                    <span id="traSuspendedBadge" style="font-size:0.8rem; background:rgba(245,158,11,0.2); color:#f59e0b; padding:2px 8px; border-radius:10px; font-weight:700;">載入中...</span>
+                </div>
+                <div style="overflow-x: auto;">
+                    <table class="status-table">
+                        <thead>
+                            <tr>
+                                <th>車次</th>
+                                <th>列車狀態</th>
+                                <th>備註與說明</th>
+                            </tr>
+                        </thead>
+                        <tbody id="traSuspendedBody">
+                            <tr>
+                                <td colspan="3" style="text-align:center; padding:20px; color:rgba(255,255,255,0.5);">
+                                    <i class="fas fa-spinner fa-spin"></i> 載入停駛清單中...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <!-- 主要圖表與日誌 Layout -->
         <div class="dashboard-main-grid">
             <div class="section-card">
@@ -709,8 +803,11 @@
             initWeatherMarquee();
             loadDisasterKPIs();
             
-            setInterval(fetchData, 60000);
-            setInterval(loadDisasterKPIs, 300000);
+            // 設定統一每 1 分鐘 (60,000 ms) 自動更新一次所有資料
+            const ONE_MINUTE = 60 * 1000;
+            setInterval(fetchData, ONE_MINUTE);
+            setInterval(loadDisasterKPIs, ONE_MINUTE);
+            setInterval(initWeatherMarquee, ONE_MINUTE);
         });
 
         // 深色模式切換
@@ -785,9 +882,136 @@
                 await updateWaterLevel();
                 await updateAQI();
                 await updateOnlineUsers();
-                addEvent('system', '民生數據已更新', '所有監控 KPI 指標已刷新');
+                await updateTRALiveStats();
+                addEvent('system', '民生與臺鐵數據已更新', '所有監控 KPI 指標已刷新');
             } catch (error) {
-                console.error("民生 KPI 載入失敗:", error);
+                console.error("民生與臺鐵 KPI 載入失敗:", error);
+            }
+        }
+
+        async function updateTRALiveStats() {
+            try {
+                const countEl = document.getElementById('traRunningCount');
+                const rateEl = document.getElementById('traOnTimeRate');
+                const delayedEl = document.getElementById('traDelayedCount');
+                const avgEl = document.getElementById('traAvgDelay');
+                const maxEl = document.getElementById('traMaxDelay');
+                const topDelayedBody = document.getElementById('traTopDelayedBody');
+                const suspendedBody = document.getElementById('traSuspendedBody');
+                const suspendedBadge = document.getElementById('traSuspendedBadge');
+
+                const res = await fetch('https://tra-schedule-worker.weacamm.org/api/live');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+
+                if (Array.isArray(data)) {
+                    // 過濾掉非列車標記 (如 ST_ 測站緩存)
+                    const trains = data.filter(t => t.TrainNo && !String(t.TrainNo).startsWith('ST_'));
+
+                    // 區分停駛列車 (status === 2) 與在行列車
+                    const activeTrains = trains.filter(t => t.TrainStatus !== 2 && t.status !== 2);
+                    const suspendedTrains = trains.filter(t => t.TrainStatus === 2 || t.status === 2);
+
+                    const totalRunning = activeTrains.length;
+                    const delayedTrains = activeTrains.filter(t => (Number(t.DelayTime) || 0) > 0);
+                    const onTimeTrains = activeTrains.filter(t => (Number(t.DelayTime) || 0) <= 5);
+
+                    const onTimeRate = totalRunning > 0 ? ((onTimeTrains.length / totalRunning) * 100).toFixed(1) : '100.0';
+                    const delayedCount = delayedTrains.length;
+
+                    let totalDelayMinutes = 0;
+                    delayedTrains.forEach(t => {
+                        totalDelayMinutes += (Number(t.DelayTime) || 0);
+                    });
+                    const avgDelay = delayedCount > 0 ? (totalDelayMinutes / delayedCount).toFixed(1) : '0.0';
+
+                    let maxDelayText = '全線無誤點';
+                    if (delayedTrains.length > 0) {
+                        const sorted = [...delayedTrains].sort((a, b) => (Number(b.DelayTime) || 0) - (Number(a.DelayTime) || 0));
+                        const top = sorted[0];
+                        const stationName = top.StationName?.Zh_tw || top.station || '';
+                        maxDelayText = `${top.TrainNo}次 (延遲${top.DelayTime}分${stationName ? ' @ ' + stationName : ''})`;
+                    }
+
+                    if (countEl) countEl.textContent = `${totalRunning}`;
+                    if (rateEl) rateEl.textContent = `${onTimeRate}%`;
+                    if (delayedEl) delayedEl.textContent = `${delayedCount}`;
+                    if (avgEl) avgEl.textContent = `${avgDelay}分`;
+                    if (maxEl) maxEl.textContent = maxDelayText;
+
+                    // 1. 渲染前 10 多誤點的車次排行榜
+                    if (topDelayedBody) {
+                        const sortedDelayed = [...delayedTrains].sort((a, b) => (Number(b.DelayTime) || 0) - (Number(a.DelayTime) || 0));
+                        const top10 = sortedDelayed.slice(0, 10);
+
+                        if (top10.length === 0) {
+                            topDelayedBody.innerHTML = `
+                                <tr>
+                                    <td colspan="5" style="text-align:center; padding:20px; color:#34d399; font-weight:bold;">
+                                        <i class="fas fa-check-circle"></i> 目前全台運轉列車皆準點順暢！
+                                    </td>
+                                </tr>
+                            `;
+                        } else {
+                            topDelayedBody.innerHTML = top10.map((t, idx) => {
+                                const delayMins = Number(t.DelayTime) || 0;
+                                const stationName = t.StationName?.Zh_tw || t.station || '行駛中';
+                                const rankColor = idx === 0 ? '#ef4444' : (idx < 3 ? '#f59e0b' : '#38bdf8');
+                                const badgeClass = delayMins > 15 ? 'text-err' : 'text-warn';
+
+                                return `
+                                    <tr>
+                                        <td style="font-weight:900; color:${rankColor};">No.${idx + 1}</td>
+                                        <td style="font-weight:bold; color:white; font-family:Consolas;">${t.TrainNo} 次</td>
+                                        <td style="color:rgba(255,255,255,0.85);">${stationName}</td>
+                                        <td class="${badgeClass}" style="font-family:Consolas; font-weight:bold;">+ ${delayMins} 分鐘</td>
+                                        <td><span class="status-dot ${delayMins > 15 ? 'bg-err' : 'bg-warn'}"></span>${delayMins > 15 ? '嚴重延遲' : '誤點'}</td>
+                                    </tr>
+                                `;
+                            }).join('');
+                        }
+                    }
+
+                    // 2. 渲染停駛的所有車次清單
+                    if (suspendedBody) {
+                        if (suspendedBadge) {
+                            if (suspendedTrains.length > 0) {
+                                suspendedBadge.textContent = `共 ${suspendedTrains.length} 班停駛`;
+                                suspendedBadge.style.background = 'rgba(239,68,68,0.2)';
+                                suspendedBadge.style.color = '#f87171';
+                            } else {
+                                suspendedBadge.textContent = '目前無班次停駛';
+                                suspendedBadge.style.background = 'rgba(16,185,129,0.2)';
+                                suspendedBadge.style.color = '#34d399';
+                            }
+                        }
+
+                        if (suspendedTrains.length === 0) {
+                            suspendedBody.innerHTML = `
+                                <tr>
+                                    <td colspan="3" style="text-align:center; padding:20px; color:#34d399; font-weight:bold;">
+                                        <i class="fas fa-check-circle"></i> 目前全臺班次均正常開行，無停駛車次
+                                    </td>
+                                </tr>
+                            `;
+                        } else {
+                            suspendedBody.innerHTML = suspendedTrains.map(t => {
+                                const stationName = t.StationName?.Zh_tw || t.station || '全區段';
+                                return `
+                                    <tr>
+                                        <td style="font-weight:bold; color:#f87171; font-family:Consolas;">${t.TrainNo} 次</td>
+                                        <td><span class="status-dot bg-err"></span><span class="text-err">停駛 (Suspended)</span></td>
+                                        <td style="color:rgba(255,255,255,0.7); font-size:0.85rem;">即時通阻/計畫性停駛 (${stationName})</td>
+                                    </tr>
+                                `;
+                            }).join('');
+                        }
+                    }
+
+                    addEvent('system', '臺鐵實時營運檢測', `在途 ${totalRunning} 列 | 準點率 ${onTimeRate}% | 誤點 Top10 與停駛清單已刷新`);
+                }
+            } catch (error) {
+                console.error("臺鐵軌道實時戰情載入失敗:", error);
             }
         }
 
@@ -997,46 +1221,102 @@
             }
         }
 
+        const PROBE_TARGETS = [
+            { name: '氣象署資料介接', url: 'https://cwa-weather-proxy.weacamm.org/api/weather/alert' },
+            { name: '台鐵時刻表 API', url: 'https://tra-schedule-worker.weacamm.org' },
+            { name: '國道/省道監視器', url: 'https://taiwan-traffic-cctv.weacamm.org/api/cameras?type=provincial' },
+            { name: '水庫水情 API', url: 'https://reservoir-api.weacamm.org/' },
+            { name: '環境與 AQI API', url: 'https://river-monitor-aqi.weacamm.org/?dataset=aqi' },
+            { name: '高鐵即時資料 API', url: 'https://thsr-proxy.weacamm.org' },
+            { name: '捷運與輕軌 API', url: 'https://metro-api-worker.weacamm.org/api' },
+            { name: '網站流量計數器', url: 'https://site-counter.weacamm.org/?page=dashboard' }
+        ];
+
         async function fetchData() {
             try {
                 const res = await fetch(MONITOR_API);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const logs = await res.json();
-                if(!logs || logs.length === 0) return;
+                if(!logs || logs.length === 0) throw new Error("無歷史 Log 資料");
                 processData(logs);
                 addEvent('tech', 'API 監控節點檢測完成', `共掃描 ${Object.keys(logs).length} 個端點`);
             } catch (e) {
-                console.error("Fetch Error:", e);
-                // 模擬穩定資料
-                renderMockData();
+                console.warn("後端監控 Worker 無回應，啟動即時前端 API 端點健康探測 (Probing):", e);
+                await probeLiveAPIs();
             }
         }
 
-        function renderMockData() {
+        async function probeLiveAPIs() {
             const tableBody = document.getElementById('statusTableBody');
-            if(!tableBody) return;
-            
-            const services = [
-                { name: '氣象署資料介接', status: 'ok', latency: 42, avail: '99.9%' },
-                { name: '台鐵時刻表 API', status: 'ok', latency: 68, avail: '99.8%' },
-                { name: '國道/省道監視器', status: 'ok', latency: 85, avail: '99.5%' },
-                { name: '水資源與水庫監控', status: 'ok', latency: 51, avail: '100.0%' },
-                { name: '網站流量與計數器', status: 'ok', latency: 35, avail: '99.9%' }
-            ];
+            if (!tableBody) return;
 
-            tableBody.innerHTML = services.map(s => `
-                <tr>
-                    <td style="font-weight:bold; color:white;">${s.name}</td>
-                    <td><span class="status-dot bg-ok"></span><span class="text-ok">線上 (Online)</span></td>
-                    <td style="font-family:Consolas; color:#38bdf8;">${s.latency} ms</td>
-                    <td class="text-ok" style="font-family:Consolas; font-weight:bold;">${s.avail}</td>
-                    <td style="color:rgba(255,255,255,0.6);">${new Date().toLocaleTimeString()}</td>
-                </tr>
-            `).join('');
+            let onlineCount = 0;
+            const probeResults = await Promise.allSettled(
+                PROBE_TARGETS.map(async (target) => {
+                    const start = performance.now();
+                    try {
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 6000);
+                        const res = await fetch(target.url, {
+                            method: 'GET',
+                            cache: 'no-store',
+                            signal: controller.signal
+                        });
+                        clearTimeout(timeoutId);
+                        const duration = Math.round(performance.now() - start);
+                        const isOk = res.ok || res.status === 404 || res.status === 405 || res.status === 401;
+                        return {
+                            name: target.name,
+                            status: isOk ? (duration > 1000 ? 'slow' : 'ok') : 'dead',
+                            latency: duration,
+                            avail: isOk ? '100.0%' : '0.0%'
+                        };
+                    } catch (err) {
+                        const duration = Math.round(performance.now() - start);
+                        return {
+                            name: target.name,
+                            status: 'dead',
+                            latency: duration > 6000 ? 6000 : duration,
+                            avail: '0.0%'
+                        };
+                    }
+                })
+            );
 
-            document.getElementById('cardTotal').textContent = services.length;
-            document.getElementById('cardOnline').textContent = '100%';
+            const rows = [];
+            probeResults.forEach(res => {
+                const item = res.value || { name: '未知服務', status: 'dead', latency: 0, avail: '0.0%' };
+                if (item.status !== 'dead') onlineCount++;
+
+                let statusHtml = '';
+                if (item.status === 'ok') {
+                    statusHtml = '<span class="status-dot bg-ok"></span><span class="text-ok">線上 (Online)</span>';
+                } else if (item.status === 'slow') {
+                    statusHtml = '<span class="status-dot bg-warn"></span><span style="color:#f59e0b; font-weight:bold;">延遲 (Slow)</span>';
+                } else {
+                    statusHtml = '<span class="status-dot bg-err"></span><span class="text-err">異常 (Offline)</span>';
+                }
+
+                const availClass = item.status !== 'dead' ? 'text-ok' : 'text-err';
+                rows.push(`
+                    <tr>
+                        <td style="font-weight:bold; color:white;">${item.name}</td>
+                        <td>${statusHtml}</td>
+                        <td style="font-family:Consolas; color:#38bdf8;">${item.latency} ms</td>
+                        <td class="${availClass}" style="font-family:Consolas; font-weight:bold;">${item.avail}</td>
+                        <td style="color:rgba(255,255,255,0.6);">${new Date().toLocaleTimeString()}</td>
+                    </tr>
+                `);
+            });
+
+            tableBody.innerHTML = rows.join('');
+            document.getElementById('cardTotal').textContent = PROBE_TARGETS.length;
+            const onlineRate = ((onlineCount / PROBE_TARGETS.length) * 100).toFixed(1);
+            document.getElementById('cardOnline').textContent = `${onlineRate}%`;
             document.getElementById('cardLastTime').textContent = new Date().toLocaleTimeString();
-            document.getElementById('cardStatus').textContent = '優良';
+            document.getElementById('cardStatus').textContent = onlineRate >= 80 ? '優良' : '注意';
+
+            addEvent('tech', '實時 API 端點探測完成', `線上率 ${onlineRate}% (${onlineCount}/${PROBE_TARGETS.length} 可用)`);
         }
 
         function processData(logs) {
