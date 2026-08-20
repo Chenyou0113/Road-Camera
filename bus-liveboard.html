@@ -307,6 +307,26 @@
             font-variant-numeric: tabular-nums;
         }
 
+        /* --- 跑馬燈 (Marquee) 樣式與動畫 --- */
+        .marquee-content {
+            display: inline-block;
+            white-space: nowrap;
+            animation: marquee-scroll 12s linear infinite;
+            font-weight: 700;
+            color: #92400e;
+        }
+        .marquee-content.static {
+            animation: none;
+            color: #78350f;
+        }
+        .marquee-content:hover {
+            animation-play-state: paused;
+        }
+        @keyframes marquee-scroll {
+            0% { transform: translateX(100%); }
+            100% { transform: translateX(-100%); }
+        }
+
         .tabs {
             display: flex;
             background: var(--bg-light);
@@ -1171,6 +1191,16 @@
             });
     }
 
+    function escapeHTML(str) {
+        if (typeof str !== 'string') return str == null ? '' : String(str);
+        return str
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     function startCountdown(duration) {
         refreshDuration = duration;
         if (countdownInterval) clearInterval(countdownInterval);
@@ -1383,9 +1413,10 @@
 
         const container = document.getElementById('route-cards-container');
 
-        // 🌟 嘗試從 localStorage 讀取快取路線資料，秒速渲染路線清單！
+        // 🌟 嘗試從 localStorage 讀取快取路線資料，秒速渲染路線清單！(支援 24 小時 TTL)
         const cacheKey = `bus_routes_${cat}_${cityKey}`;
         const cachedData = localStorage.getItem(cacheKey);
+        const ROUTE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24小時
         let hasRenderedCached = false;
         
         const renderRoutesList = (routes) => {
@@ -1396,10 +1427,12 @@
             routes.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
             const cards = routes.map(r => {
                 const rName = r.name || '';
-                const safeName = rName.replace(/'/g, '&#39;');
-                const routeSubText = `${r.departure || ''} → ${r.destination || ''}`;
+                const safeName = escapeHTML(rName);
+                const departureText = escapeHTML(r.departure || '');
+                const destinationText = escapeHTML(r.destination || '');
+                const routeSubText = `${departureText} → ${destinationText}`;
                 return `<button class="route-card-btn" onclick="loadRoute('${safeName}', '${r.city}', '${r.type}')">
-                    <div class="route-card-num">${rName}</div>
+                    <div class="route-card-num">${safeName}</div>
                     <div class="route-card-dest">${routeSubText}</div>
                 </button>`;
             }).join('');
@@ -1409,8 +1442,21 @@
         if (cachedData) {
             try {
                 const parsed = JSON.parse(cachedData);
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                    renderRoutesList(parsed);
+                let routesData = null;
+                if (Array.isArray(parsed)) {
+                    routesData = parsed;
+                } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.data)) {
+                    const age = Date.now() - (parsed.ts || 0);
+                    if (age < ROUTE_CACHE_TTL) {
+                        routesData = parsed.data;
+                    } else {
+                        console.log(`快取 ${cacheKey} 已逾期 (${Math.round(age / 3600000)}h)，自動清除並重新拉取最新路線`);
+                        localStorage.removeItem(cacheKey);
+                    }
+                }
+
+                if (routesData && routesData.length > 0) {
+                    renderRoutesList(routesData);
                     hasRenderedCached = true;
                 }
             } catch (err) {
@@ -1430,8 +1476,8 @@
             const routes = Array.isArray(data) ? data : [];
             
             if (routes.length > 0) {
-                // 保存最新取得的資料到快取中
-                localStorage.setItem(cacheKey, JSON.stringify(routes));
+                // 保存最新取得的資料與 timestamp 到快取中 (24h TTL)
+                localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), data: routes }));
                 renderRoutesList(routes);
             } else if (!hasRenderedCached) {
                 container.innerHTML = `<div class="browser-empty">此區域暫無路線</div>`;
@@ -1686,6 +1732,7 @@
 
     function switchDirection(dir) {
         currentData.direction = dir;
+        currentData.autoScrollDone = false; // 🌟 每次切換方向時重設自動捲動狀態
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         const tabDir = document.getElementById(`tab-${dir}`);
         if(tabDir) tabDir.classList.add('active');
@@ -1750,7 +1797,6 @@
         const icon = document.getElementById('refresh-icon');
         const updateTimeEl = document.getElementById('update-time');
         if(icon) icon.classList.add('fa-spin');
-        startCountdown(refreshDuration);
 
         try {
             const url = `${WORKER_URL}/?category=${currentData.type}&city=${currentData.city}&route=${encodeURIComponent(currentData.route)}`;
@@ -1765,9 +1811,11 @@
             
             updateStopsUI(estimates, buses);
             updateBusesMap(buses);
+            startCountdown(refreshDuration); // 🌟 僅在資料成功接收與更新完畢後開始倒數
         } catch (e) {
             console.error('Update failed', e);
             if (updateTimeEl) updateTimeEl.innerText = '⚠️ 連線錯誤';
+            startCountdown(refreshDuration);
         } finally {
             if(icon) setTimeout(() => icon.classList.remove('fa-spin'), 1000);
         }
@@ -2007,7 +2055,8 @@
                 
                 if (closestBusIndex !== -1) {
                     const remainingStops = matchedIndex - closestBusIndex;
-                    document.getElementById('summary-next-stops').innerText = remainingStops === 0 ? `即將抵達` : `距離 ${remainingStops} 站`;
+                    // 🌟 修正邊界重複邏輯：當 remainingStops <= 0 時僅顯示「車輛進站中」，避免與左側「即將進站」冗餘矛盾
+                    document.getElementById('summary-next-stops').innerText = remainingStops <= 0 ? `車輛進站中` : `距離 ${remainingStops} 站`;
                 } else {
                     document.getElementById('summary-next-stops').innerText = `暫無即時車輛定位`;
                 }
@@ -2017,6 +2066,21 @@
                 document.getElementById('summary-next-stops').innerText = '今日已無班車';
             } else {
                 summaryBar.style.display = 'none';
+            }
+        }
+
+        // 🌟 自動平滑捲動至最近進站/即將到站站點 (僅在方向切換或首度載入後觸發一次)
+        if (!currentData.autoScrollDone && matchedIndex !== -1) {
+            currentData.autoScrollDone = true;
+            const targetStop = stops[matchedIndex];
+            if (targetStop) {
+                const uid = targetStop.StopUID;
+                const targetRow = document.getElementById(`stop-${uid}`);
+                if (targetRow) {
+                    setTimeout(() => {
+                        targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }, 300);
+                }
             }
         }
     }
@@ -3047,16 +3111,14 @@
                 const text = alerts.map(a => `【${a.Title}】${a.Description}`).join("　　　");
                 textEl.innerText = text;
                 textEl.className = 'marquee-content';
-                textEl.style.animationDuration = Math.max(6, text.length * 0.05) + 's';
+                textEl.style.animationDuration = Math.max(8, text.length * 0.1) + 's';
             } else {
-                textEl.innerText = "目前無通阻訊息";
-                textEl.className = 'marquee-content';
-                textEl.style.animationDuration = '10s';
+                textEl.innerText = "目前無最新路線異動公告";
+                textEl.className = 'marquee-content static';
             }
         } catch (e) {
-            textEl.innerText = "目前無通阻訊息";
-            textEl.className = 'marquee-content';
-            textEl.style.animationDuration = '10s';
+            textEl.innerText = "目前無最新路線異動公告";
+            textEl.className = 'marquee-content static';
         }
     }
 </script>
