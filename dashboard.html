@@ -1289,8 +1289,9 @@
                                 const suspEnd = normName(t.SuspendedEndStation || t.SuspEndStation);
                                 const noteText = String(t.Note || t.Remark || t.Reason || '').trim();
 
-                                let statusText = '停駛';
-                                let statusClass = 'text-err';
+                                const isCancelAction = String(noteText).includes('取消') || Number(t.TrainStatus) === 2 || Number(t.status) === 2 || String(t.Reason).includes('取消');
+
+                                let isSegment = false;
                                 let segText = '';
 
                                 const stops = t.Stops || t.stops || t.Stations || [];
@@ -1299,13 +1300,12 @@
                                     const normalStops = stops.filter(s => Number(s.SuspendedFlag || s.Susp || 0) !== 1).map(s => normName(s.Name || s.StationName));
 
                                     if (normalStops.length === 0) {
-                                        statusText = '停駛';
+                                        isSegment = false;
                                         const firstSt = normName(stops[0].Name || stops[0].StationName) || startSt;
                                         const lastSt = normName(stops[stops.length - 1].Name || stops[stops.length - 1].StationName) || destSt;
-                                        segText = (firstSt && lastSt && firstSt !== lastSt) ? `${firstSt} 到 ${lastSt} 停駛` : '全線停駛';
+                                        segText = (firstSt && lastSt && firstSt !== lastSt) ? `${firstSt} 到 ${lastSt} 全線${isCancelAction ? '取消' : '停駛'}` : `全線${isCancelAction ? '取消' : '停駛'}`;
                                     } else if (suspendedStops.length > 0) {
-                                        statusText = '區段停駛';
-                                        statusClass = 'text-warn';
+                                        isSegment = true;
                                         const firstSusp = suspendedStops[0];
                                         const lastSusp = suspendedStops[suspendedStops.length - 1];
                                         if (firstSusp !== lastSusp) {
@@ -1324,17 +1324,15 @@
 
                                 if (!segText) {
                                     if (suspStart && suspEnd && suspStart !== suspEnd) {
-                                        statusText = '區段停駛';
-                                        statusClass = 'text-warn';
+                                        isSegment = true;
                                         segText = `${suspStart} 到 ${suspEnd} 停駛`;
                                     } else if (startSt && destSt && startSt !== destSt) {
-                                        statusText = '停駛';
-                                        segText = `${startSt} 到 ${destSt} 停駛`;
+                                        isSegment = false;
+                                        segText = `${startSt} 到 ${destSt} 全線${isCancelAction ? '取消' : '停駛'}`;
                                     } else {
                                         const stationName = normName(t.StationName || t.station || suspStart || suspEnd || '');
                                         if (stationName) {
-                                            statusText = '區段停駛';
-                                            statusClass = 'text-warn';
+                                            isSegment = true;
                                             if (destSt && stationName !== destSt) {
                                                 segText = `${stationName} 到 ${destSt} 停駛`;
                                             } else if (startSt && stationName !== startSt) {
@@ -1343,10 +1341,21 @@
                                                 segText = `${stationName} 區段停駛`;
                                             }
                                         } else {
-                                            statusText = '取消';
-                                            segText = '取消';
+                                            isSegment = false;
+                                            segText = isCancelAction ? '全線取消' : '全線停駛';
                                         }
                                     }
+                                }
+
+                                let statusText = '';
+                                let statusClass = 'text-err';
+
+                                if (isSegment) {
+                                    statusText = isCancelAction ? '區間取消' : '區間停駛';
+                                    statusClass = 'text-warn';
+                                } else {
+                                    statusText = isCancelAction ? '全線取消' : '全線停駛';
+                                    statusClass = 'text-err';
                                 }
 
                                 const detailNote = noteText ? ` <span style="color:rgba(255,255,255,0.45); font-size:0.8rem; font-weight:normal;">(${noteText})</span>` : '';
