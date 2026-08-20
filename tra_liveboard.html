@@ -703,6 +703,7 @@
                 <div class="tab-item active" onclick="window.switchTab('station', event)">車站</div>
                 <div class="tab-item" onclick="window.switchTab('route', event)">路線</div>
                 <div class="tab-item" onclick="window.switchTab('train', event)">車次</div>
+                <div class="tab-item" onclick="window.switchTab('special', event)">特殊列車</div>
             </div>
 
             <div class="date-section">
@@ -867,6 +868,41 @@
                         <input type="number" id="trainNoInp" placeholder="例如: 408, 121, 3122">
                     </div>
                     <button class="btn-query btn-query-red" onclick="doQuery('train')"><i class="fas fa-location-arrow"></i> 查詢</button>
+                </div>
+            </div>
+
+            <!-- 特殊列車查詢面板 -->
+            <div id="panel-special" class="search-panel" style="display:none;">
+                <div class="search-grid" style="grid-template-columns: 1fr 1fr auto;">
+                    <div class="form-group">
+                        <label style="font-size:0.85rem; color:var(--text-label); font-weight:bold; display:block; margin-bottom:4px;"><i class="fas fa-filter"></i> 特殊列車類別 (照 tra-pids 規則)</label>
+                        <select id="specialTypeSelect">
+                            <option value="all">🌟 全部特殊列車</option>
+                            <option value="minri">🖤 鳴日號</option>
+                            <option value="shanlan">黃 山嵐號</option>
+                            <option value="haifeng">🩵 海風號</option>
+                            <option value="islandstar">🩷 環島之星</option>
+                            <option value="steam">🚂 蒸汽火車 / 仲夏寶島號</option>
+                            <option value="charter">🎫 專車/專列 (自強/莒光/區間專車/慧燈/入伍)</option>
+                            <option value="extra">⚡ 臨開加班車 (5xxx / 6xxx 系列車次)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label style="font-size:0.85rem; color:var(--text-label); font-weight:bold; display:block; margin-bottom:4px;"><i class="fas fa-map-signs"></i> 運行路線/區域</label>
+                        <select id="specialLineSelect">
+                            <option value="all">全台灣路線</option>
+                            <option value="WL">西部幹線 (基隆 - 屏東)</option>
+                            <option value="WL-C">西部幹線 - 海線</option>
+                            <option value="EL">東部幹線 (八堵 - 臺東)</option>
+                            <option value="SL">南迴線 (屏東 - 臺東)</option>
+                            <option value="BRANCH">觀光/支線 (平溪/內灣/集集/沙崙/六家)</option>
+                        </select>
+                    </div>
+                    <div class="search-grid-buttons" style="align-self:end;">
+                        <button class="btn-query" style="background: linear-gradient(135deg, #d84315, #f57f17);" onclick="doQuery('special')">
+                            <i class="fas fa-sparkles"></i> 查詢特殊列車
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1598,12 +1634,215 @@
                     let liveData = null;
                     if (date === new Date(Date.now() + 8*3600000).toISOString().split('T')[0]) { liveData = await fetch(`${API_BASE}/api/live?trainNo=${tno}`).then(r => r.json()); }
                     renderTrainTrace(scheduleData, liveData);
+                } else if (type === 'special') {
+                    document.getElementById('boardTitle').innerHTML = `<i class="fas fa-star" style="color:#ff9800;"></i> 特殊列車看板 (${date})`;
+                    const selectedCategory = document.getElementById('specialTypeSelect').value;
+                    const selectedLine = document.getElementById('specialLineSelect').value;
+                    
+                    const res = await fetch(`${API_BASE}/api/timetable/daily?date=${date}`);
+                    if (!res.ok) throw new Error('timetable daily fetch failed');
+                    const timetable = await res.json();
+                    
+                    if (!Array.isArray(timetable) || timetable.length === 0) {
+                        board.innerHTML = `<div style="padding:40px; text-align:center;">無 ${date} 之列車時刻表資料</div>`;
+                        return;
+                    }
+
+                    // 1. 過濾出特殊列車
+                    let specialTrains = [];
+                    timetable.forEach(t => {
+                        const { isSpecial, categoryKey, label } = classifySpecialTrain(t);
+                        if (!isSpecial) return;
+                        if (selectedCategory !== 'all' && categoryKey !== selectedCategory) return;
+                        if (!trainPassesLine(t, selectedLine)) return;
+                        specialTrains.push({ ...t, _categoryKey: categoryKey, _specialLabel: label });
+                    });
+
+                    if (specialTrains.length === 0) {
+                        board.innerHTML = `<div style="padding:40px; text-align:center;"><i class="fas fa-info-circle" style="color:#ff9800;"></i> ${date} 於所選條件下無特殊列車班次。</div>`;
+                        return;
+                    }
+
+                    // 2. 依首站發車時間進行排序
+                    specialTrains.sort((a, b) => {
+                        const stopsA = a.Stops || a.StopTimes || [];
+                        const stopsB = b.Stops || b.StopTimes || [];
+                        const timeA = stopsA.length > 0 ? (stopsA[0].Dep || stopsA[0].Arr || '99:99') : '99:99';
+                        const timeB = stopsB.length > 0 ? (stopsB[0].Dep || stopsB[0].Arr || '99:99') : '99:99';
+                        return timeA.localeCompare(timeB);
+                    });
+
+                    // 3. 渲染特殊列車卡片列表
+                    await renderSpecialBoard(specialTrains, date);
                 }
             } catch (e) { 
                 console.error(e);
                 if (type === 'station') setStationPidsButtonVisible(false);
                 board.innerHTML = `<div style="padding:40px; text-align:center; color:#d32f2f;"><i class="fas fa-exclamation-triangle"></i> 資料載入失敗，請稍後重試</div>`; 
             }
+        }
+
+        // --- 🤖 特殊列車分類與路線判定 (遵照 tra-pids 車次規則) ---
+        function classifySpecialTrain(t) {
+            const no = Number(t.TrainNo ?? t.No ?? 0);
+            const rawType = String(t.TrainTypeName ?? t.Type ?? '');
+            const note = String(t.Note ?? '').trim();
+            const start = String(t.StartingStationName ?? t.Start ?? '');
+            const dest = String(t.EndingStationName ?? t.Dest ?? '');
+            
+            const label = normalizeTrainTypeLabel(rawType, note, String(no), start, dest);
+            let isSpecial = false;
+            let categoryKey = 'extra';
+
+            if (no === 4666 || no === 4667 || label.includes('蒸汽火車') || note.includes('仲夏寶島號') || rawType.includes('蒸汽火車')) {
+                isSpecial = true;
+                categoryKey = 'steam';
+            } else if ((no >= 6001 && no <= 6099) || (no >= 6701 && no <= 6799) || label.includes('鳴日號')) {
+                isSpecial = true;
+                categoryKey = 'minri';
+            } else if (no === 6631 || no === 6632 || no === 6633 || label.includes('山嵐號')) {
+                isSpecial = true;
+                categoryKey = 'shanlan';
+            } else if (no === 6652 || no === 6655 || label.includes('海風號')) {
+                isSpecial = true;
+                categoryKey = 'haifeng';
+            } else if (no === 1 || no === 2 || label.includes('環島之星') || rawType.includes('觀光')) {
+                isSpecial = true;
+                categoryKey = 'islandstar';
+            } else if (
+                (String(no).startsWith("661") && ((start.includes("宜蘭") && dest.includes("臺北")) || (start.includes("臺北") && dest.includes("宜蘭")) || (start.includes("宜蘭") && dest.includes("台北")) || (start.includes("台北") && dest.includes("宜蘭")))) ||
+                (no >= 6801 && no <= 6899) ||
+                ((no >= 6501 && no <= 6599) || (no >= 6601 && no <= 6699)) ||
+                label.includes('專車') || label.includes('專列') || label.includes('包車') || label.includes('郵輪') ||
+                note.includes('專車') || note.includes('專列') || note.includes('包車') || note.includes('郵輪') ||
+                rawType.includes('專車') || rawType.includes('專列') || rawType.includes('包車') || rawType.includes('郵輪')
+            ) {
+                isSpecial = true;
+                categoryKey = 'charter';
+            } else if ((no >= 5000 && no <= 6999) || note.includes('加班') || note.includes('臨開') || note.includes('迴送')) {
+                isSpecial = true;
+                categoryKey = 'extra';
+            }
+
+            return { isSpecial, categoryKey, label };
+        }
+
+        function trainPassesLine(train, lineCode) {
+            if (lineCode === 'all') return true;
+            const stops = train.Stops || train.StopTimes || [];
+            const stopNames = stops.map(s => normalizeTaiText(s.Name || s.StationName?.Zh_tw || s.StationName || ''));
+            
+            if (lineCode === 'WL') {
+                const wlStations = typeof trainLineClassification !== 'undefined' ? (trainLineClassification['WL']?.stations || []).map(s => normalizeTaiText(s.name)) : [];
+                return stopNames.some(n => wlStations.includes(n));
+            }
+            if (lineCode === 'WL-C') {
+                const seaStations = ['竹南', '談文', '大山', '後龍', '龍港', '白沙屯', '新埔', '通霄', '苑裡', '日南', '大甲', '臺中港', '清水', '沙鹿', '龍井', '大肚', '追分', '彰化'];
+                return stopNames.some(n => seaStations.includes(n));
+            }
+            if (lineCode === 'EL') {
+                const elStations = typeof trainLineClassification !== 'undefined' ? (trainLineClassification['EL']?.stations || []).map(s => normalizeTaiText(s.name)) : [];
+                return stopNames.some(n => elStations.includes(n));
+            }
+            if (lineCode === 'SL') {
+                const slStations = typeof trainLineClassification !== 'undefined' ? (trainLineClassification['SL']?.stations || []).map(s => normalizeTaiText(s.name)) : [];
+                return stopNames.some(n => slStations.includes(n));
+            }
+            if (lineCode === 'BRANCH') {
+                const branchCodes = ['CZ', 'PX', 'SUAO', 'LJ', 'NW', 'JJ', 'SH'];
+                let branchNames = [];
+                if (typeof trainLineClassification !== 'undefined') {
+                    branchCodes.forEach(code => {
+                        const list = (trainLineClassification[code]?.stations || []).map(s => normalizeTaiText(s.name));
+                        branchNames = branchNames.concat(list);
+                    });
+                }
+                return stopNames.some(n => branchNames.includes(n));
+            }
+            return true;
+        }
+
+        async function renderSpecialBoard(specialTrains, date) {
+            const board = document.getElementById('trainsBoard');
+            const isToday = date === new Date(Date.now() + 8 * 3600000).toISOString().split('T')[0];
+            
+            let html = `
+            <div class="train-card-head" style="grid-template-columns: 1.1fr 1.3fr 0.9fr 1.2fr 0.9fr;">
+                <div>車次 / 類別</div>
+                <div>起訖區間</div>
+                <div>出發 ➔ 到達</div>
+                <div>備註 / 特質</div>
+                <div>當前動態</div>
+            </div>`;
+
+            for (const t of specialTrains) {
+                const trainNo = String(t.TrainNo || t.No || '').trim();
+                const rawType = String(t.TrainTypeName || t.Type || '').trim();
+                const note = String(t.Note || '').trim();
+                const stops = t.Stops || t.StopTimes || [];
+                const startSt = stops.length > 0 ? normalizeTaiText(stops[0].Name || stops[0].StationName?.Zh_tw || stops[0].StationName || t.Start || '') : normalizeTaiText(t.Start || t.StartingStationName || '');
+                const destSt = stops.length > 0 ? normalizeTaiText(stops[stops.length - 1].Name || stops[stops.length - 1].StationName?.Zh_tw || stops[stops.length - 1].StationName || t.Dest || '') : normalizeTaiText(t.Dest || t.EndingStationName || '');
+                
+                const depTime = stops.length > 0 ? (stops[0].Dep || stops[0].Arr || '--:--').slice(0, 5) : '--:--';
+                const arrTime = stops.length > 0 ? (stops[stops.length - 1].Arr || stops[stops.length - 1].Dep || '--:--').slice(0, 5) : '--:--';
+                
+                const typeLabel = t._specialLabel || normalizeTrainTypeLabel(rawType, note, trainNo, startSt, destSt);
+                const badgeClass = getTrainTypeClass(`${rawType} ${typeLabel}`);
+                
+                let liveStatusHtml = `<span style="color:var(--text-label);">未發車 / 排定班次</span>`;
+
+                if (isToday) {
+                    try {
+                        const liveData = await fetchTrainLiveCached(trainNo);
+                        const liveInfo = normalizeLivePayload(liveData);
+                        if (liveInfo.hasData) {
+                            const delay = liveInfo.delay;
+                            if (liveInfo.status === 2) {
+                                liveStatusHtml = `<span class="delay-warn">本日停駛</span>`;
+                            } else if (delay > 0) {
+                                liveStatusHtml = `<span class="delay-warn"><i class="fas fa-train"></i> ${liveInfo.station || ''} (晚 ${delay} 分)</span>`;
+                            } else {
+                                liveStatusHtml = `<span class="delay-ok"><i class="fas fa-train"></i> ${liveInfo.station || '準點'}</span>`;
+                            }
+                        }
+                    } catch (_) {}
+                }
+
+                html += `
+                <div class="train-card special-train-card" data-train-no="${trainNo}" style="grid-template-columns: 1.1fr 1.3fr 0.9fr 1.2fr 0.9fr; cursor:pointer;" onclick="viewSpecialTrainDetail('${trainNo}', '${date}')">
+                    <div>
+                        <span class="train-type-badge ${badgeClass}">${typeLabel}</span><br>
+                        <strong style="font-size:1.15rem; font-family:'Roboto Condensed', sans-serif;">${trainNo} 次</strong>
+                    </div>
+                    <div>
+                        <strong style="color:var(--text-main);">${startSt}</strong> 
+                        <i class="fas fa-arrow-right" style="font-size:0.8rem; color:var(--text-label); margin:0 4px;"></i> 
+                        <strong style="color:var(--text-main);">${destSt}</strong>
+                    </div>
+                    <div style="font-family:'Roboto Condensed', sans-serif; font-weight:700;">
+                        ${depTime} <i class="fas fa-long-arrow-alt-right" style="font-size:0.8rem; color:var(--text-label);"></i> ${arrTime}
+                    </div>
+                    <div style="font-size:0.9rem; color:var(--text-label); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${note || '特殊專開/觀光車次'}">
+                        ${note || '特殊列車/專開班次'}
+                    </div>
+                    <div>
+                        ${liveStatusHtml}
+                    </div>
+                </div>`;
+            }
+
+            board.innerHTML = html;
+        }
+
+        async function viewSpecialTrainDetail(trainNo, date) {
+            document.getElementById('boardTitle').innerHTML = `<i class="fas fa-search-location"></i> 特殊列車 ${trainNo} 次詳細資訊 (${date})`;
+            const res = await fetch(`${API_BASE}/api/schedule?trainNo=${trainNo}&date=${date}`);
+            const scheduleData = await res.json();
+            let liveData = null;
+            if (date === new Date(Date.now() + 8 * 3600000).toISOString().split('T')[0]) {
+                liveData = await fetchTrainLiveCached(trainNo);
+            }
+            renderTrainTrace(scheduleData, liveData);
         }
 
         async function renderStationBoard(data) {
