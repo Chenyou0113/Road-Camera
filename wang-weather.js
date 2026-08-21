@@ -335,7 +335,7 @@ export default {
 
     if (url.pathname === '/api/admin/update-pids' && request.method === 'POST') {
         const auth = await authenticate();
-        if (!auth.success) return new Response(JSON.stringify(auth), { status: 401, headers: corsHeaders });
+        if (!auth.success) return new Response(JSON.stringify(auth), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
         try {
             const body = await request.json();
