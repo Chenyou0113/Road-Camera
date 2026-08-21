@@ -1310,6 +1310,8 @@
                 headers['X-Password'] = localStorage.getItem('wangwei_pass') || '';
                 if (turnstileToken) {
                     headers['X-Turnstile-Token'] = turnstileToken;
+                    // 🔥 Turnstile Token 為一次性驗證碼，發送後即刻清空，防止後續請求重複傳送無效 Token 引發 401 錯誤
+                    turnstileToken = '';
                 }
             }
             if (body) {
@@ -1684,8 +1686,20 @@
                     statusEl.innerText = "✅ PIDS 文字已更新";
                     showToast("✅ 台鐵 PIDS 文字已同步至車站看板", "success");
                 } else {
-                    statusEl.innerText = `❌ 儲存失敗：${raw || `HTTP ${res.status}`}`;
-                    showToast(`❌ 儲存失敗: ${raw}`, "error");
+                    let errMsg = raw;
+                    try {
+                        const parsed = JSON.parse(raw);
+                        if (parsed.error) errMsg = parsed.error;
+                    } catch (_) {}
+                    
+                    if (res.status === 401) {
+                        const hint = errMsg ? ` (${errMsg})` : '';
+                        statusEl.innerText = `❌ 權限驗證失敗${hint}，請重新登入`;
+                        showToast(`❌ 儲存失敗：權限不足或登入已過期${hint}`, "error");
+                    } else {
+                        statusEl.innerText = `❌ 儲存失敗：${errMsg || `HTTP ${res.status}`}`;
+                        showToast(`❌ 儲存失敗: ${errMsg || res.status}`, "error");
+                    }
                 }
             } catch (e) {
                 statusEl.innerText = "❌ 儲存失敗：連線異常";
